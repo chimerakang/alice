@@ -33,7 +33,6 @@ COPY --from=builder /app/claude-tg-agent .
 # 專案目錄掛載點
 VOLUME ["/project"]
 
-ENV PROJECT_DIR=/project
 ENV HOME=/home/claude
 
 # Claude CLI 認證目錄

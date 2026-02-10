@@ -13,18 +13,34 @@ type TokenStats struct {
 	APICallCount      int     // CLI 呼叫次數
 }
 
+// projectState 保存單一專案的對話狀態
+type projectState struct {
+	sessionID string
+	stats     TokenStats
+}
+
 type Agent struct {
 	client     *CLIClient
 	projectDir string
-	sessionID  string // CLI session ID，用於 --resume 延續對話
-	stats      TokenStats
+	projects   map[string]*projectState // projectDir → state
 }
 
 func NewAgent(client *CLIClient, projectDir string) *Agent {
 	return &Agent{
 		client:     client,
 		projectDir: projectDir,
+		projects:   make(map[string]*projectState),
 	}
+}
+
+// current 取得目前專案的狀態，不存在則建立
+func (a *Agent) current() *projectState {
+	if ps, ok := a.projects[a.projectDir]; ok {
+		return ps
+	}
+	ps := &projectState{}
+	a.projects[a.projectDir] = ps
+	return ps
 }
 
 // Run sends a message to Claude Code CLI and returns the response text.
@@ -33,21 +49,22 @@ func (a *Agent) Run(userMessage string, onUpdate func(string)) (string, error) {
 		onUpdate("🔧 Claude Code 處理中 ...")
 	}
 
-	log.Printf("[agent] calling CLI, session=%s, project=%s", a.sessionID, a.projectDir)
+	ps := a.current()
+	log.Printf("[agent] calling CLI, session=%s, project=%s", ps.sessionID, a.projectDir)
 
-	resp, err := a.client.Call(userMessage, a.projectDir, a.sessionID)
+	resp, err := a.client.Call(userMessage, a.projectDir, ps.sessionID)
 	if err != nil {
 		return "", fmt.Errorf("CLI call failed: %w", err)
 	}
 
 	// 保存 session ID 以便下次 --resume
-	a.sessionID = resp.SessionID
+	ps.sessionID = resp.SessionID
 
 	// 更新統計
-	a.stats.APICallCount++
-	a.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
-	a.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
-	a.stats.TotalCostUSD += resp.TotalCostUSD
+	ps.stats.APICallCount++
+	ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
+	ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
+	ps.stats.TotalCostUSD += resp.TotalCostUSD
 
 	log.Printf("[agent] done: turns=%d tokens_in=%d tokens_out=%d cost=$%.4f session=%s",
 		resp.NumTurns, resp.Usage.InputTokens, resp.Usage.OutputTokens,
@@ -56,24 +73,22 @@ func (a *Agent) Run(userMessage string, onUpdate func(string)) (string, error) {
 	return resp.Result, nil
 }
 
-// Reset clears session and stats (new conversation)
+// Reset clears the current project's session and stats
 func (a *Agent) Reset() {
-	a.sessionID = ""
-	a.stats = TokenStats{}
+	delete(a.projects, a.projectDir)
 }
 
-// SetProject changes the working directory and resets the session
+// SetProject switches the working directory (preserves all project sessions)
 func (a *Agent) SetProject(dir string) {
 	a.projectDir = dir
-	a.Reset()
 }
 
-// Stats returns the current token usage statistics
+// Stats returns the current project's token usage statistics
 func (a *Agent) Stats() TokenStats {
-	return a.stats
+	return a.current().stats
 }
 
-// SessionID returns the current CLI session ID
+// SessionID returns the current project's CLI session ID
 func (a *Agent) SessionID() string {
-	return a.sessionID
+	return a.current().sessionID
 }

@@ -22,6 +22,8 @@ Bot 只負責轉發訊息，所有工具執行和 agent loop 由 Claude Code CLI
 - 🔒 使用者白名單
 - 📂 多專案切換
 - 📊 Token 用量追蹤
+- 🗣️ **Forum Topics 支援** - 每個 Topic 獨立專案與對話
+- ⚡ 零依賴純 HTTP API 實作
 
 ## 前置條件
 
@@ -81,15 +83,25 @@ go build -o claude-tg-agent .
 | 指令 | 說明 |
 |------|------|
 | `/help` | 顯示說明 |
-| `/project <路徑>` | 切換專案目錄 |
+| `/project <路徑>` | 切換專案目錄（支援相對路徑） |
 | `/reset` | 清除對話歷史 |
 | `/status` | 查看目前狀態 |
 | `/usage` | 查看 token 用量 |
 
 直接傳送文字訊息就會啟動 Claude Code 來處理你的需求。
 
+### Forum Topics 支援 🆕
+
+在 Telegram 群組中開啟 Topics 功能，Alice 會為每個 Topic 維護獨立的：
+- 對話歷史
+- 專案目錄
+- CLI session
+
+這讓你可以在同一個群組中同時處理多個專案，每個 Topic 就是一個獨立的工作環境。
+
 ## 使用範例
 
+### 基本使用
 ```
 你: 看一下這個專案的結構，然後幫我加一個 health check endpoint
 
@@ -100,6 +112,14 @@ Bot: 我已經完成了以下修改：
      2. 回傳 JSON {"status": "ok", "timestamp": ...}
      ...
 ```
+
+### Forum Topics 多專案範例
+在群組建立 Topics：
+- **Frontend** Topic: `/project ~/projects/web-app`
+- **Backend** Topic: `/project ~/projects/api-server`
+- **Docs** Topic: `/project ~/projects/documentation`
+
+每個 Topic 中的對話完全獨立，Alice 會記住各自的專案上下文。
 
 ## 模型選擇
 

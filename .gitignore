@@ -5,6 +5,15 @@ claude-tg-agent
 config.json
 .env
 
+# Security files
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+credentials.json
+secrets.yaml
+
 # IDE
 .vscode/
 .idea/
