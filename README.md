@@ -78,6 +78,63 @@ go build -o claude-tg-agent .
 ./claude-tg-agent
 ```
 
+## Telegram 群組設定
+
+### 🔧 建立和設定群組
+
+#### 1. 建立 Telegram 群組
+1. 在 Telegram 中建立新群組（至少需要 2 個成員）
+2. 將你的 Bot 加入群組：
+   - 在群組中輸入 `@你的bot用戶名`
+   - 或者進入 Bot 對話，點選 "Add to Group"
+
+#### 2. 設定 Bot 權限
+Bot 需要以下基本權限：
+- ✅ **傳送訊息**
+- ✅ **讀取訊息歷史**
+- ✅ **回覆訊息**
+
+#### 3. 開啟 Forum Topics（群組多專案支援）
+
+**開啟 Topics：**
+1. 進入群組設定 → "Group Type"
+2. 開啟 "Topics" 功能
+3. 群組會轉換為 Forum 模式
+
+**建立專案 Topics：**
+```
+建議 Topic 命名：
+🖥️ Frontend        # 前端專案
+⚙️ Backend         # 後端 API
+📱 Mobile App      # 行動 App
+📚 Documentation   # 文件專案
+🧪 Experiments     # 實驗性功能
+```
+
+#### 4. 設定各 Topic 的專案目錄
+
+在每個 Topic 中執行：
+```
+/project /path/to/specific/project
+```
+
+例如：
+- **Frontend** Topic: `/project ~/projects/web-app`
+- **Backend** Topic: `/project ~/projects/api-server`
+- **Mobile** Topic: `/project ~/projects/mobile-app`
+
+### 🔒 權限和安全
+
+**白名單設定：**
+- 在 `config.json` 中設定 `allowed_user_ids`
+- 或使用環境變數 `ALLOWED_USER_IDS="123456789,987654321"`
+- 只有白名單內的用戶可以使用 Bot
+
+**最佳實務：**
+- 建議建立私人群組（僅邀請團隊成員）
+- 為敏感專案使用獨立的 Bot instance
+- 定期檢查群組成員
+
 ## Telegram 指令
 
 | 指令 | 說明 |
@@ -114,12 +171,71 @@ Bot: 我已經完成了以下修改：
 ```
 
 ### Forum Topics 多專案範例
-在群組建立 Topics：
-- **Frontend** Topic: `/project ~/projects/web-app`
-- **Backend** Topic: `/project ~/projects/api-server`
-- **Docs** Topic: `/project ~/projects/documentation`
 
-每個 Topic 中的對話完全獨立，Alice 會記住各自的專案上下文。
+**步驟 1: 建立 Topics 並設定專案**
+```
+🖥️ Frontend Topic:
+你: /project ~/projects/web-app
+Bot: ✅ 專案已切換到: /Users/username/projects/web-app
+
+⚙️ Backend Topic:
+你: /project ~/projects/api-server
+Bot: ✅ 專案已切換到: /Users/username/projects/api-server
+```
+
+**步驟 2: 在各 Topic 中獨立工作**
+```
+🖥️ Frontend Topic:
+你: 幫我添加一個新的 React 組件
+Bot: 我來為你建立一個新的 React 組件...
+
+⚙️ Backend Topic:
+你: 檢查 API 端點的效能問題
+Bot: 我來分析 API 端點的效能...
+```
+
+每個 Topic 中的對話完全獨立，Alice 會記住各自的：
+- 專案目錄和檔案狀態
+- 對話上下文和歷史
+- CLI session 和工作進度
+
+## 群組使用指南
+
+### 👥 團隊協作最佳實務
+
+**方案 1: 單一群組多 Topics**
+- 適合：小團隊（2-5人）處理相關專案
+- 設定：一個群組，多個 Topics 分別對應不同專案
+- 優點：集中管理、容易切換專案討論
+
+**方案 2: 多群組分離**
+- 適合：大團隊或機敏專案
+- 設定：每個主要專案建立獨立群組
+- 優點：更好的權限控制、避免干擾
+
+### 📋 常見使用情境
+
+**日常開發流程：**
+```
+1. 進入對應 Topic
+2. /status 查看目前專案狀態
+3. 直接描述需求：「幫我修復登入 bug」
+4. Alice 自動分析程式碼並提供解決方案
+5. /usage 查看本次開發的 token 用量
+```
+
+**專案交接：**
+```
+1. 新成員加入群組
+2. 在相關 Topic 中使用 /help 了解指令
+3. 使用 /project 確認專案目錄設定
+4. 開始協作開發
+```
+
+**故障排除：**
+- 如果 Bot 沒有回應，檢查是否在白名單中
+- 如果專案路徑錯誤，使用 `/project` 重新設定
+- 如果對話混亂，使用 `/reset` 清除歷史
 
 ## 模型選擇
 
