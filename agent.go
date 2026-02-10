@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"path/filepath"
 )
 
 // TokenStats tracks cumulative token usage for an agent session.
@@ -44,15 +45,24 @@ func (a *Agent) current() *projectState {
 }
 
 // Run sends a message to Claude Code CLI and returns the response text.
-func (a *Agent) Run(userMessage string, onUpdate func(string)) (string, error) {
+// onUpdate(msg, silent): silent=false for initial status, silent=true for tool updates.
+func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, error) {
 	if onUpdate != nil {
-		onUpdate("🔧 Claude Code 處理中 ...")
+		onUpdate("🔧 Claude Code 處理中 ...", false)
 	}
 
 	ps := a.current()
-	log.Printf("[agent] calling CLI, session=%s, project=%s", ps.sessionID, a.projectDir)
+	log.Printf("[agent] calling CLI (stream), session=%s, project=%s", ps.sessionID, a.projectDir)
 
-	resp, err := a.client.Call(userMessage, a.projectDir, ps.sessionID)
+	resp, err := a.client.CallStream(userMessage, a.projectDir, ps.sessionID, func(toolName string, toolInput map[string]interface{}) {
+		if onUpdate == nil {
+			return
+		}
+		msg := formatToolUpdate(toolName, toolInput)
+		if msg != "" {
+			onUpdate(msg, true)
+		}
+	})
 	if err != nil {
 		return "", fmt.Errorf("CLI call failed: %w", err)
 	}
@@ -71,6 +81,46 @@ func (a *Agent) Run(userMessage string, onUpdate func(string)) (string, error) {
 		resp.TotalCostUSD, resp.SessionID)
 
 	return resp.Result, nil
+}
+
+func formatToolUpdate(name string, input map[string]interface{}) string {
+	switch name {
+	case "Read":
+		if path, ok := input["file_path"].(string); ok {
+			return fmt.Sprintf("📖 讀取 %s", filepath.Base(path))
+		}
+		return "📖 讀取檔案"
+	case "Write":
+		if path, ok := input["file_path"].(string); ok {
+			return fmt.Sprintf("✏️ 寫入 %s", filepath.Base(path))
+		}
+		return "✏️ 寫入檔案"
+	case "Edit":
+		if path, ok := input["file_path"].(string); ok {
+			return fmt.Sprintf("✏️ 編輯 %s", filepath.Base(path))
+		}
+		return "✏️ 編輯檔案"
+	case "Bash":
+		if cmd, ok := input["command"].(string); ok {
+			if len(cmd) > 60 {
+				cmd = cmd[:60] + "..."
+			}
+			return fmt.Sprintf("💻 %s", cmd)
+		}
+		return "💻 執行指令"
+	case "Glob":
+		if pattern, ok := input["pattern"].(string); ok {
+			return fmt.Sprintf("🔍 搜尋 %s", pattern)
+		}
+		return "🔍 搜尋檔案"
+	case "Grep":
+		if pattern, ok := input["pattern"].(string); ok {
+			return fmt.Sprintf("🔍 搜尋 %s", pattern)
+		}
+		return "🔍 搜尋程式碼"
+	default:
+		return fmt.Sprintf("🔧 %s", name)
+	}
 }
 
 // Reset clears the current project's session and stats

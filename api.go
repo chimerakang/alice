@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -70,4 +72,118 @@ func (c *CLIClient) Call(message, projectDir, sessionID string) (*CLIResponse, e
 	}
 
 	return &resp, nil
+}
+
+// CallStream invokes Claude Code CLI with stream-json output.
+// onToolUse is called for each tool_use event during processing.
+func (c *CLIClient) CallStream(message, projectDir, sessionID string, onToolUse func(toolName string, toolInput map[string]interface{})) (*CLIResponse, error) {
+	args := []string{
+		"-p",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--model", c.Model,
+		"--dangerously-skip-permissions",
+		"--max-turns", "25",
+	}
+
+	if sessionID != "" {
+		args = append(args, "--resume", sessionID)
+	}
+
+	args = append(args, message)
+
+	cmd := exec.Command("claude", args...)
+	cmd.Dir = projectDir
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("claude CLI start: %w", err)
+	}
+
+	var finalResp *CLIResponse
+
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // up to 4MB per line
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		var event struct {
+			Type    string `json:"type"`
+			Subtype string `json:"subtype"`
+			Message *struct {
+				Content []struct {
+					Type  string                 `json:"type"`
+					Name  string                 `json:"name"`
+					Input map[string]interface{} `json:"input"`
+				} `json:"content"`
+			} `json:"message"`
+			// result fields
+			SessionID    string  `json:"session_id"`
+			IsError      bool    `json:"is_error"`
+			NumTurns     int     `json:"num_turns"`
+			Result       string  `json:"result"`
+			TotalCostUSD float64 `json:"total_cost_usd"`
+			DurationMs   int     `json:"duration_ms"`
+			Usage        struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+			} `json:"usage"`
+		}
+
+		if err := json.Unmarshal(line, &event); err != nil {
+			continue
+		}
+
+		switch event.Type {
+		case "assistant":
+			if event.Message != nil && onToolUse != nil {
+				for _, c := range event.Message.Content {
+					if c.Type == "tool_use" {
+						onToolUse(c.Name, c.Input)
+					}
+				}
+			}
+		case "result":
+			finalResp = &CLIResponse{
+				Type:         event.Type,
+				Subtype:      event.Subtype,
+				SessionID:    event.SessionID,
+				IsError:      event.IsError,
+				NumTurns:     event.NumTurns,
+				Result:       event.Result,
+				TotalCostUSD: event.TotalCostUSD,
+				DurationMs:   event.DurationMs,
+			}
+			finalResp.Usage.InputTokens = event.Usage.InputTokens
+			finalResp.Usage.OutputTokens = event.Usage.OutputTokens
+		}
+	}
+
+	if err := cmd.Wait(); err != nil {
+		if _, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("claude CLI error: %s", stderrBuf.String())
+		}
+		return nil, fmt.Errorf("claude CLI exec: %w", err)
+	}
+
+	if finalResp == nil {
+		return nil, fmt.Errorf("no result event in stream output")
+	}
+
+	if finalResp.IsError {
+		return finalResp, fmt.Errorf("CLI returned error: %s", finalResp.Result)
+	}
+
+	return finalResp, nil
 }

@@ -153,9 +153,13 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string) {
 	// 發送「處理中」提示
 	t.sendTyping(key)
 
-	// 呼叫 Claude Code CLI
-	response, err := agent.Run(text, func(update string) {
-		t.send(key, update)
+	// 呼叫 Claude Code CLI（串流模式，工具呼叫即時回報）
+	response, err := agent.Run(text, func(update string, silent bool) {
+		if silent {
+			t.sendSilent(key, update)
+		} else {
+			t.send(key, update)
+		}
 	})
 
 	if err != nil {
@@ -282,6 +286,18 @@ func (t *TelegramBot) send(key chatKey, text string) {
 	params := url.Values{
 		"chat_id": {strconv.FormatInt(key.chatID, 10)},
 		"text":    {text},
+	}
+	if key.threadID != 0 {
+		params.Set("message_thread_id", strconv.Itoa(key.threadID))
+	}
+	t.apiCall("sendMessage", params)
+}
+
+func (t *TelegramBot) sendSilent(key chatKey, text string) {
+	params := url.Values{
+		"chat_id":              {strconv.FormatInt(key.chatID, 10)},
+		"text":                 {text},
+		"disable_notification": {"true"},
 	}
 	if key.threadID != 0 {
 		params.Set("message_thread_id", strconv.Itoa(key.threadID))
