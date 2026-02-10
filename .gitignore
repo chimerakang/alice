@@ -1,0 +1,14 @@
+# Binary
+claude-tg-agent
+
+# Config with secrets
+config.json
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store

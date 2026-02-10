@@ -1,0 +1,73 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os/exec"
+)
+
+// CLIClient calls Claude Code CLI as a subprocess.
+type CLIClient struct {
+	Model string
+}
+
+// CLIResponse is the JSON output from `claude -p --output-format json`.
+type CLIResponse struct {
+	Type         string  `json:"type"`
+	Subtype      string  `json:"subtype"`
+	SessionID    string  `json:"session_id"`
+	IsError      bool    `json:"is_error"`
+	NumTurns     int     `json:"num_turns"`
+	Result       string  `json:"result"`
+	TotalCostUSD float64 `json:"total_cost_usd"`
+	DurationMs   int     `json:"duration_ms"`
+	Usage        struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage"`
+}
+
+func NewClient(model string) *CLIClient {
+	return &CLIClient{Model: model}
+}
+
+// Call invokes the Claude Code CLI in print mode.
+// If sessionID is non-empty, it resumes that session for conversation continuity.
+func (c *CLIClient) Call(message, projectDir, sessionID string) (*CLIResponse, error) {
+	args := []string{
+		"-p",
+		"--output-format", "json",
+		"--model", c.Model,
+		"--dangerously-skip-permissions",
+		"--max-turns", "25",
+	}
+
+	if sessionID != "" {
+		args = append(args, "--resume", sessionID)
+	}
+
+	args = append(args, message)
+
+	cmd := exec.Command("claude", args...)
+	cmd.Dir = projectDir
+
+	output, err := cmd.Output()
+	if err != nil {
+		// CLI 可能 stderr 有錯誤訊息
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("claude CLI error: %s", string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("claude CLI exec: %w", err)
+	}
+
+	var resp CLIResponse
+	if err := json.Unmarshal(output, &resp); err != nil {
+		return nil, fmt.Errorf("parse CLI output: %w\nraw: %s", err, string(output))
+	}
+
+	if resp.IsError {
+		return &resp, fmt.Errorf("CLI returned error: %s", resp.Result)
+	}
+
+	return &resp, nil
+}

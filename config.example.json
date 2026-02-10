@@ -1,0 +1,7 @@
+{
+  "anthropic_key": "sk-ant-xxxxx",
+  "telegram_token": "123456:ABC-DEF",
+  "model": "claude-sonnet-4-20250514",
+  "default_project_dir": "/path/to/your/project",
+  "allowed_user_ids": [123456789]
+}
