@@ -139,6 +139,47 @@ func (wi *WebInterface) handleAgentsProto(w http.ResponseWriter, r *http.Request
 	})(w, r)
 }
 
+// handleAgentAbort 中斷指定 agent 的執行中任務
+func (wi *WebInterface) handleAgentAbort(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		ChatID   int64 `json:"chat_id"`
+		ThreadID int   `json:"thread_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeProtoError(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	key := chatKey{chatID: req.ChatID, threadID: req.ThreadID}
+	wi.bot.agentsMu.RLock()
+	agent, exists := wi.bot.agents[key]
+	wi.bot.agentsMu.RUnlock()
+
+	if !exists {
+		writeProtoError(w, "Agent not found", http.StatusNotFound)
+		return
+	}
+
+	aborted := agent.Abort()
+	response := map[string]interface{}{
+		"success":   aborted,
+		"chat_id":   req.ChatID,
+		"thread_id": req.ThreadID,
+		"message":   "Agent task aborted",
+	}
+	if !aborted {
+		response["message"] = "No active task to abort"
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
 // handleAgentDetailProto 使用 proto 的 agent 詳細資訊端點處理函數
 func (wi *WebInterface) handleAgentDetailProto(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {

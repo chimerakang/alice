@@ -16,14 +16,15 @@ import (
 
 // AgentInfo represents agent information for the API
 type AgentInfo struct {
-	ChatID       int64     `json:"chat_id"`
-	ThreadID     int       `json:"thread_id"`
-	ProjectDir   string    `json:"project_dir"`
-	SessionID    string    `json:"session_id"`
-	IsActive     bool      `json:"is_active"`
-	LastActivity time.Time `json:"last_activity"`
-	CreatedAt    time.Time `json:"created_at"`
-	ProjectCount int       `json:"project_count"`
+	ChatID       int64      `json:"chat_id"`
+	ThreadID     int        `json:"thread_id"`
+	ProjectDir   string     `json:"project_dir"`
+	SessionID    string     `json:"session_id"`
+	IsActive     bool       `json:"is_active"`
+	IsProcessing bool       `json:"is_processing"`
+	LastActivity time.Time  `json:"last_activity"`
+	CreatedAt    time.Time  `json:"created_at"`
+	ProjectCount int        `json:"project_count"`
 	Stats        TokenStats `json:"stats"`
 }
 
@@ -326,6 +327,7 @@ func (wi *WebInterface) getAllAgentsInfo() []AgentInfo {
 			ProjectDir:   agent.ProjectDir(),
 			SessionID:    agent.SessionID(),
 			IsActive:     agent.IsActive(),
+			IsProcessing: agent.IsProcessing(),
 			LastActivity: agent.LastActivity(),
 			CreatedAt:    agent.CreatedAt(),
 			ProjectCount: agent.ProjectCount(),
@@ -360,6 +362,7 @@ func (wi *WebInterface) getAgentInfo(chatID int64, threadID int) *AgentInfo {
 		ProjectDir:   agent.ProjectDir(),
 		SessionID:    agent.SessionID(),
 		IsActive:     agent.IsActive(),
+		IsProcessing: agent.IsProcessing(),
 		LastActivity: agent.LastActivity(),
 		CreatedAt:    agent.CreatedAt(),
 		ProjectCount: agent.ProjectCount(),
@@ -426,6 +429,7 @@ func (wi *WebInterface) getDetailedStats() DetailedStats {
 				ProjectDir:   agent.ProjectDir(),
 				SessionID:    agent.SessionID(),
 				IsActive:     agent.IsActive(),
+				IsProcessing: agent.IsProcessing(),
 				LastActivity: agent.LastActivity(),
 				CreatedAt:    agent.CreatedAt(),
 				ProjectCount: agent.ProjectCount(),

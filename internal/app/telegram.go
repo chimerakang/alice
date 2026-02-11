@@ -54,12 +54,43 @@ func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
 
 	log.Printf("[telegram] bot authorized: @%s", me.Result.Username)
 
-	return &TelegramBot{
+	bot := &TelegramBot{
 		agents:   make(map[chatKey]*Agent),
 		client:   client,
 		allowIDs: allowIDs,
 		config:   config,
-	}, nil
+	}
+
+	// 註冊 Telegram 指令選單
+	bot.registerCommands()
+
+	return bot, nil
+}
+
+// registerCommands 透過 Telegram Bot API 註冊指令自動完成選單
+func (t *TelegramBot) registerCommands() {
+	commands := []map[string]string{
+		{"command": "project", "description": "切換專案目錄"},
+		{"command": "reset", "description": "清除對話歷史"},
+		{"command": "status", "description": "查看目前狀態"},
+		{"command": "usage", "description": "查看 token 用量"},
+		{"command": "abort", "description": "中斷正在執行的任務"},
+		{"command": "dashboard", "description": "查看系統監控面板"},
+		{"command": "checkpoints", "description": "查看檢查點狀態"},
+		{"command": "multiagent", "description": "多代理協調管理"},
+		{"command": "agents", "description": "查看專門化代理清單"},
+		{"command": "help", "description": "顯示說明"},
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{"commands": commands})
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/setMyCommands", t.config.TelegramToken)
+	resp, err := http.Post(apiURL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		log.Printf("[telegram] setMyCommands error: %v", err)
+		return
+	}
+	resp.Body.Close()
+	log.Printf("[telegram] bot commands registered (%d commands)", len(commands))
 }
 
 func (t *TelegramBot) getAgent(key chatKey) *Agent {
