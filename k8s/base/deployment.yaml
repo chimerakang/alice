@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alice-bot
+  labels:
+    app: alice-bot
+    version: v1.0.0
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: alice-bot
+  template:
+    metadata:
+      labels:
+        app: alice-bot
+        version: v1.0.0
+    spec:
+      serviceAccountName: alice-bot
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+      containers:
+      - name: alice-bot
+        image: alice:latest
+        imagePullPolicy: Always
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: TELEGRAM_BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: alice-secrets
+              key: telegram-bot-token
+        - name: CLAUDE_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: alice-config
+              key: claude-model
+        - name: ENABLE_WEB_INTERFACE
+          value: "true"
+        - name: WEB_PORT
+          value: "8080"
+        - name: ENABLE_PERFORMANCE_MONITORING
+          value: "true"
+        - name: ENABLE_RATE_LIMITING
+          value: "true"
+        - name: ENABLE_PII_DETECTION
+          value: "true"
+        - name: ENABLE_AUDIT_LOGGING
+          value: "true"
+        - name: ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: alice-secrets
+              key: encryption-key
+        - name: RATE_LIMIT_RPM
+          valueFrom:
+            configMapKeyRef:
+              name: alice-config
+              key: rate-limit-rpm
+        - name: DATA_RETENTION_DAYS
+          valueFrom:
+            configMapKeyRef:
+              name: alice-config
+              key: data-retention-days
+        volumeMounts:
+        - name: alice-data
+          mountPath: /app/data
+        - name: alice-config
+          mountPath: /app/config
+        - name: alice-logs
+          mountPath: /app/logs
+        - name: tmp
+          mountPath: /tmp
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /api/health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 12
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: alice-data
+        persistentVolumeClaim:
+          claimName: alice-data-pvc
+      - name: alice-config
+        persistentVolumeClaim:
+          claimName: alice-config-pvc
+      - name: alice-logs
+        persistentVolumeClaim:
+          claimName: alice-logs-pvc
+      - name: tmp
+        emptyDir:
+          sizeLimit: 100Mi
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30

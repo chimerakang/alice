@@ -1,0 +1,42 @@
+[Unit]
+Description=Alice - Claude Telegram Agent
+Documentation=https://github.com/your-org/alice
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=alice
+Group=alice
+WorkingDirectory=/opt/alice
+ExecStart=/usr/local/bin/alice
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+# Environment file
+EnvironmentFile=/etc/alice/alice.env
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/alice/data /opt/alice/logs
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=alice
+
+[Install]
+WantedBy=multi-user.target

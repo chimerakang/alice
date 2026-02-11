@@ -1,43 +1,90 @@
-FROM golang:1.24-alpine AS builder
+# Multi-stage build for Claude TG Agent
+# Stage 1: Build stage
+FROM golang:1.21-alpine AS builder
 
-RUN apk add --no-cache git
+# Install dependencies for building
+RUN apk add --no-cache git ca-certificates tzdata
 
+# Create app directory
 WORKDIR /app
+
+# Copy go mod and sum files
 COPY go.mod go.sum ./
+
+# Download dependencies
 RUN go mod download
+
+# Copy source code
 COPY *.go ./
-RUN CGO_ENABLED=0 go build -o claude-tg-agent .
 
-FROM alpine:3.21
+# Build the application with optimizations
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags='-w -s -extldflags "-static"' \
+    -a -installsuffix cgo \
+    -o alice .
 
-RUN apk add --no-cache \
-    bash \
-    git \
+# Stage 2: Runtime stage
+FROM alpine:3.18
+
+# Install runtime dependencies
+RUN apk --no-cache add \
+    ca-certificates \
+    tzdata \
     curl \
-    ripgrep \
-    findutils \
-    openssh-client \
-    nodejs \
-    npm \
-    python3
+    jq \
+    && addgroup -g 1001 alice \
+    && adduser -D -s /bin/sh -u 1001 -G alice alice
 
-# 安裝 Claude Code CLI
-RUN npm install -g @anthropic-ai/claude-code
+# Set timezone (can be overridden with TZ env var)
+ENV TZ=UTC
 
-# 建立非 root 用戶（Claude CLI 禁止 root 使用 --dangerously-skip-permissions）
-RUN addgroup -S claude && adduser -S claude -G claude
+# Create necessary directories
+RUN mkdir -p /app/data /app/config /app/logs \
+    && chown -R alice:alice /app
 
+# Copy binary from builder stage
+COPY --from=builder /app/alice /app/alice
+
+# Copy example configuration
+COPY config.example.json /app/config/config.example.json
+
+# Create health check script
+RUN echo '#!/bin/sh' > /app/healthcheck.sh && \
+    echo 'if [ "$ENABLE_WEB_INTERFACE" = "true" ]; then' >> /app/healthcheck.sh && \
+    echo '  curl -f http://localhost:${WEB_PORT:-8080}/api/health || exit 1' >> /app/healthcheck.sh && \
+    echo 'else' >> /app/healthcheck.sh && \
+    echo '  # Check if process is running' >> /app/healthcheck.sh && \
+    echo '  pgrep -f alice > /dev/null || exit 1' >> /app/healthcheck.sh && \
+    echo 'fi' >> /app/healthcheck.sh && \
+    chmod +x /app/healthcheck.sh
+
+# Switch to non-root user
+USER alice
+
+# Set working directory
 WORKDIR /app
-COPY --from=builder /app/claude-tg-agent .
 
-# 專案目錄掛載點
-VOLUME ["/project"]
+# Expose web interface port (can be overridden)
+EXPOSE 8080
 
-ENV HOME=/home/claude
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD /app/healthcheck.sh
 
-# Claude CLI 認證目錄
-RUN mkdir -p /home/claude/.claude && chown -R claude:claude /home/claude
+# Volume for persistent data
+VOLUME ["/app/data", "/app/config", "/app/logs"]
 
-USER claude
+# Environment variables with defaults
+ENV CLAUDE_MODEL=sonnet \
+    PROJECT_DIR=/app/data \
+    WEB_PORT=8080 \
+    ENABLE_WEB_INTERFACE=true \
+    ENABLE_PERFORMANCE_MONITORING=true \
+    ENABLE_RATE_LIMITING=true \
+    ENABLE_PII_DETECTION=true \
+    ENABLE_AUDIT_LOGGING=true \
+    DATA_RETENTION_DAYS=30 \
+    RATE_LIMIT_RPM=60
 
-ENTRYPOINT ["./claude-tg-agent"]
+# Default command
+CMD ["./alice"]

@@ -102,6 +102,9 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/security/stats", wi.handleSecurityStats)
 	mux.HandleFunc("/api/security/audit", wi.handleSecurityAudit)
 
+	// Prometheus metrics endpoint
+	mux.HandleFunc("/metrics", wi.handlePrometheusMetrics)
+
 	// 應用安全中間件
 	var handler http.Handler = mux
 
@@ -1086,4 +1089,113 @@ func generateSecurityRecommendations(stats map[string]interface{}) []map[string]
 	}
 
 	return recommendations
+}
+
+// handlePrometheusMetrics exports metrics in Prometheus format
+func (wi *WebInterface) handlePrometheusMetrics(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+
+	metrics := generatePrometheusMetrics()
+	w.Write([]byte(metrics))
+}
+
+// generatePrometheusMetrics generates Prometheus-format metrics
+func generatePrometheusMetrics() string {
+	var metrics strings.Builder
+
+	// Basic service information
+	metrics.WriteString("# HELP alice_info Information about Alice bot\n")
+	metrics.WriteString("# TYPE alice_info gauge\n")
+	metrics.WriteString("alice_info{version=\"1.0.0\"} 1\n")
+
+	// Performance metrics
+	if performanceMonitor != nil {
+		analytics := performanceMonitor.GetAnalytics()
+
+		metrics.WriteString("# HELP alice_requests_total Total number of requests processed\n")
+		metrics.WriteString("# TYPE alice_requests_total counter\n")
+		metrics.WriteString(fmt.Sprintf("alice_requests_total %d\n", analytics.TotalRequests))
+
+		metrics.WriteString("# HELP alice_success_rate Success rate percentage\n")
+		metrics.WriteString("# TYPE alice_success_rate gauge\n")
+		metrics.WriteString(fmt.Sprintf("alice_success_rate %.2f\n", analytics.SuccessRate))
+
+		metrics.WriteString("# HELP alice_api_latency_seconds Average API latency in seconds\n")
+		metrics.WriteString("# TYPE alice_api_latency_seconds gauge\n")
+		metrics.WriteString(fmt.Sprintf("alice_api_latency_seconds %.3f\n", float64(analytics.AvgAPILatency.Nanoseconds())/1e9))
+
+		metrics.WriteString("# HELP alice_total_tokens Total tokens used\n")
+		metrics.WriteString("# TYPE alice_total_tokens counter\n")
+		metrics.WriteString(fmt.Sprintf("alice_total_tokens %d\n", analytics.TotalTokens))
+
+		metrics.WriteString("# HELP alice_total_cost_usd Total cost in USD\n")
+		metrics.WriteString("# TYPE alice_total_cost_usd counter\n")
+		metrics.WriteString(fmt.Sprintf("alice_total_cost_usd %.6f\n", analytics.TotalCost))
+
+		metrics.WriteString("# HELP alice_memory_usage_bytes Current memory usage in bytes\n")
+		metrics.WriteString("# TYPE alice_memory_usage_bytes gauge\n")
+		metrics.WriteString(fmt.Sprintf("alice_memory_usage_bytes %d\n", analytics.CurrentMemoryUsage))
+
+		metrics.WriteString("# HELP alice_uptime_seconds Uptime in seconds\n")
+		metrics.WriteString("# TYPE alice_uptime_seconds counter\n")
+		metrics.WriteString(fmt.Sprintf("alice_uptime_seconds %d\n", analytics.UptimeSeconds))
+
+		// Tool usage metrics
+		for tool, count := range analytics.ToolUsageStats {
+			metrics.WriteString(fmt.Sprintf("alice_tool_usage_total{tool=\"%s\"} %d\n", tool, count))
+		}
+
+		// Error metrics by type
+		for errorType, count := range analytics.ErrorsByType {
+			metrics.WriteString(fmt.Sprintf("alice_errors_total{type=\"%s\"} %d\n", errorType, count))
+		}
+	}
+
+	// Security metrics
+	if globalSecurityManager != nil {
+		stats := globalSecurityManager.GetSecurityStats()
+
+		if totalEvents, ok := stats["total_events"].(int); ok {
+			metrics.WriteString("# HELP alice_security_events_total Total security events\n")
+			metrics.WriteString("# TYPE alice_security_events_total counter\n")
+			metrics.WriteString(fmt.Sprintf("alice_security_events_total %d\n", totalEvents))
+		}
+
+		if severities, ok := stats["severities"].(map[string]int); ok {
+			for severity, count := range severities {
+				metrics.WriteString(fmt.Sprintf("alice_security_events_by_severity{severity=\"%s\"} %d\n", severity, count))
+			}
+		}
+
+		if eventTypes, ok := stats["event_types"].(map[string]int); ok {
+			for eventType, count := range eventTypes {
+				metrics.WriteString(fmt.Sprintf("alice_security_events_by_type{type=\"%s\"} %d\n", eventType, count))
+			}
+		}
+
+		if activeVisitors, ok := stats["active_visitors"].(int); ok {
+			metrics.WriteString("# HELP alice_active_visitors Current active visitors for rate limiting\n")
+			metrics.WriteString("# TYPE alice_active_visitors gauge\n")
+			metrics.WriteString(fmt.Sprintf("alice_active_visitors %d\n", activeVisitors))
+		}
+	}
+
+	// Multi-agent metrics
+	if globalAgentCoordinator != nil && globalAgentCoordinator.IsEnabled() {
+		stats := globalAgentCoordinator.GetAgentStats()
+
+		if totalTasks, ok := stats["total_tasks"].(int64); ok {
+			metrics.WriteString("# HELP alice_multiagent_tasks_total Total multi-agent tasks\n")
+			metrics.WriteString("# TYPE alice_multiagent_tasks_total counter\n")
+			metrics.WriteString(fmt.Sprintf("alice_multiagent_tasks_total %d\n", totalTasks))
+		}
+
+		if activeTasks, ok := stats["active_tasks"].(int); ok {
+			metrics.WriteString("# HELP alice_multiagent_active_tasks Current active tasks\n")
+			metrics.WriteString("# TYPE alice_multiagent_active_tasks gauge\n")
+			metrics.WriteString(fmt.Sprintf("alice_multiagent_active_tasks %d\n", activeTasks))
+		}
+	}
+
+	return metrics.String()
 }

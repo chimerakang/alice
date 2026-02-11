@@ -1,0 +1,65 @@
+groups:
+- name: alice-bot-alerts
+  rules:
+  - alert: AliceBotDown
+    expr: up{job="alice-bot"} == 0
+    for: 1m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Alice Bot is down"
+      description: "Alice Bot has been down for more than 1 minute."
+
+  - alert: HighErrorRate
+    expr: alice_success_rate < 90
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High error rate detected"
+      description: "Success rate is {{ $value }}%, below 90% threshold."
+
+  - alert: HighApiLatency
+    expr: alice_api_latency_seconds > 10
+    for: 2m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High API latency"
+      description: "API latency is {{ $value }}s, above 10s threshold."
+
+  - alert: HighMemoryUsage
+    expr: alice_memory_usage_bytes > 400000000  # 400MB
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High memory usage"
+      description: "Memory usage is {{ $value | humanize }}B, above 400MB threshold."
+
+  - alert: SecurityEventsSpike
+    expr: rate(alice_security_events_total[5m]) > 1
+    for: 2m
+    labels:
+      severity: critical
+    annotations:
+      summary: "Security events spike detected"
+      description: "Security events rate is {{ $value }}/sec, indicating potential attack."
+
+  - alert: HighCostRate
+    expr: rate(alice_total_cost_usd[1h]) > 1
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High cost rate"
+      description: "Cost rate is ${{ $value }}/hour, above $1/hour threshold."
+
+  - alert: LowRequestRate
+    expr: rate(alice_requests_total[10m]) < 0.01
+    for: 15m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Low request rate"
+      description: "Request rate is {{ $value }}/sec, might indicate connectivity issues."
