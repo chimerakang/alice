@@ -82,6 +82,10 @@ func (wi *WebInterface) CreateRouter() *http.ServeMux {
 	mux.HandleFunc("/api/agents/", wi.handleAgentDetail)
 	mux.HandleFunc("/api/tools/recent", wi.handleRecentTools)
 	mux.HandleFunc("/api/tools/executions", wi.handleToolExecutions)
+	mux.HandleFunc("/api/decisions", wi.handleDecisions)
+	mux.HandleFunc("/api/decisions/recent", wi.handleRecentDecisions)
+	mux.HandleFunc("/api/decisions/search", wi.handleSearchDecisions)
+	mux.HandleFunc("/api/decisions/export", wi.handleExportDecisions)
 
 	return mux
 }
@@ -458,6 +462,169 @@ func (wi *WebInterface) handleToolExecutions(w http.ResponseWriter, r *http.Requ
 			"timestamp":        time.Now(),
 		})
 	})(w, r)
+}
+
+// handleDecisions returns comprehensive decision statistics
+func (wi *WebInterface) handleDecisions(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		decisions := globalDecisionLogger.GetRecentDecisions(0) // Get all
+
+		// Calculate statistics
+		taskTypeCounts := make(map[string]int)
+		outcomeStats := map[string]int{
+			"success": 0,
+			"error":   0,
+		}
+		totalDuration := int64(0)
+
+		for _, decision := range decisions {
+			taskTypeCounts[decision.Outcome.TaskType]++
+			if decision.Outcome.Success {
+				outcomeStats["success"]++
+			} else {
+				outcomeStats["error"]++
+			}
+			totalDuration += int64(decision.DurationMs)
+		}
+
+		avgDuration := int64(0)
+		if len(decisions) > 0 {
+			avgDuration = totalDuration / int64(len(decisions))
+		}
+
+		// Calculate success rate
+		total := outcomeStats["success"] + outcomeStats["error"]
+		successRate := 100.0
+		if total > 0 {
+			successRate = float64(outcomeStats["success"]) / float64(total) * 100
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"total_decisions":     len(decisions),
+			"task_type_counts":    taskTypeCounts,
+			"outcome_stats":       outcomeStats,
+			"success_rate":        successRate,
+			"avg_duration_ms":     avgDuration,
+			"recent_decisions":    globalDecisionLogger.GetRecentDecisions(5),
+			"transparency_enabled": globalDecisionLogger.IsEnabled(),
+			"timestamp":           time.Now(),
+		})
+	})(w, r)
+}
+
+// handleRecentDecisions returns recent decision logs
+func (wi *WebInterface) handleRecentDecisions(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Parse limit parameter
+		limitStr := r.URL.Query().Get("limit")
+		limit := 10 // default limit
+		if limitStr != "" {
+			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+				limit = parsedLimit
+			}
+		}
+
+		decisions := globalDecisionLogger.GetRecentDecisions(limit)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"decisions": decisions,
+			"total":     len(decisions),
+			"limit":     limit,
+			"timestamp": time.Now(),
+		})
+	})(w, r)
+}
+
+// handleSearchDecisions searches decisions based on criteria
+func (wi *WebInterface) handleSearchDecisions(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Parse search parameters
+		projectPath := r.URL.Query().Get("project_path")
+		taskType := r.URL.Query().Get("task_type")
+		successOnlyStr := r.URL.Query().Get("success_only")
+
+		successOnly := false
+		if successOnlyStr == "true" {
+			successOnly = true
+		}
+
+		decisions := globalDecisionLogger.SearchDecisions(projectPath, taskType, successOnly)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"decisions":    decisions,
+			"total":        len(decisions),
+			"filters": map[string]interface{}{
+				"project_path": projectPath,
+				"task_type":    taskType,
+				"success_only": successOnly,
+			},
+			"timestamp": time.Now(),
+		})
+	})(w, r)
+}
+
+// handleExportDecisions exports decisions in various formats
+func (wi *WebInterface) handleExportDecisions(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		format := r.URL.Query().Get("format")
+		if format == "" {
+			format = "json"
+		}
+
+		decisions := globalDecisionLogger.GetRecentDecisions(0) // Get all
+
+		switch format {
+		case "csv":
+			wi.exportDecisionsCSV(w, decisions)
+		case "json":
+			fallthrough
+		default:
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Content-Disposition", `attachment; filename="alice_decisions.json"`)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"exported_at": time.Now(),
+				"total":       len(decisions),
+				"decisions":   decisions,
+			})
+		}
+	})(w, r)
+}
+
+// exportDecisionsCSV exports decisions in CSV format
+func (wi *WebInterface) exportDecisionsCSV(w http.ResponseWriter, decisions []DecisionLog) {
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", `attachment; filename="alice_decisions.csv"`)
+
+	// CSV header
+	fmt.Fprintln(w, "timestamp,session_id,chat_id,project_path,task_type,success,duration_ms,user_prompt,tools_count,files_changed")
+
+	// CSV data
+	for _, decision := range decisions {
+		// Escape and truncate user prompt for CSV
+		userPrompt := strings.ReplaceAll(decision.UserPrompt, "\"", "\"\"")
+		if len(userPrompt) > 100 {
+			userPrompt = userPrompt[:100] + "..."
+		}
+
+		filesChanged := strings.Join(decision.Outcome.FilesChanged, ";")
+
+		fmt.Fprintf(w, "\"%s\",\"%s\",%d,\"%s\",\"%s\",%t,%d,\"%s\",%d,\"%s\"\n",
+			decision.Timestamp.Format(time.RFC3339),
+			decision.SessionID,
+			decision.ChatID,
+			decision.ProjectPath,
+			decision.Outcome.TaskType,
+			decision.Outcome.Success,
+			decision.DurationMs,
+			userPrompt,
+			len(decision.ToolCalls),
+			filesChanged,
+		)
+	}
 }
 
 // handleWithRecovery wraps handlers with panic recovery

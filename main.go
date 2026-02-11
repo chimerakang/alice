@@ -23,14 +23,20 @@ type Config struct {
 	EnableWebInterface bool   `json:"enable_web_interface"`
 	WebPort           string `json:"web_port"`
 	WebStaticDir      string `json:"web_static_dir"`
+
+	// Transparency Settings
+	EnableDecisionLogging bool `json:"enable_decision_logging"`
+	DecisionLogLevel      string `json:"decision_log_level"` // "off", "basic", "detailed"
 }
 
 func LoadConfig() (*Config, error) {
 	config := &Config{
-		Model:             "sonnet",
-		DefaultProjectDir: ".",
-		WebPort:           "8080",
-		WebStaticDir:      "./static",
+		Model:                 "sonnet",
+		DefaultProjectDir:     ".",
+		WebPort:               "8080",
+		WebStaticDir:          "./static",
+		EnableDecisionLogging: true,
+		DecisionLogLevel:      "detailed",
 	}
 
 	// 優先從 config.json 讀取
@@ -70,6 +76,14 @@ func LoadConfig() (*Config, error) {
 		config.WebStaticDir = v
 	}
 
+	// Transparency Environment Variables
+	if v := os.Getenv("ENABLE_DECISION_LOGGING"); v == "false" {
+		config.EnableDecisionLogging = false
+	}
+	if v := os.Getenv("DECISION_LOG_LEVEL"); v != "" {
+		config.DecisionLogLevel = v
+	}
+
 	// 驗證必要欄位
 	if config.TelegramToken == "" {
 		return nil, fmt.Errorf("missing TELEGRAM_BOT_TOKEN (env or config.json)")
@@ -79,6 +93,9 @@ func LoadConfig() (*Config, error) {
 	if err := validateWebConfig(config); err != nil {
 		return nil, err
 	}
+
+	// 應用透明度設定
+	applyTransparencyConfig(config)
 
 	return config, nil
 }
@@ -99,6 +116,17 @@ func validateWebConfig(config *Config) error {
 	return nil
 }
 
+func applyTransparencyConfig(config *Config) {
+	// Configure decision logging based on settings
+	if !config.EnableDecisionLogging || config.DecisionLogLevel == "off" {
+		// This will be applied after globalDecisionLogger is available
+		// We'll do this in main() after package initialization
+		log.Printf("⚠️  Decision logging disabled")
+	} else {
+		log.Printf("✅ Decision logging enabled (level: %s)", config.DecisionLogLevel)
+	}
+}
+
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
@@ -115,6 +143,15 @@ func main() {
 	if config.EnableWebInterface {
 		log.Printf("   Web interface: enabled on port %s", config.WebPort)
 		log.Printf("   Static directory: %s", config.WebStaticDir)
+	}
+
+	// Apply transparency settings
+	if !config.EnableDecisionLogging || config.DecisionLogLevel == "off" {
+		globalDecisionLogger.SetEnabled(false)
+		log.Printf("   Decision logging: disabled")
+	} else {
+		globalDecisionLogger.SetEnabled(true)
+		log.Printf("   Decision logging: enabled (level: %s)", config.DecisionLogLevel)
 	}
 
 	client := NewClient(config.Model)

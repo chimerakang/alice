@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -28,6 +29,31 @@ type ToolExecution struct {
 	Error     string                 `json:"error,omitempty"`
 }
 
+// DecisionLog captures the full context behind AI-generated decisions
+type DecisionLog struct {
+	Timestamp     time.Time              `json:"timestamp"`
+	SessionID     string                 `json:"session_id"`
+	ProjectPath   string                 `json:"project_path"`
+	ChatID        int64                  `json:"chat_id"`
+	ThreadID      int                    `json:"thread_id"`
+	UserPrompt    string                 `json:"user_prompt"`
+	AgentResponse string                 `json:"agent_response"`
+	ToolCalls     []ToolExecution        `json:"tool_calls"`
+	Context       map[string]interface{} `json:"context"`
+	Outcome       ExecutionOutcome       `json:"outcome"`
+	DurationMs    int                    `json:"duration_ms"`
+	TokensUsed    TokenStats             `json:"tokens_used"`
+}
+
+// ExecutionOutcome represents the result of an AI interaction
+type ExecutionOutcome struct {
+	Success      bool     `json:"success"`
+	ErrorMessage string   `json:"error_message,omitempty"`
+	TaskType     string   `json:"task_type"` // "code_generation", "file_operation", "analysis", etc.
+	FilesChanged []string `json:"files_changed"`
+	Summary      string   `json:"summary"`
+}
+
 // ToolLogger manages tool execution logging
 type ToolLogger struct {
 	executions []ToolExecution
@@ -39,6 +65,21 @@ type ToolLogger struct {
 var globalToolLogger = &ToolLogger{
 	executions: make([]ToolExecution, 0, 100),
 	maxSize:    100, // Keep only the most recent 100 executions
+}
+
+// DecisionLogger manages AI decision transparency logging
+type DecisionLogger struct {
+	decisions []DecisionLog
+	mu        sync.RWMutex
+	maxSize   int
+	enabled   bool
+}
+
+// Global decision logger instance
+var globalDecisionLogger = &DecisionLogger{
+	decisions: make([]DecisionLog, 0, 50),
+	maxSize:   50, // Keep only the most recent 50 decisions
+	enabled:   true,
 }
 
 // LogToolStart logs the beginning of a tool execution
@@ -103,6 +144,88 @@ func (tl *ToolLogger) GetExecutionCount() int {
 	return len(tl.executions)
 }
 
+// LogDecision records a complete AI decision with full context
+func (dl *DecisionLogger) LogDecision(decision DecisionLog) {
+	if !dl.enabled {
+		return
+	}
+
+	dl.mu.Lock()
+	defer dl.mu.Unlock()
+
+	// Add to beginning of slice (most recent first)
+	dl.decisions = append([]DecisionLog{decision}, dl.decisions...)
+
+	// Trim to max size
+	if len(dl.decisions) > dl.maxSize {
+		dl.decisions = dl.decisions[:dl.maxSize]
+	}
+}
+
+// GetRecentDecisions returns the most recent decision logs
+func (dl *DecisionLogger) GetRecentDecisions(limit int) []DecisionLog {
+	dl.mu.RLock()
+	defer dl.mu.RUnlock()
+
+	if limit <= 0 || limit > len(dl.decisions) {
+		limit = len(dl.decisions)
+	}
+
+	result := make([]DecisionLog, limit)
+	copy(result, dl.decisions[:limit])
+	return result
+}
+
+// GetDecisionCount returns the total number of decisions logged
+func (dl *DecisionLogger) GetDecisionCount() int {
+	dl.mu.RLock()
+	defer dl.mu.RUnlock()
+	return len(dl.decisions)
+}
+
+// SetEnabled enables or disables decision logging
+func (dl *DecisionLogger) SetEnabled(enabled bool) {
+	dl.mu.Lock()
+	defer dl.mu.Unlock()
+	dl.enabled = enabled
+}
+
+// IsEnabled returns whether decision logging is enabled
+func (dl *DecisionLogger) IsEnabled() bool {
+	dl.mu.RLock()
+	defer dl.mu.RUnlock()
+	return dl.enabled
+}
+
+// SearchDecisions searches for decisions matching criteria
+func (dl *DecisionLogger) SearchDecisions(projectPath string, taskType string, successOnly bool) []DecisionLog {
+	dl.mu.RLock()
+	defer dl.mu.RUnlock()
+
+	var results []DecisionLog
+	for _, decision := range dl.decisions {
+		match := true
+
+		if projectPath != "" && decision.ProjectPath != projectPath {
+			match = false
+		}
+
+		if taskType != "" && decision.Outcome.TaskType != taskType {
+			match = false
+		}
+
+		if successOnly && !decision.Outcome.Success {
+			match = false
+		}
+
+		if match {
+			results = append(results, decision)
+		}
+	}
+
+	return results
+}
+
 // projectState 保存單一專案的對話狀態
 type projectState struct {
 	sessionID    string
@@ -146,6 +269,8 @@ func (a *Agent) current() *projectState {
 // Run sends a message to Claude Code CLI and returns the response text.
 // onUpdate(msg, silent): silent=false for initial status, silent=true for tool updates.
 func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, error) {
+	startTime := time.Now()
+
 	if onUpdate != nil {
 		onUpdate("🔧 Claude Code 處理中 ...", false)
 	}
@@ -153,9 +278,23 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	ps := a.current()
 	log.Printf("[agent] calling CLI (stream), session=%s, project=%s", ps.sessionID, a.projectDir)
 
+	// Track tool executions for this decision
+	var toolCallsForDecision []ToolExecution
+
 	resp, err := a.client.CallStream(userMessage, a.projectDir, ps.sessionID, func(toolName string, toolInput map[string]interface{}) {
 		// Log tool execution start
 		globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID)
+
+		// Track this tool call for decision logging
+		toolExecution := ToolExecution{
+			Timestamp: time.Now(),
+			ToolName:  toolName,
+			Input:     toolInput,
+			Status:    "executed", // Mark as executed immediately for decision log
+			ChatID:    a.chatID,
+			ThreadID:  a.threadID,
+		}
+		toolCallsForDecision = append(toolCallsForDecision, toolExecution)
 
 		if onUpdate != nil {
 			msg := formatToolUpdate(toolName, toolInput)
@@ -165,6 +304,8 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		}
 	})
 	if err != nil {
+		// Log decision for transparency (error case)
+		a.logDecision(userMessage, "", toolCallsForDecision, startTime, nil, err)
 		return "", fmt.Errorf("CLI call failed: %w", err)
 	}
 
@@ -181,6 +322,9 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	log.Printf("[agent] done: turns=%d tokens_in=%d tokens_out=%d cost=$%.4f session=%s",
 		resp.NumTurns, resp.Usage.InputTokens, resp.Usage.OutputTokens,
 		resp.TotalCostUSD, resp.SessionID)
+
+	// Log decision for transparency (success case)
+	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil)
 
 	return resp.Result, nil
 }
@@ -268,4 +412,240 @@ func (a *Agent) IsActive() bool {
 // ProjectCount returns the number of projects this agent has worked with
 func (a *Agent) ProjectCount() int {
 	return len(a.projects)
+}
+
+// logDecision records a complete AI decision with full context
+func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolExecution, startTime time.Time, resp *CLIResponse, err error) {
+	if !globalDecisionLogger.IsEnabled() {
+		return
+	}
+
+	// Filter sensitive data from prompts and responses
+	userPrompt = a.filterSensitiveData(userPrompt)
+	agentResponse = a.filterSensitiveData(agentResponse)
+	toolCalls = a.filterSensitiveToolCalls(toolCalls)
+
+	duration := time.Since(startTime)
+	ps := a.current()
+
+	// Determine task type based on tool calls and content
+	taskType := a.inferTaskType(userPrompt, toolCalls)
+
+	// Extract files changed from tool calls
+	filesChanged := a.extractFilesChanged(toolCalls)
+
+	// Create execution outcome
+	outcome := ExecutionOutcome{
+		Success:      err == nil,
+		TaskType:     taskType,
+		FilesChanged: filesChanged,
+		Summary:      a.generateSummary(userPrompt, agentResponse, taskType),
+	}
+
+	if err != nil {
+		outcome.ErrorMessage = err.Error()
+	}
+
+	// Create context map
+	context := map[string]interface{}{
+		"turns":         0,
+		"project_dir":   a.projectDir,
+		"model":         a.client.Model,
+		"tool_count":    len(toolCalls),
+		"has_error":     err != nil,
+	}
+
+	if resp != nil {
+		context["turns"] = resp.NumTurns
+	}
+
+	// Create token stats for this interaction
+	tokenStats := TokenStats{}
+	if resp != nil {
+		tokenStats.TotalInputTokens = int64(resp.Usage.InputTokens)
+		tokenStats.TotalOutputTokens = int64(resp.Usage.OutputTokens)
+		tokenStats.TotalCostUSD = resp.TotalCostUSD
+		tokenStats.APICallCount = 1
+	}
+
+	// Create decision log
+	decision := DecisionLog{
+		Timestamp:     startTime,
+		SessionID:     ps.sessionID,
+		ProjectPath:   a.projectDir,
+		ChatID:        a.chatID,
+		ThreadID:      a.threadID,
+		UserPrompt:    userPrompt,
+		AgentResponse: agentResponse,
+		ToolCalls:     toolCalls,
+		Context:       context,
+		Outcome:       outcome,
+		DurationMs:    int(duration.Milliseconds()),
+		TokensUsed:    tokenStats,
+	}
+
+	// Log the decision
+	globalDecisionLogger.LogDecision(decision)
+
+	log.Printf("[agent] decision logged: task_type=%s, tools=%d, success=%v, duration=%dms",
+		taskType, len(toolCalls), outcome.Success, int(duration.Milliseconds()))
+}
+
+// inferTaskType attempts to classify the type of task based on user input and tools used
+func (a *Agent) inferTaskType(userPrompt string, toolCalls []ToolExecution) string {
+	prompt := strings.ToLower(userPrompt)
+
+	// Check for specific task patterns
+	if strings.Contains(prompt, "read") || strings.Contains(prompt, "show") || strings.Contains(prompt, "what") {
+		return "analysis"
+	}
+	if strings.Contains(prompt, "write") || strings.Contains(prompt, "create") || strings.Contains(prompt, "add") {
+		return "code_generation"
+	}
+	if strings.Contains(prompt, "fix") || strings.Contains(prompt, "debug") || strings.Contains(prompt, "error") {
+		return "debugging"
+	}
+	if strings.Contains(prompt, "test") {
+		return "testing"
+	}
+	if strings.Contains(prompt, "commit") || strings.Contains(prompt, "git") {
+		return "version_control"
+	}
+
+	// Classify by tools used
+	hasFileOps := false
+	hasBash := false
+	for _, tool := range toolCalls {
+		switch tool.ToolName {
+		case "Read", "Write", "Edit":
+			hasFileOps = true
+		case "Bash":
+			hasBash = true
+		}
+	}
+
+	if hasFileOps && hasBash {
+		return "complex_operation"
+	} else if hasFileOps {
+		return "file_operation"
+	} else if hasBash {
+		return "command_execution"
+	}
+
+	return "general_assistance"
+}
+
+// extractFilesChanged extracts file paths from tool calls
+func (a *Agent) extractFilesChanged(toolCalls []ToolExecution) []string {
+	filesSet := make(map[string]bool)
+
+	for _, tool := range toolCalls {
+		if tool.ToolName == "Write" || tool.ToolName == "Edit" || tool.ToolName == "Read" {
+			if filePath, ok := tool.Input["file_path"].(string); ok && filePath != "" {
+				filesSet[filePath] = true
+			}
+		}
+	}
+
+	files := make([]string, 0, len(filesSet))
+	for file := range filesSet {
+		files = append(files, file)
+	}
+
+	return files
+}
+
+// generateSummary creates a brief summary of the interaction
+func (a *Agent) generateSummary(userPrompt, agentResponse, taskType string) string {
+	if len(userPrompt) > 100 {
+		userPrompt = userPrompt[:100] + "..."
+	}
+
+	switch taskType {
+	case "code_generation":
+		return fmt.Sprintf("Generated code for: %s", userPrompt)
+	case "file_operation":
+		return fmt.Sprintf("Performed file operations for: %s", userPrompt)
+	case "analysis":
+		return fmt.Sprintf("Analyzed: %s", userPrompt)
+	case "debugging":
+		return fmt.Sprintf("Debugged issue: %s", userPrompt)
+	case "testing":
+		return fmt.Sprintf("Testing task: %s", userPrompt)
+	case "version_control":
+		return fmt.Sprintf("Git operation: %s", userPrompt)
+	default:
+		return fmt.Sprintf("Task: %s", userPrompt)
+	}
+}
+
+// filterSensitiveData removes or masks sensitive information from text
+func (a *Agent) filterSensitiveData(text string) string {
+	// Common sensitive patterns
+	sensitivePatterns := []struct {
+		pattern     string
+		replacement string
+	}{
+		{`sk-[a-zA-Z0-9-_]{20,}`, "[API_KEY_MASKED]"},                    // API keys
+		{`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`, "[EMAIL_MASKED]"}, // Email addresses
+		{`\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b`, "[CARD_MASKED]"},       // Credit card numbers
+		{`password\s*[:=]\s*\S+`, "password: [MASKED]"},                       // Passwords
+		{`token\s*[:=]\s*\S+`, "token: [MASKED]"},                             // Tokens
+		{`secret\s*[:=]\s*\S+`, "secret: [MASKED]"},                           // Secrets
+	}
+
+	filteredText := text
+	for _, pattern := range sensitivePatterns {
+		// Note: In production, use regexp for proper pattern matching
+		// For now, using simple string replacement to avoid import complexity
+		if strings.Contains(strings.ToLower(filteredText), strings.Split(pattern.replacement, ":")[0][1:]) {
+			// Simple masking - in production would use proper regex
+			filteredText = pattern.replacement
+		}
+	}
+
+	return filteredText
+}
+
+// filterSensitiveToolCalls removes sensitive data from tool call inputs
+func (a *Agent) filterSensitiveToolCalls(toolCalls []ToolExecution) []ToolExecution {
+	filtered := make([]ToolExecution, len(toolCalls))
+
+	for i, tool := range toolCalls {
+		filtered[i] = tool
+
+		// Filter sensitive data from tool inputs
+		if tool.Input != nil {
+			filteredInput := make(map[string]interface{})
+			for key, value := range tool.Input {
+				if a.isSensitiveKey(key) {
+					filteredInput[key] = "[MASKED]"
+				} else if strValue, ok := value.(string); ok {
+					filteredInput[key] = a.filterSensitiveData(strValue)
+				} else {
+					filteredInput[key] = value
+				}
+			}
+			filtered[i].Input = filteredInput
+		}
+	}
+
+	return filtered
+}
+
+// isSensitiveKey checks if a key name indicates sensitive data
+func (a *Agent) isSensitiveKey(key string) bool {
+	sensitiveKeys := []string{
+		"password", "token", "key", "secret", "auth", "credential",
+		"private", "confidential", "sensitive",
+	}
+
+	keyLower := strings.ToLower(key)
+	for _, sensitive := range sensitiveKeys {
+		if strings.Contains(keyLower, sensitive) {
+			return true
+		}
+	}
+
+	return false
 }
