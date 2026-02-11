@@ -1,9 +1,10 @@
 # Binaries
-claude-tg-agent
 alice
+alice-server
 alice-main
 alice-test
 alice-websocket
+claude-tg-agent
 test-websocket
 
 # Config with secrets
@@ -15,6 +16,9 @@ config.json.backup
 data/
 *.db
 *.sqlite
+
+# Logs
+*.log
 
 # Security files
 *.pem
@@ -32,3 +36,6 @@ secrets.yaml
 
 # OS
 .DS_Store
+
+# Docker
+.dockerignore
