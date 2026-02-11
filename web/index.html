@@ -134,6 +134,11 @@
                         <span class="text-sm text-gray-300 font-mono">ONLINE</span>
                     </div>
 
+                    <!-- WebSocket Status -->
+                    <div class="flex items-center space-x-2">
+                        <span class="websocket-status text-xs text-gray-400 font-mono">🔴 Connecting...</span>
+                    </div>
+
                     <!-- Refresh Button -->
                     <button id="refreshBtn" class="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors cursor-pointer">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -351,6 +356,7 @@
 
     <!-- JavaScript for Dashboard Functionality -->
     <script src="js/alice-api.js"></script>
+    <script src="js/websocket-client.js"></script>
     <script src="js/dashboard.js"></script>
     <script src="js/charts.js"></script>
 

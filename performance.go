@@ -118,6 +118,9 @@ func (pm *PerformanceMonitor) RecordMetric(metric PerformanceMetrics) {
 			}
 		}()
 	}
+
+	// 廣播性能指標事件到 WebSocket 客戶端
+	BroadcastPerformanceEvent(metric)
 }
 
 // updateAggregateStats 更新聚合統計

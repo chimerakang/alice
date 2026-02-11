@@ -262,6 +262,10 @@ func main() {
 		log.Printf("   Performance monitoring: disabled")
 	}
 
+	// Initialize WebSocket system
+	InitWebSocket()
+	log.Printf("   WebSocket real-time events: enabled")
+
 	// Initialize security manager
 	if err := InitSecurity(config.Security); err != nil {
 		log.Printf("❌ Security initialization failed: %v", err)

@@ -103,6 +103,9 @@ func (tl *ToolLogger) LogToolStart(toolName string, input map[string]interface{}
 	if len(tl.executions) > tl.maxSize {
 		tl.executions = tl.executions[:tl.maxSize]
 	}
+
+	// 廣播工具開始事件到 WebSocket 客戶端
+	BroadcastToolEvent("tool_execution_start", execution)
 }
 
 // LogToolComplete logs the completion of a tool execution
@@ -135,6 +138,11 @@ func (tl *ToolLogger) LogToolComplete(toolName string, status string, duration t
 				log.Printf("Warning: failed to persist tool execution to database: %v", err)
 			}
 		}()
+	}
+
+	// 廣播工具執行事件到 WebSocket 客戶端
+	if completedExecution != nil {
+		BroadcastToolEvent("tool_execution", *completedExecution)
 	}
 
 	// Record performance metrics for tool execution
@@ -187,6 +195,9 @@ func (dl *DecisionLogger) LogDecision(decision DecisionLog) {
 			}
 		}()
 	}
+
+	// 廣播決策事件到 WebSocket 客戶端
+	BroadcastDecisionEvent(decision)
 }
 
 // GetRecentDecisions returns the most recent decision logs

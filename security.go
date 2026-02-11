@@ -479,6 +479,9 @@ func (sm *SecurityManager) LogSecurityEvent(event SecurityEvent) {
 			}
 		}()
 	}
+
+	// 廣播安全事件到 WebSocket 客戶端
+	BroadcastSecurityEvent(event)
 }
 
 // GetSecurityEvents 獲取安全事件

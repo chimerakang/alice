@@ -42,7 +42,7 @@ class AliceChartsManager {
         const ctx = document.getElementById('activityChart');
         if (!ctx) return;
 
-        // Generate sample data for the last 24 hours
+        // Initialize with empty data - will be populated from real-time data
         const now = new Date();
         const labels = [];
         const agentData = [];
@@ -52,8 +52,8 @@ class AliceChartsManager {
         for (let i = 23; i >= 0; i--) {
             const time = new Date(now.getTime() - i * 60 * 60 * 1000);
             labels.push(time.toLocaleTimeString([], { hour: '2-digit' }));
-            agentData.push(Math.floor(Math.random() * 10) + 1);
-            toolData.push(Math.floor(Math.random() * 50) + 10);
+            agentData.push(0); // Will be populated from real data
+            toolData.push(0);  // Will be populated from real data
         }
 
         this.charts.activity = new Chart(ctx, {
@@ -354,6 +354,126 @@ class AliceChartsManager {
         });
 
         return chart;
+    }
+
+    // Real-time data update methods
+    addRealtimePerformanceData(performanceData) {
+        if (!this.charts.activity) return;
+
+        const chart = this.charts.activity;
+        const now = new Date();
+        const timeLabel = now.toLocaleTimeString([], { hour: '2-digit' });
+
+        // Add new data point
+        chart.data.labels.push(timeLabel);
+
+        // Add tool execution data (count tools in last hour)
+        const toolCount = performanceData.tool_execution_type ? 1 : 0;
+        chart.data.datasets[1].data.push(toolCount);
+
+        // Add agent activity (simplified - could be enhanced)
+        const agentActivity = performanceData.chat_id ? 1 : 0;
+        chart.data.datasets[0].data.push(agentActivity);
+
+        // Keep only last 24 data points
+        if (chart.data.labels.length > 24) {
+            chart.data.labels.shift();
+            chart.data.datasets.forEach(dataset => {
+                dataset.data.shift();
+            });
+        }
+
+        chart.update('none'); // Update without animation for real-time feel
+    }
+
+    updatePerformanceMetrics(data) {
+        // Update performance chart if available
+        if (this.charts.performance && data) {
+            const chart = this.charts.performance;
+
+            // Update performance data based on real metrics
+            if (data.api_latency_ms !== undefined) {
+                // Update API latency
+                const latencyDataset = chart.data.datasets.find(d => d.label.includes('Latency'));
+                if (latencyDataset && latencyDataset.data.length > 0) {
+                    latencyDataset.data[latencyDataset.data.length - 1] = data.api_latency_ms;
+                }
+            }
+
+            if (data.memory_usage !== undefined) {
+                // Update memory usage
+                const memoryDataset = chart.data.datasets.find(d => d.label.includes('Memory'));
+                if (memoryDataset && memoryDataset.data.length > 0) {
+                    memoryDataset.data[memoryDataset.data.length - 1] = Math.round(data.memory_usage / 1024 / 1024); // Convert to MB
+                }
+            }
+
+            chart.update('none');
+        }
+    }
+
+    updateToolUsageData(toolData) {
+        if (!this.charts.tools || !toolData.length) return;
+
+        const chart = this.charts.tools;
+
+        // Count tool usage from real data
+        const toolCounts = {};
+        toolData.forEach(tool => {
+            toolCounts[tool.tool_name] = (toolCounts[tool.tool_name] || 0) + 1;
+        });
+
+        // Update chart data
+        chart.data.labels = Object.keys(toolCounts);
+        chart.data.datasets[0].data = Object.values(toolCounts);
+
+        chart.update();
+    }
+
+    // Load historical data for charts
+    async loadHistoricalData() {
+        try {
+            // Load performance metrics for the last 24 hours
+            const endTime = new Date();
+            const startTime = new Date(endTime.getTime() - 24 * 60 * 60 * 1000);
+
+            const response = await window.aliceApi.request(`/api/performance/metrics?start_time=${startTime.toISOString()}&end_time=${endTime.toISOString()}&limit=100`);
+
+            if (response && response.metrics) {
+                this.populateChartsWithHistoricalData(response.metrics);
+            }
+        } catch (error) {
+            console.error('Failed to load historical data for charts:', error);
+        }
+    }
+
+    populateChartsWithHistoricalData(metrics) {
+        if (!metrics.length) return;
+
+        // Group metrics by hour
+        const hourlyData = {};
+        metrics.forEach(metric => {
+            const hour = new Date(metric.timestamp).toLocaleTimeString([], { hour: '2-digit' });
+            if (!hourlyData[hour]) {
+                hourlyData[hour] = { tools: 0, agents: new Set() };
+            }
+            hourlyData[hour].tools++;
+            if (metric.chat_id) {
+                hourlyData[hour].agents.add(metric.chat_id);
+            }
+        });
+
+        // Update activity chart with historical data
+        if (this.charts.activity) {
+            const chart = this.charts.activity;
+            chart.data.labels.forEach((label, index) => {
+                if (hourlyData[label]) {
+                    chart.data.datasets[0].data[index] = hourlyData[label].agents.size;
+                    chart.data.datasets[1].data[index] = hourlyData[label].tools;
+                }
+            });
+            chart.update();
+        }
     }
 }
 

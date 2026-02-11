@@ -1103,6 +1103,27 @@ func (wi *WebInterface) handleStorageCleanup(w http.ResponseWriter, r *http.Requ
 	})(w, r)
 }
 
+// ========== WebSocket API Handlers ==========
+
+// handleWebSocket 處理 WebSocket 連接升級
+func (wi *WebInterface) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	if globalWebSocketHub == nil {
+		http.Error(w, "WebSocket not initialized", http.StatusServiceUnavailable)
+		return
+	}
+	globalWebSocketHub.HandleWebSocket(w, r)
+}
+
+// handleWebSocketStats 獲取 WebSocket 統計資訊
+func (wi *WebInterface) handleWebSocketStats(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		stats := GetWebSocketStats()
+		writeProtoResponse(w, stats)
+	})(w, r)
+}
+
 // writeProtoResponse 將 proto message 序列化為 JSON 並寫入響應
 func writeProtoResponse(w http.ResponseWriter, msg interface{}) error {
 	// 這裡我們仍然使用 JSON 序列化，以保持與前端的兼容性

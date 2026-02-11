@@ -116,6 +116,10 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/storage/stats", wi.handleStorageStats)
 	mux.HandleFunc("/api/storage/cleanup", wi.handleStorageCleanup)
 
+	// WebSocket Real-time Events
+	mux.HandleFunc("/ws", wi.handleWebSocket)
+	mux.HandleFunc("/api/websocket/stats", wi.handleWebSocketStats)
+
 	// Prometheus metrics endpoint
 	mux.HandleFunc("/metrics", wi.handlePrometheusMetrics)
 

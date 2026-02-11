@@ -9,10 +9,60 @@ class AliceDashboard {
         this.refreshInterval = null;
         this.lastUpdate = null;
         this.cache = new Map();
-        this.updateFrequency = 5000; // 5 seconds
+        this.updateFrequency = 30000; // 30 seconds (reduced since we have real-time updates)
 
+        // Initialize WebSocket client
+        this.wsClient = null;
+        this.realtimeData = {
+            tools: [],
+            decisions: [],
+            performance: [],
+            security: [],
+            agents: new Map()
+        };
+
+        this.initializeWebSocket();
         this.initializeEventListeners();
         this.startAutoRefresh();
+    }
+
+    initializeWebSocket() {
+        this.wsClient = new AliceWebSocketClient();
+
+        // Set up real-time event handlers
+        this.wsClient.on('tool_execution_start', (event) => {
+            this.handleToolExecutionStart(event.data);
+        });
+
+        this.wsClient.on('tool_execution', (event) => {
+            this.handleToolExecutionComplete(event.data);
+        });
+
+        this.wsClient.on('decision_complete', (event) => {
+            this.handleDecisionComplete(event.data);
+        });
+
+        this.wsClient.on('performance_metric', (event) => {
+            this.handlePerformanceMetric(event.data);
+        });
+
+        this.wsClient.on('security_alert', (event) => {
+            this.handleSecurityAlert(event.data);
+        });
+
+        this.wsClient.on('agent_status', (event) => {
+            this.handleAgentStatusChange(event.data);
+        });
+
+        this.wsClient.on('connected', () => {
+            console.log('Dashboard connected to WebSocket');
+            this.showNotification('Connected to real-time events', 'success');
+        });
+
+        this.wsClient.on('disconnected', () => {
+            console.log('Dashboard disconnected from WebSocket');
+            this.showNotification('Disconnected from real-time events', 'warning');
+        });
     }
 
     initializeEventListeners() {
@@ -471,6 +521,216 @@ class AliceDashboard {
             this.updateGitInfo(gitStatusData, gitEventsData);
         } catch (error) {
             console.error('Failed to refresh Git info:', error);
+        }
+    }
+
+    // ========== Real-time Event Handlers ==========
+
+    handleToolExecutionStart(data) {
+        // Add to real-time data
+        this.realtimeData.tools.unshift({
+            ...data,
+            status: 'running'
+        });
+
+        // Keep only recent 20 items
+        if (this.realtimeData.tools.length > 20) {
+            this.realtimeData.tools.pop();
+        }
+
+        // Update running tools counter
+        this.updateRunningToolsCounter();
+
+        // Update tools feed display
+        this.updateRealtimeToolsFeed();
+
+        console.log('Tool execution started:', data.tool_name);
+    }
+
+    handleToolExecutionComplete(data) {
+        // Update existing entry or add new one
+        const existingIndex = this.realtimeData.tools.findIndex(
+            tool => tool.tool_name === data.tool_name &&
+                   tool.chat_id === data.chat_id &&
+                   tool.timestamp === data.timestamp
+        );
+
+        if (existingIndex !== -1) {
+            this.realtimeData.tools[existingIndex] = data;
+        } else {
+            this.realtimeData.tools.unshift(data);
+        }
+
+        // Keep only recent items
+        if (this.realtimeData.tools.length > 20) {
+            this.realtimeData.tools.pop();
+        }
+
+        // Update counters and displays
+        this.updateRunningToolsCounter();
+        this.updateRealtimeToolsFeed();
+
+        console.log('Tool execution completed:', data.tool_name, data.status);
+    }
+
+    handleDecisionComplete(data) {
+        this.realtimeData.decisions.unshift(data);
+
+        // Keep only recent 10 decisions
+        if (this.realtimeData.decisions.length > 10) {
+            this.realtimeData.decisions.pop();
+        }
+
+        // Update decision metrics
+        this.updateDecisionMetrics();
+
+        console.log('Decision completed:', data.success ? 'Success' : 'Failed');
+    }
+
+    handlePerformanceMetric(data) {
+        this.realtimeData.performance.unshift(data);
+
+        // Keep only recent 50 metrics
+        if (this.realtimeData.performance.length > 50) {
+            this.realtimeData.performance.pop();
+        }
+
+        // Update performance charts if available
+        if (window.chartManager) {
+            window.chartManager.addRealtimePerformanceData(data);
+        }
+
+        console.log('Performance metric received:', data.tool_execution_type);
+    }
+
+    handleSecurityAlert(data) {
+        this.realtimeData.security.unshift(data);
+
+        // Keep only recent 20 alerts
+        if (this.realtimeData.security.length > 20) {
+            this.realtimeData.security.pop();
+        }
+
+        // Show notification for high severity alerts
+        if (data.severity === 'high' || data.severity === 'critical') {
+            this.showNotification(
+                `Security Alert: ${data.description}`,
+                'error'
+            );
+        }
+
+        // Update security metrics
+        this.updateSecurityMetrics();
+
+        console.log('Security alert:', data.severity, data.event_type);
+    }
+
+    handleAgentStatusChange(data) {
+        // Update agent status map
+        this.realtimeData.agents.set(data.chat_id, {
+            chat_id: data.chat_id,
+            status: data.status,
+            details: data.details,
+            last_seen: data.timestamp
+        });
+
+        // Update agent status displays
+        this.updateAgentStatusDisplays();
+
+        console.log('Agent status change:', data.chat_id, data.status);
+    }
+
+    // ========== Real-time Display Updates ==========
+
+    updateRunningToolsCounter() {
+        const runningCount = this.realtimeData.tools.filter(
+            tool => tool.status === 'running'
+        ).length;
+
+        const element = document.getElementById('runningToolsCount');
+        if (element) {
+            element.textContent = runningCount;
+        }
+    }
+
+    updateRealtimeToolsFeed() {
+        const feedContainer = document.querySelector('.tools-feed');
+        if (!feedContainer) return;
+
+        const recentTools = this.realtimeData.tools.slice(0, 10);
+
+        const html = recentTools.map(tool => {
+            const statusClass = tool.status === 'success' ? 'text-status-success' :
+                              tool.status === 'error' ? 'text-status-error' :
+                              'text-status-warning';
+
+            const statusIcon = tool.status === 'success' ? '✓' :
+                             tool.status === 'error' ? '✗' : '⟳';
+
+            const timestamp = new Date(tool.timestamp);
+            const timeAgo = formatTimeAgo(timestamp);
+
+            return `
+                <div class="flex items-center justify-between p-3 bg-gray-800/20 border border-gray-700/50 rounded-lg">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-6 h-6 bg-blue-600/10 border border-blue-600/20 rounded flex items-center justify-center">
+                            <span class="${statusClass} text-xs font-bold">${statusIcon}</span>
+                        </div>
+                        <div>
+                            <p class="text-sm font-medium text-white font-mono">${tool.tool_name}</p>
+                            <p class="text-xs text-gray-400">Chat ${tool.chat_id}${tool.duration_ms ? ` • ${tool.duration_ms}ms` : ''}</p>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-xs ${statusClass}">${tool.status}</p>
+                        <p class="text-xs text-gray-400">${timeAgo}</p>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        feedContainer.innerHTML = html || '<p class="text-gray-400 text-center py-4">No recent tool executions</p>';
+    }
+
+    updateDecisionMetrics() {
+        const successfulDecisions = this.realtimeData.decisions.filter(d => d.success).length;
+        const totalDecisions = this.realtimeData.decisions.length;
+
+        const successRate = totalDecisions > 0 ? (successfulDecisions / totalDecisions * 100).toFixed(1) : 0;
+
+        const successRateElement = document.getElementById('decisionSuccessRate');
+        if (successRateElement) {
+            successRateElement.textContent = `${successRate}%`;
+        }
+
+        const totalDecisionsElement = document.getElementById('totalDecisions');
+        if (totalDecisionsElement) {
+            totalDecisionsElement.textContent = totalDecisions;
+        }
+    }
+
+    updateSecurityMetrics() {
+        const criticalAlerts = this.realtimeData.security.filter(s => s.severity === 'critical').length;
+        const highAlerts = this.realtimeData.security.filter(s => s.severity === 'high').length;
+
+        const criticalElement = document.getElementById('criticalAlerts');
+        if (criticalElement) {
+            criticalElement.textContent = criticalAlerts;
+        }
+
+        const highAlertsElement = document.getElementById('highAlerts');
+        if (highAlertsElement) {
+            highAlertsElement.textContent = highAlerts;
+        }
+    }
+
+    updateAgentStatusDisplays() {
+        const activeAgents = Array.from(this.realtimeData.agents.values())
+            .filter(agent => agent.status === 'active').length;
+
+        const activeAgentsElement = document.getElementById('activeAgentsCount');
+        if (activeAgentsElement) {
+            activeAgentsElement.textContent = activeAgents;
         }
     }
 
