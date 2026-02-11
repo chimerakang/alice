@@ -178,6 +178,42 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string) {
 		return
 	}
 
+	// 安全檢查和 PII 檢測
+	if globalSecurityManager != nil {
+		// 記錄用戶請求安全事件
+		globalSecurityManager.LogSecurityEvent(SecurityEvent{
+			EventType:   "telegram_message_received",
+			Severity:    "low",
+			Description: "User message received via Telegram",
+			UserID:      userID,
+			Details: map[string]interface{}{
+				"message_length": len(text),
+				"chat_id":        key.chatID,
+				"has_commands":   strings.HasPrefix(text, "/"),
+			},
+		})
+
+		// PII 檢測和過濾
+		filteredText, detected := globalSecurityManager.DetectAndFilterPII(text)
+		if len(detected) > 0 {
+			// 記錄 PII 檢測事件
+			globalSecurityManager.LogSecurityEvent(SecurityEvent{
+				EventType:   "pii_detected_telegram",
+				Severity:    "high",
+				Description: fmt.Sprintf("PII detected in Telegram message: %v", detected),
+				UserID:      userID,
+				Details: map[string]interface{}{
+					"detected_types": detected,
+					"chat_id":        key.chatID,
+				},
+			})
+
+			// 警告用戶並使用過濾後的文字
+			t.send(key, "⚠️ 偵測到敏感資訊已自動過濾，請注意保護隱私資料。")
+			text = filteredText
+		}
+	}
+
 	// 處理指令
 	if strings.HasPrefix(text, "/") {
 		t.handleCommand(key, text)

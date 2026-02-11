@@ -69,7 +69,7 @@ func NewWebInterface(bot *TelegramBot, port, staticDir string) *WebInterface {
 }
 
 // CreateRouter sets up the HTTP routes and handlers
-func (wi *WebInterface) CreateRouter() *http.ServeMux {
+func (wi *WebInterface) CreateRouter() http.Handler {
 	mux := http.NewServeMux()
 
 	// Serve dashboard at root
@@ -97,7 +97,22 @@ func (wi *WebInterface) CreateRouter() *http.ServeMux {
 	mux.HandleFunc("/api/performance/recommendations", wi.handlePerformanceRecommendations)
 	mux.HandleFunc("/api/performance/export", wi.handlePerformanceExport)
 
-	return mux
+	// Security APIs
+	mux.HandleFunc("/api/security/events", wi.handleSecurityEvents)
+	mux.HandleFunc("/api/security/stats", wi.handleSecurityStats)
+	mux.HandleFunc("/api/security/audit", wi.handleSecurityAudit)
+
+	// 應用安全中間件
+	var handler http.Handler = mux
+
+	if globalSecurityManager != nil {
+		// 依序應用中間件 (注意順序)
+		handler = globalSecurityManager.SecurityHeadersMiddleware(handler)
+		handler = globalSecurityManager.IPFilterMiddleware(handler)
+		handler = globalSecurityManager.RateLimitMiddleware(handler)
+	}
+
+	return handler
 }
 
 // Start begins the HTTP server
@@ -914,4 +929,161 @@ func (wi *WebInterface) handlePerformanceExport(w http.ResponseWriter, r *http.R
 
 		w.Write(data)
 	})(w, r)
+}
+
+// === Security API Handlers ===
+
+// handleSecurityEvents returns recent security events
+func (wi *WebInterface) handleSecurityEvents(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalSecurityManager == nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"enabled": false,
+				"message": "Security management is disabled",
+			})
+			return
+		}
+
+		// Parse query parameters
+		limitStr := r.URL.Query().Get("limit")
+		limit := 50 // default limit
+		if limitStr != "" {
+			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+				limit = parsedLimit
+			}
+		}
+
+		severity := r.URL.Query().Get("severity")
+		events := globalSecurityManager.GetSecurityEvents(limit, severity)
+
+		response := map[string]interface{}{
+			"enabled":   true,
+			"events":    events,
+			"count":     len(events),
+			"limit":     limit,
+			"severity":  severity,
+			"timestamp": time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// handleSecurityStats returns security statistics
+func (wi *WebInterface) handleSecurityStats(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalSecurityManager == nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"enabled": false,
+				"message": "Security management is disabled",
+			})
+			return
+		}
+
+		stats := globalSecurityManager.GetSecurityStats()
+		stats["enabled"] = true
+		stats["timestamp"] = time.Now()
+
+		json.NewEncoder(w).Encode(stats)
+	})(w, r)
+}
+
+// handleSecurityAudit provides detailed security audit information
+func (wi *WebInterface) handleSecurityAudit(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalSecurityManager == nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"enabled": false,
+				"message": "Security management is disabled",
+			})
+			return
+		}
+
+		// Get events by severity
+		critical := globalSecurityManager.GetSecurityEvents(10, "critical")
+		high := globalSecurityManager.GetSecurityEvents(20, "high")
+		medium := globalSecurityManager.GetSecurityEvents(30, "medium")
+		low := globalSecurityManager.GetSecurityEvents(10, "low")
+
+		stats := globalSecurityManager.GetSecurityStats()
+
+		response := map[string]interface{}{
+			"enabled":    true,
+			"summary":    stats,
+			"events": map[string]interface{}{
+				"critical": critical,
+				"high":     high,
+				"medium":   medium,
+				"low":      low,
+			},
+			"recommendations": generateSecurityRecommendations(stats),
+			"timestamp":       time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// generateSecurityRecommendations generates security recommendations based on stats
+func generateSecurityRecommendations(stats map[string]interface{}) []map[string]interface{} {
+	recommendations := []map[string]interface{}{}
+
+	// Check for high severity events
+	if severities, ok := stats["severities"].(map[string]int); ok {
+		if critical := severities["critical"]; critical > 0 {
+			recommendations = append(recommendations, map[string]interface{}{
+				"priority":    "high",
+				"title":       "Critical Security Events Detected",
+				"description": fmt.Sprintf("%d critical security events found. Immediate attention required.", critical),
+				"action":      "Review critical events and take immediate corrective action",
+			})
+		}
+
+		if high := severities["high"]; high > 5 {
+			recommendations = append(recommendations, map[string]interface{}{
+				"priority":    "medium",
+				"title":       "Multiple High Severity Events",
+				"description": fmt.Sprintf("%d high severity security events detected.", high),
+				"action":      "Investigate patterns and strengthen security measures",
+			})
+		}
+	}
+
+	// Check rate limiting status
+	if rateLimiting, ok := stats["rate_limiting"].(bool); ok && !rateLimiting {
+		recommendations = append(recommendations, map[string]interface{}{
+			"priority":    "medium",
+			"title":       "Rate Limiting Disabled",
+			"description": "Rate limiting is currently disabled, making the service vulnerable to abuse",
+			"action":      "Enable rate limiting with appropriate RPM limits",
+		})
+	}
+
+	// Check PII detection
+	if piiDetection, ok := stats["pii_detection"].(bool); ok && !piiDetection {
+		recommendations = append(recommendations, map[string]interface{}{
+			"priority":    "low",
+			"title":       "PII Detection Disabled",
+			"description": "PII detection is disabled, potential privacy compliance risk",
+			"action":      "Enable PII detection to protect sensitive information",
+		})
+	}
+
+	// Check encryption status
+	if encryption, ok := stats["encryption"].(bool); ok && !encryption {
+		recommendations = append(recommendations, map[string]interface{}{
+			"priority":    "high",
+			"title":       "Encryption Not Configured",
+			"description": "Sensitive data encryption is not configured",
+			"action":      "Configure encryption keys for sensitive data protection",
+		})
+	}
+
+	return recommendations
 }

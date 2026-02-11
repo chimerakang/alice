@@ -588,7 +588,26 @@ func (a *Agent) generateSummary(userPrompt, agentResponse, taskType string) stri
 
 // filterSensitiveData removes or masks sensitive information from text
 func (a *Agent) filterSensitiveData(text string) string {
-	// Common sensitive patterns
+	// Use security manager's PII detection if available
+	if globalSecurityManager != nil {
+		filtered, detected := globalSecurityManager.DetectAndFilterPII(text)
+		if len(detected) > 0 {
+			// Log security event for PII detection in agent logs
+			globalSecurityManager.LogSecurityEvent(SecurityEvent{
+				EventType:   "pii_filtered_in_logs",
+				Severity:    "medium",
+				Description: fmt.Sprintf("PII filtered from agent logs: %v", detected),
+				UserID:      a.chatID,
+				Details: map[string]interface{}{
+					"detected_types": detected,
+					"agent_context":  "decision_logging",
+				},
+			})
+		}
+		return filtered
+	}
+
+	// Fallback to legacy pattern matching if security manager not available
 	sensitivePatterns := []struct {
 		pattern     string
 		replacement string

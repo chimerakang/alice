@@ -34,6 +34,9 @@ type Config struct {
 	// Performance Monitoring Settings
 	EnablePerformanceMonitoring bool `json:"enable_performance_monitoring"`
 	PerformanceMetricsRetention int  `json:"performance_metrics_retention"` // hours
+
+	// Security Settings
+	Security SecurityConfig `json:"security"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -47,6 +50,17 @@ func LoadConfig() (*Config, error) {
 		EnableMultiAgent:            false, // Disabled by default (experimental)
 		EnablePerformanceMonitoring: true,  // Enabled by default
 		PerformanceMetricsRetention: 24,    // 24 hours default
+		Security: SecurityConfig{
+			EnableRateLimiting:    true,
+			RateLimitRPM:          60,   // 60 requests per minute default
+			RateLimitBurst:        10,   // 10 burst capacity
+			EnablePIIDetection:    true,
+			EnableAuditLogging:    true,
+			DataRetentionDays:     30,   // 30 days default
+			RequireAuthentication: false, // Disabled by default
+			SessionTimeoutMinutes: 60,   // 1 hour
+			MaxConcurrentSessions: 100,  // 100 concurrent sessions
+		},
 	}
 
 	// 優先從 config.json 讀取
@@ -107,6 +121,31 @@ func LoadConfig() (*Config, error) {
 		if retention, err := strconv.Atoi(v); err == nil && retention > 0 {
 			config.PerformanceMetricsRetention = retention
 		}
+	}
+
+	// Security Environment Variables
+	if v := os.Getenv("ENABLE_RATE_LIMITING"); v == "false" {
+		config.Security.EnableRateLimiting = false
+	}
+	if v := os.Getenv("RATE_LIMIT_RPM"); v != "" {
+		if rpm, err := strconv.Atoi(v); err == nil && rpm > 0 {
+			config.Security.RateLimitRPM = rpm
+		}
+	}
+	if v := os.Getenv("ENABLE_PII_DETECTION"); v == "false" {
+		config.Security.EnablePIIDetection = false
+	}
+	if v := os.Getenv("ENABLE_AUDIT_LOGGING"); v == "false" {
+		config.Security.EnableAuditLogging = false
+	}
+	if v := os.Getenv("ENCRYPTION_KEY"); v != "" {
+		config.Security.EncryptionKey = v
+	}
+	if v := os.Getenv("ALLOWED_IPS"); v != "" {
+		config.Security.AllowedIPs = strings.Split(v, ",")
+	}
+	if v := os.Getenv("BLOCKED_IPS"); v != "" {
+		config.Security.BlockedIPs = strings.Split(v, ",")
 	}
 
 	// 驗證必要欄位
@@ -195,6 +234,17 @@ func main() {
 	} else {
 		log.Printf("   Performance monitoring: disabled")
 	}
+
+	// Initialize security manager
+	if err := InitSecurity(config.Security); err != nil {
+		log.Printf("❌ Security initialization failed: %v", err)
+		log.Fatalf("Unable to continue without security features")
+	}
+	log.Printf("   Security features: rate limiting=%v, PII detection=%v, audit logging=%v",
+		config.Security.EnableRateLimiting,
+		config.Security.EnablePIIDetection,
+		config.Security.EnableAuditLogging,
+	)
 
 	client := NewClient(config.Model)
 
