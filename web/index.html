@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alice AI Agent Monitor</title>
+
+    <!-- Google Fonts - Fira Code + Fira Sans -->
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Chart.js for Data Visualization -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.min.js"></script>
+
+    <!-- Dashboard Custom Styles -->
+    <link rel="stylesheet" href="css/dashboard.css">
+
+    <script>
+        // Tailwind Config for Dark Dashboard Theme
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        'mono': ['Fira Code', 'monospace'],
+                        'sans': ['Fira Sans', 'sans-serif']
+                    },
+                    colors: {
+                        // OLED Dark Theme Colors
+                        'deep-black': '#000000',
+                        'dark-grey': '#121212',
+                        'midnight-blue': '#0A0E27',
+
+                        // Analytics Dashboard Colors
+                        'dashboard-primary': '#3B82F6',
+                        'dashboard-secondary': '#60A5FA',
+                        'dashboard-cta': '#F97316',
+
+                        // Status Colors
+                        'status-success': '#22C55E',
+                        'status-warning': '#F59E0B',
+                        'status-error': '#EF4444',
+                        'status-info': '#3B82F6'
+                    },
+                    boxShadow: {
+                        'glow': '0 0 10px rgba(59, 130, 246, 0.5)',
+                        'glow-green': '0 0 10px rgba(34, 197, 94, 0.5)',
+                        'glow-red': '0 0 10px rgba(239, 68, 68, 0.5)',
+                        'dark-card': '0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3)'
+                    },
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'fade-in': 'fadeIn 0.5s ease-in-out',
+                        'slide-up': 'slideUp 0.3s ease-out',
+                        'count-up': 'countUp 2s ease-out'
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        @keyframes countUp {
+            from { transform: scale(0.8); }
+            to { transform: scale(1); }
+        }
+
+        /* Custom scrollbar for dark theme */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #121212;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #374151;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4B5563;
+        }
+
+        /* Glowing text effect for active status */
+        .status-glow {
+            text-shadow: 0 0 10px currentColor;
+        }
+
+        /* Number animation effect */
+        .metric-number {
+            @apply font-mono font-bold tabular-nums;
+        }
+    </style>
+</head>
+<body class="bg-deep-black text-gray-100 font-sans min-h-screen">
+
+    <!-- Navigation Header -->
+    <header class="bg-dark-grey/90 backdrop-blur border-b border-gray-800 sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <!-- Logo and Title -->
+                <div class="flex items-center space-x-4">
+                    <div class="flex items-center space-x-2">
+                        <div class="w-8 h-8 bg-gradient-to-br from-dashboard-primary to-dashboard-secondary rounded-lg flex items-center justify-center">
+                            <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                        </div>
+                        <div>
+                            <h1 class="text-xl font-semibold text-white">Alice AI Monitor</h1>
+                            <p class="text-xs text-gray-400 font-mono">v1.0.0-proto</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Status Indicator -->
+                <div class="flex items-center space-x-4">
+                    <div class="flex items-center space-x-2">
+                        <div class="w-2 h-2 bg-status-success rounded-full animate-pulse-slow status-glow"></div>
+                        <span class="text-sm text-gray-300 font-mono">ONLINE</span>
+                    </div>
+
+                    <!-- Refresh Button -->
+                    <button id="refreshBtn" class="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors cursor-pointer">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Dashboard -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+        <!-- Key Metrics Row -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+
+            <!-- Active Agents -->
+            <div class="bg-dark-grey border border-gray-800 rounded-xl p-6 shadow-dark-card animate-fade-in">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-400 uppercase tracking-wide">Active Agents</p>
+                        <p class="text-3xl font-bold text-white mt-2 metric-number" id="activeAgents">0</p>
+                        <p class="text-xs text-status-success mt-1">+2 from last hour</p>
+                    </div>
+                    <div class="p-3 bg-dashboard-primary/10 rounded-lg">
+                        <svg class="w-6 h-6 text-dashboard-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tool Executions -->
+            <div class="bg-dark-grey border border-gray-800 rounded-xl p-6 shadow-dark-card animate-fade-in">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-400 uppercase tracking-wide">Tools Executed</p>
+                        <p class="text-3xl font-bold text-white mt-2 metric-number" id="toolExecutions">0</p>
+                        <p class="text-xs text-status-success mt-1">98.5% success rate</p>
+                    </div>
+                    <div class="p-3 bg-status-success/10 rounded-lg">
+                        <svg class="w-6 h-6 text-status-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Decisions Logged -->
+            <div class="bg-dark-grey border border-gray-800 rounded-xl p-6 shadow-dark-card animate-fade-in">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-400 uppercase tracking-wide">Decisions Logged</p>
+                        <p class="text-3xl font-bold text-white mt-2 metric-number" id="decisionsLogged">0</p>
+                        <p class="text-xs text-status-info mt-1">Last 24 hours</p>
+                    </div>
+                    <div class="p-3 bg-status-info/10 rounded-lg">
+                        <svg class="w-6 h-6 text-status-info" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Token Usage -->
+            <div class="bg-dark-grey border border-gray-800 rounded-xl p-6 shadow-dark-card animate-fade-in">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-gray-400 uppercase tracking-wide">Tokens Used</p>
+                        <p class="text-3xl font-bold text-white mt-2 metric-number" id="tokensUsed">0</p>
+                        <p class="text-xs text-gray-400 mt-1">$0.00 cost</p>
+                    </div>
+                    <div class="p-3 bg-dashboard-cta/10 rounded-lg">
+                        <svg class="w-6 h-6 text-dashboard-cta" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                        </svg>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+
+            <!-- Agent Activity Chart -->
+            <div class="bg-dark-grey border border-gray-800 rounded-xl p-6 shadow-dark-card">
+                <div class="flex items-center justify-between mb-6">
+                    <h3 class="text-lg font-semibold text-white">Agent Activity</h3>
+                    <div class="flex space-x-2">
+                        <button class="px-3 py-1 text-xs bg-dashboard-primary text-white rounded-md">24H</button>
+                        <button class="px-3 py-1 text-xs text-gray-400 hover:text-white">7D</button>
+                        <button class="px-3 py-1 text-xs text-gray-400 hover:text-white">30D</button>
+                    </div>
+                </div>
+                <div class="h-64">
+                    <canvas id="activityChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Tool Usage Distribution -->
+            <div class="bg-dark-grey border border-gray-800 rounded-xl p-6 shadow-dark-card">
+                <div class="flex items-center justify-between mb-6">
+                    <h3 class="text-lg font-semibold text-white">Tool Usage</h3>
+                    <div class="text-xs text-gray-400 font-mono">Real-time</div>
+                </div>
+                <div class="h-64">
+                    <canvas id="toolChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detailed Views Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+            <!-- Recent Agents -->
+            <div class="bg-dark-grey border border-gray-800 rounded-xl p-6 shadow-dark-card">
+                <div class="flex items-center justify-between mb-6">
+                    <h3 class="text-lg font-semibold text-white">Active Agents</h3>
+                    <button class="text-dashboard-primary text-sm hover:text-dashboard-secondary cursor-pointer">View All</button>
+                </div>
+                <div class="space-y-4" id="agentsList">
+                    <!-- Dynamic content will be inserted here -->
+                </div>
+            </div>
+
+            <!-- Recent Tools -->
+            <div class="bg-dark-grey border border-gray-800 rounded-xl p-6 shadow-dark-card">
+                <div class="flex items-center justify-between mb-6">
+                    <h3 class="text-lg font-semibold text-white">Recent Tools</h3>
+                    <button class="text-dashboard-primary text-sm hover:text-dashboard-secondary cursor-pointer">View All</button>
+                </div>
+                <div class="space-y-4" id="toolsList">
+                    <!-- Dynamic content will be inserted here -->
+                </div>
+            </div>
+
+            <!-- Recent Decisions -->
+            <div class="bg-dark-grey border border-gray-800 rounded-xl p-6 shadow-dark-card">
+                <div class="flex items-center justify-between mb-6">
+                    <h3 class="text-lg font-semibold text-white">Recent Decisions</h3>
+                    <button class="text-dashboard-primary text-sm hover:text-dashboard-secondary cursor-pointer">View All</button>
+                </div>
+                <div class="space-y-4" id="decisionsList">
+                    <!-- Dynamic content will be inserted here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="mt-12 pt-8 border-t border-gray-800">
+            <div class="flex items-center justify-between text-sm text-gray-500">
+                <div class="font-mono">
+                    Last updated: <span id="lastUpdated">Never</span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <span>Alice AI Agent Monitor</span>
+                    <span>•</span>
+                    <span class="text-dashboard-primary">Proto-First API</span>
+                </div>
+            </div>
+        </footer>
+    </main>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="fixed inset-0 bg-deep-black/80 backdrop-blur-sm flex items-center justify-center z-50 transition-opacity">
+        <div class="bg-dark-grey border border-gray-800 rounded-xl p-8 flex flex-col items-center space-y-4">
+            <div class="w-8 h-8 border-2 border-dashboard-primary border-t-transparent rounded-full animate-spin"></div>
+            <p class="text-white font-medium">Loading Alice Monitor...</p>
+            <p class="text-gray-400 text-sm font-mono">Connecting to API</p>
+        </div>
+    </div>
+
+    <!-- JavaScript for Dashboard Functionality -->
+    <script src="js/alice-api.js"></script>
+    <script src="js/dashboard.js"></script>
+    <script src="js/charts.js"></script>
+
+</body>
+</html>

@@ -72,6 +72,10 @@ func NewWebInterface(bot *TelegramBot, port, staticDir string) *WebInterface {
 func (wi *WebInterface) CreateRouter() http.Handler {
 	mux := http.NewServeMux()
 
+	// Serve static files
+	mux.Handle("/css/", http.StripPrefix("/css/", http.FileServer(http.Dir("web/css/"))))
+	mux.Handle("/js/", http.StripPrefix("/js/", http.FileServer(http.Dir("web/js/"))))
+
 	// Serve dashboard at root
 	mux.HandleFunc("/", wi.handleDashboard)
 
@@ -149,10 +153,17 @@ func (wi *WebInterface) handleDashboard(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Try to serve dashboard.html from static directory
-	dashboardPath := filepath.Join(wi.staticDir, "dashboard.html")
+	// Try to serve index.html from web directory (new dashboard)
+	dashboardPath := filepath.Join("web", "index.html")
 	if _, err := os.Stat(dashboardPath); err == nil {
 		http.ServeFile(w, r, dashboardPath)
+		return
+	}
+
+	// Try to serve dashboard.html from static directory (legacy)
+	legacyPath := filepath.Join(wi.staticDir, "dashboard.html")
+	if _, err := os.Stat(legacyPath); err == nil {
+		http.ServeFile(w, r, legacyPath)
 		return
 	}
 
