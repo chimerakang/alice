@@ -1,8 +1,10 @@
-package main
+package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -138,6 +140,20 @@ func (t *TelegramBot) Start() {
 					} `json:"chat"`
 					Text string `json:"text"`
 				} `json:"message"`
+				CallbackQuery *struct {
+					ID      string `json:"id"`
+					From    *struct {
+						ID int64 `json:"id"`
+					} `json:"from"`
+					Message *struct {
+						MessageID       int `json:"message_id"`
+						MessageThreadID int `json:"message_thread_id"`
+						Chat            *struct {
+							ID int64 `json:"id"`
+						} `json:"chat"`
+					} `json:"message"`
+					Data string `json:"data"`
+				} `json:"callback_query"`
 			} `json:"result"`
 		}
 
@@ -154,14 +170,20 @@ func (t *TelegramBot) Start() {
 
 		for _, update := range result.Result {
 			offset = update.UpdateID + 1
-			if update.Message == nil || update.Message.Chat == nil || update.Message.From == nil {
-				continue
+
+			// Handle regular messages
+			if update.Message != nil && update.Message.Chat != nil && update.Message.From != nil {
+				msg := update.Message
+				key := chatKey{chatID: msg.Chat.ID, threadID: msg.MessageThreadID}
+				go t.handleMessage(key, msg.From.ID, msg.Text)
 			}
 
-			msg := update.Message
-			key := chatKey{chatID: msg.Chat.ID, threadID: msg.MessageThreadID}
-
-			go t.handleMessage(key, msg.From.ID, msg.Text)
+			// Handle callback queries (inline keyboard button clicks)
+			if update.CallbackQuery != nil && update.CallbackQuery.Message != nil {
+				query := update.CallbackQuery
+				key := chatKey{chatID: query.Message.Chat.ID, threadID: query.Message.MessageThreadID}
+				go t.handleCallbackQuery(key, query.From.ID, query.ID, query.Data)
+			}
 		}
 	}
 }
@@ -216,6 +238,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string) {
 
 	// 處理指令
 	if strings.HasPrefix(text, "/") {
+		log.Printf("[telegram] handling command: %s from user %d", text, userID)
 		t.handleCommand(key, text)
 		return
 	}
@@ -295,6 +318,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string) {
 func (t *TelegramBot) handleCommand(key chatKey, text string) {
 	parts := strings.Fields(text)
 	cmd := strings.Split(parts[0], "@")[0] // 去掉 @botname 後綴
+	log.Printf("[telegram] processing command: %s", cmd)
 
 	switch cmd {
 	case "/start", "/help":
@@ -311,6 +335,8 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 /reset — 清除對話歷史
 /status — 查看目前狀態
 /usage — 查看 token 用量
+/dashboard — 查看系統監控面板
+/checkpoints — 查看檢查點狀態
 /multiagent [enable|disable|status|stats] — 多代理協調管理
 /agents — 查看專門化代理清單
 /help — 顯示此說明`
@@ -383,6 +409,24 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			stats.TotalCostUSD,
 		)
 		t.sendMarkdown(key, usage)
+
+	case "/dashboard":
+		t.handleDashboard(key)
+
+	case "/checkpoints":
+		if len(parts) < 2 {
+			t.handleCheckpointsList(key)
+		} else {
+			action := parts[1]
+			switch action {
+			case "list":
+				t.handleCheckpointsList(key)
+			case "stats":
+				t.handleCheckpointsStats(key)
+			default:
+				t.send(key, "用法: /checkpoints [list|stats]")
+			}
+		}
 
 	case "/multiagent":
 		if len(parts) < 2 {
@@ -610,4 +654,220 @@ func (t *TelegramBot) handleAgentsList(key chatKey) {
 	response += "• 複雜任務會自動協調多個代理協作\n"
 
 	t.sendMarkdown(key, response)
+}
+
+// handleDashboard shows system dashboard information
+func (t *TelegramBot) handleDashboard(key chatKey) {
+	log.Printf("[telegram] handleDashboard called for chat %d", key.chatID)
+	dashboard := "📊 *Alice AI Agent Dashboard*\n\n"
+
+	// System Health
+	dashboard += "🏥 *系統健康狀態*:\n"
+	if globalWebSocketHub != nil {
+		dashboard += "  ✅ WebSocket Hub: 運行中\n"
+		connectedClients := globalWebSocketHub.GetConnectedClients()
+		dashboard += fmt.Sprintf("  🔌 連接數: %d\n", connectedClients)
+	}
+
+	if globalCheckpointManager != nil && globalCheckpointManager.IsEnabled() {
+		dashboard += "  ✅ 檢查點系統: 已啟用\n"
+	} else {
+		dashboard += "  ❌ 檢查點系統: 已停用\n"
+	}
+
+	if globalAgentCoordinator != nil && globalAgentCoordinator.IsEnabled() {
+		dashboard += "  ✅ 多代理協調: 已啟用\n"
+	} else {
+		dashboard += "  ❌ 多代理協調: 已停用\n"
+	}
+
+	// Web Interface
+	if t.config.EnableWebInterface {
+		dashboard += fmt.Sprintf("\n🌐 *Web 監控介面*:\n")
+		dashboard += fmt.Sprintf("  📊 主面板: http://localhost:%s/\n", t.config.WebPort)
+		dashboard += fmt.Sprintf("  📈 Timeline: http://localhost:%s/timeline.html\n", t.config.WebPort)
+		dashboard += fmt.Sprintf("  🧪 測試頁面: http://localhost:%s/test-timeline.html\n", t.config.WebPort)
+	}
+
+	// Storage Info
+	if globalStorage != nil {
+		dashboard += "\n💾 *資料存儲狀態*:\n"
+		dashboard += fmt.Sprintf("  📁 資料庫: %s\n", t.config.DatabasePath)
+		dashboard += "  ✅ SQLite: 運行中\n"
+	}
+
+	// Quick Actions
+	dashboard += "\n🚀 *快速操作*:\n"
+	dashboard += "• `/checkpoints` - 查看檢查點狀態\n"
+	dashboard += "• `/status` - 查看代理狀態\n"
+	dashboard += "• `/multiagent status` - 查看多代理系統\n"
+	dashboard += "• 使用下方按鈕快速刷新或查看檢查點\n"
+
+	// Send dashboard with Web App button
+	t.sendDashboardWithWebApp(key, dashboard)
+}
+
+// handleCheckpointsList shows checkpoint information
+func (t *TelegramBot) handleCheckpointsList(key chatKey) {
+	if globalCheckpointManager == nil {
+		t.send(key, "❌ 檢查點系統未啟用")
+		return
+	}
+
+	agent := t.getAgent(key)
+	projectDir := agent.ProjectDir()
+
+	checkpoints, err := globalCheckpointManager.ListCheckpoints(projectDir, 10)
+	if err != nil {
+		t.send(key, fmt.Sprintf("❌ 獲取檢查點列表失敗: %v", err))
+		return
+	}
+
+	response := "📸 *檢查點狀態*\n\n"
+	response += fmt.Sprintf("📂 專案: `%s`\n", projectDir)
+	response += fmt.Sprintf("📊 總數: %d 個檢查點\n\n", len(checkpoints))
+
+	if len(checkpoints) == 0 {
+		response += "🔍 目前沒有檢查點\n\n"
+		response += "*提示*: 檢查點會在危險操作前自動創建"
+	} else {
+		response += "*最近的檢查點*:\n"
+		for i, cp := range checkpoints {
+			if i >= 5 { // 最多顯示 5 個
+				break
+			}
+			response += fmt.Sprintf("• `%s`\n", cp.ID[:12])
+			response += fmt.Sprintf("  📝 %s\n", cp.Description)
+			response += fmt.Sprintf("  📅 %s\n", cp.Timestamp.Format("01/02 15:04"))
+			response += fmt.Sprintf("  💾 %d bytes\n\n", cp.Size)
+		}
+	}
+
+	t.sendMarkdown(key, response)
+}
+
+// handleCheckpointsStats shows checkpoint statistics
+func (t *TelegramBot) handleCheckpointsStats(key chatKey) {
+	if globalCheckpointManager == nil {
+		t.send(key, "❌ 檢查點系統未啟用")
+		return
+	}
+
+	agent := t.getAgent(key)
+	projectDir := agent.ProjectDir()
+
+	stats, err := globalCheckpointManager.GetCheckpointStats(projectDir)
+	if err != nil {
+		t.send(key, fmt.Sprintf("❌ 獲取檢查點統計失敗: %v", err))
+		return
+	}
+
+	response := "📈 *檢查點統計*\n\n"
+	response += fmt.Sprintf("📂 專案: `%s`\n\n", projectDir)
+
+	if totalCheckpoints, ok := stats["total_checkpoints"].(int64); ok {
+		response += fmt.Sprintf("📊 總檢查點: %d\n", totalCheckpoints)
+	}
+
+	if totalSize, ok := stats["total_size"].(int64); ok {
+		response += fmt.Sprintf("💾 總大小: %d bytes\n", totalSize)
+	}
+
+	if avgSize, ok := stats["average_size"].(float64); ok {
+		response += fmt.Sprintf("📏 平均大小: %.1f bytes\n", avgSize)
+	}
+
+	response += "\n🔄 *自動檢查點觸發*:\n"
+	response += "• 檔案寫入/修改操作\n"
+	response += "• 危險命令執行 (rm, mv 等)\n"
+	response += "• 重要配置變更\n"
+
+	t.sendMarkdown(key, response)
+}
+
+// sendDashboardWithWebApp sends dashboard with refresh button
+func (t *TelegramBot) sendDashboardWithWebApp(key chatKey, text string) {
+	// Create inline keyboard with refresh button only (Web App requires HTTPS)
+	keyboard := map[string]interface{}{
+		"inline_keyboard": [][]map[string]interface{}{
+			{
+				{
+					"text": "🔄 刷新狀態",
+					"callback_data": "refresh_dashboard",
+				},
+				{
+					"text": "📸 檢查檢查點",
+					"callback_data": "show_checkpoints",
+				},
+			},
+		},
+	}
+
+	msg := map[string]interface{}{
+		"chat_id":      key.chatID,
+		"text":         text,
+		"parse_mode":   "Markdown",
+		"reply_markup": keyboard,
+	}
+
+	if key.threadID != 0 {
+		msg["message_thread_id"] = key.threadID
+	}
+
+	t.sendTelegram("sendMessage", msg)
+}
+
+// handleCallbackQuery handles inline keyboard button clicks
+func (t *TelegramBot) handleCallbackQuery(key chatKey, userID int64, queryID, data string) {
+	// Check permissions
+	if !t.isAllowed(userID) {
+		t.answerCallbackQuery(queryID, "⛔ 你沒有使用權限。")
+		return
+	}
+
+	// Handle different callback data
+	switch data {
+	case "refresh_dashboard":
+		// Send updated dashboard
+		t.handleDashboard(key)
+		t.answerCallbackQuery(queryID, "✅ 狀態已刷新")
+	case "show_checkpoints":
+		// Show checkpoints for current project
+		t.handleCheckpointsList(key)
+		t.answerCallbackQuery(queryID, "📸 檢查點信息已更新")
+	default:
+		t.answerCallbackQuery(queryID, "❓ 未知操作")
+	}
+}
+
+// answerCallbackQuery answers callback query to remove loading indicator
+func (t *TelegramBot) answerCallbackQuery(queryID, text string) {
+	params := map[string]interface{}{
+		"callback_query_id": queryID,
+		"text":              text,
+	}
+	t.sendTelegram("answerCallbackQuery", params)
+}
+
+// sendTelegram sends JSON data to Telegram API
+func (t *TelegramBot) sendTelegram(method string, params map[string]interface{}) {
+	jsonData, err := json.Marshal(params)
+	if err != nil {
+		log.Printf("Error marshaling Telegram API params: %v", err)
+		return
+	}
+
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/%s", t.config.TelegramToken, method)
+
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Printf("Error calling Telegram API: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("Telegram API error: %s", string(body))
+	}
 }

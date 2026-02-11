@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -201,7 +201,7 @@ func applyTransparencyConfig(config *Config) {
 	}
 }
 
-func main() {
+func Main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
 	config, err := LoadConfig()

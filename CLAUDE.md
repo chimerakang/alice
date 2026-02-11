@@ -10,22 +10,25 @@ Alice (claude-tg-agent) is a Go-based Telegram bot that provides Claude AI agent
 
 ```bash
 # Run directly
-go run .
+go run ./cmd/alice
 
-# Build binary
-go build -o claude-tg-agent .
+# Build binary (via Makefile)
+make go-build
+
+# Build binary (manual)
+go build -o alice ./cmd/alice
 
 # Docker
-docker build -t claude-tg-agent .
+docker build -t alice .
 docker run -d \
   -e ANTHROPIC_API_KEY="..." \
   -e TELEGRAM_BOT_TOKEN="..." \
   -e ALLOWED_USER_IDS="123456789" \
   -v /path/to/project:/project \
-  claude-tg-agent
+  alice
 ```
 
-No test files exist yet. No Makefile or task runner — just `go run .` / `go build`.
+A Makefile is available — run `make help` for all targets.
 
 ## Configuration
 
@@ -50,13 +53,30 @@ Telegram ←→ TelegramBot ←→ Agent (loop) ←→ AnthropicClient
                           ToolExecutor → local filesystem / shell
 ```
 
-All source is in the root package (`package main`), one file per concern:
+### Project Structure
 
-- **main.go** — Entry point, `Config` struct, `LoadConfig()` (config.json + env var merge)
-- **api.go** — `AnthropicClient`, API request/response types (`Message`, `ContentBlock`, `ToolDef`, `APIResponse`), message constructors
-- **agent.go** — `Agent` struct with the core loop (`Run()`). Iterates up to 25 times, calling Claude and executing tools until no more tool calls or `end_turn`. Per-chat conversation `history` management.
-- **tools.go** — `ToolExecutor` and `BuildTools()`. Six tools: `file_read`, `file_write`, `bash`, `file_search`, `list_files`, `file_patch`. Safety limits: 100KB file read, 50KB bash output, 30KB search results, dangerous command blocklist.
-- **telegram.go** — `TelegramBot` with per-chat agent instances (`map[int64]*Agent`), user whitelist, commands (`/help`, `/project`, `/reset`, `/status`), message splitting for Telegram's 4096-char limit.
+```
+cmd/alice/main.go        — Entry point (thin wrapper calling app.Main())
+internal/app/             — All application code (package app)
+  main.go                 — Config, LoadConfig(), Main() initialization
+  agent.go                — Agent core loop, tool/decision logging
+  api.go                  — CLIClient, Claude Code CLI integration
+  telegram.go             — TelegramBot, command handling, per-chat agents
+  web.go                  — WebInterface, REST API, dashboard
+  websocket.go            — WebSocket hub for real-time events
+  storage.go              — SQLiteStorage persistence layer
+  performance.go          — PerformanceMonitor, metrics collection
+  security.go             — SecurityManager, rate limiting, PII detection
+  checkpoint.go           — CheckpointManager, state snapshots
+  multiagent.go           — AgentCoordinator, specialized agents
+  git_integration.go      — GitManager, repository state tracking
+  proto_converters.go     — Proto type conversion helpers
+  tools.go                — ToolExecutor, BuildTools() (6 tools)
+gen/                      — Generated protobuf/gRPC code
+proto/                    — Proto definitions
+web/                      — Static web assets (HTML, CSS, JS)
+docs/                     — Documentation
+```
 
 ## Key Design Decisions
 
@@ -67,10 +87,10 @@ All source is in the root package (`package main`), one file per concern:
 
 ## Adding New Tools
 
-1. Add a `ToolDef` entry in `BuildTools()` in tools.go
+1. Add a `ToolDef` entry in `BuildTools()` in `internal/app/tools.go`
 2. Add a case in `ToolExecutor.Execute()` switch
 3. Implement the handler method on `*ToolExecutor`
 
 ## Dependencies
 
-Single direct dependency: `github.com/go-telegram-bot-api/telegram-bot-api/v5`
+Key dependencies: telegram-bot-api, gorilla/websocket, modernc.org/sqlite, google.golang.org/grpc, google.golang.org/protobuf

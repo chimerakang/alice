@@ -1,7 +1,0 @@
-{
-  "anthropic_key": "test-key",
-  "telegram_token": "test-token",
-  "model": "claude-sonnet-4-20250514",
-  "default_project_dir": "/tmp",
-  "allowed_user_ids": [123456789]
-}

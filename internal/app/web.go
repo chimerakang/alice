@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -78,6 +78,10 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 
 	// Serve dashboard at root
 	mux.HandleFunc("/", wi.handleDashboard)
+
+	// Serve Timeline and Test pages
+	mux.HandleFunc("/timeline.html", wi.handleTimelinePage)
+	mux.HandleFunc("/test-timeline.html", wi.handleTestTimelinePage)
 
 	// API endpoints
 	mux.HandleFunc("/api/health", wi.handleHealth)
@@ -195,6 +199,26 @@ func (wi *WebInterface) handleDashboard(w http.ResponseWriter, r *http.Request) 
 
 	// If no dashboard file found, serve a simple status page
 	wi.handleSimpleDashboard(w, r)
+}
+
+// handleTimelinePage serves the timeline monitoring page
+func (wi *WebInterface) handleTimelinePage(w http.ResponseWriter, r *http.Request) {
+	timelinePath := filepath.Join("web", "timeline.html")
+	if _, err := os.Stat(timelinePath); err == nil {
+		http.ServeFile(w, r, timelinePath)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+// handleTestTimelinePage serves the timeline testing page
+func (wi *WebInterface) handleTestTimelinePage(w http.ResponseWriter, r *http.Request) {
+	testPath := filepath.Join("web", "test-timeline.html")
+	if _, err := os.Stat(testPath); err == nil {
+		http.ServeFile(w, r, testPath)
+		return
+	}
+	http.NotFound(w, r)
 }
 
 // handleSimpleDashboard serves a basic status page when dashboard.html is not available
@@ -1315,6 +1339,16 @@ func (wi *WebInterface) handleDeleteCheckpoint(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Broadcast WebSocket event for real-time monitoring
+	if globalWebSocketHub != nil {
+		deleteEvent := map[string]interface{}{
+			"checkpoint_id": checkpointID,
+			"timestamp":     time.Now(),
+			"action":        "deleted",
+		}
+		globalWebSocketHub.BroadcastEvent("checkpoint_deleted", deleteEvent)
+	}
+
 	response := map[string]interface{}{
 		"success":       true,
 		"checkpoint_id": checkpointID,
@@ -1376,6 +1410,21 @@ func (wi *WebInterface) handleCreateCheckpoint(w http.ResponseWriter, r *http.Re
 			log.Printf("Error creating checkpoint: %v", err)
 			http.Error(w, fmt.Sprintf("Failed to create checkpoint: %v", err), http.StatusInternalServerError)
 			return
+		}
+
+		// Broadcast WebSocket event for real-time monitoring
+		if globalWebSocketHub != nil {
+			checkpointEvent := map[string]interface{}{
+				"checkpoint_id": checkpoint.ID,
+				"project_dir":   checkpoint.ProjectDir,
+				"description":   checkpoint.Description,
+				"trigger_type":  checkpoint.TriggerType,
+				"session_id":    checkpoint.SessionID,
+				"chat_id":       checkpoint.ChatID,
+				"timestamp":     checkpoint.Timestamp,
+				"size":          checkpoint.Size,
+			}
+			globalWebSocketHub.BroadcastEvent("checkpoint_created", checkpointEvent)
 		}
 
 		response := map[string]interface{}{

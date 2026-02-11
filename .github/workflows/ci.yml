@@ -9,7 +9,7 @@ on:
     types: [ published ]
 
 env:
-  GO_VERSION: '1.21'
+  GO_VERSION: '1.24'
   DOCKER_REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: ['1.20', '1.21']
+        go-version: ['1.23', '1.24']
 
     steps:
     - name: Checkout code
@@ -57,7 +57,7 @@ jobs:
         go tool cover -html=coverage.out -o coverage.html
 
     - name: Upload coverage to Codecov
-      if: matrix.go-version == '1.21'
+      if: matrix.go-version == '1.24'
       uses: codecov/codecov-action@v3
       with:
         file: ./coverage.out
@@ -65,19 +65,19 @@ jobs:
         name: codecov-umbrella
 
     - name: Run security scan with Gosec
-      if: matrix.go-version == '1.21'
+      if: matrix.go-version == '1.24'
       uses: securecodewarrior/github-action-gosec@master
       with:
         args: './...'
 
     - name: Run dependency vulnerability check
-      if: matrix.go-version == '1.21'
+      if: matrix.go-version == '1.24'
       run: |
         go install github.com/sonatypecommunity/nancy@latest
         go list -json -m all | nancy sleuth
 
     - name: Static analysis with StaticCheck
-      if: matrix.go-version == '1.21'
+      if: matrix.go-version == '1.24'
       uses: dominikh/staticcheck-action@v1.3.0
       with:
         version: "2023.1.6"

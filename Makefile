@@ -44,7 +44,7 @@ go-mod-tidy:
 # Build Go application
 go-build:
 	@echo "🏗️  Building Go application..."
-	go build -o alice .
+	go build -o alice ./cmd/alice
 	@echo "✅ Go build complete"
 
 # Run tests
@@ -100,8 +100,8 @@ docker-build:
 # Run development server with hot reload
 dev:
 	@echo "🚀 Starting development server..."
-	go run . &
-	fswatch -o . | xargs -n1 -I{} sh -c 'pkill -f "go run" && go run . &'
+	go run ./cmd/alice &
+	fswatch -o . | xargs -n1 -I{} sh -c 'pkill -f "go run" && go run ./cmd/alice &'
 
 # Production build
 prod-build: proto go-build
