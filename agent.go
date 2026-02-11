@@ -320,6 +320,9 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	var toolCallsForDecision []ToolExecution
 
 	resp, err := a.client.CallStream(userMessage, a.projectDir, ps.sessionID, func(toolName string, toolInput map[string]interface{}) {
+		// Check if we should create a checkpoint before executing this tool
+		a.checkAndCreateCheckpoint(toolName, toolInput)
+
 		// Log tool execution start
 		globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID)
 
@@ -705,4 +708,61 @@ func (a *Agent) isSensitiveKey(key string) bool {
 	}
 
 	return false
+}
+
+// checkAndCreateCheckpoint checks if a checkpoint should be created before executing a tool
+func (a *Agent) checkAndCreateCheckpoint(toolName string, toolInput map[string]interface{}) {
+	// Check if checkpoint manager is available and enabled
+	if globalCheckpointManager == nil || !globalCheckpointManager.IsEnabled() {
+		return
+	}
+
+	// Check if this operation requires a checkpoint
+	shouldCreate, dangerousOp, description := globalCheckpointManager.ShouldCreateCheckpoint(toolName, toolInput)
+	if !shouldCreate {
+		return
+	}
+
+	// Extract session information
+	sessionID := ""
+	// For now, we'll use a simple session ID based on chat ID
+	sessionID = fmt.Sprintf("chat_%d", a.chatID)
+
+	// Create checkpoint
+	log.Printf("Creating checkpoint before %s operation (chat: %d)", toolName, a.chatID)
+
+	checkpoint, err := globalCheckpointManager.CreateCheckpoint(
+		a.projectDir,
+		description,
+		TriggerPreDanger,
+		sessionID,
+		a.chatID,
+		fmt.Sprintf("%s: %s", toolName, dangerousOp.Description),
+	)
+
+	if err != nil {
+		log.Printf("Warning: Failed to create checkpoint before %s: %v", toolName, err)
+		return
+	}
+
+	log.Printf("Checkpoint %s created successfully before %s operation", checkpoint.ID, toolName)
+
+	// Broadcast checkpoint event via WebSocket if available
+	if globalWebSocketHub != nil {
+		checkpointEvent := map[string]interface{}{
+			"event_type":     "checkpoint_created",
+			"checkpoint_id":  checkpoint.ID,
+			"tool_name":      toolName,
+			"chat_id":        a.chatID,
+			"project_dir":    a.projectDir,
+			"description":    description,
+			"trigger_type":   string(TriggerPreDanger),
+			"dangerous_op":   dangerousOp.Description,
+			"risk_level":     dangerousOp.RiskLevel.String(),
+			"timestamp":      checkpoint.Timestamp,
+		}
+
+		// Use the correct broadcast method
+		globalWebSocketHub.BroadcastEvent("checkpoint_created", checkpointEvent)
+	}
 }

@@ -1,9 +1,20 @@
-# Binary
+# Binaries
 claude-tg-agent
+alice
+alice-main
+alice-test
+alice-websocket
+test-websocket
 
 # Config with secrets
 config.json
+config.json.backup
 .env
+
+# Database and data
+data/
+*.db
+*.sqlite
 
 # Security files
 *.pem

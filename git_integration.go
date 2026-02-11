@@ -425,11 +425,13 @@ var (
 	gitManager          *GitManager
 	gitOperationManager *GitOperationManager
 	gitEventLogger      *GitEventLogger
+	globalGitManager    *GitManager // Global reference for checkpoint system
 )
 
 // InitGitIntegration initializes the Git integration system
 func InitGitIntegration() {
 	gitManager = NewGitManager()
+	globalGitManager = gitManager // Set global reference
 	gitOperationManager = NewGitOperationManager(gitManager)
 	gitEventLogger = NewGitEventLogger()
 }

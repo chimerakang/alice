@@ -266,6 +266,18 @@ func main() {
 	InitWebSocket()
 	log.Printf("   WebSocket real-time events: enabled")
 
+	// Initialize Checkpoint system
+	if config.EnablePersistence && globalStorage != nil && globalGitManager != nil {
+		if err := InitCheckpointManager(globalStorage, globalGitManager); err != nil {
+			log.Printf("⚠️ Warning: failed to initialize checkpoint system: %v", err)
+			log.Printf("   Continuing without checkpoint functionality")
+		} else {
+			log.Printf("   Checkpoint system: enabled (auto-snapshots for dangerous operations)")
+		}
+	} else {
+		log.Printf("   Checkpoint system: disabled (requires persistence and git integration)")
+	}
+
 	// Initialize security manager
 	if err := InitSecurity(config.Security); err != nil {
 		log.Printf("❌ Security initialization failed: %v", err)

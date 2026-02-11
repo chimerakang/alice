@@ -127,24 +127,38 @@
                     </div>
                 </div>
 
-                <!-- Status Indicator -->
-                <div class="flex items-center space-x-4">
-                    <div class="flex items-center space-x-2">
-                        <div class="w-2 h-2 bg-status-success rounded-full animate-pulse-slow status-glow"></div>
-                        <span class="text-sm text-gray-300 font-mono">ONLINE</span>
-                    </div>
+                <!-- Navigation -->
+                <div class="flex items-center space-x-6">
+                    <nav class="flex items-center space-x-4">
+                        <a href="index.html" class="text-dashboard-primary text-sm font-medium">
+                            Dashboard
+                        </a>
+                        <a href="timeline.html" class="text-gray-400 hover:text-white text-sm transition-colors">
+                            Timeline
+                        </a>
+                    </nav>
 
-                    <!-- WebSocket Status -->
-                    <div class="flex items-center space-x-2">
-                        <span class="websocket-status text-xs text-gray-400 font-mono">🔴 Connecting...</span>
-                    </div>
+                    <div class="w-px h-6 bg-gray-700"></div>
 
-                    <!-- Refresh Button -->
-                    <button id="refreshBtn" class="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors cursor-pointer">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                        </svg>
-                    </button>
+                    <!-- Status Indicator -->
+                    <div class="flex items-center space-x-4">
+                        <div class="flex items-center space-x-2">
+                            <div class="w-2 h-2 bg-status-success rounded-full animate-pulse-slow status-glow"></div>
+                            <span class="text-sm text-gray-300 font-mono">ONLINE</span>
+                        </div>
+
+                        <!-- WebSocket Status -->
+                        <div class="flex items-center space-x-2">
+                            <span class="websocket-status text-xs text-gray-400 font-mono">🔴 Connecting...</span>
+                        </div>
+
+                        <!-- Refresh Button -->
+                        <button id="refreshBtn" class="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors cursor-pointer">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                            </svg>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Alice Timeline & Terminal - Test Suite</title>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- CSS -->
+    <link rel="stylesheet" href="css/timeline.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+
+    <script>
+        // Tailwind Config
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        'mono': ['Fira Code', 'monospace'],
+                        'sans': ['Fira Sans', 'sans-serif']
+                    },
+                    colors: {
+                        'deep-black': '#000000',
+                        'dark-grey': '#121212',
+                        'dashboard-primary': '#3B82F6',
+                        'dashboard-secondary': '#60A5FA',
+                        'dashboard-cta': '#F97316',
+                        'status-success': '#22C55E',
+                        'status-warning': '#F59E0B',
+                        'status-error': '#EF4444',
+                        'status-info': '#3B82F6'
+                    },
+                    boxShadow: {
+                        'dark-card': '0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3)'
+                    },
+                    animation: {
+                        'fade-in': 'fadeIn 0.5s ease-in-out',
+                        'slide-up': 'slideUp 0.3s ease-out',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(20px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+    </style>
+</head>
+<body class="bg-deep-black text-gray-100 font-sans min-h-screen">
+
+    <!-- Header -->
+    <header class="bg-dark-grey/90 backdrop-blur border-b border-gray-800 p-4">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <h1 class="text-2xl font-bold text-white">Timeline & Terminal Test Suite</h1>
+            <div class="flex items-center space-x-4">
+                <button id="startTest" class="bg-dashboard-primary hover:bg-dashboard-primary/80 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                    Start Test
+                </button>
+                <button id="stopTest" class="bg-status-error hover:bg-status-error/80 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                    Stop Test
+                </button>
+                <button id="clearAll" class="bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                    Clear All
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Test Controls -->
+    <div class="max-w-7xl mx-auto p-6">
+        <div class="bg-dark-grey border border-gray-800 rounded-xl p-6 mb-6">
+            <h2 class="text-lg font-semibold text-white mb-4">Test Controls</h2>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <!-- Timeline Tests -->
+                <div class="space-y-3">
+                    <h3 class="text-sm font-medium text-gray-300">Timeline Tests</h3>
+                    <button id="testToolExecution" class="w-full bg-dashboard-primary/10 hover:bg-dashboard-primary/20 text-dashboard-primary border border-dashboard-primary/30 px-3 py-2 rounded text-sm transition-colors">
+                        Test Tool Execution
+                    </button>
+                    <button id="testDecision" class="w-full bg-dashboard-secondary/10 hover:bg-dashboard-secondary/20 text-dashboard-secondary border border-dashboard-secondary/30 px-3 py-2 rounded text-sm transition-colors">
+                        Test AI Decision
+                    </button>
+                    <button id="testPerformance" class="w-full bg-dashboard-cta/10 hover:bg-dashboard-cta/20 text-dashboard-cta border border-dashboard-cta/30 px-3 py-2 rounded text-sm transition-colors">
+                        Test Performance Metric
+                    </button>
+                </div>
+
+                <!-- Terminal Tests -->
+                <div class="space-y-3">
+                    <h3 class="text-sm font-medium text-gray-300">Terminal Tests</h3>
+                    <button id="testTerminalOutput" class="w-full bg-status-success/10 hover:bg-status-success/20 text-status-success border border-status-success/30 px-3 py-2 rounded text-sm transition-colors">
+                        Test Terminal Output
+                    </button>
+                    <button id="testErrorOutput" class="w-full bg-status-error/10 hover:bg-status-error/20 text-status-error border border-status-error/30 px-3 py-2 rounded text-sm transition-colors">
+                        Test Error Output
+                    </button>
+                    <button id="testSecurityAlert" class="w-full bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 border border-purple-500/30 px-3 py-2 rounded text-sm transition-colors">
+                        Test Security Alert
+                    </button>
+                </div>
+
+                <!-- Integration Tests -->
+                <div class="space-y-3">
+                    <h3 class="text-sm font-medium text-gray-300">Integration Tests</h3>
+                    <button id="testWebSocket" class="w-full bg-gray-700/50 hover:bg-gray-700 text-gray-300 border border-gray-600 px-3 py-2 rounded text-sm transition-colors">
+                        Test WebSocket Connection
+                    </button>
+                    <button id="testFiltering" class="w-full bg-gray-700/50 hover:bg-gray-700 text-gray-300 border border-gray-600 px-3 py-2 rounded text-sm transition-colors">
+                        Test Event Filtering
+                    </button>
+                    <button id="testPerformance" class="w-full bg-gray-700/50 hover:bg-gray-700 text-gray-300 border border-gray-600 px-3 py-2 rounded text-sm transition-colors">
+                        Test Performance Load
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Components Layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Timeline Component -->
+            <div class="lg:col-span-2">
+                <div id="timelineContainer"></div>
+            </div>
+
+            <!-- Terminal Component -->
+            <div class="lg:col-span-1">
+                <div id="terminalContainer"></div>
+            </div>
+        </div>
+
+        <!-- Test Results -->
+        <div class="mt-6 bg-dark-grey border border-gray-800 rounded-xl p-6">
+            <h2 class="text-lg font-semibold text-white mb-4">Test Results</h2>
+            <div id="testResults" class="space-y-2 text-sm font-mono">
+                <div class="text-gray-400">Ready to run tests...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mock WebSocket for Testing -->
+    <script>
+        class MockWebSocketClient {
+            constructor() {
+                this.eventListeners = new Map();
+                this.isConnected = false;
+            }
+
+            on(eventType, callback) {
+                if (!this.eventListeners.has(eventType)) {
+                    this.eventListeners.set(eventType, []);
+                }
+                this.eventListeners.get(eventType).push(callback);
+            }
+
+            off(eventType, callback) {
+                if (this.eventListeners.has(eventType)) {
+                    const listeners = this.eventListeners.get(eventType);
+                    const index = listeners.indexOf(callback);
+                    if (index !== -1) {
+                        listeners.splice(index, 1);
+                    }
+                }
+            }
+
+            emit(eventType, data) {
+                if (this.eventListeners.has(eventType)) {
+                    this.eventListeners.get(eventType).forEach(callback => {
+                        try {
+                            callback(data);
+                        } catch (error) {
+                            console.error(`Error in event listener for ${eventType}:`, error);
+                        }
+                    });
+                }
+            }
+
+            connect() {
+                setTimeout(() => {
+                    this.isConnected = true;
+                    this.emit('connected', {});
+                }, 100);
+            }
+
+            disconnect() {
+                this.isConnected = false;
+                this.emit('disconnected', {});
+            }
+
+            // Mock WebSocket methods
+            send() {}
+            getStats() { return { connected: this.isConnected }; }
+        }
+
+        // Override the global WebSocket client for testing
+        window.AliceWebSocketClient = MockWebSocketClient;
+    </script>
+
+    <!-- Load Components -->
+    <script src="js/timeline.js"></script>
+    <script src="js/terminal.js"></script>
+
+    <!-- Test Suite -->
+    <script>
+        let timeline = null;
+        let terminal = null;
+        let mockWsClient = null;
+        let testRunning = false;
+        let testInterval = null;
+        let testCount = 0;
+
+        // Initialize components
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeComponents();
+            setupTestControls();
+            logTestResult('Test suite initialized', 'info');
+        });
+
+        function initializeComponents() {
+            // Initialize Timeline
+            timeline = new AliceTimeline('#timelineContainer', {
+                maxItems: 100,
+                autoScroll: true,
+                showFilters: true,
+                height: '500px'
+            });
+
+            // Initialize Terminal
+            terminal = new AliceTerminal('#terminalContainer', {
+                maxLines: 200,
+                autoScroll: true,
+                showTimestamps: true,
+                height: '500px'
+            });
+
+            // Create mock WebSocket client
+            mockWsClient = new MockWebSocketClient();
+            mockWsClient.connect();
+
+            // Override WebSocket clients in components
+            timeline.wsClient = mockWsClient;
+            terminal.wsClient = mockWsClient;
+
+            logTestResult('Timeline and Terminal components initialized', 'success');
+        }
+
+        function setupTestControls() {
+            // Start/Stop test buttons
+            document.getElementById('startTest').addEventListener('click', startAutomatedTest);
+            document.getElementById('stopTest').addEventListener('click', stopAutomatedTest);
+            document.getElementById('clearAll').addEventListener('click', clearAll);
+
+            // Individual test buttons
+            document.getElementById('testToolExecution').addEventListener('click', () => testToolExecution());
+            document.getElementById('testDecision').addEventListener('click', () => testDecision());
+            document.getElementById('testPerformance').addEventListener('click', () => testPerformanceMetric());
+            document.getElementById('testTerminalOutput').addEventListener('click', () => testTerminalOutput());
+            document.getElementById('testErrorOutput').addEventListener('click', () => testErrorOutput());
+            document.getElementById('testSecurityAlert').addEventListener('click', () => testSecurityAlert());
+            document.getElementById('testWebSocket').addEventListener('click', () => testWebSocketConnection());
+            document.getElementById('testFiltering').addEventListener('click', () => testEventFiltering());
+        }
+
+        function startAutomatedTest() {
+            if (testRunning) return;
+
+            testRunning = true;
+            testCount = 0;
+            logTestResult('Starting automated test sequence...', 'info');
+
+            testInterval = setInterval(() => {
+                const tests = [
+                    testToolExecution,
+                    testDecision,
+                    testPerformanceMetric,
+                    testTerminalOutput,
+                    testErrorOutput,
+                    testSecurityAlert
+                ];
+
+                const randomTest = tests[Math.floor(Math.random() * tests.length)];
+                randomTest();
+
+                testCount++;
+                if (testCount >= 100) {
+                    stopAutomatedTest();
+                }
+            }, 1000);
+        }
+
+        function stopAutomatedTest() {
+            testRunning = false;
+            if (testInterval) {
+                clearInterval(testInterval);
+                testInterval = null;
+            }
+            logTestResult(`Automated test stopped after ${testCount} events`, 'info');
+        }
+
+        function clearAll() {
+            timeline.clearTimeline();
+            terminal.clear();
+            document.getElementById('testResults').innerHTML = '<div class="text-gray-400">Test results cleared...</div>';
+        }
+
+        // Test Functions
+        function testToolExecution() {
+            const tools = ['Read', 'Write', 'Bash', 'Grep', 'Edit', 'List'];
+            const tool = tools[Math.floor(Math.random() * tools.length)];
+            const chatId = 12345 + Math.floor(Math.random() * 10);
+            const success = Math.random() > 0.2;
+
+            // Tool start
+            mockWsClient.emit('tool_execution_start', {
+                data: {
+                    tool_name: tool,
+                    chat_id: chatId,
+                    thread_id: 1,
+                    timestamp: new Date().toISOString()
+                }
+            });
+
+            // Tool completion after delay
+            setTimeout(() => {
+                mockWsClient.emit('tool_execution', {
+                    data: {
+                        tool_name: tool,
+                        status: success ? 'success' : 'error',
+                        duration_ms: Math.floor(Math.random() * 3000) + 100,
+                        chat_id: chatId,
+                        thread_id: 1,
+                        error: success ? '' : `Sample error for ${tool}`
+                    }
+                });
+            }, Math.random() * 2000 + 500);
+
+            logTestResult(`Tool execution test: ${tool}`, 'success');
+        }
+
+        function testDecision() {
+            const taskTypes = ['code_generation', 'file_analysis', 'debugging', 'refactoring', 'planning'];
+            const taskType = taskTypes[Math.floor(Math.random() * taskTypes.length)];
+            const success = Math.random() > 0.3;
+            const chatId = 12345 + Math.floor(Math.random() * 10);
+
+            mockWsClient.emit('decision_complete', {
+                data: {
+                    session_id: 'test_session',
+                    project_path: '/test/project',
+                    chat_id: chatId,
+                    success: success,
+                    task_type: taskType,
+                    duration_ms: Math.floor(Math.random() * 5000) + 1000,
+                    tokens_input: Math.floor(Math.random() * 800) + 200,
+                    tokens_output: Math.floor(Math.random() * 1200) + 300
+                }
+            });
+
+            logTestResult(`Decision test: ${taskType} - ${success ? 'SUCCESS' : 'PARTIAL'}`, 'success');
+        }
+
+        function testPerformanceMetric() {
+            const toolTypes = ['read', 'write', 'bash', 'search', 'edit'];
+            const toolType = toolTypes[Math.floor(Math.random() * toolTypes.length)];
+
+            mockWsClient.emit('performance_metric', {
+                data: {
+                    api_latency_ms: Math.floor(Math.random() * 1500) + 100,
+                    api_success: Math.random() > 0.1,
+                    tool_execution_time: Math.floor(Math.random() * 800) + 50,
+                    tool_execution_type: toolType,
+                    tokens_used: Math.floor(Math.random() * 400) + 100,
+                    memory_usage: Math.floor(Math.random() * 2097152) + 1048576,
+                    chat_id: 12345 + Math.floor(Math.random() * 10)
+                }
+            });
+
+            logTestResult(`Performance metric test: ${toolType}`, 'success');
+        }
+
+        function testTerminalOutput() {
+            terminal.addCustomLine('Test terminal output message', 'info', '📝');
+            terminal.addCustomLine('Simulating bash command execution...', 'success', '💻');
+            terminal.addCustomLine('  └─ Command completed successfully', 'debug');
+            logTestResult('Terminal output test completed', 'success');
+        }
+
+        function testErrorOutput() {
+            terminal.addCustomLine('Simulating error condition...', 'error', '❌');
+            terminal.addCustomLine('  └─ Error: Permission denied', 'error');
+            terminal.addCustomLine('  └─ Retrying with elevated permissions...', 'warning', '⚠️');
+            logTestResult('Error output test completed', 'success');
+        }
+
+        function testSecurityAlert() {
+            const severities = ['low', 'medium', 'high', 'critical'];
+            const eventTypes = ['rate_limit_exceeded', 'unauthorized_access', 'suspicious_activity', 'malware_detected'];
+
+            const severity = severities[Math.floor(Math.random() * severities.length)];
+            const eventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
+
+            mockWsClient.emit('security_alert', {
+                data: {
+                    event_id: 'test_' + Date.now(),
+                    event_type: eventType,
+                    severity: severity,
+                    description: `Test security alert: ${eventType}`,
+                    user_id: 12345,
+                    ip: `192.168.1.${Math.floor(Math.random() * 254) + 1}`,
+                    mitigated: Math.random() > 0.5
+                }
+            });
+
+            logTestResult(`Security alert test: ${severity} - ${eventType}`, 'success');
+        }
+
+        function testWebSocketConnection() {
+            mockWsClient.disconnect();
+            logTestResult('WebSocket disconnected for test', 'warning');
+
+            setTimeout(() => {
+                mockWsClient.connect();
+                logTestResult('WebSocket reconnected', 'success');
+            }, 2000);
+        }
+
+        function testEventFiltering() {
+            // Generate multiple event types quickly
+            testToolExecution();
+            setTimeout(testDecision, 200);
+            setTimeout(testPerformanceMetric, 400);
+            setTimeout(testSecurityAlert, 600);
+
+            logTestResult('Event filtering test: Generated multiple event types', 'success');
+        }
+
+        function logTestResult(message, type) {
+            const results = document.getElementById('testResults');
+            const timestamp = new Date().toLocaleTimeString();
+            const typeClasses = {
+                'info': 'text-blue-400',
+                'success': 'text-green-400',
+                'warning': 'text-yellow-400',
+                'error': 'text-red-400'
+            };
+
+            const colorClass = typeClasses[type] || 'text-gray-400';
+            const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : type === 'warning' ? '⚠️' : 'ℹ️';
+
+            const logEntry = document.createElement('div');
+            logEntry.className = `${colorClass} animate-fade-in`;
+            logEntry.innerHTML = `${icon} [${timestamp}] ${message}`;
+
+            results.appendChild(logEntry);
+
+            // Keep only last 20 results
+            if (results.children.length > 20) {
+                results.removeChild(results.firstChild);
+            }
+        }
+    </script>
+</body>
+</html>

@@ -44,6 +44,9 @@ type Storage interface {
 	// Connection Management
 	Close() error
 	Health() error
+
+	// Database Access (for advanced operations like checkpoints)
+	GetDB() interface{} // Returns underlying database connection
 }
 
 // SQLiteStorage SQLite 實作
@@ -716,6 +719,11 @@ func (s *SQLiteStorage) Close() error {
 // Health 檢查資料庫健康狀態
 func (s *SQLiteStorage) Health() error {
 	return s.db.Ping()
+}
+
+// GetDB 返回底層資料庫連接
+func (s *SQLiteStorage) GetDB() interface{} {
+	return s.db
 }
 
 // GetDatabaseStats 獲取資料庫統計資訊

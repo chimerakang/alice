@@ -116,6 +116,12 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/storage/stats", wi.handleStorageStats)
 	mux.HandleFunc("/api/storage/cleanup", wi.handleStorageCleanup)
 
+	// Checkpoint & Snapshot APIs
+	mux.HandleFunc("/api/checkpoints", wi.handleCheckpoints)
+	mux.HandleFunc("/api/checkpoints/create", wi.handleCreateCheckpoint)
+	mux.HandleFunc("/api/checkpoints/restore", wi.handleRestoreCheckpoint)
+	mux.HandleFunc("/api/checkpoints/stats", wi.handleCheckpointStats)
+
 	// WebSocket Real-time Events
 	mux.HandleFunc("/ws", wi.handleWebSocket)
 	mux.HandleFunc("/api/websocket/stats", wi.handleWebSocketStats)
@@ -1223,4 +1229,257 @@ func generatePrometheusMetrics() string {
 	}
 
 	return metrics.String()
+}
+
+// ==================== Checkpoint API Handlers ====================
+
+// handleCheckpoints lists checkpoints for a project
+func (wi *WebInterface) handleCheckpoints(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		switch r.Method {
+		case http.MethodGet:
+			wi.handleListCheckpoints(w, r)
+		case http.MethodDelete:
+			wi.handleDeleteCheckpoint(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})(w, r)
+}
+
+// handleListCheckpoints lists checkpoints for a project
+func (wi *WebInterface) handleListCheckpoints(w http.ResponseWriter, r *http.Request) {
+	// Get query parameters
+	projectDir := r.URL.Query().Get("project_dir")
+	if projectDir == "" {
+		http.Error(w, "project_dir parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	limitStr := r.URL.Query().Get("limit")
+	limit := 20 // Default limit
+	if limitStr != "" {
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+
+	// Check if checkpoint manager is available
+	if globalCheckpointManager == nil {
+		http.Error(w, "Checkpoint manager not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Get checkpoints
+	checkpoints, err := globalCheckpointManager.ListCheckpoints(projectDir, limit)
+	if err != nil {
+		log.Printf("Error listing checkpoints: %v", err)
+		http.Error(w, "Failed to list checkpoints", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"checkpoints":  checkpoints,
+		"total_count":  len(checkpoints),
+		"project_dir":  projectDir,
+		"limit":        limit,
+		"timestamp":    time.Now(),
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Error encoding checkpoints response: %v", err)
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+// handleDeleteCheckpoint deletes a specific checkpoint
+func (wi *WebInterface) handleDeleteCheckpoint(w http.ResponseWriter, r *http.Request) {
+	checkpointID := r.URL.Query().Get("id")
+	if checkpointID == "" {
+		http.Error(w, "checkpoint id parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Check if checkpoint manager is available
+	if globalCheckpointManager == nil {
+		http.Error(w, "Checkpoint manager not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Delete checkpoint
+	if err := globalCheckpointManager.DeleteCheckpoint(checkpointID); err != nil {
+		log.Printf("Error deleting checkpoint %s: %v", checkpointID, err)
+		http.Error(w, "Failed to delete checkpoint", http.StatusInternalServerError)
+		return
+	}
+
+	response := map[string]interface{}{
+		"success":       true,
+		"checkpoint_id": checkpointID,
+		"timestamp":     time.Now(),
+	}
+
+	json.NewEncoder(w).Encode(response)
+}
+
+// handleCreateCheckpoint creates a new checkpoint
+func (wi *WebInterface) handleCreateCheckpoint(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse request body
+		var req struct {
+			ProjectDir  string `json:"project_dir"`
+			Description string `json:"description"`
+			SessionID   string `json:"session_id,omitempty"`
+			ChatID      int64  `json:"chat_id,omitempty"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON request", http.StatusBadRequest)
+			return
+		}
+
+		// Validate required fields
+		if req.ProjectDir == "" {
+			http.Error(w, "project_dir is required", http.StatusBadRequest)
+			return
+		}
+
+		if req.Description == "" {
+			req.Description = "Manual checkpoint created via API"
+		}
+
+		// Check if checkpoint manager is available
+		if globalCheckpointManager == nil {
+			http.Error(w, "Checkpoint manager not available", http.StatusServiceUnavailable)
+			return
+		}
+
+		// Create checkpoint
+		checkpoint, err := globalCheckpointManager.CreateCheckpoint(
+			req.ProjectDir,
+			req.Description,
+			TriggerManual,
+			req.SessionID,
+			req.ChatID,
+			"", // No dangerous operation for manual checkpoints
+		)
+		if err != nil {
+			log.Printf("Error creating checkpoint: %v", err)
+			http.Error(w, fmt.Sprintf("Failed to create checkpoint: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		response := map[string]interface{}{
+			"success":    true,
+			"checkpoint": checkpoint,
+			"timestamp":  time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// handleRestoreCheckpoint restores a project to a checkpoint
+func (wi *WebInterface) handleRestoreCheckpoint(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse request body
+		var req struct {
+			CheckpointID string `json:"checkpoint_id"`
+			ProjectDir   string `json:"project_dir"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON request", http.StatusBadRequest)
+			return
+		}
+
+		// Validate required fields
+		if req.CheckpointID == "" {
+			http.Error(w, "checkpoint_id is required", http.StatusBadRequest)
+			return
+		}
+
+		if req.ProjectDir == "" {
+			http.Error(w, "project_dir is required", http.StatusBadRequest)
+			return
+		}
+
+		// Check if checkpoint manager is available
+		if globalCheckpointManager == nil {
+			http.Error(w, "Checkpoint manager not available", http.StatusServiceUnavailable)
+			return
+		}
+
+		// Restore checkpoint
+		if err := globalCheckpointManager.RestoreCheckpoint(req.CheckpointID, req.ProjectDir); err != nil {
+			log.Printf("Error restoring checkpoint %s: %v", req.CheckpointID, err)
+			http.Error(w, fmt.Sprintf("Failed to restore checkpoint: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		response := map[string]interface{}{
+			"success":       true,
+			"checkpoint_id": req.CheckpointID,
+			"project_dir":   req.ProjectDir,
+			"timestamp":     time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// handleCheckpointStats returns checkpoint statistics
+func (wi *WebInterface) handleCheckpointStats(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Get query parameters
+		projectDir := r.URL.Query().Get("project_dir")
+		if projectDir == "" {
+			http.Error(w, "project_dir parameter is required", http.StatusBadRequest)
+			return
+		}
+
+		// Check if checkpoint manager is available
+		if globalCheckpointManager == nil {
+			http.Error(w, "Checkpoint manager not available", http.StatusServiceUnavailable)
+			return
+		}
+
+		// Get checkpoint statistics
+		stats, err := globalCheckpointManager.GetCheckpointStats(projectDir)
+		if err != nil {
+			log.Printf("Error getting checkpoint stats: %v", err)
+			http.Error(w, "Failed to get checkpoint statistics", http.StatusInternalServerError)
+			return
+		}
+
+		// Add manager status
+		stats["manager_enabled"] = globalCheckpointManager.IsEnabled()
+		stats["project_dir"] = projectDir
+		stats["timestamp"] = time.Now()
+
+		json.NewEncoder(w).Encode(stats)
+	})(w, r)
 }
