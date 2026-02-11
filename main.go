@@ -209,6 +209,10 @@ func main() {
 		log.Printf("   Static directory: %s", config.WebStaticDir)
 	}
 
+	// Initialize Git integration
+	InitGitIntegration()
+	log.Printf("   Git integration: enabled")
+
 	// Apply transparency settings
 	if !config.EnableDecisionLogging || config.DecisionLogLevel == "off" {
 		globalDecisionLogger.SetEnabled(false)

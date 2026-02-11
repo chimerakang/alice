@@ -113,6 +113,32 @@ class AliceApiClient {
     async getStats() {
         return this.request('/api/stats');
     }
+
+    // ========== Git Integration API ==========
+
+    async getGitStatus(projectDir) {
+        const params = projectDir ? `?project_dir=${encodeURIComponent(projectDir)}` : '';
+        return this.request(`/api/git/status${params}`);
+    }
+
+    async getGitEvents(limit = 20, projectDir) {
+        const params = new URLSearchParams();
+        if (limit) params.set('limit', limit.toString());
+        if (projectDir) params.set('project_dir', projectDir);
+        const query = params.toString() ? `?${params}` : '';
+        return this.request(`/api/git/events${query}`);
+    }
+
+    async getGitOperations() {
+        return this.request('/api/git/operations');
+    }
+
+    async updateGitOperations(settings) {
+        return this.request('/api/git/operations', {
+            method: 'POST',
+            body: JSON.stringify(settings)
+        });
+    }
 }
 
 /**

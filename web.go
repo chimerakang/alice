@@ -106,6 +106,11 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/security/stats", wi.handleSecurityStatsProto)
 	mux.HandleFunc("/api/security/audit", wi.handleSecurityAuditProto)
 
+	// Git Integration APIs
+	mux.HandleFunc("/api/git/status", wi.handleGitStatus)
+	mux.HandleFunc("/api/git/events", wi.handleGitEvents)
+	mux.HandleFunc("/api/git/operations", wi.handleGitOperations)
+
 	// Prometheus metrics endpoint
 	mux.HandleFunc("/metrics", wi.handlePrometheusMetrics)
 

@@ -33,7 +33,7 @@ func convertToProtoAgentInfo(info AgentInfo) *alicev1.AgentInfo {
 		LastActive:   timestamppb.New(info.LastActivity),
 		TokenStats:   convertToProtoTokenStats(info.Stats),
 		Model:        "", // 需要從配置獲取
-		GitState:     nil, // 暫時為空，後續可以添加 Git 狀態檢測
+		GitState:     getGitStateForProject(info.ProjectDir),
 	}
 }
 
@@ -623,6 +623,170 @@ func (wi *WebInterface) handleSecurityAuditProto(w http.ResponseWriter, r *http.
 			"timestamp":  time.Now(),
 		}
 		writeProtoResponse(w, response)
+	})(w, r)
+}
+
+// getGitStateForProject 獲取專案的 Git 狀態
+func getGitStateForProject(projectDir string) *alicev1.GitState {
+	if gitManager == nil {
+		return nil
+	}
+
+	gitState, err := gitManager.GetGitState(projectDir)
+	if err != nil {
+		// 如果無法獲取 Git 狀態，返回 nil（可能不是 Git 專案）
+		return nil
+	}
+
+	return gitState
+}
+
+// convertToProtoGitEvent 將 GitEvent 轉換為 proto GitEvent（為儀表板使用）
+func convertToProtoGitEvent(event GitEvent) map[string]interface{} {
+	return map[string]interface{}{
+		"timestamp":   event.Timestamp.Format(time.RFC3339),
+		"project_dir": event.ProjectDir,
+		"operation":   event.Operation,
+		"args":        event.Args,
+		"success":     event.Success,
+		"output":      event.Output,
+		"error":       event.Error,
+		"chat_id":     event.ChatID,
+		"thread_id":   event.ThreadID,
+		"user_prompt": event.UserPrompt,
+	}
+}
+
+// ========== Git API Proto Handlers ==========
+
+// handleGitStatus 處理 Git 狀態查詢
+func (wi *WebInterface) handleGitStatus(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// 獲取專案目錄參數
+		projectDir := r.URL.Query().Get("project_dir")
+		if projectDir == "" {
+			projectDir = "." // 預設為當前目錄
+		}
+
+		// 獲取 Git 狀態
+		gitState := getGitStateForProject(projectDir)
+
+		response := map[string]interface{}{
+			"project_dir": projectDir,
+			"git_state":   gitState,
+			"timestamp":   time.Now(),
+		}
+
+		if gitState == nil {
+			response["error"] = "Not a Git repository or Git not available"
+		}
+
+		writeProtoResponse(w, response)
+	})(w, r)
+}
+
+// handleGitEvents 處理 Git 事件查詢
+func (wi *WebInterface) handleGitEvents(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// 解析查詢參數
+		limitStr := r.URL.Query().Get("limit")
+		projectDir := r.URL.Query().Get("project_dir")
+
+		limit := 20 // 預設限制
+		if limitStr != "" {
+			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+				limit = parsedLimit
+			}
+		}
+
+		var events []GitEvent
+		if gitEventLogger != nil {
+			if projectDir != "" {
+				events = gitEventLogger.GetEventsByProject(projectDir, limit)
+			} else {
+				events = gitEventLogger.GetRecentEvents(limit)
+			}
+		}
+
+		// 轉換事件為前端可讀格式
+		protoEvents := make([]map[string]interface{}, len(events))
+		for i, event := range events {
+			protoEvents[i] = convertToProtoGitEvent(event)
+		}
+
+		response := map[string]interface{}{
+			"events":      protoEvents,
+			"total":       len(events),
+			"project_dir": projectDir,
+			"timestamp":   time.Now(),
+		}
+
+		writeProtoResponse(w, response)
+	})(w, r)
+}
+
+// handleGitOperations 處理 Git 操作權限查詢和設定
+func (wi *WebInterface) handleGitOperations(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method == "GET" {
+			// 獲取當前操作權限
+			var permissions map[string]bool
+			if gitOperationManager != nil {
+				permissions = gitOperationManager.GetOperationPermissions()
+			} else {
+				permissions = map[string]bool{}
+			}
+
+			response := map[string]interface{}{
+				"permissions": permissions,
+				"safety_mode": gitOperationManager != nil && gitOperationManager.safetyMode,
+				"timestamp":   time.Now(),
+			}
+
+			writeProtoResponse(w, response)
+
+		} else if r.Method == "POST" {
+			// 更新操作權限（僅限管理員）
+			var request struct {
+				Operation string `json:"operation"`
+				Allowed   bool   `json:"allowed"`
+				SafetyMode *bool  `json:"safety_mode,omitempty"`
+			}
+
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				writeProtoError(w, "Invalid JSON request", http.StatusBadRequest)
+				return
+			}
+
+			if gitOperationManager != nil {
+				if request.SafetyMode != nil {
+					gitOperationManager.EnableSafetyMode(*request.SafetyMode)
+				}
+
+				if request.Operation != "" {
+					gitOperationManager.AllowOperation(request.Operation, request.Allowed)
+				}
+			}
+
+			// 返回更新後的權限
+			permissions := gitOperationManager.GetOperationPermissions()
+			response := map[string]interface{}{
+				"permissions": permissions,
+				"safety_mode": gitOperationManager.safetyMode,
+				"updated":     true,
+				"timestamp":   time.Now(),
+			}
+
+			writeProtoResponse(w, response)
+		} else {
+			writeProtoError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
 	})(w, r)
 }
 

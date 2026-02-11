@@ -40,6 +40,11 @@ class AliceDashboard {
 
         // Window focus/blur
         window.addEventListener('focus', () => this.refresh());
+
+        // Git refresh button
+        document.getElementById('refreshGitBtn')?.addEventListener('click', () => {
+            this.refreshGitInfo();
+        });
     }
 
     async loadDashboard() {
@@ -55,13 +60,17 @@ class AliceDashboard {
                 toolsData,
                 decisionsData,
                 toolStatsData,
-                multiAgentStatus
+                multiAgentStatus,
+                gitStatusData,
+                gitEventsData
             ] = await Promise.all([
                 this.loadAgents(),
                 this.loadTools(),
                 this.loadDecisions(),
                 this.loadToolStats(),
-                this.loadMultiAgentStatus()
+                this.loadMultiAgentStatus(),
+                this.loadGitStatus(),
+                this.loadGitEvents()
             ]);
 
             // Update metrics
@@ -71,6 +80,7 @@ class AliceDashboard {
             this.updateAgentsList(agentsData);
             this.updateToolsList(toolsData);
             this.updateDecisionsList(decisionsData);
+            this.updateGitInfo(gitStatusData, gitEventsData);
 
             // Update charts
             window.chartManager?.updateCharts({
@@ -138,6 +148,24 @@ class AliceDashboard {
         } catch (error) {
             console.warn('Failed to load multi-agent status:', error);
             return { coordinator_status: 'unknown', active_tasks: 0 };
+        }
+    }
+
+    async loadGitStatus() {
+        try {
+            return await window.aliceApi.getGitStatus();
+        } catch (error) {
+            console.warn('Failed to load Git status:', error);
+            return { git_state: null };
+        }
+    }
+
+    async loadGitEvents() {
+        try {
+            return await window.aliceApi.getGitEvents(10);
+        } catch (error) {
+            console.warn('Failed to load Git events:', error);
+            return { events: [] };
         }
     }
 
@@ -288,6 +316,162 @@ class AliceDashboard {
         }).join('');
 
         container.innerHTML = html;
+    }
+
+    updateGitInfo(gitStatusData, gitEventsData) {
+        this.updateGitStatusCard(gitStatusData);
+        this.updateGitRepositoryInfo(gitStatusData);
+        this.updateGitEventsList(gitEventsData);
+    }
+
+    updateGitStatusCard(gitStatusData) {
+        const branchElement = document.getElementById('gitBranch');
+        const statusElement = document.getElementById('gitStatus');
+
+        if (!branchElement || !statusElement) return;
+
+        if (gitStatusData && gitStatusData.git_state) {
+            const gitState = gitStatusData.git_state;
+            branchElement.textContent = gitState.branch || 'Unknown';
+
+            let statusText = 'Clean';
+            let statusClass = 'text-status-success';
+
+            if (gitState.is_dirty) {
+                statusText = `${gitState.modified_files?.length || 0} modified`;
+                statusClass = 'text-status-warning';
+            }
+
+            statusElement.textContent = statusText;
+            statusElement.className = `text-xs mt-1 ${statusClass}`;
+        } else {
+            branchElement.textContent = 'No Repository';
+            statusElement.textContent = 'Not a Git repository';
+            statusElement.className = 'text-xs mt-1 text-gray-400';
+        }
+    }
+
+    updateGitRepositoryInfo(gitStatusData) {
+        const container = document.getElementById('gitRepositoryInfo');
+        if (!container) return;
+
+        if (!gitStatusData || !gitStatusData.git_state) {
+            container.innerHTML = `
+                <div class="text-center py-6 text-gray-400">
+                    <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                    </svg>
+                    <p class="text-sm">No Git repository found</p>
+                    <p class="text-xs text-gray-500">Initialize Git or check project directory</p>
+                </div>
+            `;
+            return;
+        }
+
+        const gitState = gitStatusData.git_state;
+        const isDirty = gitState.is_dirty;
+        const statusColor = isDirty ? 'text-status-warning' : 'text-status-success';
+        const statusIcon = isDirty ? '⚠️' : '✅';
+
+        const html = `
+            <div class="space-y-3">
+                <div class="flex items-center justify-between p-3 bg-gray-800/30 rounded-lg">
+                    <span class="text-sm text-gray-400">Branch</span>
+                    <span class="font-mono text-white">${gitState.branch || 'Unknown'}</span>
+                </div>
+                <div class="flex items-center justify-between p-3 bg-gray-800/30 rounded-lg">
+                    <span class="text-sm text-gray-400">Commit</span>
+                    <span class="font-mono text-gray-300 text-sm">${gitState.commit_hash || 'N/A'}</span>
+                </div>
+                <div class="flex items-center justify-between p-3 bg-gray-800/30 rounded-lg">
+                    <span class="text-sm text-gray-400">Status</span>
+                    <span class="${statusColor} text-sm font-medium">${statusIcon} ${isDirty ? 'Modified' : 'Clean'}</span>
+                </div>
+                ${gitState.remote_url ? `
+                <div class="flex items-center justify-between p-3 bg-gray-800/30 rounded-lg">
+                    <span class="text-sm text-gray-400">Remote</span>
+                    <span class="font-mono text-gray-300 text-xs truncate max-w-32" title="${gitState.remote_url}">
+                        ${gitState.remote_url.split('/').pop() || gitState.remote_url}
+                    </span>
+                </div>
+                ` : ''}
+                ${isDirty && gitState.modified_files?.length ? `
+                <div class="mt-3">
+                    <p class="text-xs text-gray-400 mb-2">Modified Files (${gitState.modified_files.length})</p>
+                    <div class="max-h-20 overflow-y-auto">
+                        ${gitState.modified_files.slice(0, 5).map(file => `
+                            <div class="text-xs font-mono text-gray-300 py-1">${file}</div>
+                        `).join('')}
+                        ${gitState.modified_files.length > 5 ?
+                            `<div class="text-xs text-gray-400 py-1">... and ${gitState.modified_files.length - 5} more</div>`
+                            : ''
+                        }
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+        `;
+
+        container.innerHTML = html;
+    }
+
+    updateGitEventsList(gitEventsData) {
+        const container = document.getElementById('gitEventsList');
+        if (!container) return;
+
+        if (!gitEventsData || !gitEventsData.events || gitEventsData.events.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-8 text-gray-400">
+                    <svg class="w-12 h-12 mx-auto mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                    </svg>
+                    <p class="text-sm">No Git operations recorded</p>
+                </div>
+            `;
+            return;
+        }
+
+        const html = gitEventsData.events.slice(0, 8).map(event => {
+            const success = event.success;
+            const statusColor = success ? 'text-status-success' : 'text-status-error';
+            const statusIcon = success ? '✓' : '✗';
+            const timestamp = new Date(event.timestamp);
+
+            return `
+                <div class="flex items-center justify-between p-3 bg-gray-800/20 border border-gray-700/50 rounded-lg hover:bg-gray-800/40 transition-colors">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-6 h-6 ${success ? 'bg-status-success/10' : 'bg-status-error/10'} border ${success ? 'border-status-success/20' : 'border-status-error/20'} rounded flex items-center justify-center">
+                            <span class="${statusColor} text-xs font-bold">${statusIcon}</span>
+                        </div>
+                        <div>
+                            <p class="text-sm font-medium text-white font-mono">git ${event.operation}</p>
+                            <p class="text-xs text-gray-400">
+                                ${event.args?.join(' ') || ''}
+                                ${event.chat_id ? `• Chat ${event.chat_id}` : ''}
+                            </p>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-xs ${statusColor}">${success ? 'Success' : 'Failed'}</p>
+                        <p class="text-xs text-gray-400">${formatTimeAgo(timestamp)}</p>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        container.innerHTML = html;
+    }
+
+    async refreshGitInfo() {
+        try {
+            const [gitStatusData, gitEventsData] = await Promise.all([
+                this.loadGitStatus(),
+                this.loadGitEvents()
+            ]);
+            this.updateGitInfo(gitStatusData, gitEventsData);
+        } catch (error) {
+            console.error('Failed to refresh Git info:', error);
+        }
     }
 
     updateLastUpdatedTime() {
