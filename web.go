@@ -8,9 +8,38 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
+
+// AgentInfo represents agent information for the API
+type AgentInfo struct {
+	ChatID       int64     `json:"chat_id"`
+	ThreadID     int       `json:"thread_id"`
+	ProjectDir   string    `json:"project_dir"`
+	SessionID    string    `json:"session_id"`
+	IsActive     bool      `json:"is_active"`
+	LastActivity time.Time `json:"last_activity"`
+	CreatedAt    time.Time `json:"created_at"`
+	ProjectCount int       `json:"project_count"`
+	Stats        TokenStats `json:"stats"`
+}
+
+// DetailedStats represents enhanced statistics
+type DetailedStats struct {
+	ActiveSessions    int                   `json:"active_sessions"`
+	TotalSessions     int                   `json:"total_sessions"`
+	ToolsExecuted     int64                 `json:"tools_executed"`
+	TotalProjects     int                   `json:"total_projects"`
+	SuccessRate       float64               `json:"success_rate"`
+	UptimeSeconds     int64                 `json:"uptime_seconds"`
+	Timestamp         time.Time             `json:"timestamp"`
+	RecentAgents      []AgentInfo           `json:"recent_agents"`
+	TotalTokensUsed   int64                 `json:"total_tokens_used"`
+	TotalCostUSD      float64               `json:"total_cost_usd"`
+}
 
 // WebInterface manages the HTTP server and web dashboard functionality
 type WebInterface struct {
@@ -49,6 +78,10 @@ func (wi *WebInterface) CreateRouter() *http.ServeMux {
 	// API endpoints
 	mux.HandleFunc("/api/health", wi.handleHealth)
 	mux.HandleFunc("/api/stats", wi.handleStats)
+	mux.HandleFunc("/api/agents", wi.handleAgents)
+	mux.HandleFunc("/api/agents/", wi.handleAgentDetail)
+	mux.HandleFunc("/api/tools/recent", wi.handleRecentTools)
+	mux.HandleFunc("/api/tools/executions", wi.handleToolExecutions)
 
 	return mux
 }
@@ -161,25 +194,270 @@ func (wi *WebInterface) handleStats(w http.ResponseWriter, r *http.Request) {
 	})(w, r)
 }
 
-// getBasicStats collects basic statistics from the Telegram bot
-func (wi *WebInterface) getBasicStats() map[string]interface{} {
+// handleAgents returns a list of all active agents
+func (wi *WebInterface) handleAgents(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		agents := wi.getAllAgentsInfo()
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"agents": agents,
+			"total":  len(agents),
+		})
+	})(w, r)
+}
+
+// handleAgentDetail returns detailed information about a specific agent
+func (wi *WebInterface) handleAgentDetail(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Parse chat_id and thread_id from URL path or query
+		chatIDStr := r.URL.Query().Get("chat_id")
+		threadIDStr := r.URL.Query().Get("thread_id")
+
+		if chatIDStr == "" {
+			// Try to extract from URL path like /api/agents/123456
+			urlParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/agents/"), "/")
+			if len(urlParts) > 0 && urlParts[0] != "" {
+				chatIDStr = urlParts[0]
+			}
+		}
+
+		if chatIDStr == "" {
+			http.Error(w, "Missing chat_id parameter", http.StatusBadRequest)
+			return
+		}
+
+		chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
+		if err != nil {
+			http.Error(w, "Invalid chat_id", http.StatusBadRequest)
+			return
+		}
+
+		threadID := 0
+		if threadIDStr != "" {
+			threadID, _ = strconv.Atoi(threadIDStr)
+		}
+
+		agent := wi.getAgentInfo(chatID, threadID)
+		if agent == nil {
+			http.Error(w, "Agent not found", http.StatusNotFound)
+			return
+		}
+
+		json.NewEncoder(w).Encode(agent)
+	})(w, r)
+}
+
+// getAllAgentsInfo gets information about all agents
+func (wi *WebInterface) getAllAgentsInfo() []AgentInfo {
 	wi.mu.RLock()
 	defer wi.mu.RUnlock()
 
-	// Get agent count safely using thread-safe method
-	agentCount := 0
-	if wi.bot != nil {
-		agentCount = wi.bot.GetAgentCount()
+	if wi.bot == nil {
+		return []AgentInfo{}
 	}
 
-	return map[string]interface{}{
-		"active_sessions":   agentCount,
-		"tools_executed":    0, // Will implement in Phase 2
-		"projects":         agentCount, // Each agent represents a project context
-		"success_rate":     100.0,
-		"uptime_seconds":   time.Now().Unix(),
-		"timestamp":        time.Now(),
+	agents := wi.bot.GetAgentsSafely()
+	var agentInfos []AgentInfo
+
+	for key, agent := range agents {
+		if agent == nil {
+			continue
+		}
+
+		info := AgentInfo{
+			ChatID:       key.chatID,
+			ThreadID:     key.threadID,
+			ProjectDir:   agent.ProjectDir(),
+			SessionID:    agent.SessionID(),
+			IsActive:     agent.IsActive(),
+			LastActivity: agent.LastActivity(),
+			CreatedAt:    agent.CreatedAt(),
+			ProjectCount: agent.ProjectCount(),
+			Stats:        agent.Stats(),
+		}
+		agentInfos = append(agentInfos, info)
 	}
+
+	return agentInfos
+}
+
+// getAgentInfo gets information about a specific agent
+func (wi *WebInterface) getAgentInfo(chatID int64, threadID int) *AgentInfo {
+	wi.mu.RLock()
+	defer wi.mu.RUnlock()
+
+	if wi.bot == nil {
+		return nil
+	}
+
+	agents := wi.bot.GetAgentsSafely()
+	key := chatKey{chatID: chatID, threadID: threadID}
+
+	agent, exists := agents[key]
+	if !exists || agent == nil {
+		return nil
+	}
+
+	return &AgentInfo{
+		ChatID:       chatID,
+		ThreadID:     threadID,
+		ProjectDir:   agent.ProjectDir(),
+		SessionID:    agent.SessionID(),
+		IsActive:     agent.IsActive(),
+		LastActivity: agent.LastActivity(),
+		CreatedAt:    agent.CreatedAt(),
+		ProjectCount: agent.ProjectCount(),
+		Stats:        agent.Stats(),
+	}
+}
+
+// getBasicStats collects basic statistics from the Telegram bot
+func (wi *WebInterface) getBasicStats() map[string]interface{} {
+	stats := wi.getDetailedStats()
+
+	// Convert DetailedStats to map[string]interface{}
+	return map[string]interface{}{
+		"active_sessions":   stats.ActiveSessions,
+		"tools_executed":    stats.ToolsExecuted,
+		"projects":         stats.TotalProjects,
+		"success_rate":     stats.SuccessRate,
+		"uptime_seconds":   stats.UptimeSeconds,
+		"timestamp":        stats.Timestamp,
+		"total_sessions":   stats.TotalSessions,
+		"total_tokens_used": stats.TotalTokensUsed,
+		"total_cost_usd":   stats.TotalCostUSD,
+	}
+}
+
+// getDetailedStats collects comprehensive statistics
+func (wi *WebInterface) getDetailedStats() DetailedStats {
+	wi.mu.RLock()
+	defer wi.mu.RUnlock()
+
+	if wi.bot == nil {
+		return DetailedStats{
+			Timestamp: time.Now(),
+		}
+	}
+
+	agents := wi.bot.GetAgentsSafely()
+
+	activeSessions := 0
+	totalTokensUsed := int64(0)
+	totalCostUSD := 0.0
+	totalProjects := 0
+	var recentAgents []AgentInfo
+
+	for key, agent := range agents {
+		if agent == nil {
+			continue
+		}
+
+		if agent.IsActive() {
+			activeSessions++
+		}
+
+		stats := agent.Stats()
+		totalTokensUsed += stats.TotalInputTokens + stats.TotalOutputTokens
+		totalCostUSD += stats.TotalCostUSD
+		totalProjects += agent.ProjectCount()
+
+		// Add to recent agents (limit to 5 most recent)
+		if len(recentAgents) < 5 {
+			info := AgentInfo{
+				ChatID:       key.chatID,
+				ThreadID:     key.threadID,
+				ProjectDir:   agent.ProjectDir(),
+				SessionID:    agent.SessionID(),
+				IsActive:     agent.IsActive(),
+				LastActivity: agent.LastActivity(),
+				CreatedAt:    agent.CreatedAt(),
+				ProjectCount: agent.ProjectCount(),
+				Stats:        stats,
+			}
+			recentAgents = append(recentAgents, info)
+		}
+	}
+
+	// Get tool execution count from global logger
+	toolExecutionCount := int64(globalToolLogger.GetExecutionCount())
+
+	return DetailedStats{
+		ActiveSessions:  activeSessions,
+		TotalSessions:   len(agents),
+		ToolsExecuted:   toolExecutionCount,
+		TotalProjects:   totalProjects,
+		SuccessRate:     100.0, // Will calculate based on tool execution success/failure
+		UptimeSeconds:   time.Now().Unix(),
+		Timestamp:       time.Now(),
+		RecentAgents:    recentAgents,
+		TotalTokensUsed: totalTokensUsed,
+		TotalCostUSD:    totalCostUSD,
+	}
+}
+
+// handleRecentTools returns recent tool executions
+func (wi *WebInterface) handleRecentTools(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Parse limit parameter
+		limitStr := r.URL.Query().Get("limit")
+		limit := 20 // default limit
+		if limitStr != "" {
+			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+				limit = parsedLimit
+			}
+		}
+
+		executions := globalToolLogger.GetRecentExecutions(limit)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"executions": executions,
+			"total":      len(executions),
+			"timestamp":  time.Now(),
+		})
+	})(w, r)
+}
+
+// handleToolExecutions returns detailed tool execution statistics
+func (wi *WebInterface) handleToolExecutions(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		executions := globalToolLogger.GetRecentExecutions(0) // Get all
+
+		// Calculate statistics
+		toolCounts := make(map[string]int)
+		statusCounts := map[string]int{
+			"running": 0,
+			"success": 0,
+			"error":   0,
+		}
+
+		for _, exec := range executions {
+			toolCounts[exec.ToolName]++
+			statusCounts[exec.Status]++
+		}
+
+		// Calculate success rate
+		total := statusCounts["success"] + statusCounts["error"]
+		successRate := 100.0
+		if total > 0 {
+			successRate = float64(statusCounts["success"]) / float64(total) * 100
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"total_executions": len(executions),
+			"tool_counts":      toolCounts,
+			"status_counts":    statusCounts,
+			"success_rate":     successRate,
+			"recent_executions": globalToolLogger.GetRecentExecutions(10), // Last 10
+			"timestamp":        time.Now(),
+		})
+	})(w, r)
 }
 
 // handleWithRecovery wraps handlers with panic recovery

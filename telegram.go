@@ -77,7 +77,7 @@ func (t *TelegramBot) getAgent(key chatKey) *Agent {
 		return agent
 	}
 
-	agent := NewAgent(t.client, t.config.DefaultProjectDir)
+	agent := NewAgent(t.client, t.config.DefaultProjectDir, key.chatID, key.threadID)
 	t.agents[key] = agent
 	return agent
 }
