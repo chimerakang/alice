@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // chatKey 用於識別獨立對話（支援 Forum Topics）
@@ -189,14 +190,58 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string) {
 	// 發送「處理中」提示
 	t.sendTyping(key)
 
-	// 呼叫 Claude Code CLI（串流模式，工具呼叫即時回報）
-	response, err := agent.Run(text, func(update string, silent bool) {
-		if silent {
-			t.sendSilent(key, update)
+	var response string
+	var err error
+
+	// Check if multi-agent coordination should be used
+	if globalAgentCoordinator.IsEnabled() && globalAgentCoordinator.ShouldUseMultiAgent(text) {
+		// Use coordinated multi-agent execution
+		response, err = globalAgentCoordinator.ExecuteCoordinatedTask(text, agent, func(update string, silent bool) {
+			if silent {
+				t.sendSilent(key, update)
+			} else {
+				t.send(key, update)
+			}
+		})
+	} else if globalAgentCoordinator.IsEnabled() {
+		// Use single specialized agent based on task routing
+		agentType := globalAgentCoordinator.RouteTask(text)
+		if agentType != GeneralAgent {
+			specializedAgent := globalAgentCoordinator.GetOrCreateAgent(agentType, agent)
+			t.send(key, fmt.Sprintf("🤖 使用 %s 代理處理此任務", agentType.String()))
+
+			response, err = specializedAgent.ExecuteSubTask(SubTask{
+				ID:          fmt.Sprintf("single_%d", time.Now().Unix()),
+				Description: text,
+				AgentType:   agentType,
+				Status:      TaskStatusInProgress,
+			}, func(update string, silent bool) {
+				if silent {
+					t.sendSilent(key, update)
+				} else {
+					t.send(key, update)
+				}
+			})
 		} else {
-			t.send(key, update)
+			// Fall back to regular agent
+			response, err = agent.Run(text, func(update string, silent bool) {
+				if silent {
+					t.sendSilent(key, update)
+				} else {
+					t.send(key, update)
+				}
+			})
 		}
-	})
+	} else {
+		// Regular single agent execution
+		response, err = agent.Run(text, func(update string, silent bool) {
+			if silent {
+				t.sendSilent(key, update)
+			} else {
+				t.send(key, update)
+			}
+		})
+	}
 
 	if err != nil {
 		t.send(key, fmt.Sprintf("❌ 錯誤: %v", err))
@@ -230,6 +275,8 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 /reset — 清除對話歷史
 /status — 查看目前狀態
 /usage — 查看 token 用量
+/multiagent [enable|disable|status|stats] — 多代理協調管理
+/agents — 查看專門化代理清單
 /help — 顯示此說明`
 		t.sendMarkdown(key, help)
 
@@ -300,6 +347,31 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			stats.TotalCostUSD,
 		)
 		t.sendMarkdown(key, usage)
+
+	case "/multiagent":
+		if len(parts) < 2 {
+			// Show current status
+			t.handleMultiAgentStatus(key)
+		} else {
+			action := parts[1]
+			switch action {
+			case "enable":
+				globalAgentCoordinator.SetEnabled(true)
+				t.send(key, "✅ 多代理協調已啟用")
+			case "disable":
+				globalAgentCoordinator.SetEnabled(false)
+				t.send(key, "❌ 多代理協調已停用")
+			case "status":
+				t.handleMultiAgentStatus(key)
+			case "stats":
+				t.handleMultiAgentStats(key)
+			default:
+				t.send(key, "用法: /multiagent [enable|disable|status|stats]")
+			}
+		}
+
+	case "/agents":
+		t.handleAgentsList(key)
 
 	default:
 		t.send(key, "未知指令，輸入 /help 查看可用指令")
@@ -411,4 +483,95 @@ func splitMessage(text string, maxLen int) []string {
 		text = text[cutAt:]
 	}
 	return chunks
+}
+
+// handleMultiAgentStatus shows the current multi-agent system status
+func (t *TelegramBot) handleMultiAgentStatus(key chatKey) {
+	stats := globalAgentCoordinator.GetAgentStats()
+
+	status := fmt.Sprintf("🤖 *多代理系統狀態*\n\n")
+
+	if globalAgentCoordinator.IsEnabled() {
+		status += "✅ *狀態*: 已啟用\n\n"
+	} else {
+		status += "❌ *狀態*: 已停用\n\n"
+	}
+
+	totalAgents := stats["total_agents"].(int)
+	status += fmt.Sprintf("📊 *統計*:\n  總代理數: %d\n\n", totalAgents)
+
+	if activeTask, hasTask := stats["active_task"]; hasTask && activeTask != nil {
+		taskInfo := activeTask.(map[string]interface{})
+		status += fmt.Sprintf("🔄 *執行中任務*:\n  ID: %s\n  狀態: %s\n\n",
+			taskInfo["id"].(string), taskInfo["status"].(string))
+	}
+
+	status += "*可用代理類型*:\n"
+	status += "• General - 通用代理\n"
+	status += "• CodeReview - 程式碼審查\n"
+	status += "• Testing - 測試專家\n"
+	status += "• Documentation - 文件撰寫\n"
+	status += "• Deployment - 部署專家\n"
+	status += "• Debug - 除錯專家\n"
+
+	t.sendMarkdown(key, status)
+}
+
+// handleMultiAgentStats shows detailed statistics about agent usage
+func (t *TelegramBot) handleMultiAgentStats(key chatKey) {
+	stats := globalAgentCoordinator.GetAgentStats()
+
+	response := fmt.Sprintf("📊 *多代理使用統計*\n\n")
+
+	if agents, hasAgents := stats["agents"]; hasAgents {
+		agentStats := agents.(map[string]interface{})
+
+		if len(agentStats) == 0 {
+			response += "目前沒有活躍的專門化代理。\n"
+		} else {
+			for agentType, agentInfo := range agentStats {
+				info := agentInfo.(map[string]interface{})
+				taskCount := info["task_count"].(int)
+				lastUsed := info["last_used"].(time.Time)
+
+				response += fmt.Sprintf("🤖 *%s*\n", agentType)
+				response += fmt.Sprintf("  任務數: %d\n", taskCount)
+				response += fmt.Sprintf("  最後使用: %s\n\n",
+					lastUsed.Format("2006-01-02 15:04:05"))
+			}
+		}
+	}
+
+	t.sendMarkdown(key, response)
+}
+
+// handleAgentsList shows available agent types and their capabilities
+func (t *TelegramBot) handleAgentsList(key chatKey) {
+	response := "🤖 *可用代理類型*\n\n"
+
+	agentTypes := []struct {
+		name        string
+		description string
+		skills      []string
+	}{
+		{"General", "通用代理", []string{"一般協助", "程式碼生成", "檔案操作"}},
+		{"CodeReview", "程式碼審查專家", []string{"程式碼分析", "安全審查", "效能審查", "最佳實務"}},
+		{"Testing", "測試專家", []string{"單元測試", "整合測試", "測試自動化", "覆蓋率分析"}},
+		{"Documentation", "文件專家", []string{"API 文件", "README 撰寫", "程式碼註解", "使用指南"}},
+		{"Deployment", "部署專家", []string{"CI/CD", "Docker", "Kubernetes", "雲端部署", "監控"}},
+		{"Debug", "除錯專家", []string{"錯誤分析", "日誌分析", "效能除錯", "問題排解"}},
+	}
+
+	for _, agent := range agentTypes {
+		response += fmt.Sprintf("**%s**\n", agent.name)
+		response += fmt.Sprintf("描述: %s\n", agent.description)
+		response += fmt.Sprintf("技能: %s\n\n", strings.Join(agent.skills, ", "))
+	}
+
+	response += "*使用方式*:\n"
+	response += "• 直接描述任務，系統會自動選擇最適合的代理\n"
+	response += "• 使用 `/multiagent enable` 啟用智慧路由\n"
+	response += "• 複雜任務會自動協調多個代理協作\n"
+
+	t.sendMarkdown(key, response)
 }

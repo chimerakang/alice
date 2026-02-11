@@ -27,6 +27,9 @@ type Config struct {
 	// Transparency Settings
 	EnableDecisionLogging bool `json:"enable_decision_logging"`
 	DecisionLogLevel      string `json:"decision_log_level"` // "off", "basic", "detailed"
+
+	// Multi-Agent Settings
+	EnableMultiAgent bool `json:"enable_multi_agent"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -37,6 +40,7 @@ func LoadConfig() (*Config, error) {
 		WebStaticDir:          "./static",
 		EnableDecisionLogging: true,
 		DecisionLogLevel:      "detailed",
+		EnableMultiAgent:      false, // Disabled by default (experimental)
 	}
 
 	// 優先從 config.json 讀取
@@ -82,6 +86,11 @@ func LoadConfig() (*Config, error) {
 	}
 	if v := os.Getenv("DECISION_LOG_LEVEL"); v != "" {
 		config.DecisionLogLevel = v
+	}
+
+	// Multi-Agent Environment Variables
+	if v := os.Getenv("ENABLE_MULTI_AGENT"); v == "true" {
+		config.EnableMultiAgent = true
 	}
 
 	// 驗證必要欄位
@@ -152,6 +161,15 @@ func main() {
 	} else {
 		globalDecisionLogger.SetEnabled(true)
 		log.Printf("   Decision logging: enabled (level: %s)", config.DecisionLogLevel)
+	}
+
+	// Apply multi-agent settings
+	if config.EnableMultiAgent {
+		globalAgentCoordinator.SetEnabled(true)
+		log.Printf("   Multi-agent coordination: enabled")
+	} else {
+		globalAgentCoordinator.SetEnabled(false)
+		log.Printf("   Multi-agent coordination: disabled")
 	}
 
 	client := NewClient(config.Model)
