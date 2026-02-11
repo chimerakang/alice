@@ -440,6 +440,56 @@ func generateDecisionID(chatID int64, threadID int, timestamp time.Time) string 
 	return fmt.Sprintf("decision_%d_%d_%d", chatID, threadID, timestamp.Unix())
 }
 
+// convertDecisionToFrontendJSON 將 DecisionLog 轉換為前端相容的 JSON 結構
+// 前端 TypeScript DecisionLog 介面需要平坦化的欄位結構
+func convertDecisionToFrontendJSON(decision DecisionLog) map[string]interface{} {
+	// 建立 tool_calls 陣列（使用 proto 轉換保持一致性）
+	toolCalls := make([]interface{}, len(decision.ToolCalls))
+	for i, tool := range decision.ToolCalls {
+		toolCalls[i] = convertToProtoToolExecution(tool)
+	}
+
+	// 建立 git_state（如果有 git 資訊）
+	var gitState interface{}
+	if decision.GitCommitHash != "" || decision.GitBranch != "" {
+		gitState = map[string]interface{}{
+			"commit_hash":    decision.GitCommitHash,
+			"branch":         decision.GitBranch,
+			"is_dirty":       false,
+			"remote_url":     "",
+			"modified_files": []string{},
+		}
+	}
+
+	result := map[string]interface{}{
+		"id":               generateDecisionID(decision.ChatID, decision.ThreadID, decision.Timestamp),
+		"timestamp":        decision.Timestamp,
+		"session_id":       decision.SessionID,
+		"project_path":     decision.ProjectPath,
+		"chat_id":          decision.ChatID,
+		"thread_id":        decision.ThreadID,
+		"user_prompt":      decision.UserPrompt,
+		"agent_response":   decision.AgentResponse,
+		"thinking_content": decision.ThinkingContent,
+		"tool_calls":       toolCalls,
+		"task_type":        decision.Outcome.TaskType,
+		"outcome": map[string]interface{}{
+			"success":       decision.Outcome.Success,
+			"error_message": decision.Outcome.ErrorMessage,
+			"severity":      "SEVERITY_LOW",
+		},
+		"duration_ms":    decision.DurationMs,
+		"tokens_input":   decision.TokensUsed.TotalInputTokens,
+		"tokens_output":  decision.TokensUsed.TotalOutputTokens,
+	}
+
+	if gitState != nil {
+		result["git_state"] = gitState
+	}
+
+	return result
+}
+
 // handleDecisionsProto 使用 proto 的決策統計端點處理函數
 func (wi *WebInterface) handleDecisionsProto(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
@@ -510,24 +560,22 @@ func (wi *WebInterface) handleDecisionsProto(w http.ResponseWriter, r *http.Requ
 			successRate = float64(successCount) / float64(totalDecisions) * 100
 		}
 
-		// 建立統計響應
+		// 建立統計響應 — 使用前端相容的 JSON 格式
+		recentLimit := 10
+		if totalDecisions < recentLimit {
+			recentLimit = totalDecisions
+		}
+		recent := make([]interface{}, recentLimit)
+		for i := 0; i < recentLimit; i++ {
+			recent[i] = convertDecisionToFrontendJSON(decisions[i])
+		}
+
 		response := map[string]interface{}{
-			"total_decisions": totalDecisions,
-			"success_rate":    successRate,
-			"task_types":      taskTypeCounts,
-			"recent_decisions": func() []interface{} {
-				// 返回最近 10 個決策
-				limit := 10
-				if totalDecisions < limit {
-					limit = totalDecisions
-				}
-				recent := make([]interface{}, limit)
-				for i := 0; i < limit; i++ {
-					recent[i] = convertToProtoDecisionLog(decisions[i])
-				}
-				return recent
-			}(),
-			"timestamp": time.Now(),
+			"total_decisions":  totalDecisions,
+			"success_rate":     successRate,
+			"task_types":       taskTypeCounts,
+			"recent_decisions": recent,
+			"timestamp":        time.Now(),
 		}
 
 		if err := writeProtoResponse(w, response); err != nil {
@@ -537,7 +585,7 @@ func (wi *WebInterface) handleDecisionsProto(w http.ResponseWriter, r *http.Requ
 	})(w, r)
 }
 
-// handleRecentDecisionsProto 使用 proto 的最近決策端點處理函數
+// handleRecentDecisionsProto 使用前端相容 JSON 的最近決策端點處理函數
 func (wi *WebInterface) handleRecentDecisionsProto(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -565,18 +613,18 @@ func (wi *WebInterface) handleRecentDecisionsProto(w http.ResponseWriter, r *htt
 			decisions = globalDecisionLogger.GetRecentDecisions(limit)
 		}
 
-		// 轉換為 proto 響應
-		protoDecisions := make([]*alicev1.DecisionLog, len(decisions))
+		// 轉換為前端相容的 JSON 格式（非 proto 格式）
+		frontendDecisions := make([]interface{}, len(decisions))
 		for i, decision := range decisions {
-			protoDecisions[i] = convertToProtoDecisionLog(decision)
+			frontendDecisions[i] = convertDecisionToFrontendJSON(decision)
 		}
 
-		response := &alicev1.ListDecisionsResponse{
-			Decisions: protoDecisions,
-			Pagination: &alicev1.Pagination{
-				TotalCount: int64(len(decisions)),
-				Page:       1,
-				PageSize:   int32(limit),
+		response := map[string]interface{}{
+			"decisions": frontendDecisions,
+			"pagination": map[string]interface{}{
+				"total_count": len(decisions),
+				"page":        1,
+				"page_size":   limit,
 			},
 		}
 

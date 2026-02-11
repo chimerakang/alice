@@ -85,6 +85,7 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/health", wi.handleHealth)
 	mux.HandleFunc("/api/stats", wi.handleStats)
 	mux.HandleFunc("/api/agents", wi.handleAgentsProto)
+	mux.HandleFunc("/api/agents/abort", wi.handleAgentAbort)
 	mux.HandleFunc("/api/agents/", wi.handleAgentDetailProto)
 	mux.HandleFunc("/api/tools/recent", wi.handleRecentToolsProto)
 	mux.HandleFunc("/api/tools/executions", wi.handleToolExecutionsProto)
@@ -1335,10 +1336,11 @@ func (wi *WebInterface) handleCreateCheckpoint(w http.ResponseWriter, r *http.Re
 
 		// Parse request body
 		var req struct {
-			ProjectDir  string `json:"project_dir"`
-			Description string `json:"description"`
-			SessionID   string `json:"session_id,omitempty"`
-			ChatID      int64  `json:"chat_id,omitempty"`
+			ProjectDir     string `json:"project_dir"`
+			Description    string `json:"description"`
+			SessionID      string `json:"session_id,omitempty"`
+			ChatID         int64  `json:"chat_id,omitempty"`
+			DecisionLogID  string `json:"decision_log_id,omitempty"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1370,7 +1372,7 @@ func (wi *WebInterface) handleCreateCheckpoint(w http.ResponseWriter, r *http.Re
 			req.SessionID,
 			req.ChatID,
 			"", // No dangerous operation for manual checkpoints
-			"", // No decision log ID for manual checkpoints
+			req.DecisionLogID, // Use decision_log_id from request
 		)
 		if err != nil {
 			log.Printf("Error creating checkpoint: %v", err)

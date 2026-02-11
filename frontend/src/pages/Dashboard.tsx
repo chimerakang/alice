@@ -279,8 +279,9 @@ function RecentDecisionsCard({ decisions }: { decisions: DecisionLog[] }) {
           {decisions.slice(0, 5).map((d) => {
             const isSuccess = d.outcome?.success;
             const toolCount = d.tool_calls?.length || 0;
-            const promptPreview =
-              d.user_prompt?.slice(0, 80) + (d.user_prompt?.length > 80 ? "…" : "");
+            const promptPreview = d.user_prompt
+              ? d.user_prompt.slice(0, 80) + (d.user_prompt.length > 80 ? "…" : "")
+              : "";
 
             return (
               <button

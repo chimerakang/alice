@@ -346,7 +346,8 @@ func (s *SQLiteStorage) GetDecisionLogs(limit int, offset int) ([]DecisionLog, e
 	rows, err := s.db.Query(`
 		SELECT timestamp, session_id, project_path, chat_id, thread_id, user_prompt,
 			   agent_response, tool_calls_json, context_json, outcome_json, duration_ms,
-			   tokens_input, tokens_output, COALESCE(thinking_content, '') as thinking_content
+			   tokens_input, tokens_output, COALESCE(thinking_content, '') as thinking_content,
+			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch
 		FROM decision_logs
 		ORDER BY timestamp DESC
 		LIMIT ? OFFSET ?`, limit, offset)
@@ -363,7 +364,8 @@ func (s *SQLiteStorage) GetDecisionLogsByTimeRange(start, end time.Time, limit i
 	rows, err := s.db.Query(`
 		SELECT timestamp, session_id, project_path, chat_id, thread_id, user_prompt,
 			   agent_response, tool_calls_json, context_json, outcome_json, duration_ms,
-			   tokens_input, tokens_output, COALESCE(thinking_content, '') as thinking_content
+			   tokens_input, tokens_output, COALESCE(thinking_content, '') as thinking_content,
+			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch
 		FROM decision_logs
 		WHERE timestamp BETWEEN ? AND ?
 		ORDER BY timestamp DESC
@@ -381,7 +383,8 @@ func (s *SQLiteStorage) GetDecisionLogsByProject(projectPath string, limit int) 
 	rows, err := s.db.Query(`
 		SELECT timestamp, session_id, project_path, chat_id, thread_id, user_prompt,
 			   agent_response, tool_calls_json, context_json, outcome_json, duration_ms,
-			   tokens_input, tokens_output, COALESCE(thinking_content, '') as thinking_content
+			   tokens_input, tokens_output, COALESCE(thinking_content, '') as thinking_content,
+			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch
 		FROM decision_logs
 		WHERE project_path = ?
 		ORDER BY timestamp DESC
@@ -400,12 +403,13 @@ func (s *SQLiteStorage) scanDecisionLogs(rows *sql.Rows) ([]DecisionLog, error) 
 	for rows.Next() {
 		var log DecisionLog
 		var toolCallsJSON, contextJSON, outcomeJSON string
+		var gitCommitHash, gitBranch string
 
 		err := rows.Scan(&log.Timestamp, &log.SessionID, &log.ProjectPath,
 			&log.ChatID, &log.ThreadID, &log.UserPrompt, &log.AgentResponse,
 			&toolCallsJSON, &contextJSON, &outcomeJSON, &log.DurationMs,
 			&log.TokensUsed.TotalInputTokens, &log.TokensUsed.TotalOutputTokens,
-			&log.ThinkingContent)
+			&log.ThinkingContent, &gitCommitHash, &gitBranch)
 		if err != nil {
 			return nil, err
 		}
@@ -414,6 +418,10 @@ func (s *SQLiteStorage) scanDecisionLogs(rows *sql.Rows) ([]DecisionLog, error) 
 		json.Unmarshal([]byte(toolCallsJSON), &log.ToolCalls)
 		json.Unmarshal([]byte(contextJSON), &log.Context)
 		json.Unmarshal([]byte(outcomeJSON), &log.Outcome)
+
+		// 設定 Git 狀態
+		log.GitCommitHash = gitCommitHash
+		log.GitBranch = gitBranch
 
 		logs = append(logs, log)
 	}

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -44,6 +45,8 @@ type DecisionLog struct {
 	Outcome         ExecutionOutcome       `json:"outcome"`
 	DurationMs      int                    `json:"duration_ms"`
 	TokensUsed      TokenStats             `json:"tokens_used"`
+	GitCommitHash   string                 `json:"git_commit_hash,omitempty"`
+	GitBranch       string                 `json:"git_branch,omitempty"`
 }
 
 // ExecutionOutcome represents the result of an AI interaction
@@ -279,6 +282,10 @@ type Agent struct {
 	projects   map[string]*projectState // projectDir → state
 	chatID     int64                    // Telegram chat ID
 	threadID   int                      // Telegram thread ID (for forum topics)
+	// Abort control
+	cancelFunc context.CancelFunc // 取消正在執行的 CLI 子程序
+	cancelMu   sync.Mutex         // 保護 cancelFunc 的併發存取
+	processing bool               // 是否正在處理請求
 }
 
 func NewAgent(client *CLIClient, projectDir string, chatID int64, threadID int) *Agent {
@@ -289,6 +296,25 @@ func NewAgent(client *CLIClient, projectDir string, chatID int64, threadID int) 
 		chatID:     chatID,
 		threadID:   threadID,
 	}
+}
+
+// Abort 中斷正在執行的 agent 任務，回傳是否成功中斷
+func (a *Agent) Abort() bool {
+	a.cancelMu.Lock()
+	defer a.cancelMu.Unlock()
+	if a.cancelFunc != nil {
+		a.cancelFunc()
+		a.cancelFunc = nil
+		return true
+	}
+	return false
+}
+
+// IsProcessing 回報 agent 是否正在執行任務
+func (a *Agent) IsProcessing() bool {
+	a.cancelMu.Lock()
+	defer a.cancelMu.Unlock()
+	return a.processing
 }
 
 // current 取得目前專案的狀態，不存在則建立
@@ -310,6 +336,20 @@ func (a *Agent) current() *projectState {
 func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, error) {
 	startTime := time.Now()
 
+	// 設定取消 context
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cancelMu.Lock()
+	a.cancelFunc = cancel
+	a.processing = true
+	a.cancelMu.Unlock()
+	defer func() {
+		a.cancelMu.Lock()
+		a.cancelFunc = nil
+		a.processing = false
+		a.cancelMu.Unlock()
+		cancel()
+	}()
+
 	if onUpdate != nil {
 		onUpdate("🔧 Claude Code 處理中 ...", false)
 	}
@@ -324,7 +364,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	// Track tool executions for this decision
 	var toolCallsForDecision []ToolExecution
 
-	resp, err := a.client.CallStream(userMessage, a.projectDir, ps.sessionID, func(toolName string, toolInput map[string]interface{}) {
+	resp, err := a.client.CallStream(ctx, userMessage, a.projectDir, ps.sessionID, func(toolName string, toolInput map[string]interface{}) {
 		// Check if we should create a checkpoint before executing this tool
 		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
 

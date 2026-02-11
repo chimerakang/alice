@@ -3,6 +3,7 @@ package app
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -39,7 +40,7 @@ func NewClient(model string) *CLIClient {
 
 // Call invokes the Claude Code CLI in print mode.
 // If sessionID is non-empty, it resumes that session for conversation continuity.
-func (c *CLIClient) Call(message, projectDir, sessionID string) (*CLIResponse, error) {
+func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID string) (*CLIResponse, error) {
 	startTime := time.Now()
 	args := []string{
 		"-p",
@@ -55,11 +56,14 @@ func (c *CLIClient) Call(message, projectDir, sessionID string) (*CLIResponse, e
 
 	args = append(args, message)
 
-	cmd := exec.Command("claude", args...)
+	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = projectDir
 
 	output, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() == context.Canceled {
+			return nil, fmt.Errorf("agent aborted by user")
+		}
 		// CLI 可能 stderr 有錯誤訊息
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			return nil, fmt.Errorf("claude CLI error: %s", string(exitErr.Stderr))
@@ -101,7 +105,7 @@ func (c *CLIClient) Call(message, projectDir, sessionID string) (*CLIResponse, e
 // CallStream invokes Claude Code CLI with stream-json output.
 // onToolUse is called for each tool_use event during processing.
 // onContent is called for thinking/text content blocks (contentType: "thinking" or "text").
-func (c *CLIClient) CallStream(message, projectDir, sessionID string, onToolUse func(toolName string, toolInput map[string]interface{}), onContent func(contentType, text string)) (*CLIResponse, error) {
+func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, sessionID string, onToolUse func(toolName string, toolInput map[string]interface{}), onContent func(contentType, text string)) (*CLIResponse, error) {
 	startTime := time.Now()
 	args := []string{
 		"-p",
@@ -118,7 +122,7 @@ func (c *CLIClient) CallStream(message, projectDir, sessionID string, onToolUse 
 
 	args = append(args, message)
 
-	cmd := exec.Command("claude", args...)
+	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = projectDir
 
 	stdout, err := cmd.StdoutPipe()
@@ -224,6 +228,9 @@ func (c *CLIClient) CallStream(message, projectDir, sessionID string, onToolUse 
 	}
 
 	if err := cmd.Wait(); err != nil {
+		if ctx.Err() == context.Canceled {
+			return nil, fmt.Errorf("agent aborted by user")
+		}
 		if _, ok := err.(*exec.ExitError); ok {
 			return nil, fmt.Errorf("claude CLI error: %s", stderrBuf.String())
 		}

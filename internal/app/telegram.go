@@ -303,6 +303,10 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string) {
 	}
 
 	if err != nil {
+		if strings.Contains(err.Error(), "agent aborted by user") {
+			// 已由 /abort 指令回饋，不再發送重複訊息
+			return
+		}
 		t.send(key, fmt.Sprintf("❌ 錯誤: %v", err))
 		return
 	}
@@ -337,6 +341,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 /usage — 查看 token 用量
 /dashboard — 查看系統監控面板
 /checkpoints — 查看檢查點狀態
+/abort — 中斷正在執行的任務
 /multiagent [enable|disable|status|stats] — 多代理協調管理
 /agents — 查看專門化代理清單
 /help — 顯示此說明`
@@ -448,6 +453,18 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			default:
 				t.send(key, "用法: /multiagent [enable|disable|status|stats]")
 			}
+		}
+
+	case "/abort":
+		agent := t.getAgent(key)
+		if agent.IsProcessing() {
+			if agent.Abort() {
+				t.send(key, "🛑 已中斷正在執行的任務")
+			} else {
+				t.send(key, "⚠️ 任務已結束，無需中斷")
+			}
+		} else {
+			t.send(key, "ℹ️ 目前沒有正在執行的任務")
 		}
 
 	case "/agents":
