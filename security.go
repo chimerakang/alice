@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"regexp"
@@ -468,6 +469,15 @@ func (sm *SecurityManager) LogSecurityEvent(event SecurityEvent) {
 	// 保持日誌大小限制
 	if len(sm.auditLog) > 10000 {
 		sm.auditLog = sm.auditLog[1000:]
+	}
+
+	// 如果有 SQLite 儲存，將安全事件寫入資料庫
+	if globalStorage != nil {
+		go func() {
+			if err := globalStorage.InsertSecurityEvent(event); err != nil {
+				log.Printf("Warning: failed to persist security event to database: %v", err)
+			}
+		}()
 	}
 }
 

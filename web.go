@@ -111,6 +111,11 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/git/events", wi.handleGitEvents)
 	mux.HandleFunc("/api/git/operations", wi.handleGitOperations)
 
+	// Storage & Persistence APIs
+	mux.HandleFunc("/api/storage/health", wi.handleStorageHealth)
+	mux.HandleFunc("/api/storage/stats", wi.handleStorageStats)
+	mux.HandleFunc("/api/storage/cleanup", wi.handleStorageCleanup)
+
 	// Prometheus metrics endpoint
 	mux.HandleFunc("/metrics", wi.handlePrometheusMetrics)
 

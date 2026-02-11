@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -286,8 +287,58 @@ func (wi *WebInterface) handleToolExecutionsProto(w http.ResponseWriter, r *http
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// 獲取所有執行記錄
-		executions := globalToolLogger.GetRecentExecutions(0)
+		// 解析查詢參數
+		query := r.URL.Query()
+		limitStr := query.Get("limit")
+		offsetStr := query.Get("offset")
+		chatIDStr := query.Get("chat_id")
+		startTimeStr := query.Get("start_time")
+		endTimeStr := query.Get("end_time")
+		source := query.Get("source") // "memory" 或 "database"
+
+		// 設置預設值
+		limit := 100
+		offset := 0
+		if limitStr != "" {
+			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+				limit = parsedLimit
+			}
+		}
+		if offsetStr != "" {
+			if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+				offset = parsedOffset
+			}
+		}
+
+		var executions []ToolExecution
+		var err error
+
+		// 根據來源和參數選擇查詢方式
+		if globalStorage != nil && source != "memory" {
+			// 優先使用資料庫查詢（支援更多功能）
+			if chatIDStr != "" {
+				if chatID, parseErr := strconv.ParseInt(chatIDStr, 10, 64); parseErr == nil {
+					executions, err = globalStorage.GetToolExecutionsByChat(chatID, limit)
+				}
+			} else if startTimeStr != "" && endTimeStr != "" {
+				if startTime, err1 := time.Parse(time.RFC3339, startTimeStr); err1 == nil {
+					if endTime, err2 := time.Parse(time.RFC3339, endTimeStr); err2 == nil {
+						executions, err = globalStorage.GetToolExecutionsByTimeRange(startTime, endTime, limit)
+					}
+				}
+			} else {
+				// 一般分頁查詢
+				executions, err = globalStorage.GetToolExecutions(limit, offset)
+			}
+
+			if err != nil {
+				log.Printf("Database query error, falling back to memory: %v", err)
+				executions = globalToolLogger.GetRecentExecutions(limit)
+			}
+		} else {
+			// 使用記憶體數據（向後兼容）
+			executions = globalToolLogger.GetRecentExecutions(limit)
+		}
 
 		// 計算統計數據
 		toolCounts := make(map[string]int)
@@ -393,8 +444,53 @@ func (wi *WebInterface) handleDecisionsProto(w http.ResponseWriter, r *http.Requ
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// 獲取所有決策記錄
-		decisions := globalDecisionLogger.GetRecentDecisions(0)
+		// 解析查詢參數
+		query := r.URL.Query()
+		limitStr := query.Get("limit")
+		offsetStr := query.Get("offset")
+		projectPath := query.Get("project_path")
+		startTimeStr := query.Get("start_time")
+		endTimeStr := query.Get("end_time")
+		source := query.Get("source")
+
+		// 設置預設值
+		limit := 50
+		offset := 0
+		if limitStr != "" {
+			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+				limit = parsedLimit
+			}
+		}
+		if offsetStr != "" {
+			if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+				offset = parsedOffset
+			}
+		}
+
+		var decisions []DecisionLog
+		var err error
+
+		// 根據來源和參數選擇查詢方式
+		if globalStorage != nil && source != "memory" {
+			if projectPath != "" {
+				decisions, err = globalStorage.GetDecisionLogsByProject(projectPath, limit)
+			} else if startTimeStr != "" && endTimeStr != "" {
+				if startTime, err1 := time.Parse(time.RFC3339, startTimeStr); err1 == nil {
+					if endTime, err2 := time.Parse(time.RFC3339, endTimeStr); err2 == nil {
+						decisions, err = globalStorage.GetDecisionLogsByTimeRange(startTime, endTime, limit)
+					}
+				}
+			} else {
+				decisions, err = globalStorage.GetDecisionLogs(limit, offset)
+			}
+
+			if err != nil {
+				log.Printf("Database query error, falling back to memory: %v", err)
+				decisions = globalDecisionLogger.GetRecentDecisions(limit)
+			}
+		} else {
+			decisions = globalDecisionLogger.GetRecentDecisions(limit)
+		}
 
 		// 計算統計數據
 		totalDecisions := len(decisions)
@@ -541,9 +637,57 @@ func (wi *WebInterface) handlePerformanceAnalyticsProto(w http.ResponseWriter, r
 func (wi *WebInterface) handlePerformanceMetricsProto(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+
+		// 解析查詢參數
+		query := r.URL.Query()
+		limitStr := query.Get("limit")
+		offsetStr := query.Get("offset")
+		startTimeStr := query.Get("start_time")
+		endTimeStr := query.Get("end_time")
+		source := query.Get("source")
+
+		// 設置預設值
+		limit := 100
+		offset := 0
+		if limitStr != "" {
+			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+				limit = parsedLimit
+			}
+		}
+		if offsetStr != "" {
+			if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+				offset = parsedOffset
+			}
+		}
+
+		var metrics []PerformanceMetrics
+		var err error
+
+		// 根據來源和參數選擇查詢方式
+		if globalStorage != nil && source != "memory" {
+			if startTimeStr != "" && endTimeStr != "" {
+				if startTime, err1 := time.Parse(time.RFC3339, startTimeStr); err1 == nil {
+					if endTime, err2 := time.Parse(time.RFC3339, endTimeStr); err2 == nil {
+						metrics, err = globalStorage.GetPerformanceMetricsByTimeRange(startTime, endTime, limit)
+					}
+				}
+			} else {
+				metrics, err = globalStorage.GetPerformanceMetrics(limit, offset)
+			}
+
+			if err != nil {
+				log.Printf("Database query error, falling back to memory: %v", err)
+				if performanceMonitor != nil {
+					metrics = performanceMonitor.GetRecentMetrics(limit)
+				}
+			}
+		} else if performanceMonitor != nil {
+			metrics = performanceMonitor.GetRecentMetrics(limit)
+		}
+
 		response := map[string]interface{}{
-			"metrics":   []interface{}{},
-			"total":     0,
+			"metrics":   metrics,
+			"total":     len(metrics),
 			"timestamp": time.Now(),
 		}
 		writeProtoResponse(w, response)
@@ -591,9 +735,60 @@ func (wi *WebInterface) handlePerformanceExportProto(w http.ResponseWriter, r *h
 func (wi *WebInterface) handleSecurityEventsProto(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+
+		// 解析查詢參數
+		query := r.URL.Query()
+		limitStr := query.Get("limit")
+		offsetStr := query.Get("offset")
+		severity := query.Get("severity")
+		startTimeStr := query.Get("start_time")
+		endTimeStr := query.Get("end_time")
+		source := query.Get("source")
+
+		// 設置預設值
+		limit := 50
+		offset := 0
+		if limitStr != "" {
+			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+				limit = parsedLimit
+			}
+		}
+		if offsetStr != "" {
+			if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+				offset = parsedOffset
+			}
+		}
+
+		var events []SecurityEvent
+		var err error
+
+		// 根據來源和參數選擇查詢方式
+		if globalStorage != nil && source != "memory" {
+			if severity != "" {
+				events, err = globalStorage.GetSecurityEventsBySeverity(severity, limit)
+			} else if startTimeStr != "" && endTimeStr != "" {
+				if startTime, err1 := time.Parse(time.RFC3339, startTimeStr); err1 == nil {
+					if endTime, err2 := time.Parse(time.RFC3339, endTimeStr); err2 == nil {
+						events, err = globalStorage.GetSecurityEventsByTimeRange(startTime, endTime, limit)
+					}
+				}
+			} else {
+				events, err = globalStorage.GetSecurityEvents(limit, offset)
+			}
+
+			if err != nil {
+				log.Printf("Database query error, falling back to memory: %v", err)
+				if globalSecurityManager != nil {
+					events = globalSecurityManager.GetSecurityEvents(limit, "")
+				}
+			}
+		} else if globalSecurityManager != nil {
+			events = globalSecurityManager.GetSecurityEvents(limit, "")
+		}
+
 		response := map[string]interface{}{
-			"events":    []interface{}{},
-			"total":     0,
+			"events":    events,
+			"total":     len(events),
 			"timestamp": time.Now(),
 		}
 		writeProtoResponse(w, response)
@@ -787,6 +982,124 @@ func (wi *WebInterface) handleGitOperations(w http.ResponseWriter, r *http.Reque
 		} else {
 			writeProtoError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
+	})(w, r)
+}
+
+// ========== Storage & Persistence API Handlers ==========
+
+// handleStorageHealth 檢查儲存系統健康狀態
+func (wi *WebInterface) handleStorageHealth(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalStorage == nil {
+			response := map[string]interface{}{
+				"healthy":      false,
+				"persistence":  false,
+				"message":      "Storage system not initialized - using memory only",
+				"timestamp":    time.Now(),
+			}
+			writeProtoResponse(w, response)
+			return
+		}
+
+		// 檢查資料庫健康狀態
+		err := globalStorage.Health()
+		response := map[string]interface{}{
+			"healthy":      err == nil,
+			"persistence":  true,
+			"timestamp":    time.Now(),
+		}
+
+		if err != nil {
+			response["error"] = err.Error()
+		}
+
+		writeProtoResponse(w, response)
+	})(w, r)
+}
+
+// handleStorageStats 獲取儲存統計資訊
+func (wi *WebInterface) handleStorageStats(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalStorage == nil {
+			response := map[string]interface{}{
+				"persistence": false,
+				"message":     "Storage system not initialized",
+				"timestamp":   time.Now(),
+			}
+			writeProtoResponse(w, response)
+			return
+		}
+
+		// 嘗試獲取資料庫統計 (如果 SQLiteStorage 支援)
+		response := map[string]interface{}{
+			"persistence": true,
+			"timestamp":   time.Now(),
+		}
+
+		// 檢查是否是 SQLiteStorage 實例
+		if sqliteStorage, ok := globalStorage.(*SQLiteStorage); ok {
+			if stats, err := sqliteStorage.GetDatabaseStats(); err == nil {
+				response["database_stats"] = stats
+			} else {
+				response["stats_error"] = err.Error()
+			}
+		}
+
+		writeProtoResponse(w, response)
+	})(w, r)
+}
+
+// handleStorageCleanup 手動觸發資料清理
+func (wi *WebInterface) handleStorageCleanup(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != "POST" {
+			writeProtoError(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if globalStorage == nil {
+			writeProtoError(w, "Storage system not initialized", http.StatusServiceUnavailable)
+			return
+		}
+
+		// 解析請求參數
+		var request struct {
+			RetentionDays int `json:"retention_days,omitempty"`
+		}
+
+		// 使用預設值
+		request.RetentionDays = 30
+
+		if r.ContentLength > 0 {
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				writeProtoError(w, "Invalid JSON request", http.StatusBadRequest)
+				return
+			}
+		}
+
+		// 執行清理
+		start := time.Now()
+		err := globalStorage.CleanupOldData(request.RetentionDays)
+		duration := time.Since(start)
+
+		response := map[string]interface{}{
+			"success":        err == nil,
+			"retention_days": request.RetentionDays,
+			"duration_ms":    duration.Milliseconds(),
+			"timestamp":      time.Now(),
+		}
+
+		if err != nil {
+			response["error"] = err.Error()
+		}
+
+		writeProtoResponse(w, response)
 	})(w, r)
 }
 

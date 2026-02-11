@@ -38,6 +38,9 @@ Config is loaded from `config.json` (see `config.example.json`), overridden by e
 | `CLAUDE_MODEL` | `model` | No | `claude-sonnet-4-20250514` |
 | `PROJECT_DIR` | `default_project_dir` | No | `.` |
 | `ALLOWED_USER_IDS` | `allowed_user_ids` | No | `[]` (allow all) |
+| `ALICE_ENABLE_PERSISTENCE` | `enable_persistence` | No | `true` |
+| `ALICE_DATABASE_PATH` | `database_path` | No | `./data/alice.db` |
+| `ALICE_DATA_RETENTION_DAYS` | `data_retention_days` | No | `30` |
 
 ## Architecture
 

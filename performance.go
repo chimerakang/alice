@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"runtime"
 	"sync"
 	"time"
@@ -108,6 +109,15 @@ func (pm *PerformanceMonitor) RecordMetric(metric PerformanceMetrics) {
 
 	// 更新聚合統計
 	pm.updateAggregateStats(metric)
+
+	// 如果有 SQLite 儲存，將效能指標寫入資料庫
+	if globalStorage != nil {
+		go func() {
+			if err := globalStorage.InsertPerformanceMetric(metric); err != nil {
+				log.Printf("Warning: failed to persist performance metric to database: %v", err)
+			}
+		}()
+	}
 }
 
 // updateAggregateStats 更新聚合統計

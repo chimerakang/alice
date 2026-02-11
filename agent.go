@@ -112,6 +112,7 @@ func (tl *ToolLogger) LogToolComplete(toolName string, status string, duration t
 
 	var chatID int64 = 0
 	success := (status == "success" && err == nil)
+	var completedExecution *ToolExecution
 
 	// Find the most recent execution of this tool and update it
 	for i := range tl.executions {
@@ -122,8 +123,18 @@ func (tl *ToolLogger) LogToolComplete(toolName string, status string, duration t
 			if err != nil {
 				tl.executions[i].Error = err.Error()
 			}
+			completedExecution = &tl.executions[i]
 			break
 		}
+	}
+
+	// 如果有 SQLite 儲存，將完成的工具執行記錄寫入資料庫
+	if globalStorage != nil && completedExecution != nil {
+		go func() {
+			if err := globalStorage.InsertToolExecution(*completedExecution); err != nil {
+				log.Printf("Warning: failed to persist tool execution to database: %v", err)
+			}
+		}()
 	}
 
 	// Record performance metrics for tool execution
@@ -166,6 +177,15 @@ func (dl *DecisionLogger) LogDecision(decision DecisionLog) {
 	// Trim to max size
 	if len(dl.decisions) > dl.maxSize {
 		dl.decisions = dl.decisions[:dl.maxSize]
+	}
+
+	// 如果有 SQLite 儲存，將決策記錄寫入資料庫
+	if globalStorage != nil {
+		go func() {
+			if err := globalStorage.InsertDecisionLog(decision); err != nil {
+				log.Printf("Warning: failed to persist decision log to database: %v", err)
+			}
+		}()
 	}
 }
 

@@ -37,6 +37,12 @@ type Config struct {
 
 	// Security Settings
 	Security SecurityConfig `json:"security"`
+
+	// Storage Settings
+	EnablePersistence   bool   `json:"enable_persistence"`
+	DatabasePath        string `json:"database_path"`
+	DataRetentionDays   int    `json:"data_retention_days"`
+	EnableDataCleanup   bool   `json:"enable_data_cleanup"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -50,6 +56,10 @@ func LoadConfig() (*Config, error) {
 		EnableMultiAgent:            false, // Disabled by default (experimental)
 		EnablePerformanceMonitoring: true,  // Enabled by default
 		PerformanceMetricsRetention: 24,    // 24 hours default
+		EnablePersistence:           true,  // Enable SQLite persistence by default
+		DatabasePath:                "./data/alice.db", // Default database path
+		DataRetentionDays:           30,    // Keep 30 days of data
+		EnableDataCleanup:           true,  // Enable automatic cleanup
 		Security: SecurityConfig{
 			EnableRateLimiting:    true,
 			RateLimitRPM:          60,   // 60 requests per minute default
@@ -213,6 +223,19 @@ func main() {
 	InitGitIntegration()
 	log.Printf("   Git integration: enabled")
 
+	// Initialize Storage system
+	if config.EnablePersistence {
+		if err := InitStorage(config.DatabasePath); err != nil {
+			log.Printf("⚠️ Warning: failed to initialize persistence layer: %v", err)
+			log.Printf("   Continuing with in-memory storage only")
+		} else {
+			log.Printf("   Persistence: enabled (SQLite at %s)", config.DatabasePath)
+			log.Printf("   Data retention: %d days", config.DataRetentionDays)
+		}
+	} else {
+		log.Printf("   Persistence: disabled (in-memory storage only)")
+	}
+
 	// Apply transparency settings
 	if !config.EnableDecisionLogging || config.DecisionLogLevel == "off" {
 		globalDecisionLogger.SetEnabled(false)
@@ -268,6 +291,24 @@ func main() {
 		}()
 	}
 
+	// Start periodic data cleanup if persistence is enabled
+	if config.EnablePersistence && config.EnableDataCleanup && globalStorage != nil {
+		go func() {
+			ticker := time.NewTicker(24 * time.Hour) // Run cleanup daily
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ticker.C:
+					if err := globalStorage.CleanupOldData(config.DataRetentionDays); err != nil {
+						log.Printf("❌ Data cleanup error: %v", err)
+					}
+				}
+			}
+		}()
+		log.Printf("   Data cleanup: scheduled daily (retention: %d days)", config.DataRetentionDays)
+	}
+
 	// Start Telegram bot in separate goroutine
 	go tgBot.Start()
 
@@ -284,6 +325,15 @@ func main() {
 		defer cancel()
 		if err := webInterface.Shutdown(ctx); err != nil {
 			log.Printf("❌ Web interface shutdown error: %v", err)
+		}
+	}
+
+	// Close database connection
+	if globalStorage != nil {
+		if err := globalStorage.Close(); err != nil {
+			log.Printf("❌ Database shutdown error: %v", err)
+		} else {
+			log.Printf("✅ Database connection closed")
 		}
 	}
 

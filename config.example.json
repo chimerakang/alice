@@ -3,5 +3,34 @@
   "telegram_token": "123456:ABC-DEF",
   "model": "claude-sonnet-4-20250514",
   "default_project_dir": "/path/to/your/project",
-  "allowed_user_ids": [123456789]
+  "allowed_user_ids": [123456789],
+
+  "enable_web_interface": true,
+  "web_port": "8080",
+  "web_static_dir": "./web",
+
+  "enable_decision_logging": true,
+  "decision_log_level": "detailed",
+
+  "enable_multi_agent": false,
+
+  "enable_performance_monitoring": true,
+  "performance_metrics_retention": 24,
+
+  "enable_persistence": true,
+  "database_path": "./data/alice.db",
+  "data_retention_days": 30,
+  "enable_data_cleanup": true,
+
+  "security": {
+    "enable_rate_limiting": true,
+    "rate_limit_rpm": 60,
+    "rate_limit_burst": 10,
+    "enable_pii_detection": true,
+    "enable_audit_logging": true,
+    "data_retention_days": 30,
+    "require_authentication": false,
+    "session_timeout_minutes": 60,
+    "max_concurrent_sessions": 100
+  }
 }
