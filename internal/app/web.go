@@ -72,16 +72,14 @@ func NewWebInterface(bot *TelegramBot, port, staticDir string) *WebInterface {
 func (wi *WebInterface) CreateRouter() http.Handler {
 	mux := http.NewServeMux()
 
-	// Serve static files
-	mux.Handle("/css/", http.StripPrefix("/css/", http.FileServer(http.Dir("web/css/"))))
-	mux.Handle("/js/", http.StripPrefix("/js/", http.FileServer(http.Dir("web/js/"))))
+	// Serve Vite-built static assets
+	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir("web/assets/"))))
+	mux.HandleFunc("/vite.svg", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "web/vite.svg")
+	})
 
-	// Serve dashboard at root
-	mux.HandleFunc("/", wi.handleDashboard)
-
-	// Serve Timeline and Test pages
-	mux.HandleFunc("/timeline.html", wi.handleTimelinePage)
-	mux.HandleFunc("/test-timeline.html", wi.handleTestTimelinePage)
+	// SPA fallback: serve index.html for all non-API routes (React Router handles client-side routing)
+	mux.HandleFunc("/", wi.handleSPAFallback)
 
 	// API endpoints
 	mux.HandleFunc("/api/health", wi.handleHealth)
@@ -170,55 +168,21 @@ func (wi *WebInterface) Shutdown(ctx context.Context) error {
 	return wi.server.Shutdown(ctx)
 }
 
-// handleDashboard serves the main dashboard page
-func (wi *WebInterface) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
+// handleSPAFallback serves the React SPA for all non-API routes.
+// API, WebSocket, metrics, and static asset routes are handled by their own handlers.
+// Everything else gets index.html so React Router can handle client-side routing.
+func (wi *WebInterface) handleSPAFallback(w http.ResponseWriter, r *http.Request) {
+	// Let registered API/ws/metrics routes pass through (they have their own handlers)
+	// This handler only fires for unmatched routes due to ServeMux longest-match rule
+
+	indexPath := filepath.Join("web", "index.html")
+	if _, err := os.Stat(indexPath); err == nil {
+		http.ServeFile(w, r, indexPath)
 		return
 	}
 
-	// Try to serve index.html from web directory (new dashboard)
-	dashboardPath := filepath.Join("web", "index.html")
-	if _, err := os.Stat(dashboardPath); err == nil {
-		http.ServeFile(w, r, dashboardPath)
-		return
-	}
-
-	// Try to serve dashboard.html from static directory (legacy)
-	legacyPath := filepath.Join(wi.staticDir, "dashboard.html")
-	if _, err := os.Stat(legacyPath); err == nil {
-		http.ServeFile(w, r, legacyPath)
-		return
-	}
-
-	// Fall back to serving dashboard.html from current directory
-	if _, err := os.Stat("dashboard.html"); err == nil {
-		http.ServeFile(w, r, "dashboard.html")
-		return
-	}
-
-	// If no dashboard file found, serve a simple status page
+	// If no index.html found, serve a simple status page
 	wi.handleSimpleDashboard(w, r)
-}
-
-// handleTimelinePage serves the timeline monitoring page
-func (wi *WebInterface) handleTimelinePage(w http.ResponseWriter, r *http.Request) {
-	timelinePath := filepath.Join("web", "timeline.html")
-	if _, err := os.Stat(timelinePath); err == nil {
-		http.ServeFile(w, r, timelinePath)
-		return
-	}
-	http.NotFound(w, r)
-}
-
-// handleTestTimelinePage serves the timeline testing page
-func (wi *WebInterface) handleTestTimelinePage(w http.ResponseWriter, r *http.Request) {
-	testPath := filepath.Join("web", "test-timeline.html")
-	if _, err := os.Stat(testPath); err == nil {
-		http.ServeFile(w, r, testPath)
-		return
-	}
-	http.NotFound(w, r)
 }
 
 // handleSimpleDashboard serves a basic status page when dashboard.html is not available

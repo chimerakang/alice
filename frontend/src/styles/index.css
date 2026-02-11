@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+/* ========== OLED Dark Theme ========== */
+
+@theme {
+  --color-deep-black: #000000;
+  --color-dark-grey: #121212;
+  --color-midnight-blue: #0A0E27;
+  --color-surface: #1a1a2e;
+  --color-surface-hover: #222240;
+  --color-border: rgba(55, 65, 81, 0.5);
+  --color-border-hover: rgba(59, 130, 246, 0.3);
+
+  --color-primary: #3B82F6;
+  --color-primary-light: #60A5FA;
+  --color-accent: #F97316;
+
+  --color-success: #22C55E;
+  --color-warning: #F59E0B;
+  --color-error: #EF4444;
+  --color-info: #3B82F6;
+
+  --font-mono: 'Fira Code', ui-monospace, monospace;
+  --font-sans: 'Fira Sans', ui-sans-serif, sans-serif;
+}
+
+/* ========== Base Styles ========== */
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: linear-gradient(135deg, #000000 0%, #0A0E27 50%, #121212 100%);
+  background-attachment: fixed;
+  color: #e5e7eb;
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* ========== Scrollbar ========== */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #121212;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(59, 130, 246, 0.3);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(59, 130, 246, 0.5);
+}
+
+/* ========== Animations ========== */
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-up {
+  from { transform: translateY(12px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 5px rgba(59, 130, 246, 0.3); }
+  50% { box-shadow: 0 0 15px rgba(59, 130, 246, 0.6); }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
+
+/* ========== Dashboard Card ========== */
+
+.card {
+  background: rgba(18, 18, 18, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(55, 65, 81, 0.5);
+  border-radius: 0.75rem;
+  transition: all 0.2s ease;
+}
+
+.card:hover {
+  border-color: rgba(59, 130, 246, 0.3);
+  box-shadow: 0 8px 25px -8px rgba(0, 0, 0, 0.6);
+}
+
+/* ========== Status Indicator ========== */
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.status-dot-success {
+  background: #22C55E;
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+}
+
+.status-dot-error {
+  background: #EF4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+}
+
+.status-dot-warning {
+  background: #F59E0B;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
+}
+
+.status-dot-running {
+  background: #3B82F6;
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.5);
+  animation: pulse-glow 2s infinite;
+}
+
+/* ========== Monospace ========== */
+
+code, pre, .font-mono {
+  font-family: var(--font-mono);
+  font-feature-settings: 'liga' 1, 'calt' 1;
+}

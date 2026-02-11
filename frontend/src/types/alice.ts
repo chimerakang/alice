@@ -1,0 +1,224 @@
+/**
+ * Re-export proto-generated TypeScript types.
+ * Source: gen/ts/alice/v1/types.ts
+ *
+ * These types are the single source of truth, generated from .proto files.
+ * When proto definitions change, regenerate with `make proto` and copy here.
+ */
+
+// ========== Enums (as const objects for erasableSyntaxOnly) ==========
+
+export const Status = {
+  STATUS_UNSPECIFIED: "STATUS_UNSPECIFIED",
+  STATUS_PENDING: "STATUS_PENDING",
+  STATUS_RUNNING: "STATUS_RUNNING",
+  STATUS_SUCCESS: "STATUS_SUCCESS",
+  STATUS_ERROR: "STATUS_ERROR",
+  STATUS_CANCELLED: "STATUS_CANCELLED",
+} as const;
+export type Status = (typeof Status)[keyof typeof Status];
+
+export const Severity = {
+  SEVERITY_UNSPECIFIED: "SEVERITY_UNSPECIFIED",
+  SEVERITY_LOW: "SEVERITY_LOW",
+  SEVERITY_MEDIUM: "SEVERITY_MEDIUM",
+  SEVERITY_HIGH: "SEVERITY_HIGH",
+  SEVERITY_CRITICAL: "SEVERITY_CRITICAL",
+} as const;
+export type Severity = (typeof Severity)[keyof typeof Severity];
+
+export const AgentType = {
+  AGENT_TYPE_UNSPECIFIED: "AGENT_TYPE_UNSPECIFIED",
+  AGENT_TYPE_COORDINATOR: "AGENT_TYPE_COORDINATOR",
+  AGENT_TYPE_CODE_GENERATOR: "AGENT_TYPE_CODE_GENERATOR",
+  AGENT_TYPE_FILE_MANAGER: "AGENT_TYPE_FILE_MANAGER",
+  AGENT_TYPE_ANALYZER: "AGENT_TYPE_ANALYZER",
+  AGENT_TYPE_TESTER: "AGENT_TYPE_TESTER",
+  AGENT_TYPE_OPTIMIZER: "AGENT_TYPE_OPTIMIZER",
+} as const;
+export type AgentType = (typeof AgentType)[keyof typeof AgentType];
+
+// ========== Common ==========
+
+export interface Pagination {
+  page: number;
+  page_size: number;
+  total_pages: number;
+  total_count: number;
+}
+
+export interface TokenStats {
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_tokens: number;
+  total_cost_usd: number;
+  total_requests: number;
+}
+
+export interface GitState {
+  commit_hash: string;
+  branch: string;
+  is_dirty: boolean;
+  remote_url: string;
+  modified_files: string[];
+}
+
+// ========== Agent ==========
+
+export interface AgentInfo {
+  id: string;
+  chat_id: number;
+  thread_id: number;
+  project_dir: string;
+  session_id: string;
+  status: Status;
+  created_at: string;
+  last_active: string;
+  token_stats?: TokenStats;
+  model: string;
+  git_state?: GitState;
+}
+
+// ========== Tool ==========
+
+export interface ToolExecution {
+  id: string;
+  timestamp: string;
+  tool_name: string;
+  input: Record<string, string>;
+  status: Status;
+  duration_ms: number;
+  chat_id: number;
+  thread_id: number;
+  error: string;
+  git_state?: GitState;
+}
+
+// ========== Decision ==========
+
+export interface ExecutionOutcome {
+  success: boolean;
+  error_message: string;
+  severity: Severity;
+}
+
+export interface DecisionLog {
+  id: string;
+  timestamp: string;
+  session_id: string;
+  project_path: string;
+  user_prompt: string;
+  agent_response: string;
+  tool_calls: ToolExecution[];
+  task_type: string;
+  outcome: ExecutionOutcome;
+  duration_ms: number;
+  tokens_input: number;
+  tokens_output: number;
+  chat_id: number;
+  thread_id: number;
+  git_state?: GitState;
+}
+
+// ========== Performance ==========
+
+export interface PerformanceMetric {
+  timestamp: string;
+  api_latency_ms: number;
+  api_success: boolean;
+  tool_execution_time: number;
+  tool_execution_type: string;
+  tokens_used: number;
+  estimated_cost: number;
+  memory_usage: number;
+  error_type: string;
+  chat_id: number;
+}
+
+export interface PerformanceAnalytics {
+  total_operations: number;
+  avg_response_time: number;
+  error_rate: number;
+  throughput: number;
+  timestamp: string;
+}
+
+// ========== Security ==========
+
+export interface SecurityEvent {
+  event_id: string;
+  event_type: string;
+  severity: Severity;
+  description: string;
+  user_id: string;
+  ip: string;
+  mitigated: boolean;
+  timestamp: string;
+}
+
+export interface SecurityStats {
+  total_events: number;
+  blocked_attempts: number;
+  pii_detections: number;
+  threat_level: string;
+  timestamp: string;
+}
+
+// ========== Checkpoint ==========
+
+export interface Checkpoint {
+  id: string;
+  timestamp: string;
+  project_dir: string;
+  git_commit_hash: string;
+  git_branch: string;
+  description: string;
+  trigger_type: string;
+  session_id: string;
+  chat_id: number;
+  size: number;
+  is_active: boolean;
+}
+
+// ========== WebSocket ==========
+
+export interface WebSocketEvent {
+  type: WebSocketEventType;
+  timestamp: string;
+  data: unknown;
+}
+
+export type WebSocketEventType =
+  | "tool_execution_start"
+  | "tool_execution"
+  | "decision_complete"
+  | "performance_metric"
+  | "security_alert"
+  | "agent_status";
+
+// ========== API Responses ==========
+
+export interface StatsResponse {
+  active_sessions: number;
+  total_sessions: number;
+  tools_executed: number;
+  total_projects: number;
+  success_rate: number;
+  uptime_seconds: number;
+  timestamp: string;
+  total_tokens_used: number;
+  total_cost_usd: number;
+}
+
+export interface HealthResponse {
+  status: string;
+  telegram: string;
+  timestamp: string;
+}
+
+export interface MultiAgentStatus {
+  coordinator_status: string;
+  active_tasks: number;
+  specialized_agents: string[];
+  timestamp: string;
+}

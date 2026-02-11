@@ -1,50 +1,25 @@
-version: '3.8'
-
 services:
-  alice:
+  # Dashboard: nginx serving React SPA + proxy to host bot API
+  dashboard:
     build: .
-    container_name: alice-bot
+    container_name: alice-dashboard
     restart: unless-stopped
-    environment:
-      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - CLAUDE_MODEL=${CLAUDE_MODEL:-sonnet}
-      - ENABLE_WEB_INTERFACE=true
-      - WEB_PORT=8080
-      - ENABLE_PERFORMANCE_MONITORING=true
-      - ENABLE_RATE_LIMITING=true
-      - ENABLE_PII_DETECTION=true
-      - ENABLE_AUDIT_LOGGING=true
-      - RATE_LIMIT_RPM=${RATE_LIMIT_RPM:-60}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
-      - DATA_RETENTION_DAYS=${DATA_RETENTION_DAYS:-30}
-      - TZ=${TZ:-UTC}
     ports:
-      - "127.0.0.1:8080:8080"  # Only bind to localhost for security
-    volumes:
-      - alice_data:/app/data
-      - alice_config:/app/config
-      - alice_logs:/app/logs
-      - ./config.json:/app/config.json:ro  # Mount custom config if exists
+      - "127.0.0.1:3939:8082"
+    environment:
+      - TZ=${TZ:-Asia/Taipei}
     healthcheck:
-      test: ["CMD", "/app/healthcheck.sh"]
+      test: ["CMD", "curl", "-sf", "http://localhost:8082/"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 30s
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-    networks:
-      - alice-network
     security_opt:
       - no-new-privileges:true
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp:noexec,nosuid,size=100m
 
   # Optional: Monitoring stack
   prometheus:
@@ -54,8 +29,6 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
       - '--storage.tsdb.retention.time=30d'
       - '--web.enable-lifecycle'
     volumes:
@@ -63,8 +36,6 @@ services:
       - prometheus_data:/prometheus
     ports:
       - "127.0.0.1:9090:9090"
-    networks:
-      - alice-network
     profiles:
       - monitoring
 
@@ -75,69 +46,17 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
-      - GF_INSTALL_PLUGINS=grafana-piechart-panel
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
     ports:
-      - "127.0.0.1:3000:3000"
-    networks:
-      - alice-network
+      - "127.0.0.1:3001:3000"
     profiles:
       - monitoring
     depends_on:
       - prometheus
 
-  # Optional: Log aggregation
-  loki:
-    image: grafana/loki:2.8.0
-    container_name: alice-loki
-    restart: unless-stopped
-    command: -config.file=/etc/loki/local-config.yaml
-    volumes:
-      - ./monitoring/loki.yml:/etc/loki/local-config.yaml:ro
-      - loki_data:/loki
-    ports:
-      - "127.0.0.1:3100:3100"
-    networks:
-      - alice-network
-    profiles:
-      - logging
-
-  promtail:
-    image: grafana/promtail:2.8.0
-    container_name: alice-promtail
-    restart: unless-stopped
-    volumes:
-      - ./monitoring/promtail.yml:/etc/promtail/config.yml:ro
-      - /var/log:/var/log:ro
-      - alice_logs:/app/logs:ro
-    command: -config.file=/etc/promtail/config.yml
-    networks:
-      - alice-network
-    profiles:
-      - logging
-    depends_on:
-      - loki
-
 volumes:
-  alice_data:
-    driver: local
-  alice_config:
-    driver: local
-  alice_logs:
-    driver: local
   prometheus_data:
     driver: local
   grafana_data:
     driver: local
-  loki_data:
-    driver: local
-
-networks:
-  alice-network:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/16
