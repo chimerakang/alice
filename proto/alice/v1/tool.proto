@@ -1,0 +1,112 @@
+syntax = "proto3";
+
+package alice.v1;
+
+import "alice/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/alice/proto/gen/go/alice/v1;alicev1";
+
+// Tool execution record
+message ToolExecution {
+  string id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  string tool_name = 3;
+  map<string, string> input = 4;
+  Status status = 5;
+  int64 duration_ms = 6;
+  int64 chat_id = 7;
+  int32 thread_id = 8;
+  string error = 9;
+  GitState git_state = 10;
+  ToolOutput output = 11;
+}
+
+// Tool execution output
+message ToolOutput {
+  string content = 1;
+  string file_path = 2;
+  int64 size_bytes = 3;
+  string mime_type = 4;
+  map<string, string> metadata = 5;
+}
+
+// Tool definition and capabilities
+message ToolDefinition {
+  string name = 1;
+  string description = 2;
+  repeated ToolParameter parameters = 3;
+  repeated string capabilities = 4;
+  bool dangerous = 5;
+  map<string, string> config = 6;
+}
+
+// Tool parameter definition
+message ToolParameter {
+  string name = 1;
+  string type = 2;
+  string description = 3;
+  bool required = 4;
+  string default_value = 5;
+  repeated string enum_values = 6;
+}
+
+// Tool service
+service ToolService {
+  // List recent tool executions
+  rpc ListToolExecutions(ListToolExecutionsRequest) returns (ListToolExecutionsResponse);
+
+  // Get specific tool execution
+  rpc GetToolExecution(GetToolExecutionRequest) returns (GetToolExecutionResponse);
+
+  // List available tools
+  rpc ListTools(ListToolsRequest) returns (ListToolsResponse);
+
+  // Get tool definition
+  rpc GetTool(GetToolRequest) returns (GetToolResponse);
+}
+
+// Request messages
+message ListToolExecutionsRequest {
+  ListRequest pagination = 1;
+  string tool_name_filter = 2;
+  Status status_filter = 3;
+  int64 chat_id_filter = 4;
+  google.protobuf.Timestamp since = 5;
+}
+
+message GetToolExecutionRequest {
+  string execution_id = 1;
+}
+
+message ListToolsRequest {
+  ListRequest pagination = 1;
+  bool include_dangerous = 2;
+}
+
+message GetToolRequest {
+  string tool_name = 1;
+}
+
+// Response messages
+message ListToolExecutionsResponse {
+  repeated ToolExecution executions = 1;
+  Pagination pagination = 2;
+  Error error = 3;
+}
+
+message GetToolExecutionResponse {
+  ToolExecution execution = 1;
+  Error error = 2;
+}
+
+message ListToolsResponse {
+  repeated ToolDefinition tools = 1;
+  Pagination pagination = 2;
+  Error error = 3;
+}
+
+message GetToolResponse {
+  ToolDefinition tool = 1;
+  Error error = 2;
+}

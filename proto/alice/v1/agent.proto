@@ -1,0 +1,123 @@
+syntax = "proto3";
+
+package alice.v1;
+
+import "alice/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/alice/proto/gen/go/alice/v1;alicev1";
+
+// Agent information and status
+message AgentInfo {
+  string id = 1;
+  int64 chat_id = 2;
+  int32 thread_id = 3;
+  string project_dir = 4;
+  string session_id = 5;
+  Status status = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp last_active = 8;
+  TokenStats token_stats = 9;
+  GitState git_state = 10;
+  string model = 11;
+}
+
+// Detailed statistics for an agent
+message AgentStats {
+  AgentInfo agent_info = 1;
+  int64 total_messages = 2;
+  int64 successful_operations = 3;
+  int64 failed_operations = 4;
+  double average_response_time_seconds = 5;
+  repeated ToolUsageStat tool_usage = 6;
+  repeated RecentActivity recent_activities = 7;
+}
+
+// Tool usage statistics
+message ToolUsageStat {
+  string tool_name = 1;
+  int64 usage_count = 2;
+  double average_duration_ms = 3;
+  double success_rate = 4;
+}
+
+// Recent activity entry
+message RecentActivity {
+  google.protobuf.Timestamp timestamp = 1;
+  string action = 2;
+  string description = 3;
+  Status status = 4;
+  int64 duration_ms = 5;
+}
+
+// Agent management service
+service AgentService {
+  // List all active agents
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+
+  // Get detailed information about a specific agent
+  rpc GetAgent(GetAgentRequest) returns (GetAgentResponse);
+
+  // Get comprehensive statistics for an agent
+  rpc GetAgentStats(GetAgentStatsRequest) returns (GetAgentStatsResponse);
+
+  // Reset an agent's state
+  rpc ResetAgent(ResetAgentRequest) returns (ResetAgentResponse);
+
+  // Interrupt an agent's current operation
+  rpc InterruptAgent(InterruptAgentRequest) returns (InterruptAgentResponse);
+}
+
+// Request messages
+message ListAgentsRequest {
+  ListRequest pagination = 1;
+  Status status_filter = 2;
+}
+
+message GetAgentRequest {
+  string agent_id = 1;
+}
+
+message GetAgentStatsRequest {
+  string agent_id = 1;
+  google.protobuf.Timestamp since = 2;
+}
+
+message ResetAgentRequest {
+  string agent_id = 1;
+  bool preserve_session = 2;
+}
+
+message InterruptAgentRequest {
+  string agent_id = 1;
+  string reason = 2;
+}
+
+// Response messages
+message ListAgentsResponse {
+  repeated AgentInfo agents = 1;
+  Pagination pagination = 2;
+  Error error = 3;
+}
+
+message GetAgentResponse {
+  AgentInfo agent = 1;
+  Error error = 2;
+}
+
+message GetAgentStatsResponse {
+  AgentStats stats = 1;
+  Error error = 2;
+}
+
+message ResetAgentResponse {
+  bool success = 1;
+  string new_session_id = 2;
+  Error error = 3;
+}
+
+message InterruptAgentResponse {
+  bool success = 1;
+  string message = 2;
+  Error error = 3;
+}

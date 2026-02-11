@@ -1,0 +1,214 @@
+syntax = "proto3";
+
+package alice.v1;
+
+import "alice/v1/common.proto";
+import "alice/v1/agent.proto";
+import "alice/v1/tool.proto";
+import "alice/v1/decision.proto";
+import "alice/v1/performance.proto";
+import "alice/v1/security.proto";
+import "alice/v1/multiagent.proto";
+import "alice/v1/websocket.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/alice/proto/gen/go/alice/v1;alicev1";
+
+// Dashboard overview information
+message DashboardOverview {
+  SystemHealth health = 1;
+  AgentSummary agents = 2;
+  ActivitySummary activity = 3;
+  PerformanceSnapshot performance = 4;
+  SecuritySnapshot security = 5;
+  google.protobuf.Timestamp generated_at = 6;
+}
+
+// System health indicators
+message SystemHealth {
+  Status overall_status = 1;
+  double uptime_hours = 2;
+  double cpu_usage_percent = 3;
+  double memory_usage_percent = 4;
+  int32 active_connections = 5;
+  double api_success_rate = 6;
+  repeated HealthCheck checks = 7;
+}
+
+// Health check result
+message HealthCheck {
+  string name = 1;
+  Status status = 2;
+  string message = 3;
+  google.protobuf.Timestamp last_check = 4;
+  int64 response_time_ms = 5;
+}
+
+// Agent summary for dashboard
+message AgentSummary {
+  int32 total_agents = 1;
+  int32 active_agents = 2;
+  int32 idle_agents = 3;
+  int32 error_agents = 4;
+  repeated AgentInfo recent_agents = 5;
+}
+
+// Activity summary
+message ActivitySummary {
+  int64 messages_today = 1;
+  int64 tools_executed_today = 2;
+  int64 decisions_made_today = 3;
+  double average_response_time = 4;
+  repeated RecentActivity recent_activities = 5;
+}
+
+// Performance snapshot for dashboard
+message PerformanceSnapshot {
+  double success_rate = 1;
+  double avg_latency_seconds = 2;
+  double cost_today = 3;
+  int64 tokens_used_today = 4;
+  string most_used_tool = 5;
+  Status performance_status = 6;
+}
+
+// Security snapshot for dashboard
+message SecuritySnapshot {
+  int32 events_today = 1;
+  Severity highest_severity_today = 2;
+  int32 blocked_requests = 3;
+  int32 pii_detections = 4;
+  Status security_status = 5;
+  repeated SecurityEvent recent_events = 6;
+}
+
+// Timeline entry for activity feed
+message TimelineEntry {
+  string id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  string title = 3;
+  string description = 4;
+  string type = 5; // "agent", "tool", "security", "performance", "system"
+  Severity severity = 6;
+  map<string, string> metadata = 7;
+  string icon = 8;
+  string color = 9;
+}
+
+// Dashboard service - aggregates all other services
+service DashboardService {
+  // Get dashboard overview
+  rpc GetOverview(GetOverviewRequest) returns (GetOverviewResponse);
+
+  // Get activity timeline
+  rpc GetTimeline(GetTimelineRequest) returns (GetTimelineResponse);
+
+  // Get system health
+  rpc GetHealth(GetHealthRequest) returns (GetHealthResponse);
+
+  // Search across all entities
+  rpc Search(SearchRequest) returns (SearchResponse);
+
+  // Get dashboard configuration
+  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+
+  // Update dashboard configuration
+  rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse);
+}
+
+// Request messages
+message GetOverviewRequest {
+  google.protobuf.Timestamp since = 1;
+  bool include_details = 2;
+}
+
+message GetTimelineRequest {
+  ListRequest pagination = 1;
+  google.protobuf.Timestamp since = 2;
+  repeated string type_filter = 3;
+  Severity min_severity = 4;
+}
+
+message GetHealthRequest {
+  bool run_checks = 1;
+}
+
+message SearchRequest {
+  string query = 1;
+  repeated string entity_types = 2; // "agents", "tools", "decisions", "events"
+  ListRequest pagination = 3;
+}
+
+message GetConfigRequest {}
+
+message UpdateConfigRequest {
+  DashboardConfig config = 1;
+}
+
+// Response messages
+message GetOverviewResponse {
+  DashboardOverview overview = 1;
+  Error error = 2;
+}
+
+message GetTimelineResponse {
+  repeated TimelineEntry entries = 1;
+  Pagination pagination = 2;
+  Error error = 3;
+}
+
+message GetHealthResponse {
+  SystemHealth health = 1;
+  Error error = 2;
+}
+
+message SearchResponse {
+  repeated SearchResult results = 1;
+  Pagination pagination = 2;
+  string query = 3;
+  Error error = 4;
+}
+
+message GetConfigResponse {
+  DashboardConfig config = 1;
+  Error error = 2;
+}
+
+message UpdateConfigResponse {
+  bool success = 1;
+  DashboardConfig updated_config = 2;
+  Error error = 3;
+}
+
+// Search result
+message SearchResult {
+  string entity_type = 1;
+  string entity_id = 2;
+  string title = 3;
+  string description = 4;
+  double relevance_score = 5;
+  google.protobuf.Timestamp timestamp = 6;
+  map<string, string> highlights = 7;
+}
+
+// Dashboard configuration
+message DashboardConfig {
+  string theme = 1; // "light", "dark", "auto"
+  string language = 2; // "en", "zh-TW", "zh-CN"
+  bool auto_refresh = 3;
+  int32 refresh_interval_seconds = 4;
+  repeated string visible_panels = 5;
+  map<string, string> panel_settings = 6;
+  NotificationSettings notifications = 7;
+}
+
+// Notification settings
+message NotificationSettings {
+  bool enabled = 1;
+  repeated string event_types = 2;
+  Severity min_severity = 3;
+  bool sound_enabled = 4;
+  bool desktop_notifications = 5;
+  bool email_notifications = 6;
+  string email_address = 7;
+}

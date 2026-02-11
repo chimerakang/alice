@@ -1,0 +1,219 @@
+syntax = "proto3";
+
+package alice.v1;
+
+import "alice/v1/common.proto";
+import "alice/v1/agent.proto";
+import "alice/v1/tool.proto";
+import "alice/v1/decision.proto";
+import "alice/v1/performance.proto";
+import "alice/v1/security.proto";
+import "alice/v1/multiagent.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/alice/proto/gen/go/alice/v1;alicev1";
+
+// WebSocket event envelope for all real-time communications
+message WebSocketEvent {
+  string id = 1;
+  string type = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  int64 chat_id = 4;
+  int32 thread_id = 5;
+
+  oneof payload {
+    // Agent events
+    AgentStatusChanged agent_status = 10;
+    AgentCreated agent_created = 11;
+    AgentDestroyed agent_destroyed = 12;
+
+    // Tool events
+    ToolExecutionStarted tool_started = 20;
+    ToolExecutionCompleted tool_completed = 21;
+    ToolExecutionFailed tool_failed = 22;
+
+    // Decision events
+    DecisionMade decision_made = 30;
+    DecisionExported decision_exported = 31;
+
+    // Performance events
+    PerformanceAlert performance_alert = 40;
+    MetricThresholdExceeded threshold_exceeded = 41;
+
+    // Security events
+    SecurityIncident security_incident = 50;
+    PIIDetected pii_detected = 51;
+    RateLimitExceeded rate_limit_exceeded = 52;
+
+    // Multi-agent events
+    TaskCreated task_created = 60;
+    TaskCompleted task_completed = 61;
+    TaskFailed task_failed = 62;
+    AgentAssigned agent_assigned = 63;
+
+    // System events
+    SystemAlert system_alert = 70;
+    ConfigChanged config_changed = 71;
+  }
+}
+
+// Agent event payloads
+message AgentStatusChanged {
+  string agent_id = 1;
+  Status old_status = 2;
+  Status new_status = 3;
+  AgentInfo agent_info = 4;
+}
+
+message AgentCreated {
+  AgentInfo agent = 1;
+}
+
+message AgentDestroyed {
+  string agent_id = 1;
+  string reason = 2;
+}
+
+// Tool event payloads
+message ToolExecutionStarted {
+  ToolExecution execution = 1;
+}
+
+message ToolExecutionCompleted {
+  ToolExecution execution = 1;
+}
+
+message ToolExecutionFailed {
+  ToolExecution execution = 1;
+  string error_details = 2;
+}
+
+// Decision event payloads
+message DecisionMade {
+  DecisionLog decision = 1;
+}
+
+message DecisionExported {
+  string format = 1;
+  int32 count = 2;
+  string filename = 3;
+}
+
+// Performance event payloads
+message PerformanceAlert {
+  string metric_name = 1;
+  double current_value = 2;
+  double threshold = 3;
+  Severity severity = 4;
+  string description = 5;
+}
+
+message MetricThresholdExceeded {
+  string metric_name = 1;
+  double value = 2;
+  double threshold = 3;
+  google.protobuf.Timestamp detected_at = 4;
+}
+
+// Security event payloads
+message SecurityIncident {
+  SecurityEvent event = 1;
+}
+
+message PIIDetected {
+  string text_preview = 1;
+  repeated string detected_types = 2;
+  Severity severity = 3;
+  string context = 4;
+}
+
+message RateLimitExceeded {
+  string client_ip = 1;
+  int32 requests_per_minute = 2;
+  int32 limit = 3;
+  string action = 4;
+}
+
+// Multi-agent event payloads
+message TaskCreated {
+  CoordinatedTask task = 1;
+}
+
+message TaskCompleted {
+  string task_id = 1;
+  bool success = 2;
+  string result = 3;
+}
+
+message TaskFailed {
+  string task_id = 1;
+  string error = 2;
+  repeated string failed_subtasks = 3;
+}
+
+message AgentAssigned {
+  string task_id = 1;
+  string subtask_id = 2;
+  AgentType agent_type = 3;
+  string description = 4;
+}
+
+// System event payloads
+message SystemAlert {
+  Severity severity = 1;
+  string title = 2;
+  string message = 3;
+  map<string, string> context = 4;
+}
+
+message ConfigChanged {
+  string component = 1;
+  map<string, string> old_values = 2;
+  map<string, string> new_values = 3;
+  string changed_by = 4;
+}
+
+// WebSocket service
+service WebSocketService {
+  // Subscribe to real-time events
+  rpc Subscribe(SubscribeRequest) returns (stream WebSocketEvent);
+
+  // Send command to agent
+  rpc SendCommand(SendCommandRequest) returns (SendCommandResponse);
+
+  // Get connection status
+  rpc GetConnectionStatus(GetConnectionStatusRequest) returns (GetConnectionStatusResponse);
+}
+
+// WebSocket request messages
+message SubscribeRequest {
+  repeated string event_types = 1;
+  int64 chat_id_filter = 2;
+  Severity min_severity = 3;
+  bool include_historical = 4;
+}
+
+message SendCommandRequest {
+  string command = 1;
+  map<string, string> parameters = 2;
+  int64 target_chat_id = 3;
+  int32 target_thread_id = 4;
+}
+
+message GetConnectionStatusRequest {}
+
+// WebSocket response messages
+message SendCommandResponse {
+  bool success = 1;
+  string command_id = 2;
+  string message = 3;
+  Error error = 4;
+}
+
+message GetConnectionStatusResponse {
+  bool connected = 1;
+  int32 active_subscriptions = 2;
+  google.protobuf.Timestamp connected_since = 3;
+  int64 events_received = 4;
+  Error error = 5;
+}

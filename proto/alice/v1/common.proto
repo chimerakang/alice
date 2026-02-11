@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package alice.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/alice/proto/gen/go/alice/v1;alicev1";
+
+// Pagination for list requests
+message Pagination {
+  int32 page = 1;
+  int32 page_size = 2;
+  int32 total_pages = 3;
+  int64 total_count = 4;
+}
+
+// Standard list request with pagination
+message ListRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+  string filter = 3;
+  string sort_by = 4;
+  bool descending = 5;
+}
+
+// Standard error response
+message Error {
+  string code = 1;
+  string message = 2;
+  repeated string details = 3;
+}
+
+// Git repository state
+message GitState {
+  string commit_hash = 1;
+  string branch = 2;
+  bool is_dirty = 3;
+  string remote_url = 4;
+  repeated string modified_files = 5;
+}
+
+// Token usage statistics
+message TokenStats {
+  int64 total_input_tokens = 1;
+  int64 total_output_tokens = 2;
+  double total_cost_usd = 3;
+  int64 api_call_count = 4;
+}
+
+// Status enumeration used across different components
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_PENDING = 1;
+  STATUS_RUNNING = 2;
+  STATUS_SUCCESS = 3;
+  STATUS_ERROR = 4;
+  STATUS_CANCELLED = 5;
+}
+
+// Severity levels for events and alerts
+enum Severity {
+  SEVERITY_UNSPECIFIED = 0;
+  SEVERITY_LOW = 1;
+  SEVERITY_MEDIUM = 2;
+  SEVERITY_HIGH = 3;
+  SEVERITY_CRITICAL = 4;
+}

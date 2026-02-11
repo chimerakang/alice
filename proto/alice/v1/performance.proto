@@ -1,0 +1,147 @@
+syntax = "proto3";
+
+package alice.v1;
+
+import "alice/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+option go_package = "github.com/alice/proto/gen/go/alice/v1;alicev1";
+
+// Performance metric data point
+message PerformanceMetric {
+  google.protobuf.Timestamp timestamp = 1;
+  google.protobuf.Duration api_call_latency = 2;
+  bool api_call_success = 3;
+  google.protobuf.Duration tool_execution_time = 4;
+  string tool_execution_type = 5;
+  int32 tokens_used = 6;
+  double estimated_cost = 7;
+  uint64 memory_usage = 8;
+  string error_type = 9;
+  int64 chat_id = 10;
+  string agent_type = 11;
+}
+
+// Performance analytics summary
+message PerformanceAnalytics {
+  int64 total_requests = 1;
+  double success_rate = 2;
+  google.protobuf.Duration avg_api_latency = 3;
+  google.protobuf.Duration avg_tool_execution = 4;
+  int64 total_tokens = 5;
+  double total_cost = 6;
+  map<string, int64> errors_by_type = 7;
+  map<string, int64> tool_usage_stats = 8;
+  uint64 peak_memory_usage = 9;
+  uint64 current_memory_usage = 10;
+  int64 uptime_seconds = 11;
+  double requests_per_hour = 12;
+  double cost_per_request = 13;
+  google.protobuf.Timestamp generated_at = 14;
+}
+
+// Performance recommendation
+message PerformanceRecommendation {
+  string type = 1;
+  Severity priority = 2;
+  string title = 3;
+  string description = 4;
+  string impact = 5;
+  google.protobuf.Timestamp timestamp = 6;
+  string action = 7;
+}
+
+// Performance trends over time
+message PerformanceTrends {
+  int32 period_hours = 1;
+  int32 data_points = 2;
+  double avg_latency_ms = 3;
+  int64 total_tokens = 4;
+  double total_cost = 5;
+  double success_rate = 6;
+  map<string, HourlyStats> hourly_breakdown = 7;
+  google.protobuf.Timestamp generated_at = 8;
+}
+
+// Hourly performance statistics
+message HourlyStats {
+  int32 requests = 1;
+  google.protobuf.Duration latency_sum = 2;
+  int32 tokens = 3;
+  double cost = 4;
+  int32 errors = 5;
+}
+
+// Performance service
+service PerformanceService {
+  // Get performance analytics
+  rpc GetAnalytics(GetAnalyticsRequest) returns (GetAnalyticsResponse);
+
+  // Get recent metrics
+  rpc GetMetrics(GetMetricsRequest) returns (GetMetricsResponse);
+
+  // Get performance trends
+  rpc GetTrends(GetTrendsRequest) returns (GetTrendsResponse);
+
+  // Get recommendations
+  rpc GetRecommendations(GetRecommendationsRequest) returns (GetRecommendationsResponse);
+
+  // Export performance data
+  rpc ExportMetrics(ExportMetricsRequest) returns (ExportMetricsResponse);
+}
+
+// Request messages
+message GetAnalyticsRequest {
+  google.protobuf.Timestamp since = 1;
+}
+
+message GetMetricsRequest {
+  int32 limit = 1;
+  google.protobuf.Timestamp since = 2;
+}
+
+message GetTrendsRequest {
+  int32 hours = 1;
+  string metric_type = 2; // "latency", "cost", "success_rate", etc.
+}
+
+message GetRecommendationsRequest {
+  Severity min_priority = 1;
+}
+
+message ExportMetricsRequest {
+  string format = 1; // "json", "csv", "prometheus"
+  google.protobuf.Timestamp since = 2;
+}
+
+// Response messages
+message GetAnalyticsResponse {
+  PerformanceAnalytics analytics = 1;
+  repeated PerformanceRecommendation recommendations = 2;
+  Error error = 3;
+}
+
+message GetMetricsResponse {
+  repeated PerformanceMetric metrics = 1;
+  int32 count = 2;
+  Error error = 3;
+}
+
+message GetTrendsResponse {
+  PerformanceTrends trends = 1;
+  Error error = 2;
+}
+
+message GetRecommendationsResponse {
+  repeated PerformanceRecommendation recommendations = 1;
+  int32 count = 2;
+  Error error = 3;
+}
+
+message ExportMetricsResponse {
+  bytes data = 1;
+  string filename = 2;
+  string content_type = 3;
+  Error error = 4;
+}

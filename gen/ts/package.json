@@ -1,0 +1,41 @@
+{
+  "name": "@alice/api-types",
+  "version": "1.0.0",
+  "description": "TypeScript types for Alice AI Agent API",
+  "main": "alice/v1/types.js",
+  "types": "alice/v1/types.d.ts",
+  "exports": {
+    ".": {
+      "types": "./alice/v1/types.d.ts",
+      "import": "./alice/v1/types.js",
+      "require": "./alice/v1/types.js"
+    }
+  },
+  "files": [
+    "alice/",
+    "README.md"
+  ],
+  "keywords": [
+    "alice",
+    "ai",
+    "agent",
+    "api",
+    "typescript",
+    "types",
+    "protobuf"
+  ],
+  "author": "Alice AI Agent Team",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/alice.git",
+    "directory": "gen/ts"
+  }
+}

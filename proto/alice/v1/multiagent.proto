@@ -1,0 +1,183 @@
+syntax = "proto3";
+
+package alice.v1;
+
+import "alice/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/alice/proto/gen/go/alice/v1;alicev1";
+
+// Agent type enumeration
+enum AgentType {
+  AGENT_TYPE_UNSPECIFIED = 0;
+  AGENT_TYPE_GENERAL = 1;
+  AGENT_TYPE_CODE_REVIEW = 2;
+  AGENT_TYPE_TESTING = 3;
+  AGENT_TYPE_DOCUMENTATION = 4;
+  AGENT_TYPE_DEPLOYMENT = 5;
+  AGENT_TYPE_DEBUG = 6;
+}
+
+// Coordinated task definition
+message CoordinatedTask {
+  string id = 1;
+  string description = 2;
+  Status status = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+  repeated SubTask sub_tasks = 6;
+  AgentType primary_agent = 7;
+  map<string, string> context = 8;
+  int64 chat_id = 9;
+  int32 thread_id = 10;
+  TaskPriority priority = 11;
+}
+
+// Sub-task within a coordinated task
+message SubTask {
+  string id = 1;
+  string description = 2;
+  Status status = 3;
+  AgentType assigned_agent = 4;
+  repeated string dependencies = 5;
+  google.protobuf.Timestamp started_at = 6;
+  google.protobuf.Timestamp completed_at = 7;
+  string result = 8;
+  string error = 9;
+}
+
+// Task priority levels
+enum TaskPriority {
+  TASK_PRIORITY_UNSPECIFIED = 0;
+  TASK_PRIORITY_LOW = 1;
+  TASK_PRIORITY_NORMAL = 2;
+  TASK_PRIORITY_HIGH = 3;
+  TASK_PRIORITY_URGENT = 4;
+}
+
+// Specialized agent information
+message SpecializedAgent {
+  AgentType type = 1;
+  string description = 2;
+  repeated string skills = 3;
+  repeated string capabilities = 4;
+  google.protobuf.Timestamp last_used = 5;
+  int64 usage_count = 6;
+  double success_rate = 7;
+  bool available = 8;
+}
+
+// Multi-agent coordinator status
+message CoordinatorStatus {
+  bool enabled = 1;
+  int32 active_tasks = 2;
+  int64 total_tasks = 3;
+  repeated SpecializedAgent agents = 4;
+  CoordinatedTask current_task = 5;
+  google.protobuf.Timestamp last_activity = 6;
+}
+
+// Multi-agent statistics
+message MultiAgentStats {
+  int64 total_tasks = 1;
+  int64 completed_tasks = 2;
+  int64 failed_tasks = 3;
+  map<string, int64> agent_usage = 4;
+  map<string, double> agent_success_rates = 5;
+  double overall_success_rate = 6;
+  google.protobuf.Timestamp generated_at = 7;
+}
+
+// Multi-agent service
+service MultiAgentService {
+  // Get coordinator status
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+
+  // Get statistics
+  rpc GetStats(GetMultiAgentStatsRequest) returns (GetMultiAgentStatsResponse);
+
+  // List specialized agents
+  rpc ListAgents(ListSpecializedAgentsRequest) returns (ListSpecializedAgentsResponse);
+
+  // Create coordinated task
+  rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+
+  // Get task status
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+
+  // List tasks
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+
+  // Cancel task
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+}
+
+// Request messages
+message GetStatusRequest {}
+
+message GetMultiAgentStatsRequest {
+  google.protobuf.Timestamp since = 1;
+}
+
+message ListSpecializedAgentsRequest {}
+
+message CreateTaskRequest {
+  string description = 1;
+  TaskPriority priority = 2;
+  int64 chat_id = 3;
+  int32 thread_id = 4;
+  map<string, string> context = 5;
+}
+
+message GetTaskRequest {
+  string task_id = 1;
+}
+
+message ListTasksRequest {
+  ListRequest pagination = 1;
+  Status status_filter = 2;
+  AgentType agent_filter = 3;
+}
+
+message CancelTaskRequest {
+  string task_id = 1;
+  string reason = 2;
+}
+
+// Response messages
+message GetStatusResponse {
+  CoordinatorStatus status = 1;
+  Error error = 2;
+}
+
+message GetMultiAgentStatsResponse {
+  MultiAgentStats stats = 1;
+  Error error = 2;
+}
+
+message ListSpecializedAgentsResponse {
+  repeated SpecializedAgent agents = 1;
+  Error error = 2;
+}
+
+message CreateTaskResponse {
+  CoordinatedTask task = 1;
+  Error error = 2;
+}
+
+message GetTaskResponse {
+  CoordinatedTask task = 1;
+  Error error = 2;
+}
+
+message ListTasksResponse {
+  repeated CoordinatedTask tasks = 1;
+  Pagination pagination = 2;
+  Error error = 3;
+}
+
+message CancelTaskResponse {
+  bool success = 1;
+  string message = 2;
+  Error error = 3;
+}

@@ -1,0 +1,137 @@
+syntax = "proto3";
+
+package alice.v1;
+
+import "alice/v1/common.proto";
+import "alice/v1/tool.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/alice/proto/gen/go/alice/v1;alicev1";
+
+// Decision log entry
+message DecisionLog {
+  string id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  string user_prompt = 3;
+  string agent_response = 4;
+  repeated ToolExecution tool_calls = 5;
+  int64 chat_id = 6;
+  int32 thread_id = 7;
+  string project_path = 8;
+  int64 duration_ms = 9;
+  TokenStats token_stats = 10;
+  ExecutionOutcome outcome = 11;
+  map<string, string> context = 12;
+  PrivacyLevel privacy_level = 13;
+}
+
+// Execution outcome details
+message ExecutionOutcome {
+  bool success = 1;
+  string task_type = 2;
+  repeated string files_changed = 3;
+  string summary = 4;
+  string error_message = 5;
+  Severity severity = 6;
+}
+
+// Privacy level for decision logs
+enum PrivacyLevel {
+  PRIVACY_LEVEL_UNSPECIFIED = 0;
+  PRIVACY_LEVEL_PUBLIC = 1;
+  PRIVACY_LEVEL_INTERNAL = 2;
+  PRIVACY_LEVEL_CONFIDENTIAL = 3;
+  PRIVACY_LEVEL_RESTRICTED = 4;
+}
+
+// Decision service
+service DecisionService {
+  // List decision logs
+  rpc ListDecisions(ListDecisionsRequest) returns (ListDecisionsResponse);
+
+  // Get specific decision
+  rpc GetDecision(GetDecisionRequest) returns (GetDecisionResponse);
+
+  // Search decisions
+  rpc SearchDecisions(SearchDecisionsRequest) returns (SearchDecisionsResponse);
+
+  // Export decisions
+  rpc ExportDecisions(ExportDecisionsRequest) returns (ExportDecisionsResponse);
+
+  // Get decision analytics
+  rpc GetDecisionAnalytics(GetDecisionAnalyticsRequest) returns (GetDecisionAnalyticsResponse);
+}
+
+// Request messages
+message ListDecisionsRequest {
+  ListRequest pagination = 1;
+  int64 chat_id_filter = 2;
+  string project_path_filter = 3;
+  google.protobuf.Timestamp since = 4;
+  PrivacyLevel max_privacy_level = 5;
+}
+
+message GetDecisionRequest {
+  string decision_id = 1;
+}
+
+message SearchDecisionsRequest {
+  string query = 1;
+  string project_path = 2;
+  string task_type = 3;
+  bool success_only = 4;
+  ListRequest pagination = 5;
+}
+
+message ExportDecisionsRequest {
+  string format = 1; // "json" or "csv"
+  google.protobuf.Timestamp since = 2;
+  repeated string project_paths = 3;
+}
+
+message GetDecisionAnalyticsRequest {
+  google.protobuf.Timestamp since = 1;
+  repeated string project_paths = 2;
+}
+
+// Response messages
+message ListDecisionsResponse {
+  repeated DecisionLog decisions = 1;
+  Pagination pagination = 2;
+  Error error = 3;
+}
+
+message GetDecisionResponse {
+  DecisionLog decision = 1;
+  Error error = 2;
+}
+
+message SearchDecisionsResponse {
+  repeated DecisionLog decisions = 1;
+  Pagination pagination = 2;
+  string search_query = 3;
+  Error error = 4;
+}
+
+message ExportDecisionsResponse {
+  bytes data = 1;
+  string filename = 2;
+  string content_type = 3;
+  Error error = 4;
+}
+
+message DecisionAnalytics {
+  int64 total_decisions = 1;
+  map<string, int64> task_type_counts = 2;
+  map<string, int64> outcome_stats = 3;
+  double success_rate = 4;
+  double avg_duration_ms = 5;
+  repeated DecisionLog recent_decisions = 6;
+  bool transparency_enabled = 7;
+  google.protobuf.Timestamp generated_at = 8;
+}
+
+message GetDecisionAnalyticsResponse {
+  DecisionAnalytics analytics = 1;
+  Error error = 2;
+}

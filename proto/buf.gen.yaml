@@ -1,0 +1,13 @@
+version: v1
+managed:
+  enabled: false
+plugins:
+  # Go code generation using local protoc plugins
+  - plugin: go
+    out: ../gen/go
+    opt:
+      - paths=source_relative
+  - plugin: go-grpc
+    out: ../gen/go
+    opt:
+      - paths=source_relative

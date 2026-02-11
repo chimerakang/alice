@@ -1,0 +1,158 @@
+syntax = "proto3";
+
+package alice.v1;
+
+import "alice/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/alice/proto/gen/go/alice/v1;alicev1";
+
+// Security event record
+message SecurityEvent {
+  string id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  string event_type = 3;
+  Severity severity = 4;
+  string description = 5;
+  int64 user_id = 6;
+  string ip = 7;
+  string user_agent = 8;
+  map<string, string> details = 9;
+  bool mitigated = 10;
+  string mitigation_action = 11;
+}
+
+// Security statistics
+message SecurityStats {
+  int64 total_events = 1;
+  map<string, int64> event_types = 2;
+  map<string, int64> severities = 3;
+  bool rate_limiting = 4;
+  bool pii_detection = 5;
+  bool audit_logging = 6;
+  bool encryption = 7;
+  int32 active_visitors = 8;
+  google.protobuf.Timestamp generated_at = 9;
+}
+
+// Security audit report
+message SecurityAudit {
+  SecurityStats summary = 1;
+  SecurityEventsByLevel events = 2;
+  repeated SecurityRecommendation recommendations = 3;
+  google.protobuf.Timestamp generated_at = 4;
+}
+
+// Security events grouped by severity level
+message SecurityEventsByLevel {
+  repeated SecurityEvent critical = 1;
+  repeated SecurityEvent high = 2;
+  repeated SecurityEvent medium = 3;
+  repeated SecurityEvent low = 4;
+}
+
+// Security recommendation
+message SecurityRecommendation {
+  Severity priority = 1;
+  string title = 2;
+  string description = 3;
+  string action = 4;
+  google.protobuf.Timestamp timestamp = 5;
+}
+
+// PII (Personally Identifiable Information) detection result
+message PIIDetectionResult {
+  string original_text = 1;
+  string filtered_text = 2;
+  repeated string detected_types = 3;
+  repeated PIIMatch matches = 4;
+  google.protobuf.Timestamp processed_at = 5;
+}
+
+// PII pattern match
+message PIIMatch {
+  string pattern_name = 1;
+  string pattern_type = 2;
+  Severity severity = 3;
+  int32 start_position = 4;
+  int32 end_position = 5;
+  string replacement = 6;
+}
+
+// Security service
+service SecurityService {
+  // List security events
+  rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+
+  // Get security statistics
+  rpc GetStats(GetStatsRequest) returns (GetStatsResponse);
+
+  // Get security audit report
+  rpc GetAudit(GetAuditRequest) returns (GetAuditResponse);
+
+  // Detect PII in text
+  rpc DetectPII(DetectPIIRequest) returns (DetectPIIResponse);
+
+  // Report security incident
+  rpc ReportIncident(ReportIncidentRequest) returns (ReportIncidentResponse);
+}
+
+// Request messages
+message ListEventsRequest {
+  ListRequest pagination = 1;
+  Severity severity_filter = 2;
+  string event_type_filter = 3;
+  google.protobuf.Timestamp since = 4;
+  int64 user_id_filter = 5;
+}
+
+message GetStatsRequest {
+  google.protobuf.Timestamp since = 1;
+}
+
+message GetAuditRequest {
+  google.protobuf.Timestamp since = 1;
+  int32 events_per_level = 2;
+}
+
+message DetectPIIRequest {
+  string text = 1;
+  bool filter_detected = 2;
+}
+
+message ReportIncidentRequest {
+  string event_type = 1;
+  Severity severity = 2;
+  string description = 3;
+  int64 user_id = 4;
+  string ip = 5;
+  map<string, string> context = 6;
+}
+
+// Response messages
+message ListEventsResponse {
+  repeated SecurityEvent events = 1;
+  Pagination pagination = 2;
+  Error error = 3;
+}
+
+message GetStatsResponse {
+  SecurityStats stats = 1;
+  Error error = 2;
+}
+
+message GetAuditResponse {
+  SecurityAudit audit = 1;
+  Error error = 2;
+}
+
+message DetectPIIResponse {
+  PIIDetectionResult result = 1;
+  Error error = 2;
+}
+
+message ReportIncidentResponse {
+  string incident_id = 1;
+  bool success = 2;
+  Error error = 3;
+}
