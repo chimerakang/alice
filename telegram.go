@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // chatKey 用於識別獨立對話（支援 Forum Topics）
@@ -19,6 +20,7 @@ type chatKey struct {
 
 type TelegramBot struct {
 	agents   map[chatKey]*Agent // 每個 chat/topic 一個 agent
+	agentsMu sync.RWMutex       // 保護 agents map 的讀寫鎖
 	client   *CLIClient
 	allowIDs map[int64]bool // 白名單
 	config   *Config
@@ -58,12 +60,46 @@ func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
 }
 
 func (t *TelegramBot) getAgent(key chatKey) *Agent {
+	// 先用讀鎖檢查是否已存在
+	t.agentsMu.RLock()
+	if agent, ok := t.agents[key]; ok {
+		t.agentsMu.RUnlock()
+		return agent
+	}
+	t.agentsMu.RUnlock()
+
+	// 如果不存在，用寫鎖創建新的 agent
+	t.agentsMu.Lock()
+	defer t.agentsMu.Unlock()
+
+	// 雙重檢查，防止在獲取寫鎖期間其他 goroutine 已創建
 	if agent, ok := t.agents[key]; ok {
 		return agent
 	}
+
 	agent := NewAgent(t.client, t.config.DefaultProjectDir)
 	t.agents[key] = agent
 	return agent
+}
+
+// GetAgentsSafely 安全地獲取所有 agents 的副本，供 Web 介面使用
+func (t *TelegramBot) GetAgentsSafely() map[chatKey]*Agent {
+	t.agentsMu.RLock()
+	defer t.agentsMu.RUnlock()
+
+	// 創建副本以避免併發存取問題
+	agents := make(map[chatKey]*Agent)
+	for key, agent := range t.agents {
+		agents[key] = agent
+	}
+	return agents
+}
+
+// GetAgentCount 安全地獲取 agent 數量
+func (t *TelegramBot) GetAgentCount() int {
+	t.agentsMu.RLock()
+	defer t.agentsMu.RUnlock()
+	return len(t.agents)
 }
 
 func (t *TelegramBot) isAllowed(userID int64) bool {
