@@ -62,8 +62,8 @@ func LoadConfig() (*Config, error) {
 		EnableDataCleanup:           true,  // Enable automatic cleanup
 		Security: SecurityConfig{
 			EnableRateLimiting:    true,
-			RateLimitRPM:          60,   // 60 requests per minute default
-			RateLimitBurst:        10,   // 10 burst capacity
+			RateLimitRPM:          120,  // 120 requests per minute (SPA makes many concurrent calls)
+			RateLimitBurst:        30,   // 30 burst capacity (SPA initial load ~15 parallel requests)
 			EnablePIIDetection:    true,
 			EnableAuditLogging:    true,
 			DataRetentionDays:     30,   // 30 days default

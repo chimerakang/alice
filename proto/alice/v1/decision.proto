@@ -23,6 +23,7 @@ message DecisionLog {
   ExecutionOutcome outcome = 11;
   map<string, string> context = 12;
   PrivacyLevel privacy_level = 13;
+  string thinking_content = 14;
 }
 
 // Execution outcome details

@@ -26,6 +26,7 @@ type Checkpoint struct {
 	TriggerType     CheckpointTrigger `json:"trigger_type" db:"trigger_type"`
 	SessionID       string            `json:"session_id" db:"session_id"`
 	ChatID          int64             `json:"chat_id" db:"chat_id"`
+	DecisionLogID   string            `json:"decision_log_id" db:"decision_log_id"`
 	FileSnapshots   map[string]string `json:"file_snapshots" db:"files_snapshot_json"`
 	PreCondition    string            `json:"pre_condition" db:"pre_condition"`
 	DangerousOp     string            `json:"dangerous_op" db:"dangerous_op"`
@@ -214,7 +215,22 @@ func (cm *CheckpointManager) initializeTables() error {
 	// Get underlying database connection
 	db := cm.storage.GetDB().(*sql.DB)
 	_, err := db.Exec(query)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Migration: Add decision_log_id column (safe for existing databases)
+	_, alterErr := db.Exec(`ALTER TABLE checkpoints ADD COLUMN decision_log_id TEXT DEFAULT ''`)
+	if alterErr != nil {
+		// Column likely already exists - expected for non-first runs
+		if !strings.Contains(alterErr.Error(), "duplicate column") {
+			log.Printf("Note: decision_log_id column migration: %v", alterErr)
+		}
+	}
+
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_checkpoints_decision_log ON checkpoints(decision_log_id)`)
+
+	return nil
 }
 
 // ShouldCreateCheckpoint determines if a checkpoint should be created before executing a tool
@@ -257,7 +273,7 @@ func (cm *CheckpointManager) isCommandDangerous(command string, patterns []strin
 }
 
 // CreateCheckpoint creates a new checkpoint
-func (cm *CheckpointManager) CreateCheckpoint(projectDir, description string, triggerType CheckpointTrigger, sessionID string, chatID int64, dangerousOp string) (*Checkpoint, error) {
+func (cm *CheckpointManager) CreateCheckpoint(projectDir, description string, triggerType CheckpointTrigger, sessionID string, chatID int64, dangerousOp string, decisionLogID string) (*Checkpoint, error) {
 	if !cm.enabled {
 		return nil, fmt.Errorf("checkpoint manager is disabled")
 	}
@@ -277,8 +293,9 @@ func (cm *CheckpointManager) CreateCheckpoint(projectDir, description string, tr
 		Description:  description,
 		TriggerType:  triggerType,
 		SessionID:    sessionID,
-		ChatID:       chatID,
-		DangerousOp:  dangerousOp,
+		ChatID:        chatID,
+		DecisionLogID: decisionLogID,
+		DangerousOp:   dangerousOp,
 		CreatedBy:    "alice-agent",
 		IsActive:     true,
 		FileSnapshots: make(map[string]string),
@@ -463,9 +480,9 @@ func (cm *CheckpointManager) storeCheckpoint(checkpoint *Checkpoint) error {
 	query := `
 		INSERT INTO checkpoints (
 			id, timestamp, project_dir, git_commit_hash, git_branch, git_stash_ref,
-			description, trigger_type, session_id, chat_id, files_snapshot_json,
-			pre_condition, dangerous_op, created_by, size, is_active
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			description, trigger_type, session_id, chat_id, decision_log_id,
+			files_snapshot_json, pre_condition, dangerous_op, created_by, size, is_active
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
 	// Get underlying database connection
@@ -474,8 +491,9 @@ func (cm *CheckpointManager) storeCheckpoint(checkpoint *Checkpoint) error {
 		checkpoint.ID, checkpoint.Timestamp, checkpoint.ProjectDir,
 		checkpoint.GitCommitHash, checkpoint.GitBranch, checkpoint.GitStashRef,
 		checkpoint.Description, string(checkpoint.TriggerType), checkpoint.SessionID,
-		checkpoint.ChatID, string(fileSnapshotsJSON), checkpoint.PreCondition,
-		checkpoint.DangerousOp, checkpoint.CreatedBy, checkpoint.Size, checkpoint.IsActive,
+		checkpoint.ChatID, checkpoint.DecisionLogID, string(fileSnapshotsJSON),
+		checkpoint.PreCondition, checkpoint.DangerousOp, checkpoint.CreatedBy,
+		checkpoint.Size, checkpoint.IsActive,
 	)
 	return err
 }
@@ -486,8 +504,8 @@ func (cm *CheckpointManager) ListCheckpoints(projectDir string, limit int) ([]Ch
 
 	query := `
 		SELECT id, timestamp, project_dir, git_commit_hash, git_branch, git_stash_ref,
-			   description, trigger_type, session_id, chat_id, files_snapshot_json,
-			   pre_condition, dangerous_op, created_by, size, is_active
+			   description, trigger_type, session_id, chat_id, decision_log_id,
+			   files_snapshot_json, pre_condition, dangerous_op, created_by, size, is_active
 		FROM checkpoints
 		WHERE project_dir = ? AND is_active = 1
 		ORDER BY timestamp DESC
@@ -508,13 +526,17 @@ func (cm *CheckpointManager) ListCheckpoints(projectDir string, limit int) ([]Ch
 		var cp Checkpoint
 		var triggerType string
 		var fileSnapshotsJSON string
+		var decisionLogID sql.NullString
 
 		err := rows.Scan(
 			&cp.ID, &cp.Timestamp, &cp.ProjectDir, &cp.GitCommitHash,
 			&cp.GitBranch, &cp.GitStashRef, &cp.Description, &triggerType,
-			&cp.SessionID, &cp.ChatID, &fileSnapshotsJSON, &cp.PreCondition,
-			&cp.DangerousOp, &cp.CreatedBy, &cp.Size, &cp.IsActive,
+			&cp.SessionID, &cp.ChatID, &decisionLogID, &fileSnapshotsJSON,
+			&cp.PreCondition, &cp.DangerousOp, &cp.CreatedBy, &cp.Size, &cp.IsActive,
 		)
+		if decisionLogID.Valid {
+			cp.DecisionLogID = decisionLogID.String
+		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to scan checkpoint: %w", err)
 		}
@@ -625,8 +647,8 @@ func (cm *CheckpointManager) restoreFileSnapshots(projectDir string, checkpoint 
 func (cm *CheckpointManager) getCheckpoint(checkpointID string) (*Checkpoint, error) {
 	query := `
 		SELECT id, timestamp, project_dir, git_commit_hash, git_branch, git_stash_ref,
-			   description, trigger_type, session_id, chat_id, files_snapshot_json,
-			   pre_condition, dangerous_op, created_by, size, is_active
+			   description, trigger_type, session_id, chat_id, decision_log_id,
+			   files_snapshot_json, pre_condition, dangerous_op, created_by, size, is_active
 		FROM checkpoints
 		WHERE id = ? AND is_active = 1
 	`
@@ -637,12 +659,13 @@ func (cm *CheckpointManager) getCheckpoint(checkpointID string) (*Checkpoint, er
 	var cp Checkpoint
 	var triggerType string
 	var fileSnapshotsJSON string
+	var decisionLogID sql.NullString
 
 	err := row.Scan(
 		&cp.ID, &cp.Timestamp, &cp.ProjectDir, &cp.GitCommitHash,
 		&cp.GitBranch, &cp.GitStashRef, &cp.Description, &triggerType,
-		&cp.SessionID, &cp.ChatID, &fileSnapshotsJSON, &cp.PreCondition,
-		&cp.DangerousOp, &cp.CreatedBy, &cp.Size, &cp.IsActive,
+		&cp.SessionID, &cp.ChatID, &decisionLogID, &fileSnapshotsJSON,
+		&cp.PreCondition, &cp.DangerousOp, &cp.CreatedBy, &cp.Size, &cp.IsActive,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -652,6 +675,9 @@ func (cm *CheckpointManager) getCheckpoint(checkpointID string) (*Checkpoint, er
 	}
 
 	cp.TriggerType = CheckpointTrigger(triggerType)
+	if decisionLogID.Valid {
+		cp.DecisionLogID = decisionLogID.String
+	}
 
 	// Unmarshal file snapshots
 	if fileSnapshotsJSON != "" {

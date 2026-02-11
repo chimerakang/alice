@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // Pure Go SQLite driver (no CGO required)
@@ -201,6 +202,12 @@ func (s *SQLiteStorage) initTables() error {
 		}
 	}
 
+	// Migration: add thinking_content column to decision_logs
+	_, err := s.db.Exec(`ALTER TABLE decision_logs ADD COLUMN thinking_content TEXT DEFAULT ''`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		log.Printf("Migration warning (thinking_content): %v", err)
+	}
+
 	log.Printf("Database initialized successfully at: %s", s.path)
 	return nil
 }
@@ -323,13 +330,13 @@ func (s *SQLiteStorage) InsertDecisionLog(log DecisionLog) error {
 		INSERT INTO decision_logs
 		(timestamp, session_id, project_path, chat_id, thread_id, user_prompt, agent_response,
 		 tool_calls_json, context_json, outcome_json, duration_ms, tokens_input, tokens_output,
-		 tokens_total, cost_usd, git_commit_hash, git_branch)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 tokens_total, cost_usd, git_commit_hash, git_branch, thinking_content)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		log.Timestamp, log.SessionID, log.ProjectPath, log.ChatID, log.ThreadID,
 		log.UserPrompt, log.AgentResponse, string(toolCallsJSON), string(contextJSON),
 		string(outcomeJSON), log.DurationMs, log.TokensUsed.TotalInputTokens, log.TokensUsed.TotalOutputTokens,
 		log.TokensUsed.TotalInputTokens+log.TokensUsed.TotalOutputTokens, log.TokensUsed.TotalCostUSD,
-		gitCommitHash, gitBranch)
+		gitCommitHash, gitBranch, log.ThinkingContent)
 
 	return err
 }
@@ -339,7 +346,7 @@ func (s *SQLiteStorage) GetDecisionLogs(limit int, offset int) ([]DecisionLog, e
 	rows, err := s.db.Query(`
 		SELECT timestamp, session_id, project_path, chat_id, thread_id, user_prompt,
 			   agent_response, tool_calls_json, context_json, outcome_json, duration_ms,
-			   tokens_input, tokens_output
+			   tokens_input, tokens_output, COALESCE(thinking_content, '') as thinking_content
 		FROM decision_logs
 		ORDER BY timestamp DESC
 		LIMIT ? OFFSET ?`, limit, offset)
@@ -356,7 +363,7 @@ func (s *SQLiteStorage) GetDecisionLogsByTimeRange(start, end time.Time, limit i
 	rows, err := s.db.Query(`
 		SELECT timestamp, session_id, project_path, chat_id, thread_id, user_prompt,
 			   agent_response, tool_calls_json, context_json, outcome_json, duration_ms,
-			   tokens_input, tokens_output
+			   tokens_input, tokens_output, COALESCE(thinking_content, '') as thinking_content
 		FROM decision_logs
 		WHERE timestamp BETWEEN ? AND ?
 		ORDER BY timestamp DESC
@@ -374,7 +381,7 @@ func (s *SQLiteStorage) GetDecisionLogsByProject(projectPath string, limit int) 
 	rows, err := s.db.Query(`
 		SELECT timestamp, session_id, project_path, chat_id, thread_id, user_prompt,
 			   agent_response, tool_calls_json, context_json, outcome_json, duration_ms,
-			   tokens_input, tokens_output
+			   tokens_input, tokens_output, COALESCE(thinking_content, '') as thinking_content
 		FROM decision_logs
 		WHERE project_path = ?
 		ORDER BY timestamp DESC
@@ -397,7 +404,8 @@ func (s *SQLiteStorage) scanDecisionLogs(rows *sql.Rows) ([]DecisionLog, error) 
 		err := rows.Scan(&log.Timestamp, &log.SessionID, &log.ProjectPath,
 			&log.ChatID, &log.ThreadID, &log.UserPrompt, &log.AgentResponse,
 			&toolCallsJSON, &contextJSON, &outcomeJSON, &log.DurationMs,
-			&log.TokensUsed.TotalInputTokens, &log.TokensUsed.TotalOutputTokens)
+			&log.TokensUsed.TotalInputTokens, &log.TokensUsed.TotalOutputTokens,
+			&log.ThinkingContent)
 		if err != nil {
 			return nil, err
 		}

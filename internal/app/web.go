@@ -112,6 +112,7 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/git/status", wi.handleGitStatus)
 	mux.HandleFunc("/api/git/events", wi.handleGitEvents)
 	mux.HandleFunc("/api/git/operations", wi.handleGitOperations)
+	mux.HandleFunc("/api/git/diff", wi.handleGitDiff)
 
 	// Storage & Persistence APIs
 	mux.HandleFunc("/api/storage/health", wi.handleStorageHealth)
@@ -1369,6 +1370,7 @@ func (wi *WebInterface) handleCreateCheckpoint(w http.ResponseWriter, r *http.Re
 			req.SessionID,
 			req.ChatID,
 			"", // No dangerous operation for manual checkpoints
+			"", // No decision log ID for manual checkpoints
 		)
 		if err != nil {
 			log.Printf("Error creating checkpoint: %v", err)

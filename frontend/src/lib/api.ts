@@ -10,6 +10,7 @@ import type {
   HealthResponse,
   MultiAgentStatus,
   GitState,
+  GitDiffResponse,
   Checkpoint,
 } from "@/types/alice";
 
@@ -93,6 +94,14 @@ export const api = {
   },
   getGitEvents: (limit = 20) =>
     fetchJson<{ events?: unknown[] }>(`/api/git/events?limit=${limit}`),
+  getGitDiff: (opts: { projectDir?: string; commit?: string; against?: string } = {}) => {
+    const params = new URLSearchParams();
+    if (opts.projectDir) params.set("project_dir", opts.projectDir);
+    if (opts.commit) params.set("commit", opts.commit);
+    if (opts.against) params.set("against", opts.against);
+    const qs = params.toString();
+    return fetchJson<GitDiffResponse>(`/api/git/diff${qs ? `?${qs}` : ""}`);
+  },
 
   // ========== Checkpoints ==========
   getCheckpoints: (projectDir: string) =>

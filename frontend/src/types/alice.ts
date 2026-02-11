@@ -63,6 +63,23 @@ export interface GitState {
   modified_files: string[];
 }
 
+export interface DiffFile {
+  path: string;
+  status: "added" | "deleted" | "modified";
+  additions: number;
+  deletions: number;
+  chunks: string;
+}
+
+export interface GitDiffResponse {
+  project_dir: string;
+  commit: string;
+  against: string;
+  raw_diff: string;
+  files: DiffFile[];
+  file_count: number;
+}
+
 // ========== Agent ==========
 
 export interface AgentInfo {
@@ -109,6 +126,7 @@ export interface DecisionLog {
   project_path: string;
   user_prompt: string;
   agent_response: string;
+  thinking_content?: string;
   tool_calls: ToolExecution[];
   task_type: string;
   outcome: ExecutionOutcome;
@@ -178,6 +196,10 @@ export interface Checkpoint {
   chat_id: number;
   size: number;
   is_active: boolean;
+  decision_log_id?: string;
+  dangerous_op?: string;
+  pre_condition?: string;
+  created_by?: string;
 }
 
 // ========== WebSocket ==========

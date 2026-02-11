@@ -80,22 +80,23 @@ func (PrivacyLevel) EnumDescriptor() ([]byte, []int) {
 
 // Decision log entry
 type DecisionLog struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Timestamp     *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	UserPrompt    string                 `protobuf:"bytes,3,opt,name=user_prompt,json=userPrompt,proto3" json:"user_prompt,omitempty"`
-	AgentResponse string                 `protobuf:"bytes,4,opt,name=agent_response,json=agentResponse,proto3" json:"agent_response,omitempty"`
-	ToolCalls     []*ToolExecution       `protobuf:"bytes,5,rep,name=tool_calls,json=toolCalls,proto3" json:"tool_calls,omitempty"`
-	ChatId        int64                  `protobuf:"varint,6,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
-	ThreadId      int32                  `protobuf:"varint,7,opt,name=thread_id,json=threadId,proto3" json:"thread_id,omitempty"`
-	ProjectPath   string                 `protobuf:"bytes,8,opt,name=project_path,json=projectPath,proto3" json:"project_path,omitempty"`
-	DurationMs    int64                  `protobuf:"varint,9,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
-	TokenStats    *TokenStats            `protobuf:"bytes,10,opt,name=token_stats,json=tokenStats,proto3" json:"token_stats,omitempty"`
-	Outcome       *ExecutionOutcome      `protobuf:"bytes,11,opt,name=outcome,proto3" json:"outcome,omitempty"`
-	Context       map[string]string      `protobuf:"bytes,12,rep,name=context,proto3" json:"context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	PrivacyLevel  PrivacyLevel           `protobuf:"varint,13,opt,name=privacy_level,json=privacyLevel,proto3,enum=alice.v1.PrivacyLevel" json:"privacy_level,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Timestamp       *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	UserPrompt      string                 `protobuf:"bytes,3,opt,name=user_prompt,json=userPrompt,proto3" json:"user_prompt,omitempty"`
+	AgentResponse   string                 `protobuf:"bytes,4,opt,name=agent_response,json=agentResponse,proto3" json:"agent_response,omitempty"`
+	ToolCalls       []*ToolExecution       `protobuf:"bytes,5,rep,name=tool_calls,json=toolCalls,proto3" json:"tool_calls,omitempty"`
+	ChatId          int64                  `protobuf:"varint,6,opt,name=chat_id,json=chatId,proto3" json:"chat_id,omitempty"`
+	ThreadId        int32                  `protobuf:"varint,7,opt,name=thread_id,json=threadId,proto3" json:"thread_id,omitempty"`
+	ProjectPath     string                 `protobuf:"bytes,8,opt,name=project_path,json=projectPath,proto3" json:"project_path,omitempty"`
+	DurationMs      int64                  `protobuf:"varint,9,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	TokenStats      *TokenStats            `protobuf:"bytes,10,opt,name=token_stats,json=tokenStats,proto3" json:"token_stats,omitempty"`
+	Outcome         *ExecutionOutcome      `protobuf:"bytes,11,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	Context         map[string]string      `protobuf:"bytes,12,rep,name=context,proto3" json:"context,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	PrivacyLevel    PrivacyLevel           `protobuf:"varint,13,opt,name=privacy_level,json=privacyLevel,proto3,enum=alice.v1.PrivacyLevel" json:"privacy_level,omitempty"`
+	ThinkingContent string                 `protobuf:"bytes,14,opt,name=thinking_content,json=thinkingContent,proto3" json:"thinking_content,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *DecisionLog) Reset() {
@@ -217,6 +218,13 @@ func (x *DecisionLog) GetPrivacyLevel() PrivacyLevel {
 		return x.PrivacyLevel
 	}
 	return PrivacyLevel_PRIVACY_LEVEL_UNSPECIFIED
+}
+
+func (x *DecisionLog) GetThinkingContent() string {
+	if x != nil {
+		return x.ThinkingContent
+	}
+	return ""
 }
 
 // Execution outcome details
@@ -1018,7 +1026,7 @@ var File_alice_v1_decision_proto protoreflect.FileDescriptor
 
 const file_alice_v1_decision_proto_rawDesc = "" +
 	"\n" +
-	"\x17alice/v1/decision.proto\x12\balice.v1\x1a\x15alice/v1/common.proto\x1a\x13alice/v1/tool.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf5\x04\n" +
+	"\x17alice/v1/decision.proto\x12\balice.v1\x1a\x15alice/v1/common.proto\x1a\x13alice/v1/tool.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\xa0\x05\n" +
 	"\vDecisionLog\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x128\n" +
 	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12\x1f\n" +
@@ -1037,7 +1045,8 @@ const file_alice_v1_decision_proto_rawDesc = "" +
 	"tokenStats\x124\n" +
 	"\aoutcome\x18\v \x01(\v2\x1a.alice.v1.ExecutionOutcomeR\aoutcome\x12<\n" +
 	"\acontext\x18\f \x03(\v2\".alice.v1.DecisionLog.ContextEntryR\acontext\x12;\n" +
-	"\rprivacy_level\x18\r \x01(\x0e2\x16.alice.v1.PrivacyLevelR\fprivacyLevel\x1a:\n" +
+	"\rprivacy_level\x18\r \x01(\x0e2\x16.alice.v1.PrivacyLevelR\fprivacyLevel\x12)\n" +
+	"\x10thinking_content\x18\x0e \x01(\tR\x0fthinkingContent\x1a:\n" +
 	"\fContextEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xdd\x01\n" +

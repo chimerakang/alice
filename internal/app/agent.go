@@ -31,18 +31,19 @@ type ToolExecution struct {
 
 // DecisionLog captures the full context behind AI-generated decisions
 type DecisionLog struct {
-	Timestamp     time.Time              `json:"timestamp"`
-	SessionID     string                 `json:"session_id"`
-	ProjectPath   string                 `json:"project_path"`
-	ChatID        int64                  `json:"chat_id"`
-	ThreadID      int                    `json:"thread_id"`
-	UserPrompt    string                 `json:"user_prompt"`
-	AgentResponse string                 `json:"agent_response"`
-	ToolCalls     []ToolExecution        `json:"tool_calls"`
-	Context       map[string]interface{} `json:"context"`
-	Outcome       ExecutionOutcome       `json:"outcome"`
-	DurationMs    int                    `json:"duration_ms"`
-	TokensUsed    TokenStats             `json:"tokens_used"`
+	Timestamp       time.Time              `json:"timestamp"`
+	SessionID       string                 `json:"session_id"`
+	ProjectPath     string                 `json:"project_path"`
+	ChatID          int64                  `json:"chat_id"`
+	ThreadID        int                    `json:"thread_id"`
+	UserPrompt      string                 `json:"user_prompt"`
+	AgentResponse   string                 `json:"agent_response"`
+	ThinkingContent string                 `json:"thinking_content"` // AI thinking/reasoning blocks
+	ToolCalls       []ToolExecution        `json:"tool_calls"`
+	Context         map[string]interface{} `json:"context"`
+	Outcome         ExecutionOutcome       `json:"outcome"`
+	DurationMs      int                    `json:"duration_ms"`
+	TokensUsed      TokenStats             `json:"tokens_used"`
 }
 
 // ExecutionOutcome represents the result of an AI interaction
@@ -316,12 +317,16 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	ps := a.current()
 	log.Printf("[agent] calling CLI (stream), session=%s, project=%s", ps.sessionID, a.projectDir)
 
+	// Pre-generate decision ID so checkpoints created during streaming
+	// can reference the decision that will be created after streaming completes.
+	currentDecisionID := generateDecisionID(a.chatID, a.threadID, startTime)
+
 	// Track tool executions for this decision
 	var toolCallsForDecision []ToolExecution
 
 	resp, err := a.client.CallStream(userMessage, a.projectDir, ps.sessionID, func(toolName string, toolInput map[string]interface{}) {
 		// Check if we should create a checkpoint before executing this tool
-		a.checkAndCreateCheckpoint(toolName, toolInput)
+		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
 
 		// Log tool execution start
 		globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID)
@@ -342,6 +347,26 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 			if msg != "" {
 				onUpdate(msg, true)
 			}
+		}
+	}, func(contentType, text string) {
+		if onUpdate == nil || text == "" {
+			return
+		}
+		switch contentType {
+		case "thinking":
+			// Show truncated thinking as update
+			msg := text
+			if len(msg) > 200 {
+				msg = msg[:200] + "..."
+			}
+			onUpdate("🧠 "+msg, true)
+		case "text":
+			// Show AI text response as update
+			msg := text
+			if len(msg) > 300 {
+				msg = msg[:300] + "..."
+			}
+			onUpdate("💬 "+msg, true)
 		}
 	})
 	if err != nil {
@@ -509,20 +534,27 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 		tokenStats.APICallCount = 1
 	}
 
+	// Extract thinking content from CLI response
+	thinkingContent := ""
+	if resp != nil {
+		thinkingContent = resp.ThinkingContent
+	}
+
 	// Create decision log
 	decision := DecisionLog{
-		Timestamp:     startTime,
-		SessionID:     ps.sessionID,
-		ProjectPath:   a.projectDir,
-		ChatID:        a.chatID,
-		ThreadID:      a.threadID,
-		UserPrompt:    userPrompt,
-		AgentResponse: agentResponse,
-		ToolCalls:     toolCalls,
-		Context:       context,
-		Outcome:       outcome,
-		DurationMs:    int(duration.Milliseconds()),
-		TokensUsed:    tokenStats,
+		Timestamp:       startTime,
+		SessionID:       ps.sessionID,
+		ProjectPath:     a.projectDir,
+		ChatID:          a.chatID,
+		ThreadID:        a.threadID,
+		UserPrompt:      userPrompt,
+		AgentResponse:   agentResponse,
+		ThinkingContent: thinkingContent,
+		ToolCalls:       toolCalls,
+		Context:         context,
+		Outcome:         outcome,
+		DurationMs:      int(duration.Milliseconds()),
+		TokensUsed:      tokenStats,
 	}
 
 	// Log the decision
@@ -711,7 +743,7 @@ func (a *Agent) isSensitiveKey(key string) bool {
 }
 
 // checkAndCreateCheckpoint checks if a checkpoint should be created before executing a tool
-func (a *Agent) checkAndCreateCheckpoint(toolName string, toolInput map[string]interface{}) {
+func (a *Agent) checkAndCreateCheckpoint(toolName string, toolInput map[string]interface{}, decisionLogID string) {
 	// Check if checkpoint manager is available and enabled
 	if globalCheckpointManager == nil || !globalCheckpointManager.IsEnabled() {
 		return
@@ -738,6 +770,7 @@ func (a *Agent) checkAndCreateCheckpoint(toolName string, toolInput map[string]i
 		sessionID,
 		a.chatID,
 		fmt.Sprintf("%s: %s", toolName, dangerousOp.Description),
+		decisionLogID,
 	)
 
 	if err != nil {
@@ -750,16 +783,17 @@ func (a *Agent) checkAndCreateCheckpoint(toolName string, toolInput map[string]i
 	// Broadcast checkpoint event via WebSocket if available
 	if globalWebSocketHub != nil {
 		checkpointEvent := map[string]interface{}{
-			"event_type":     "checkpoint_created",
-			"checkpoint_id":  checkpoint.ID,
-			"tool_name":      toolName,
-			"chat_id":        a.chatID,
-			"project_dir":    a.projectDir,
-			"description":    description,
-			"trigger_type":   string(TriggerPreDanger),
-			"dangerous_op":   dangerousOp.Description,
-			"risk_level":     dangerousOp.RiskLevel.String(),
-			"timestamp":      checkpoint.Timestamp,
+			"event_type":      "checkpoint_created",
+			"checkpoint_id":   checkpoint.ID,
+			"decision_log_id": checkpoint.DecisionLogID,
+			"tool_name":       toolName,
+			"chat_id":         a.chatID,
+			"project_dir":     a.projectDir,
+			"description":     description,
+			"trigger_type":    string(TriggerPreDanger),
+			"dangerous_op":    dangerousOp.Description,
+			"risk_level":      dangerousOp.RiskLevel.String(),
+			"timestamp":       checkpoint.Timestamp,
 		}
 
 		// Use the correct broadcast method

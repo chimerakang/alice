@@ -3,11 +3,13 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { useAppStore } from "@/stores/appStore";
 import Dashboard from "@/pages/Dashboard";
 import Timeline from "@/pages/Timeline";
+import Checkpoints from "@/pages/Checkpoints";
 import Performance from "@/pages/Performance";
 import Security from "@/pages/Security";
 import {
   LayoutDashboard,
   Clock,
+  Camera,
   BarChart3,
   Shield,
   Wifi,
@@ -17,6 +19,7 @@ import {
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/timeline", icon: Clock, label: "Timeline" },
+  { to: "/checkpoints", icon: Camera, label: "Checkpoints" },
   { to: "/performance", icon: BarChart3, label: "Performance" },
   { to: "/security", icon: Shield, label: "Security" },
 ];
@@ -90,6 +93,7 @@ function AppLayout() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/timeline" element={<Timeline />} />
+            <Route path="/checkpoints" element={<Checkpoints />} />
             <Route path="/performance" element={<Performance />} />
             <Route path="/security" element={<Security />} />
           </Routes>

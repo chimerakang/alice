@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -16,15 +17,17 @@ type CLIClient struct {
 
 // CLIResponse is the JSON output from `claude -p --output-format json`.
 type CLIResponse struct {
-	Type         string  `json:"type"`
-	Subtype      string  `json:"subtype"`
-	SessionID    string  `json:"session_id"`
-	IsError      bool    `json:"is_error"`
-	NumTurns     int     `json:"num_turns"`
-	Result       string  `json:"result"`
-	TotalCostUSD float64 `json:"total_cost_usd"`
-	DurationMs   int     `json:"duration_ms"`
-	Usage        struct {
+	Type            string  `json:"type"`
+	Subtype         string  `json:"subtype"`
+	SessionID       string  `json:"session_id"`
+	IsError         bool    `json:"is_error"`
+	NumTurns        int     `json:"num_turns"`
+	Result          string  `json:"result"`
+	TotalCostUSD    float64 `json:"total_cost_usd"`
+	DurationMs      int     `json:"duration_ms"`
+	ThinkingContent string  `json:"thinking_content"` // accumulated thinking blocks
+	TextContent     string  `json:"text_content"`     // accumulated text blocks
+	Usage           struct {
 		InputTokens  int `json:"input_tokens"`
 		OutputTokens int `json:"output_tokens"`
 	} `json:"usage"`
@@ -97,7 +100,8 @@ func (c *CLIClient) Call(message, projectDir, sessionID string) (*CLIResponse, e
 
 // CallStream invokes Claude Code CLI with stream-json output.
 // onToolUse is called for each tool_use event during processing.
-func (c *CLIClient) CallStream(message, projectDir, sessionID string, onToolUse func(toolName string, toolInput map[string]interface{})) (*CLIResponse, error) {
+// onContent is called for thinking/text content blocks (contentType: "thinking" or "text").
+func (c *CLIClient) CallStream(message, projectDir, sessionID string, onToolUse func(toolName string, toolInput map[string]interface{}), onContent func(contentType, text string)) (*CLIResponse, error) {
 	startTime := time.Now()
 	args := []string{
 		"-p",
@@ -130,6 +134,8 @@ func (c *CLIClient) CallStream(message, projectDir, sessionID string, onToolUse 
 	}
 
 	var finalResp *CLIResponse
+	var thinkingBlocks []string
+	var textBlocks []string
 
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // up to 4MB per line
@@ -145,9 +151,11 @@ func (c *CLIClient) CallStream(message, projectDir, sessionID string, onToolUse 
 			Subtype string `json:"subtype"`
 			Message *struct {
 				Content []struct {
-					Type  string                 `json:"type"`
-					Name  string                 `json:"name"`
-					Input map[string]interface{} `json:"input"`
+					Type     string                 `json:"type"`
+					Name     string                 `json:"name"`
+					Input    map[string]interface{} `json:"input"`
+					Text     string                 `json:"text"`     // for type="text"
+					Thinking string                 `json:"thinking"` // for type="thinking"
 				} `json:"content"`
 			} `json:"message"`
 			// result fields
@@ -169,10 +177,27 @@ func (c *CLIClient) CallStream(message, projectDir, sessionID string, onToolUse 
 
 		switch event.Type {
 		case "assistant":
-			if event.Message != nil && onToolUse != nil {
+			if event.Message != nil {
 				for _, c := range event.Message.Content {
-					if c.Type == "tool_use" {
-						onToolUse(c.Name, c.Input)
+					switch c.Type {
+					case "tool_use":
+						if onToolUse != nil {
+							onToolUse(c.Name, c.Input)
+						}
+					case "thinking":
+						if c.Thinking != "" {
+							thinkingBlocks = append(thinkingBlocks, c.Thinking)
+							if onContent != nil {
+								onContent("thinking", c.Thinking)
+							}
+						}
+					case "text":
+						if c.Text != "" {
+							textBlocks = append(textBlocks, c.Text)
+							if onContent != nil {
+								onContent("text", c.Text)
+							}
+						}
 					}
 				}
 			}
@@ -190,6 +215,12 @@ func (c *CLIClient) CallStream(message, projectDir, sessionID string, onToolUse 
 			finalResp.Usage.InputTokens = event.Usage.InputTokens
 			finalResp.Usage.OutputTokens = event.Usage.OutputTokens
 		}
+	}
+
+	// Merge accumulated thinking/text blocks into response
+	if finalResp != nil {
+		finalResp.ThinkingContent = strings.Join(thinkingBlocks, "\n\n---\n\n")
+		finalResp.TextContent = strings.Join(textBlocks, "\n\n")
 	}
 
 	if err := cmd.Wait(); err != nil {

@@ -418,19 +418,20 @@ func convertToProtoDecisionLog(decision DecisionLog) *alicev1.DecisionLog {
 	}
 
 	return &alicev1.DecisionLog{
-		Id:            generateDecisionID(decision.ChatID, decision.ThreadID, decision.Timestamp),
-		Timestamp:     timestamppb.New(decision.Timestamp),
-		UserPrompt:    decision.UserPrompt,
-		AgentResponse: decision.AgentResponse,
-		ToolCalls:     protoToolCalls,
-		ChatId:        decision.ChatID,
-		ThreadId:      int32(decision.ThreadID),
-		ProjectPath:   decision.ProjectPath,
-		DurationMs:    int64(decision.DurationMs),
-		TokenStats:    convertToProtoTokenStats(decision.TokensUsed),
-		Outcome:       convertToProtoExecutionOutcome(decision.Outcome),
-		Context:       contextStr,
-		PrivacyLevel:  alicev1.PrivacyLevel_PRIVACY_LEVEL_PUBLIC, // 預設為 public
+		Id:              generateDecisionID(decision.ChatID, decision.ThreadID, decision.Timestamp),
+		Timestamp:       timestamppb.New(decision.Timestamp),
+		UserPrompt:      decision.UserPrompt,
+		AgentResponse:   decision.AgentResponse,
+		ThinkingContent: decision.ThinkingContent,
+		ToolCalls:       protoToolCalls,
+		ChatId:          decision.ChatID,
+		ThreadId:        int32(decision.ThreadID),
+		ProjectPath:     decision.ProjectPath,
+		DurationMs:      int64(decision.DurationMs),
+		TokenStats:      convertToProtoTokenStats(decision.TokensUsed),
+		Outcome:         convertToProtoExecutionOutcome(decision.Outcome),
+		Context:         contextStr,
+		PrivacyLevel:    alicev1.PrivacyLevel_PRIVACY_LEVEL_PUBLIC, // 預設為 public
 	}
 }
 
@@ -550,8 +551,19 @@ func (wi *WebInterface) handleRecentDecisionsProto(w http.ResponseWriter, r *htt
 			}
 		}
 
-		// 獲取最近的決策記錄
-		decisions := globalDecisionLogger.GetRecentDecisions(limit)
+		// 獲取最近的決策記錄 (優先從資料庫讀取，fallback 到記憶體)
+		var decisions []DecisionLog
+		if globalStorage != nil {
+			dbDecisions, err := globalStorage.GetDecisionLogs(limit, 0)
+			if err != nil {
+				log.Printf("Database query error, falling back to memory: %v", err)
+				decisions = globalDecisionLogger.GetRecentDecisions(limit)
+			} else {
+				decisions = dbDecisions
+			}
+		} else {
+			decisions = globalDecisionLogger.GetRecentDecisions(limit)
+		}
 
 		// 轉換為 proto 響應
 		protoDecisions := make([]*alicev1.DecisionLog, len(decisions))
@@ -983,6 +995,136 @@ func (wi *WebInterface) handleGitOperations(w http.ResponseWriter, r *http.Reque
 			writeProtoError(w, "Method not allowed", http.StatusMethodNotAllowed)
 		}
 	})(w, r)
+}
+
+// handleGitDiff 處理 Git diff 查詢 — 取得指定 commit 或工作目錄的變更差異
+// GET /api/git/diff?project_dir=...&commit=<hash>&against=<hash>
+//   - commit 不指定: working tree diff (unstaged)
+//   - commit=<hash>: show that commit's diff
+//   - commit=<hash>&against=<hash2>: diff between two commits
+func (wi *WebInterface) handleGitDiff(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != "GET" {
+			writeProtoError(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		projectDir := r.URL.Query().Get("project_dir")
+		if projectDir == "" {
+			projectDir = "."
+		}
+
+		commit := r.URL.Query().Get("commit")
+		against := r.URL.Query().Get("against")
+
+		// Safety: only allow read-only diff operations
+		if gitOperationManager == nil {
+			writeProtoError(w, "Git integration not initialized", http.StatusServiceUnavailable)
+			return
+		}
+
+		// Build git diff command args
+		var args []string
+		if commit != "" && against != "" {
+			// Diff between two commits
+			args = []string{against, commit}
+		} else if commit != "" {
+			// Show a specific commit's diff
+			args = []string{commit + "^", commit}
+		}
+		// else: working tree diff (no args = unstaged changes)
+
+		// Use the operation manager for safety checks
+		output, err := gitOperationManager.ExecuteGitOperation(projectDir, "diff", args)
+		if err != nil {
+			writeProtoError(w, fmt.Sprintf("Git diff failed: %v", err), http.StatusInternalServerError)
+			return
+		}
+
+		// Parse diff into structured file entries
+		files := parseDiffOutput(output)
+
+		response := map[string]interface{}{
+			"project_dir": projectDir,
+			"commit":      commit,
+			"against":     against,
+			"raw_diff":    output,
+			"files":       files,
+			"file_count":  len(files),
+			"timestamp":   time.Now(),
+		}
+
+		writeProtoResponse(w, response)
+	})(w, r)
+}
+
+// DiffFile represents a single file's diff
+type DiffFile struct {
+	Path      string `json:"path"`
+	Status    string `json:"status"` // added, deleted, modified
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	Chunks    string `json:"chunks"` // the actual diff hunks
+}
+
+// parseDiffOutput parses unified diff output into structured file entries
+func parseDiffOutput(raw string) []DiffFile {
+	if raw == "" {
+		return []DiffFile{}
+	}
+
+	var files []DiffFile
+	sections := strings.Split(raw, "diff --git ")
+
+	for _, section := range sections {
+		if section == "" {
+			continue
+		}
+
+		file := DiffFile{}
+
+		lines := strings.SplitN(section, "\n", 2)
+		if len(lines) == 0 {
+			continue
+		}
+
+		// Parse file path from "a/path b/path"
+		header := lines[0]
+		parts := strings.Fields(header)
+		if len(parts) >= 2 {
+			file.Path = strings.TrimPrefix(parts[1], "b/")
+		}
+
+		content := ""
+		if len(lines) > 1 {
+			content = lines[1]
+		}
+
+		// Determine status
+		if strings.Contains(content, "new file mode") {
+			file.Status = "added"
+		} else if strings.Contains(content, "deleted file mode") {
+			file.Status = "deleted"
+		} else {
+			file.Status = "modified"
+		}
+
+		// Count additions and deletions
+		for _, line := range strings.Split(content, "\n") {
+			if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+				file.Additions++
+			} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+				file.Deletions++
+			}
+		}
+
+		file.Chunks = content
+		files = append(files, file)
+	}
+
+	return files
 }
 
 // ========== Storage & Persistence API Handlers ==========
