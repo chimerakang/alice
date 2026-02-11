@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"time"
 )
 
 // CLIClient calls Claude Code CLI as a subprocess.
@@ -36,6 +37,7 @@ func NewClient(model string) *CLIClient {
 // Call invokes the Claude Code CLI in print mode.
 // If sessionID is non-empty, it resumes that session for conversation continuity.
 func (c *CLIClient) Call(message, projectDir, sessionID string) (*CLIResponse, error) {
+	startTime := time.Now()
 	args := []string{
 		"-p",
 		"--output-format", "json",
@@ -67,6 +69,25 @@ func (c *CLIClient) Call(message, projectDir, sessionID string) (*CLIResponse, e
 		return nil, fmt.Errorf("parse CLI output: %w\nraw: %s", err, string(output))
 	}
 
+	// Record performance metrics
+	latency := time.Since(startTime)
+	totalTokens := resp.Usage.InputTokens + resp.Usage.OutputTokens
+	errorType := ""
+	if resp.IsError {
+		errorType = "cli_error"
+	}
+
+	// Use session ID as chat ID for tracking (if available)
+	chatID := int64(0)
+	if sessionID != "" {
+		// Simple hash of session ID for consistent chat ID
+		for _, b := range []byte(sessionID) {
+			chatID = chatID*31 + int64(b)
+		}
+	}
+
+	RecordAPICall(latency, !resp.IsError, totalTokens, resp.TotalCostUSD, chatID, errorType)
+
 	if resp.IsError {
 		return &resp, fmt.Errorf("CLI returned error: %s", resp.Result)
 	}
@@ -77,6 +98,7 @@ func (c *CLIClient) Call(message, projectDir, sessionID string) (*CLIResponse, e
 // CallStream invokes Claude Code CLI with stream-json output.
 // onToolUse is called for each tool_use event during processing.
 func (c *CLIClient) CallStream(message, projectDir, sessionID string, onToolUse func(toolName string, toolInput map[string]interface{})) (*CLIResponse, error) {
+	startTime := time.Now()
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
@@ -180,6 +202,25 @@ func (c *CLIClient) CallStream(message, projectDir, sessionID string, onToolUse 
 	if finalResp == nil {
 		return nil, fmt.Errorf("no result event in stream output")
 	}
+
+	// Record performance metrics
+	latency := time.Since(startTime)
+	totalTokens := finalResp.Usage.InputTokens + finalResp.Usage.OutputTokens
+	errorType := ""
+	if finalResp.IsError {
+		errorType = "cli_stream_error"
+	}
+
+	// Use session ID as chat ID for tracking (if available)
+	chatID := int64(0)
+	if sessionID != "" {
+		// Simple hash of session ID for consistent chat ID
+		for _, b := range []byte(sessionID) {
+			chatID = chatID*31 + int64(b)
+		}
+	}
+
+	RecordAPICall(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, chatID, errorType)
 
 	if finalResp.IsError {
 		return finalResp, fmt.Errorf("CLI returned error: %s", finalResp.Result)

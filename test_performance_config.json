@@ -1,0 +1,12 @@
+{
+  "telegram_token": "test-token",
+  "model": "sonnet",
+  "default_project_dir": ".",
+  "enable_web_interface": true,
+  "web_port": "8080",
+  "enable_decision_logging": true,
+  "decision_log_level": "detailed",
+  "enable_multi_agent": false,
+  "enable_performance_monitoring": true,
+  "performance_metrics_retention": 24
+}

@@ -110,17 +110,24 @@ func (tl *ToolLogger) LogToolComplete(toolName string, status string, duration t
 	tl.mu.Lock()
 	defer tl.mu.Unlock()
 
+	var chatID int64 = 0
+	success := (status == "success" && err == nil)
+
 	// Find the most recent execution of this tool and update it
 	for i := range tl.executions {
 		if tl.executions[i].ToolName == toolName && tl.executions[i].Status == "running" {
 			tl.executions[i].Status = status
 			tl.executions[i].Duration = duration
+			chatID = tl.executions[i].ChatID
 			if err != nil {
 				tl.executions[i].Error = err.Error()
 			}
 			break
 		}
 	}
+
+	// Record performance metrics for tool execution
+	RecordToolExecution(toolName, duration, chatID, success)
 }
 
 // GetRecentExecutions returns the most recent tool executions

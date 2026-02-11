@@ -90,6 +90,13 @@ func (wi *WebInterface) CreateRouter() *http.ServeMux {
 	mux.HandleFunc("/api/multiagent/stats", wi.handleMultiAgentStats)
 	mux.HandleFunc("/api/multiagent/agents", wi.handleMultiAgentAgents)
 
+	// Performance Monitoring APIs
+	mux.HandleFunc("/api/performance/analytics", wi.handlePerformanceAnalytics)
+	mux.HandleFunc("/api/performance/metrics", wi.handlePerformanceMetrics)
+	mux.HandleFunc("/api/performance/trends", wi.handlePerformanceTrends)
+	mux.HandleFunc("/api/performance/recommendations", wi.handlePerformanceRecommendations)
+	mux.HandleFunc("/api/performance/export", wi.handlePerformanceExport)
+
 	return mux
 }
 
@@ -748,5 +755,163 @@ func (wi *WebInterface) handleMultiAgentAgents(w http.ResponseWriter, r *http.Re
 			"enabled":     globalAgentCoordinator.IsEnabled(),
 			"timestamp":   time.Now(),
 		})
+	})(w, r)
+}
+
+// === Performance Monitoring API Handlers ===
+
+// handlePerformanceAnalytics returns comprehensive performance analytics
+func (wi *WebInterface) handlePerformanceAnalytics(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if performanceMonitor == nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"enabled": false,
+				"message": "Performance monitoring is disabled",
+			})
+			return
+		}
+
+		analytics := performanceMonitor.GetAnalytics()
+		recommendations := performanceMonitor.GenerateRecommendations()
+
+		response := map[string]interface{}{
+			"enabled":         true,
+			"analytics":       analytics,
+			"recommendations": recommendations,
+			"timestamp":       time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// handlePerformanceMetrics returns recent performance metrics
+func (wi *WebInterface) handlePerformanceMetrics(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if performanceMonitor == nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"enabled": false,
+				"message": "Performance monitoring is disabled",
+			})
+			return
+		}
+
+		// Parse limit parameter
+		limitStr := r.URL.Query().Get("limit")
+		limit := 100 // default limit
+		if limitStr != "" {
+			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+				limit = parsedLimit
+			}
+		}
+
+		metrics := performanceMonitor.GetRecentMetrics(limit)
+
+		response := map[string]interface{}{
+			"enabled":   true,
+			"metrics":   metrics,
+			"count":     len(metrics),
+			"limit":     limit,
+			"timestamp": time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// handlePerformanceTrends returns performance trend data
+func (wi *WebInterface) handlePerformanceTrends(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if performanceMonitor == nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"enabled": false,
+				"message": "Performance monitoring is disabled",
+			})
+			return
+		}
+
+		// Parse hours parameter
+		hoursStr := r.URL.Query().Get("hours")
+		hours := 24 // default 24 hours
+		if hoursStr != "" {
+			if parsedHours, err := strconv.Atoi(hoursStr); err == nil && parsedHours > 0 {
+				hours = parsedHours
+			}
+		}
+
+		trends := performanceMonitor.GetPerformanceTrends(hours)
+
+		response := map[string]interface{}{
+			"enabled":   true,
+			"trends":    trends,
+			"timestamp": time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// handlePerformanceRecommendations returns optimization recommendations
+func (wi *WebInterface) handlePerformanceRecommendations(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if performanceMonitor == nil {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"enabled": false,
+				"message": "Performance monitoring is disabled",
+			})
+			return
+		}
+
+		recommendations := performanceMonitor.GenerateRecommendations()
+
+		response := map[string]interface{}{
+			"enabled":         true,
+			"recommendations": recommendations,
+			"count":           len(recommendations),
+			"timestamp":       time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// handlePerformanceExport exports performance data
+func (wi *WebInterface) handlePerformanceExport(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		if performanceMonitor == nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Performance monitoring is disabled",
+			})
+			return
+		}
+
+		// Export performance data as JSON
+		data, err := performanceMonitor.ExportMetrics()
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": fmt.Sprintf("Export failed: %v", err),
+			})
+			return
+		}
+
+		// Set headers for file download
+		filename := fmt.Sprintf("alice-performance-metrics-%s.json", time.Now().Format("20060102-150405"))
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+
+		w.Write(data)
 	})(w, r)
 }

@@ -30,6 +30,10 @@ type Config struct {
 
 	// Multi-Agent Settings
 	EnableMultiAgent bool `json:"enable_multi_agent"`
+
+	// Performance Monitoring Settings
+	EnablePerformanceMonitoring bool `json:"enable_performance_monitoring"`
+	PerformanceMetricsRetention int  `json:"performance_metrics_retention"` // hours
 }
 
 func LoadConfig() (*Config, error) {
@@ -38,9 +42,11 @@ func LoadConfig() (*Config, error) {
 		DefaultProjectDir:     ".",
 		WebPort:               "8080",
 		WebStaticDir:          "./static",
-		EnableDecisionLogging: true,
-		DecisionLogLevel:      "detailed",
-		EnableMultiAgent:      false, // Disabled by default (experimental)
+		EnableDecisionLogging:       true,
+		DecisionLogLevel:            "detailed",
+		EnableMultiAgent:            false, // Disabled by default (experimental)
+		EnablePerformanceMonitoring: true,  // Enabled by default
+		PerformanceMetricsRetention: 24,    // 24 hours default
 	}
 
 	// 優先從 config.json 讀取
@@ -91,6 +97,16 @@ func LoadConfig() (*Config, error) {
 	// Multi-Agent Environment Variables
 	if v := os.Getenv("ENABLE_MULTI_AGENT"); v == "true" {
 		config.EnableMultiAgent = true
+	}
+
+	// Performance Monitoring Environment Variables
+	if v := os.Getenv("ENABLE_PERFORMANCE_MONITORING"); v == "false" {
+		config.EnablePerformanceMonitoring = false
+	}
+	if v := os.Getenv("PERFORMANCE_METRICS_RETENTION"); v != "" {
+		if retention, err := strconv.Atoi(v); err == nil && retention > 0 {
+			config.PerformanceMetricsRetention = retention
+		}
 	}
 
 	// 驗證必要欄位
@@ -170,6 +186,14 @@ func main() {
 	} else {
 		globalAgentCoordinator.SetEnabled(false)
 		log.Printf("   Multi-agent coordination: disabled")
+	}
+
+	// Initialize performance monitoring
+	if config.EnablePerformanceMonitoring {
+		InitPerformanceMonitor()
+		log.Printf("   Performance monitoring: enabled (retention: %dh)", config.PerformanceMetricsRetention)
+	} else {
+		log.Printf("   Performance monitoring: disabled")
 	}
 
 	client := NewClient(config.Model)
