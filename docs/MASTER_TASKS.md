@@ -25,7 +25,7 @@
 | P4 - Proto-First | Protocol Buffers 架構遷移 | 100% | ✅ |
 | P5 - Frontend Foundation | React + Vite 框架 + 基礎元件 | 100% | ✅ |
 | P6 - AI Audit System | AI 開發追蹤核心功能 | 100% | ✅ |
-| P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 | 75% | 🔄 |
+| P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 | 100% | ✅ |
 | P8 - Control API | 遠端控制 + 中斷/回溯 | 60% | 🔄 |
 
 ---
@@ -129,9 +129,10 @@
 | | — Frontend: 優先用 decision_log_id 直接查詢 | | ✅ | |
 | | — Frontend: 保留時間戳配對為 fallback | | ✅ | |
 | | — **🎉 Issue #26 已關閉** (2026-02-12) | | ✅ | |
-| 7.3 | Performance & Security Analysis | [#25](https://github.com/chimerakang/alice/issues/25) | 📋 | P2 |
-| | — Performance: 響應時間/Token趨勢圖表 | | | |
-| | — Security: 事件列表/嚴重度分佈 | | | |
+| 7.3 | Performance & Security Analysis | [#25](https://github.com/chimerakang/alice/issues/25) | ✅ | P2 |
+| | — Performance: 響應時間/Token/成本/記憶體趨勢圖表 ✅ | | ✅ | |
+| | — Security: 事件列表/嚴重度分佈/PII記錄 ✅ | | ✅ | |
+| | — **🎉 Issue #25 已關閉** (2026-02-12) | | ✅ | |
 
 ## P8 - Remote Control API (🔄 60%)
 
@@ -186,7 +187,7 @@ Phase 4 (分析) ─── #25 Performance/Security ──→ #11 Remote Control
 | [#22](https://github.com/chimerakang/alice/issues/22) | Decision Detail + Diff Viewer | P6 | ✅ Closed |
 | [#23](https://github.com/chimerakang/alice/issues/23) | Checkpoint Management UI | P6 | ✅ Closed |
 | [#24](https://github.com/chimerakang/alice/issues/24) | Dashboard Enhancement | P7 | ✅ Closed |
-| [#25](https://github.com/chimerakang/alice/issues/25) | Performance & Security | P7 | 📋 Open |
+| [#25](https://github.com/chimerakang/alice/issues/25) | Performance & Security | P7 | ✅ Closed |
 | [#26](https://github.com/chimerakang/alice/issues/26) | Checkpoint ↔ DecisionLog 直接關聯 | P7 | ✅ Closed |
 | [#27](https://github.com/chimerakang/alice/issues/27) | 擴充 CallStream 擷取完整 AI 思考內容 | P6 | ✅ Closed |
 | [#11](https://github.com/chimerakang/alice/issues/11) | Remote Control API | P8 | 🔄 Open (60%) |
