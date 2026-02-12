@@ -28,7 +28,7 @@
 | P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 + 歷史資料查詢 | 100% | ✅ |
 | P8 - Control API | 遠端控制 + 中斷/回溯 | 100% | ✅ |
 | P8.5 - TG 指令增強 | /tasks 待辦清單 + Topic 設定持久化 | 100% | ✅ |
-| P9 - Multimedia Input | 圖片分析 + 語音轉文字 | 0% | 📋 |
+| P9 - Multimedia Input | 圖片分析 + 語音轉文字 | 50% | 🔄 |
 | P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 0% | 📋 |
 
 ---
@@ -183,11 +183,11 @@
 
 | # | Task | Issue | Status | Priority |
 |---|------|-------|--------|----------|
-| 9.1 | **Telegram 圖片訊息支援** | [#28](https://github.com/chimerakang/alice/issues/28) | 📋 | **P0** |
-| | — 擴展 TG update 解析結構（Photo + Caption 欄位） | | 📋 | |
-| | — 實作 Telegram getFile + downloadFile 圖片下載 | | 📋 | |
-| | — 組合圖片路徑 prompt，引導 Claude Read tool 讀取 | | 📋 | |
-| | — 臨時檔案管理（下載目錄 + 使用後清理） | | 📋 | |
+| 9.1 | **Telegram 圖片訊息支援** | [#28](https://github.com/chimerakang/alice/issues/28) | 🔄 | **P0** |
+| | — 擴展 TG update 解析結構（Photo + Caption 欄位） ✅ | | ✅ | |
+| | — 實作 Telegram getFile + downloadFile 圖片下載 ✅ | | ✅ | |
+| | — 組合圖片路徑 prompt，引導 Claude Read tool 讀取 ✅ | | ✅ | |
+| | — 臨時檔案管理（下載目錄 + 使用後清理） ✅ | | ✅ | |
 | 9.2 | **Telegram 語音訊息轉文字** | [#29](https://github.com/chimerakang/alice/issues/29) | 📋 | P1 |
 | | — 擴展 TG update 解析結構（Voice 欄位） | | 📋 | |
 | | — 實作 STT 客戶端（OpenAI Whisper API） | | 📋 | |

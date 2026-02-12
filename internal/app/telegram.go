@@ -24,6 +24,15 @@ type chatKey struct {
 	threadID int
 }
 
+// PhotoSize Telegram 圖片大小資訊
+type PhotoSize struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id"`
+	Width        int    `json:"width"`
+	Height       int    `json:"height"`
+	FileSize     int    `json:"file_size,omitempty"`
+}
+
 type TelegramBot struct {
 	agents   map[chatKey]*Agent // 每個 chat/topic 一個 agent
 	agentsMu sync.RWMutex       // 保護 agents map 的讀寫鎖
@@ -182,7 +191,9 @@ func (t *TelegramBot) Start() {
 					Chat *struct {
 						ID int64 `json:"id"`
 					} `json:"chat"`
-					Text string `json:"text"`
+					Text    string      `json:"text"`
+					Caption string      `json:"caption"`
+					Photo   []PhotoSize `json:"photo"`
 				} `json:"message"`
 				CallbackQuery *struct {
 					ID      string `json:"id"`
@@ -219,7 +230,7 @@ func (t *TelegramBot) Start() {
 			if update.Message != nil && update.Message.Chat != nil && update.Message.From != nil {
 				msg := update.Message
 				key := chatKey{chatID: msg.Chat.ID, threadID: msg.MessageThreadID}
-				go t.handleMessage(key, msg.From.ID, msg.Text)
+				go t.handleMessage(key, msg.From.ID, msg.Text, msg.Caption, msg.Photo)
 			}
 
 			// Handle callback queries (inline keyboard button clicks)
@@ -232,7 +243,7 @@ func (t *TelegramBot) Start() {
 	}
 }
 
-func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string) {
+func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, caption string, photo []PhotoSize) {
 	// 權限檢查
 	if !t.isAllowed(userID) {
 		t.send(key, "⛔ 你沒有使用權限。")
@@ -240,6 +251,14 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string) {
 	}
 
 	text = strings.TrimSpace(text)
+	caption = strings.TrimSpace(caption)
+
+	// Handle photo messages
+	if len(photo) > 0 {
+		t.handlePhotoMessage(key, userID, photo, caption)
+		return
+	}
+
 	if text == "" {
 		return
 	}
@@ -1152,4 +1171,187 @@ func (t *TelegramBot) parseMasterTasks(filePath string) ([]PhaseInfo, error) {
 	}
 
 	return filteredPhases, nil
+}
+
+// handlePhotoMessage 處理圖片訊息
+func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []PhotoSize, caption string) {
+	// 檢查多媒體支援是否開啟
+	if !t.config.Multimedia.EnablePhotoSupport {
+		t.send(key, "📷 圖片分析功能目前未啟用。請聯繫管理員開啟 `enable_photo_support` 設定。")
+		return
+	}
+
+	// 取得最高解析度的圖片（通常是陣列最後一個）
+	if len(photo) == 0 {
+		return
+	}
+	targetPhoto := photo[len(photo)-1]
+
+	// 檢查檔案大小限制
+	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
+	if targetPhoto.FileSize > maxSizeBytes {
+		t.send(key, fmt.Sprintf("📷 圖片檔案過大（%s），限制為 %dMB。",
+			formatFileSize(targetPhoto.FileSize), t.config.Multimedia.MaxFileSizeMB))
+		return
+	}
+
+	// 下載圖片
+	imagePath, err := t.downloadFile(targetPhoto.FileID)
+	if err != nil {
+		log.Printf("[telegram] download photo error: %v", err)
+		t.send(key, "📷 下載圖片失敗，請稍後再試。")
+		return
+	}
+
+	// 確保在函數結束時清理臨時檔案
+	defer func() {
+		if err := os.Remove(imagePath); err != nil {
+			log.Printf("[telegram] cleanup photo error: %v", err)
+		}
+	}()
+
+	// 組合 prompt 讓 Claude 分析圖片
+	prompt := fmt.Sprintf("請分析這張圖片: %s", imagePath)
+	if caption != "" {
+		prompt = fmt.Sprintf("%s\n\n用戶說明: %s", prompt, caption)
+	}
+
+	// 安全檢查和 PII 檢測
+	if globalSecurityManager != nil {
+		globalSecurityManager.LogSecurityEvent(SecurityEvent{
+			EventType:   "telegram_photo_received",
+			Severity:    "medium",
+			Description: "Photo message received via Telegram",
+			UserID:      userID,
+			Details: map[string]interface{}{
+				"file_size":    targetPhoto.FileSize,
+				"width":        targetPhoto.Width,
+				"height":       targetPhoto.Height,
+				"has_caption":  caption != "",
+				"caption_len":  len(caption),
+				"chat_id":      key.chatID,
+			},
+		})
+
+		// PII 檢測 caption
+		if caption != "" {
+			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption)
+			if len(detected) > 0 {
+				globalSecurityManager.LogSecurityEvent(SecurityEvent{
+					EventType:   "pii_detected_photo_caption",
+					Severity:    "high",
+					Description: fmt.Sprintf("PII detected in photo caption: %v", detected),
+					UserID:      userID,
+					Details: map[string]interface{}{
+						"detected_types": detected,
+						"chat_id":        key.chatID,
+					},
+				})
+				t.send(key, "⚠️ 圖片說明中偵測到敏感資訊已自動過濾。")
+				caption = filteredCaption
+				prompt = fmt.Sprintf("請分析這張圖片: %s\n\n用戶說明: %s", imagePath, caption)
+			}
+		}
+	}
+
+	// 發送給 Agent 處理
+	agent := t.getAgent(key)
+	t.send(key, "📷 正在分析圖片...")
+
+	response, err := agent.Run(prompt, func(update string, silent bool) {
+		if silent {
+			t.sendSilent(key, update)
+		} else {
+			t.send(key, update)
+		}
+	})
+	if err != nil {
+		log.Printf("[telegram] photo analysis error: %v", err)
+		t.send(key, "📷 圖片分析失敗，請稍後再試。")
+		return
+	}
+
+	if response != "" {
+		t.send(key, response)
+	}
+}
+
+// downloadFile 從 Telegram 下載檔案到臨時目錄
+func (t *TelegramBot) downloadFile(fileID string) (string, error) {
+	// 1. 取得檔案路徑
+	getFileURL := fmt.Sprintf("https://api.telegram.org/bot%s/getFile?file_id=%s",
+		t.config.TelegramToken, fileID)
+
+	resp, err := http.Get(getFileURL)
+	if err != nil {
+		return "", fmt.Errorf("getFile request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var fileResp struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			FileID   string `json:"file_id"`
+			FilePath string `json:"file_path"`
+			FileSize int    `json:"file_size"`
+		} `json:"result"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&fileResp); err != nil {
+		return "", fmt.Errorf("parse getFile response failed: %w", err)
+	}
+
+	if !fileResp.OK || fileResp.Result.FilePath == "" {
+		return "", fmt.Errorf("getFile failed: invalid response")
+	}
+
+	// 2. 下載檔案內容
+	downloadURL := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s",
+		t.config.TelegramToken, fileResp.Result.FilePath)
+
+	downloadResp, err := http.Get(downloadURL)
+	if err != nil {
+		return "", fmt.Errorf("download file failed: %w", err)
+	}
+	defer downloadResp.Body.Close()
+
+	// 3. 確保臨時目錄存在
+	tempDir := t.config.Multimedia.TempDownloadDir
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return "", fmt.Errorf("create temp dir failed: %w", err)
+	}
+
+	// 4. 儲存到臨時檔案（保留原始副檔名）
+	ext := filepath.Ext(fileResp.Result.FilePath)
+	if ext == "" {
+		ext = ".jpg" // 預設為 JPEG
+	}
+
+	tempFile := filepath.Join(tempDir, fmt.Sprintf("photo_%s_%d%s",
+		fileID, time.Now().Unix(), ext))
+
+	file, err := os.Create(tempFile)
+	if err != nil {
+		return "", fmt.Errorf("create temp file failed: %w", err)
+	}
+	defer file.Close()
+
+	_, err = io.Copy(file, downloadResp.Body)
+	if err != nil {
+		os.Remove(tempFile) // 清理失敗的檔案
+		return "", fmt.Errorf("save file failed: %w", err)
+	}
+
+	return tempFile, nil
+}
+
+// formatFileSize 格式化檔案大小顯示
+func formatFileSize(bytes int) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	if bytes < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	}
+	return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
 }

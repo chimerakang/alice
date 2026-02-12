@@ -325,6 +325,22 @@ func Main() {
 		config.Security.EnableAuditLogging,
 	)
 
+	// Initialize multimedia support
+	if config.Multimedia.EnablePhotoSupport || config.Multimedia.EnableVoiceSupport {
+		// Ensure temp directory exists
+		if err := os.MkdirAll(config.Multimedia.TempDownloadDir, 0755); err != nil {
+			log.Printf("⚠️ Warning: failed to create temp download directory: %v", err)
+			log.Printf("   Multimedia features may not work properly")
+		} else {
+			log.Printf("   Multimedia temp directory: %s", config.Multimedia.TempDownloadDir)
+		}
+		log.Printf("   Multimedia support: photo=%v, voice=%v (max size: %dMB)",
+			config.Multimedia.EnablePhotoSupport,
+			config.Multimedia.EnableVoiceSupport,
+			config.Multimedia.MaxFileSizeMB,
+		)
+	}
+
 	client := NewClient(config.Model)
 
 	tgBot, err := NewTelegramBot(config, client)
