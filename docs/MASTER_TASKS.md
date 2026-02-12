@@ -27,7 +27,7 @@
 | P6 - AI Audit System | AI 開發追蹤核心功能 | 100% | ✅ |
 | P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 + 歷史資料查詢 | 90% | 🔄 |
 | P8 - Control API | 遠端控制 + 中斷/回溯 | 100% | ✅ |
-| P8.5 - TG 指令增強 | /tasks 待辦清單指令 | 0% | 📋 |
+| P8.5 - TG 指令增強 | /tasks 待辦清單指令 | 100% | ✅ |
 | P9 - Multimedia Input | 圖片分析 + 語音轉文字 | 0% | 📋 |
 
 ---
@@ -160,15 +160,17 @@
 | 8.5 | 控制端點認證 (Bearer token) | [#11](https://github.com/chimerakang/alice/issues/11) | ✅ | P2 |
 | | — **🎉 Issue #11 已關閉** (2026-02-12) | | ✅ | |
 
-## P8.5 - Telegram 指令增強 (📋 0%)
+## P8.5 - Telegram 指令增強 (✅ 100%)
 
 | # | Task | Issue | Status | Priority |
 |---|------|-------|--------|----------|
-| 8.6 | **/tasks 指令 — 查看待辦工作清單** | [#31](https://github.com/chimerakang/alice/issues/31) | 📋 | P1 |
-| | — 解析 MASTER_TASKS.md 提取未完成項目（📋/🔄/🧪） | | 📋 | |
-| | — handleCommand 新增 /tasks case | | 📋 | |
-| | — 格式化輸出 Phase + 任務清單到 Telegram | | 📋 | |
-| | — 更新 /help 指令說明 | | 📋 | |
+| 8.6 | **/tasks 指令 — 查看待辦工作清單** | [#31](https://github.com/chimerakang/alice/issues/31) | ✅ | P1 |
+| | — 解析 MASTER_TASKS.md 提取未完成項目（📋/🔄/🧪） ✅ | | ✅ | |
+| | — handleCommand 新增 /tasks case ✅ | | ✅ | |
+| | — 格式化輸出 Phase + 任務清單到 Telegram ✅ | | ✅ | |
+| | — 更新 /help 指令說明 ✅ | | ✅ | |
+| | — 更新指令註冊清單 ✅ | | ✅ | |
+| | — **🎉 Issue #31 已完成** (2026-02-13) | | ✅ | |
 
 ## P9 - Multimedia Input (📋 0%)
 

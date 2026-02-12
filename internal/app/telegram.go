@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -8,7 +9,9 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -79,6 +82,7 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "checkpoints", "description": "查看檢查點狀態"},
 		{"command": "multiagent", "description": "多代理協調管理"},
 		{"command": "agents", "description": "查看專門化代理清單"},
+		{"command": "tasks", "description": "查看待辦工作清單"},
 		{"command": "help", "description": "顯示說明"},
 	}
 
@@ -375,6 +379,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 /abort — 中斷正在執行的任務
 /multiagent [enable|disable|status|stats] — 多代理協調管理
 /agents — 查看專門化代理清單
+/tasks — 查看待辦工作清單
 /help — 顯示此說明`
 		t.sendMarkdown(key, help)
 
@@ -500,6 +505,9 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 
 	case "/agents":
 		t.handleAgentsList(key)
+
+	case "/tasks":
+		t.handleTasks(key)
 
 	default:
 		t.send(key, "未知指令，輸入 /help 查看可用指令")
@@ -918,4 +926,215 @@ func (t *TelegramBot) sendTelegram(method string, params map[string]interface{})
 		body, _ := io.ReadAll(resp.Body)
 		log.Printf("Telegram API error: %s", string(body))
 	}
+}
+
+// handleTasks 處理 /tasks 命令，顯示未完成的工作清單
+func (t *TelegramBot) handleTasks(key chatKey) {
+	// 獲取專案根目錄
+	agent := t.getAgent(key)
+	projectDir := agent.ProjectDir()
+
+	// MASTER_TASKS.md 檔案路徑
+	tasksFile := filepath.Join(projectDir, "docs", "MASTER_TASKS.md")
+
+	// 解析 MASTER_TASKS.md
+	phases, err := t.parseMasterTasks(tasksFile)
+	if err != nil {
+		t.send(key, fmt.Sprintf("❌ 無法讀取任務清單: %v", err))
+		return
+	}
+
+	// 統計未完成任務
+	var pendingTasks []string
+	var totalPendingCount int
+
+	for _, phase := range phases {
+		if len(phase.Tasks) > 0 {
+			phaseHeader := fmt.Sprintf("📋 **%s** (%d%%, %s)",
+				phase.Name, phase.Progress, phase.Status)
+			var phaseTasks []string
+
+			for _, task := range phase.Tasks {
+				taskStatus := ""
+				switch task.Status {
+				case "📋":
+					taskStatus = "📋 規劃中"
+				case "🔄":
+					taskStatus = "🔄 開發中"
+				case "🧪":
+					taskStatus = "🧪 測試中"
+				default:
+					continue // 跳過已完成的任務
+				}
+
+				taskLine := fmt.Sprintf("  %s %s", taskStatus, task.Description)
+				if task.IssueLink != "" {
+					taskLine += fmt.Sprintf(" %s", task.IssueLink)
+				}
+
+				phaseTasks = append(phaseTasks, taskLine)
+				totalPendingCount++
+			}
+
+			if len(phaseTasks) > 0 {
+				pendingTasks = append(pendingTasks, phaseHeader)
+				pendingTasks = append(pendingTasks, phaseTasks...)
+				pendingTasks = append(pendingTasks, "") // 空行分隔
+			}
+		}
+	}
+
+	// 組裝回應訊息
+	var response string
+	if totalPendingCount == 0 {
+		response = "🎉 *所有任務已完成！*\n\n"
+		response += "目前沒有待辦的工作項目。\n"
+		response += "查看已完成的任務請參閱 `docs/MASTER_TASKS.md`"
+	} else {
+		response = fmt.Sprintf("📋 *Alice AI Agent 待辦清單*\n\n")
+		response += fmt.Sprintf("📊 **總計**: %d 個待辦任務\n\n", totalPendingCount)
+		response += strings.Join(pendingTasks, "\n")
+		response += "\n💡 *提示*: 使用對應的 GitHub Issue 連結查看詳細資訊"
+	}
+
+	t.sendMarkdown(key, response)
+}
+
+// TaskInfo 表示單個任務資訊
+type TaskInfo struct {
+	Number      string // 任務編號 (如 "8.6")
+	Description string // 任務描述
+	IssueLink   string // GitHub Issue 連結
+	Status      string // 狀態符號 (📋/🔄/🧪/✅)
+}
+
+// PhaseInfo 表示階段資訊
+type PhaseInfo struct {
+	Name     string     // 階段名稱
+	Progress int        // 進度百分比
+	Status   string     // 狀態符號
+	Tasks    []TaskInfo // 任務列表
+}
+
+// parseMasterTasks 解析 MASTER_TASKS.md 檔案提取未完成任務
+func (t *TelegramBot) parseMasterTasks(filePath string) ([]PhaseInfo, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("無法開啟檔案 %s: %w", filePath, err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	var phases []PhaseInfo
+	var currentPhase *PhaseInfo
+
+	// 用於匹配階段標題的正規表達式
+	phaseRegex := regexp.MustCompile(`^## (P\d+(?:\.\d+)?\s*-\s*.+?)\s*\(([^)]+)\)`)
+	// 用於匹配進度表格行的正規表達式
+	progressRegex := regexp.MustCompile(`^\|\s*(P\d+(?:\.\d+)?[^|]*)\|\s*([^|]*)\|\s*(\d+)%\s*\|\s*([^|]+)\s*\|`)
+	// 用於匹配任務行的正規表達式 (支援有或沒有任務編號的行)
+	taskRegex := regexp.MustCompile(`^\|\s*(\d+\.\d+|)\s*\|\s*(.+?)\s*\|\s*(\[#\d+\]\([^)]+\)|—)\s*\|\s*([📋🔄🧪✅⏸️])\s*\|`)
+
+	isInOverview := false
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		// 檢查是否進入 Phase Overview 表格
+		if strings.Contains(line, "## Phase Overview") {
+			isInOverview = true
+			continue
+		}
+
+		// 如果在 Phase Overview 中，解析進度表格
+		if isInOverview {
+			if strings.HasPrefix(line, "|") && !strings.Contains(line, "Phase") && !strings.Contains(line, "---") {
+				matches := progressRegex.FindStringSubmatch(line)
+				if len(matches) == 5 {
+					phaseName := strings.TrimSpace(matches[1])
+					progress := 0
+					if progressStr := strings.TrimSpace(matches[3]); progressStr != "" {
+						if p, err := strconv.Atoi(progressStr); err == nil {
+							progress = p
+						}
+					}
+					status := strings.TrimSpace(matches[4])
+
+					// 只包含未完成的階段 (進度 < 100% 或狀態不是 ✅)
+					if progress < 100 || status != "✅" {
+						phases = append(phases, PhaseInfo{
+							Name:     phaseName,
+							Progress: progress,
+							Status:   status,
+							Tasks:    []TaskInfo{},
+						})
+					}
+				}
+			} else if line == "---" {
+				isInOverview = false
+			}
+			continue
+		}
+
+		// 檢查階段標題
+		matches := phaseRegex.FindStringSubmatch(line)
+		if len(matches) == 3 {
+			phaseName := strings.TrimSpace(matches[1])
+
+			// 尋找對應的階段
+			for i := range phases {
+				if strings.HasPrefix(phases[i].Name, strings.Split(phaseName, " - ")[0]) {
+					currentPhase = &phases[i]
+					break
+				}
+			}
+			continue
+		}
+
+		// 解析任務表格行
+		if currentPhase != nil && strings.HasPrefix(line, "|") && !strings.Contains(line, "Task") && !strings.Contains(line, "---") {
+			matches := taskRegex.FindStringSubmatch(line)
+			if len(matches) == 5 {
+				taskNumber := strings.TrimSpace(matches[1])
+				description := strings.TrimSpace(matches[2])
+				issueLink := strings.TrimSpace(matches[3])
+				status := strings.TrimSpace(matches[4])
+
+				// 只包含未完成的任務
+				if status == "📋" || status == "🔄" || status == "🧪" {
+					task := TaskInfo{
+						Number:      taskNumber,
+						Description: description,
+						Status:      status,
+					}
+
+					// 如果沒有任務編號，使用自動編號
+					if taskNumber == "" {
+						task.Number = fmt.Sprintf("%d.x", len(currentPhase.Tasks)+1)
+					}
+
+					// 處理 Issue 連結
+					if issueLink != "—" && issueLink != "" {
+						task.IssueLink = issueLink
+					}
+
+					currentPhase.Tasks = append(currentPhase.Tasks, task)
+				}
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("讀取檔案時發生錯誤: %w", err)
+	}
+
+	// 移除沒有待辦任務的階段
+	var filteredPhases []PhaseInfo
+	for _, phase := range phases {
+		if len(phase.Tasks) > 0 {
+			filteredPhases = append(filteredPhases, phase)
+		}
+	}
+
+	return filteredPhases, nil
 }
