@@ -23,7 +23,7 @@
 | P2 - Monitoring | Web Dashboard + API + 監控系統 | 100% | ✅ |
 | P3 - Data Layer | 持久化 + Git 整合 + Checkpoint | 100% | ✅ |
 | P4 - Proto-First | Protocol Buffers 架構遷移 | 100% | ✅ |
-| P5 - Frontend Foundation | React + Vite 框架 + 基礎元件 | 90% | 🔄 |
+| P5 - Frontend Foundation | React + Vite 框架 + 基礎元件 | 100% | ✅ |
 | P6 - AI Audit System | AI 開發追蹤核心功能 | 100% | ✅ |
 | P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 | 75% | 🔄 |
 | P8 - Control API | 遠端控制 + 中斷/回溯 | 60% | 🔄 |
@@ -70,7 +70,7 @@
 | 4.3 | TypeScript 類型生成 | [#13](https://github.com/chimerakang/alice/issues/13) | ✅ |
 | 4.4 | API 端點遷移至 proto 型別 | [#13](https://github.com/chimerakang/alice/issues/13) | ✅ |
 
-## P5 - Frontend Foundation (✅ 90%)
+## P5 - Frontend Foundation (✅ 100%)
 
 | # | Task | Issue | Status | Priority |
 |---|------|-------|--------|----------|
@@ -80,10 +80,10 @@
 | | — CollapsiblePanel, MarkdownRenderer, StatusBadge | | ✅ | |
 | | — DiffViewer, ToolCallGantt, SearchFilter | | ✅ | |
 | | — TimelineEntry | | ✅ | |
-| 5.4 | WebSocket Hook + Zustand 狀態管理 | [#17](https://github.com/chimerakang/alice/issues/17) | 🔄 | P0 |
-| | — WebSocket hook ✅ | | | |
-| | — Zustand store ✅ | | | |
-| | — 剩餘: notifications, event recovery | | | |
+| 5.4 | WebSocket Hook + Zustand 狀態管理 | [#17](https://github.com/chimerakang/alice/issues/17) | ✅ | P0 |
+| | — WebSocket hook (exponential backoff 重連) ✅ | | ✅ | |
+| | — Zustand store (6種事件類型 + devtools) ✅ | | ✅ | |
+| | — API client + 初始數據載入 ✅ | | ✅ | |
 
 ## P6 - AI Audit System: 核心功能 (✅ 100%)
 
@@ -178,7 +178,7 @@ Phase 4 (分析) ─── #25 Performance/Security ──→ #11 Remote Control
 | [#1-#10, #12-#13](https://github.com/chimerakang/alice/issues) | P1-P4 Backend | P1-P4 | ✅ All Closed |
 | [#15](https://github.com/chimerakang/alice/issues/15) | React + Vite 專案初始化 | P5 | ✅ Closed |
 | [#16](https://github.com/chimerakang/alice/issues/16) | 共用 UI 元件庫 | P5 | ✅ Closed |
-| [#17](https://github.com/chimerakang/alice/issues/17) | WebSocket + Zustand | P5 | 🔄 Open (80%) |
+| [#17](https://github.com/chimerakang/alice/issues/17) | WebSocket + Zustand | P5 | ✅ Closed |
 | [#18](https://github.com/chimerakang/alice/issues/18) | ~~Dashboard 主頁面~~ | — | ❌ Replaced by #24 |
 | [#19](https://github.com/chimerakang/alice/issues/19) | ~~Timeline + Terminal~~ | — | ❌ Replaced by #21 |
 | [#20](https://github.com/chimerakang/alice/issues/20) | ~~Git/Checkpoint/Perf/Security~~ | — | ❌ Split into #22-#25 |

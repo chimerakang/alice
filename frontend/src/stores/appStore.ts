@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { devtools } from "zustand/middleware";
 import type {
   AgentInfo,
   ToolExecution,
@@ -49,7 +50,9 @@ interface AppState {
   handleWsEvent: (event: WebSocketEvent) => void;
 }
 
-export const useAppStore = create<AppState>((set, get) => ({
+export const useAppStore = create<AppState>()(
+  devtools(
+    (set, get) => ({
   // Connection
   wsConnected: false,
   setWsConnected: (v) => set({ wsConnected: v }),
@@ -126,4 +129,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       // performance_metric handled separately if needed
     }
   },
+}), {
+  name: "alice-app-store",
 }));
