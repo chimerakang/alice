@@ -377,6 +377,22 @@ func Main() {
 		log.Printf("   Data cleanup: scheduled daily (retention: %d days)", config.DataRetentionDays)
 	}
 
+	// Start periodic multimedia file cleanup
+	if config.Multimedia.EnablePhotoSupport || config.Multimedia.EnableVoiceSupport {
+		go func() {
+			ticker := time.NewTicker(6 * time.Hour) // Clean temp files every 6 hours
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ticker.C:
+					CleanupTempMediaFiles(config.Multimedia.TempDownloadDir, 1*time.Hour) // Remove files older than 1 hour
+				}
+			}
+		}()
+		log.Printf("   Multimedia cleanup: scheduled every 6h (remove files older than 1h)")
+	}
+
 	// Start Telegram bot in separate goroutine
 	go tgBot.Start()
 

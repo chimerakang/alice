@@ -28,7 +28,7 @@
 | P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 + 歷史資料查詢 | 100% | ✅ |
 | P8 - Control API | 遠端控制 + 中斷/回溯 | 100% | ✅ |
 | P8.5 - TG 指令增強 | /tasks 待辦清單 + Topic 設定持久化 | 100% | ✅ |
-| P9 - Multimedia Input | 圖片分析 + 語音轉文字 | 50% | 🔄 |
+| P9 - Multimedia Input | 圖片分析 + 語音轉文字 | 95% | 🔄 |
 | P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 0% | 📋 |
 
 ---
@@ -183,21 +183,22 @@
 
 | # | Task | Issue | Status | Priority |
 |---|------|-------|--------|----------|
-| 9.1 | **Telegram 圖片訊息支援** | [#28](https://github.com/chimerakang/alice/issues/28) | 🔄 | **P0** |
+| 9.1 | **Telegram 圖片訊息支援** | [#28](https://github.com/chimerakang/alice/issues/28) | ✅ | **P0** |
 | | — 擴展 TG update 解析結構（Photo + Caption 欄位） ✅ | | ✅ | |
 | | — 實作 Telegram getFile + downloadFile 圖片下載 ✅ | | ✅ | |
 | | — 組合圖片路徑 prompt，引導 Claude Read tool 讀取 ✅ | | ✅ | |
 | | — 臨時檔案管理（下載目錄 + 使用後清理） ✅ | | ✅ | |
+| | — **🎉 Issue #28 已完成** (2026-02-13) | | ✅ | |
 | 9.2 | **Telegram 語音訊息轉文字** | [#29](https://github.com/chimerakang/alice/issues/29) | 📋 | P1 |
 | | — 擴展 TG update 解析結構（Voice 欄位） | | 📋 | |
 | | — 實作 STT 客戶端（OpenAI Whisper API） | | 📋 | |
 | | — 語音下載 → 轉錄 → 文字傳給 Claude CLI | | 📋 | |
 | | — 回覆中顯示轉錄文字供用戶確認 | | 📋 | |
-| 9.3 | 共用媒體基礎設施 | — | 📋 | P0 |
-| | — Telegram 檔案下載共用函數 | | 📋 | |
-| | — 臨時目錄管理 + 定期清理機制 | | 📋 | |
-| | — MultimediaConfig 接線到實際邏輯 | | 📋 | |
-| | — config.example.json 更新多媒體設定範例 | | 📋 | |
+| 9.3 | 共用媒體基礎設施 | — | ✅ | P0 |
+| | — Telegram 檔案下載共用函數 ✅ | | ✅ | |
+| | — 臨時目錄管理 + 定期清理機制 ✅ | | ✅ | |
+| | — MultimediaConfig 接線到實際邏輯 ✅ | | ✅ | |
+| | — config.example.json 更新多媒體設定範例 ✅ | | ✅ | |
 
 ## P10 - Claude Code Hooks 整合 (📋 0%)
 
@@ -267,7 +268,7 @@ Phase 4 (分析) ─── #25 Performance/Security ──→ #11 Remote Control
 | [#27](https://github.com/chimerakang/alice/issues/27) | 擴充 CallStream 擷取完整 AI 思考內容 | P6 | ✅ Closed |
 | [#11](https://github.com/chimerakang/alice/issues/11) | Remote Control API | P8 | ✅ Closed |
 | [#31](https://github.com/chimerakang/alice/issues/31) | **/tasks 指令 — 查看待辦工作清單** | P8.5 | ✅ Closed |
-| [#28](https://github.com/chimerakang/alice/issues/28) | **Telegram 圖片訊息支援** | P9 | 📋 Planned |
+| [#28](https://github.com/chimerakang/alice/issues/28) | **Telegram 圖片訊息支援** | P9 | 🔄 In Progress |
 | [#29](https://github.com/chimerakang/alice/issues/29) | **Telegram 語音訊息轉文字** | P9 | 📋 Planned |
 | [#30](https://github.com/chimerakang/alice/issues/30) | **Checkpoints 頁面重新定位：AI 決策歷程 + 安全快照** | P7 | ✅ Closed |
 | [#33](https://github.com/chimerakang/alice/issues/33) | **Topic-Project 對應持久化 — 重啟後保留設定** | P8.5 | ✅ Closed |

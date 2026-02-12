@@ -1196,7 +1196,7 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 	}
 
 	// 下載圖片
-	imagePath, err := t.downloadFile(targetPhoto.FileID)
+	imagePath, err := t.DownloadTelegramFile(targetPhoto.FileID, "photo")
 	if err != nil {
 		log.Printf("[telegram] download photo error: %v", err)
 		t.send(key, "📷 下載圖片失敗，請稍後再試。")
@@ -1276,8 +1276,67 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 	}
 }
 
-// downloadFile 從 Telegram 下載檔案到臨時目錄
-func (t *TelegramBot) downloadFile(fileID string) (string, error) {
+
+// formatFileSize 格式化檔案大小顯示
+func formatFileSize(bytes int) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	if bytes < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	}
+	return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
+}
+
+// CleanupTempMediaFiles 清理舊的臨時媒體檔案
+func CleanupTempMediaFiles(tempDir string, maxAge time.Duration) {
+	if tempDir == "" || tempDir == "." {
+		return // 避免誤刪重要檔案
+	}
+
+	entries, err := os.ReadDir(tempDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("[multimedia] cleanup readdir error: %v", err)
+		}
+		return
+	}
+
+	cutoff := time.Now().Add(-maxAge)
+	deletedCount := 0
+	deletedSize := int64(0)
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		filePath := filepath.Join(tempDir, entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+
+		// 檢查檔案是否過期
+		if info.ModTime().Before(cutoff) {
+			size := info.Size()
+			if err := os.Remove(filePath); err == nil {
+				deletedCount++
+				deletedSize += size
+			} else {
+				log.Printf("[multimedia] cleanup remove error: %v", err)
+			}
+		}
+	}
+
+	if deletedCount > 0 {
+		log.Printf("[multimedia] cleanup: removed %d files (%.1f MB)",
+			deletedCount, float64(deletedSize)/(1024*1024))
+	}
+}
+
+// DownloadTelegramFile 通用 Telegram 檔案下載函數（支援圖片和語音）
+func (t *TelegramBot) DownloadTelegramFile(fileID, fileType string) (string, error) {
 	// 1. 取得檔案路徑
 	getFileURL := fmt.Sprintf("https://api.telegram.org/bot%s/getFile?file_id=%s",
 		t.config.TelegramToken, fileID)
@@ -1305,6 +1364,13 @@ func (t *TelegramBot) downloadFile(fileID string) (string, error) {
 		return "", fmt.Errorf("getFile failed: invalid response")
 	}
 
+	// 檢查檔案大小限制
+	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
+	if fileResp.Result.FileSize > maxSizeBytes {
+		return "", fmt.Errorf("file too large: %d bytes (limit: %d MB)",
+			fileResp.Result.FileSize, t.config.Multimedia.MaxFileSizeMB)
+	}
+
 	// 2. 下載檔案內容
 	downloadURL := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s",
 		t.config.TelegramToken, fileResp.Result.FilePath)
@@ -1324,11 +1390,19 @@ func (t *TelegramBot) downloadFile(fileID string) (string, error) {
 	// 4. 儲存到臨時檔案（保留原始副檔名）
 	ext := filepath.Ext(fileResp.Result.FilePath)
 	if ext == "" {
-		ext = ".jpg" // 預設為 JPEG
+		// 根據檔案類型設定預設副檔名
+		switch fileType {
+		case "photo":
+			ext = ".jpg"
+		case "voice":
+			ext = ".ogg"
+		default:
+			ext = ".bin"
+		}
 	}
 
-	tempFile := filepath.Join(tempDir, fmt.Sprintf("photo_%s_%d%s",
-		fileID, time.Now().Unix(), ext))
+	tempFile := filepath.Join(tempDir, fmt.Sprintf("%s_%s_%d%s",
+		fileType, fileID, time.Now().Unix(), ext))
 
 	file, err := os.Create(tempFile)
 	if err != nil {
@@ -1343,15 +1417,4 @@ func (t *TelegramBot) downloadFile(fileID string) (string, error) {
 	}
 
 	return tempFile, nil
-}
-
-// formatFileSize 格式化檔案大小顯示
-func formatFileSize(bytes int) string {
-	if bytes < 1024 {
-		return fmt.Sprintf("%d B", bytes)
-	}
-	if bytes < 1024*1024 {
-		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
-	}
-	return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
 }
