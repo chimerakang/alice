@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import type { SecurityStats, SecurityEvent } from "@/types/alice";
 import { useAppStore } from "@/stores/appStore";
+import DateRangeFilter from "@/components/DateRangeFilter";
+import type { DateRange } from "@/components/DateRangeFilter";
 import {
   Shield,
   ShieldAlert,
@@ -56,6 +58,11 @@ export default function Security() {
   const [sortField, setSortField] = useState<keyof SecurityEvent>("timestamp");
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const { securityEvents } = useAppStore();
+  const [dateRange, setDateRange] = useState<DateRange>({});
+
+  const handleDateRangeChange = useCallback((range: DateRange) => {
+    setDateRange(range);
+  }, []);
 
   useEffect(() => {
     const loadData = async () => {
@@ -63,7 +70,11 @@ export default function Security() {
         setLoading(true);
         const [statsData, eventsData] = await Promise.allSettled([
           api.getSecurityStats(),
-          api.getSecurityEvents(100), // Get more events for analysis
+          api.getSecurityEvents({
+            limit: 200,
+            startTime: dateRange.startTime,
+            endTime: dateRange.endTime,
+          }),
         ]);
 
         if (statsData.status === "fulfilled") setStats(statsData.value);
@@ -80,7 +91,7 @@ export default function Security() {
     loadData();
     const interval = setInterval(loadData, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [dateRange]);
 
   // Combine API events with WebSocket events for real-time data
   const allEvents = [...events, ...securityEvents];
@@ -229,6 +240,9 @@ export default function Security() {
           Export Audit Log
         </button>
       </div>
+
+      {/* Date Range Filter */}
+      <DateRangeFilter onChange={handleDateRangeChange} />
 
       {/* Summary Cards */}
       {stats && (

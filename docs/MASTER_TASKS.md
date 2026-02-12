@@ -26,7 +26,7 @@
 | P5 - Frontend Foundation | React + Vite 框架 + 基礎元件 | 100% | ✅ |
 | P6 - AI Audit System | AI 開發追蹤核心功能 | 100% | ✅ |
 | P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 | 100% | ✅ |
-| P8 - Control API | 遠端控制 + 中斷/回溯 | 60% | 🔄 |
+| P8 - Control API | 遠端控制 + 中斷/回溯 | 100% | ✅ |
 
 ---
 
@@ -134,14 +134,16 @@
 | | — Security: 事件列表/嚴重度分佈/PII記錄 ✅ | | ✅ | |
 | | — **🎉 Issue #25 已關閉** (2026-02-12) | | ✅ | |
 
-## P8 - Remote Control API (🔄 60%)
+## P8 - Remote Control API (✅ 100%)
 
 | # | Task | Issue | Status | Priority |
 |---|------|-------|--------|----------|
 | 8.1 | Checkpoint restore endpoint | [#11](https://github.com/chimerakang/alice/issues/11) | ✅ | — |
-| 8.2 | Agent interrupt endpoint (Process.Kill) | [#11](https://github.com/chimerakang/alice/issues/11) | 📋 | P1 |
-| 8.3 | Agent reset endpoint (Web API) | [#11](https://github.com/chimerakang/alice/issues/11) | 📋 | P1 |
-| 8.4 | 控制端點認證 (Bearer token) | [#11](https://github.com/chimerakang/alice/issues/11) | 📋 | P2 |
+| 8.2 | Agent interrupt endpoint (Process.Kill) | [#11](https://github.com/chimerakang/alice/issues/11) | ✅ | P1 |
+| 8.3 | Agent reset endpoint (Web API) | [#11](https://github.com/chimerakang/alice/issues/11) | ✅ | P1 |
+| 8.4 | Agent project switch endpoint | [#11](https://github.com/chimerakang/alice/issues/11) | ✅ | P1 |
+| 8.5 | 控制端點認證 (Bearer token) | [#11](https://github.com/chimerakang/alice/issues/11) | ✅ | P2 |
+| | — **🎉 Issue #11 已關閉** (2026-02-12) | | ✅ | |
 
 ---
 
@@ -190,7 +192,7 @@ Phase 4 (分析) ─── #25 Performance/Security ──→ #11 Remote Control
 | [#25](https://github.com/chimerakang/alice/issues/25) | Performance & Security | P7 | ✅ Closed |
 | [#26](https://github.com/chimerakang/alice/issues/26) | Checkpoint ↔ DecisionLog 直接關聯 | P7 | ✅ Closed |
 | [#27](https://github.com/chimerakang/alice/issues/27) | 擴充 CallStream 擷取完整 AI 思考內容 | P6 | ✅ Closed |
-| [#11](https://github.com/chimerakang/alice/issues/11) | Remote Control API | P8 | 🔄 Open (60%) |
+| [#11](https://github.com/chimerakang/alice/issues/11) | Remote Control API | P8 | ✅ Closed |
 
 ---
 

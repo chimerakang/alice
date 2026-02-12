@@ -445,7 +445,7 @@ export default function Checkpoints() {
 
   // Fetch decisions from API
   useEffect(() => {
-    api.getRecentDecisions(50).then((res) => {
+    api.getRecentDecisions({ limit: 50 }).then((res) => {
       if (res.decisions) setAllDecisions(res.decisions);
     }).catch(() => {});
   }, []);

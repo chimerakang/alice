@@ -23,6 +23,7 @@ type Config struct {
 	EnableWebInterface bool   `json:"enable_web_interface"`
 	WebPort           string `json:"web_port"`
 	WebStaticDir      string `json:"web_static_dir"`
+	WebAPIToken       string `json:"web_api_token"` // Bearer token for control endpoints
 
 	// Transparency Settings
 	EnableDecisionLogging bool `json:"enable_decision_logging"`
@@ -108,6 +109,9 @@ func LoadConfig() (*Config, error) {
 	}
 	if v := os.Getenv("WEB_STATIC_DIR"); v != "" {
 		config.WebStaticDir = v
+	}
+	if v := os.Getenv("WEB_API_TOKEN"); v != "" {
+		config.WebAPIToken = v
 	}
 
 	// Transparency Environment Variables
@@ -299,7 +303,7 @@ func Main() {
 	// Start web interface if enabled
 	var webInterface *WebInterface
 	if config.EnableWebInterface {
-		webInterface = NewWebInterface(tgBot, config.WebPort, config.WebStaticDir)
+		webInterface = NewWebInterface(tgBot, config.WebPort, config.WebStaticDir, config.WebAPIToken)
 		go func() {
 			if err := webInterface.Start(); err != nil {
 				log.Printf("❌ Web server error: %v", err)

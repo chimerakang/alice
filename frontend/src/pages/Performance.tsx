@@ -1,6 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import type { PerformanceAnalytics, PerformanceMetric } from "@/types/alice";
+import DateRangeFilter from "@/components/DateRangeFilter";
+import type { DateRange } from "@/components/DateRangeFilter";
 import { BarChart3, Clock, CheckCircle, AlertTriangle, Cpu, DollarSign, TrendingUp } from "lucide-react";
 import {
   LineChart,
@@ -36,6 +38,11 @@ export default function Performance() {
   const [metrics, setMetrics] = useState<PerformanceMetric[]>([]);
   const [recommendations, setRecommendations] = useState<{ text: string; priority: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dateRange, setDateRange] = useState<DateRange>({});
+
+  const handleDateRangeChange = useCallback((range: DateRange) => {
+    setDateRange(range);
+  }, []);
 
   useEffect(() => {
     const loadData = async () => {
@@ -43,7 +50,11 @@ export default function Performance() {
         setLoading(true);
         const [analyticsData, metricsData, recsData] = await Promise.allSettled([
           api.getPerformanceAnalytics(),
-          api.getPerformanceMetrics(50), // Get more data for trends
+          api.getPerformanceMetrics({
+            limit: 200,
+            startTime: dateRange.startTime,
+            endTime: dateRange.endTime,
+          }),
           api.getPerformanceRecommendations(),
         ]);
 
@@ -63,9 +74,9 @@ export default function Performance() {
     };
 
     loadData();
-    const interval = setInterval(loadData, 30000); // Refresh every 30s
+    const interval = setInterval(loadData, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [dateRange]);
 
   // Transform metrics data for charts
   const trendsData: TrendsData[] = metrics
@@ -109,6 +120,9 @@ export default function Performance() {
           Last updated: {new Date().toLocaleTimeString()}
         </div>
       </div>
+
+      {/* Date Range Filter */}
+      <DateRangeFilter onChange={handleDateRangeChange} />
 
       {/* Summary Cards */}
       {analytics && (

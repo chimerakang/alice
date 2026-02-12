@@ -1,8 +1,10 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/appStore";
 import type { StatsResponse, DecisionLog, GitState } from "@/types/alice";
+import DateRangeFilter from "@/components/DateRangeFilter";
+import type { DateRange } from "@/components/DateRangeFilter";
 import StatusBadge from "@/components/StatusBadge";
 import {
   Activity,
@@ -513,13 +515,22 @@ export default function Dashboard() {
   const [projectGitStates, setProjectGitStates] = useState<Map<string, GitState>>(new Map());
   const [recentDecisions, setRecentDecisions] = useState<DecisionLog[]>([]);
   const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
+  const [dateRange, setDateRange] = useState<DateRange>({});
+
+  const handleDateRangeChange = useCallback((range: DateRange) => {
+    setDateRange(range);
+  }, []);
 
   // First: fetch decisions + basic stats to discover project paths
   useEffect(() => {
     const load = async () => {
       const results = await Promise.allSettled([
         api.getStats(),
-        api.getRecentDecisions(50),
+        api.getRecentDecisions({
+          limit: 200,
+          startTime: dateRange.startTime,
+          endTime: dateRange.endTime,
+        }),
         api.getStorageStats(),
       ]);
 
@@ -538,7 +549,7 @@ export default function Dashboard() {
     load();
     const interval = setInterval(load, 30000);
     return () => clearInterval(interval);
-  }, [setStats]);
+  }, [setStats, dateRange]);
 
   // Merge store decisions with API-fetched ones for charts
   const allDecisions = useMemo(() => {
@@ -610,6 +621,11 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 animate-fade-in">
+      {/* ── Time Range Filter ── */}
+      <div className="flex items-center justify-between">
+        <DateRangeFilter onChange={handleDateRangeChange} compact />
+      </div>
+
       {/* ── Row 1: Metric Cards ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <MetricCard

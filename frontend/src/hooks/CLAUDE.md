@@ -5,5 +5,5 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #1014 | 10:40 PM | 🔵 | API Client Defines Historical Data Endpoints But They're Not Used | ~455 |
+| #1012 | 10:40 PM | 🔵 | Frontend WebSocket Hook Only Handles Real-Time Events | ~396 |
 </claude-mem-context>

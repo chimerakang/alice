@@ -1,8 +1,11 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { api } from "@/lib/api";
+import type { TimeRangeQuery } from "@/lib/api";
 import { useAppStore } from "@/stores/appStore";
 import type { DecisionLog, DiffFile } from "@/types/alice";
 import SearchFilter from "@/components/SearchFilter";
+import DateRangeFilter from "@/components/DateRangeFilter";
+import type { DateRange } from "@/components/DateRangeFilter";
 import TimelineEntry from "@/components/TimelineEntry";
 import CollapsiblePanel from "@/components/CollapsiblePanel";
 import StatusBadge from "@/components/StatusBadge";
@@ -394,63 +397,72 @@ export default function Timeline() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [projectFilter, setProjectFilter] = useState("all");
   const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+  const [dateRange, setDateRange] = useState<DateRange>({});
   const [selectedDecision, setSelectedDecision] = useState<DecisionLog | null>(null);
 
-  // Fetch decisions from API
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const res = await api.getRecentDecisions(100);
-        setApiDecisions(res.decisions || []);
-      } catch {
-        // API not available
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+  // Fetch decisions from API with server-side pagination + time range
+  const fetchDecisions = useCallback(async (pageNum: number, range: DateRange) => {
+    setLoading(true);
+    try {
+      const params: TimeRangeQuery = {
+        limit: PAGE_SIZE,
+        offset: pageNum * PAGE_SIZE,
+        startTime: range.startTime,
+        endTime: range.endTime,
+      };
+      const res = await api.getRecentDecisions(params);
+      setApiDecisions(res.decisions || []);
+      setTotalCount(res.pagination?.total_count ?? (res.decisions?.length || 0));
+    } catch {
+      // API not available — keep what we have
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  // Merge live WS decisions with API decisions, deduplicate by ID
-  const allDecisions = useMemo(() => {
+  // Initial load + refetch when page or date range changes
+  useEffect(() => {
+    fetchDecisions(page, dateRange);
+  }, [page, dateRange, fetchDecisions]);
+
+  // Merge live WS decisions (newest) on top of API decisions when on first page with no date filter
+  const displayDecisions = useMemo(() => {
+    const isFirstPageNoFilter = page === 0 && !dateRange.startTime && !dateRange.endTime;
+    if (!isFirstPageNoFilter || liveDecisions.length === 0) {
+      return apiDecisions;
+    }
+
+    // Deduplicate: live WS first, then API
     const seen = new Set<string>();
     const merged: DecisionLog[] = [];
-
-    // Live decisions first (newest)
     for (const d of liveDecisions) {
       if (d.id && seen.has(d.id)) continue;
       if (d.id) seen.add(d.id);
       merged.push(d);
     }
-
-    // Then API decisions
     for (const d of apiDecisions) {
       if (d.id && seen.has(d.id)) continue;
       if (d.id) seen.add(d.id);
       merged.push(d);
     }
-
     return merged;
-  }, [liveDecisions, apiDecisions]);
+  }, [liveDecisions, apiDecisions, page, dateRange]);
 
-  // Extract unique projects from all decisions
+  // Extract unique projects from displayed decisions
   const projects = useMemo(() => {
     const paths = new Set<string>();
-    for (const d of allDecisions) {
+    for (const d of displayDecisions) {
       if (d.project_path) paths.add(d.project_path);
     }
     return Array.from(paths).sort();
-  }, [allDecisions]);
+  }, [displayDecisions]);
 
-  // Filter
+  // Client-side filter (search, status, project) on current page data
   const filtered = useMemo(() => {
-    return allDecisions.filter((d) => {
-      // Project filter
-      if (projectFilter !== "all" && d.project_path !== projectFilter) {
-        return false;
-      }
+    return displayDecisions.filter((d) => {
+      if (projectFilter !== "all" && d.project_path !== projectFilter) return false;
 
-      // Status filter
       if (statusFilter === "success") {
         const hasError = d.tool_calls?.some(
           (t) => String(t.status) === "STATUS_ERROR" || String(t.status) === "4"
@@ -464,7 +476,6 @@ export default function Timeline() {
         if (!hasError && d.outcome?.success !== false) return false;
       }
 
-      // Search
       if (searchQuery) {
         const q = searchQuery.toLowerCase();
         const matchPrompt = d.user_prompt?.toLowerCase().includes(q);
@@ -473,37 +484,28 @@ export default function Timeline() {
           t.tool_name?.toLowerCase().includes(q)
         );
         const matchType = d.task_type?.toLowerCase().includes(q);
-        if (!matchPrompt && !matchResponse && !matchTool && !matchType) {
-          return false;
-        }
+        if (!matchPrompt && !matchResponse && !matchTool && !matchType) return false;
       }
 
       return true;
     });
-  }, [allDecisions, projectFilter, statusFilter, searchQuery]);
+  }, [displayDecisions, projectFilter, statusFilter, searchQuery]);
 
-  // Pagination
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  // Pagination — use server-side total_count for page calculation
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
-  // Reset page when filters change
   const handleSearch = useCallback((q: string) => {
     setSearchQuery(q);
-    setPage(0);
   }, []);
 
   const handleStatusChange = useCallback((s: string) => {
     setStatusFilter(s);
-    setPage(0);
   }, []);
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 text-primary animate-spin" />
-      </div>
-    );
-  }
+  const handleDateRangeChange = useCallback((range: DateRange) => {
+    setDateRange(range);
+    setPage(0);
+  }, []);
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -520,9 +522,12 @@ export default function Timeline() {
           />
           {wsConnected ? "Live" : "Disconnected"}
           <span className="text-gray-600">|</span>
-          <span>{allDecisions.length} decisions</span>
+          <span>{totalCount} decisions</span>
         </div>
       </div>
+
+      {/* Date Range Filter */}
+      <DateRangeFilter onChange={handleDateRangeChange} />
 
       {/* Search & Filter */}
       <div className="space-y-3">
@@ -540,7 +545,7 @@ export default function Timeline() {
             <FolderOpen className="w-3.5 h-3.5 text-gray-500" />
             <div className="flex items-center gap-1.5 flex-wrap">
               <button
-                onClick={() => { setProjectFilter("all"); setPage(0); }}
+                onClick={() => { setProjectFilter("all"); }}
                 className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
                   projectFilter === "all"
                     ? "bg-primary/15 text-primary border-primary/30"
@@ -554,7 +559,7 @@ export default function Timeline() {
                 return (
                   <button
                     key={p}
-                    onClick={() => { setProjectFilter(p); setPage(0); }}
+                    onClick={() => { setProjectFilter(p); }}
                     title={p}
                     className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
                       projectFilter === p
@@ -572,16 +577,20 @@ export default function Timeline() {
       </div>
 
       {/* Timeline */}
-      {filtered.length === 0 ? (
+      {loading ? (
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="w-8 h-8 text-primary animate-spin" />
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="card p-12 text-center">
           <Clock className="w-12 h-12 text-gray-600 mx-auto mb-4" />
           <p className="text-gray-400">
-            {allDecisions.length === 0
+            {totalCount === 0
               ? "No decisions yet"
               : "No decisions match your filter"}
           </p>
           <p className="text-gray-600 text-sm mt-1">
-            {allDecisions.length === 0
+            {totalCount === 0
               ? "Decisions will appear here as the AI agent processes tasks."
               : "Try adjusting your search or filter criteria."}
           </p>
@@ -589,7 +598,7 @@ export default function Timeline() {
       ) : (
         <>
           <div className="relative">
-            {paged.map((d, i) => (
+            {filtered.map((d, i) => (
               <TimelineEntry
                 key={d.id || `${page}-${i}`}
                 decision={d}
@@ -602,7 +611,7 @@ export default function Timeline() {
           {totalPages > 1 && (
             <div className="flex items-center justify-between pt-2">
               <span className="text-xs text-gray-500">
-                {filtered.length} decision{filtered.length !== 1 ? "s" : ""}{" "}
+                {totalCount} decision{totalCount !== 1 ? "s" : ""}{" "}
                 · Page {page + 1} of {totalPages}
               </span>
               <div className="flex items-center gap-1">

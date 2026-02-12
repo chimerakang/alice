@@ -284,21 +284,58 @@ func generateToolExecutionID(chatID int64, threadID int, timestamp time.Time) st
 }
 
 // handleRecentToolsProto 使用 proto 的最近工具執行端點處理函數
+// handleRecentToolsProto 最近工具執行記錄端點
+// 支援參數: limit, offset, start_time, end_time
 func (wi *WebInterface) handleRecentToolsProto(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// 解析 limit 參數
-		limitStr := r.URL.Query().Get("limit")
-		limit := 20 // 預設限制
+		// 解析查詢參數
+		query := r.URL.Query()
+		limitStr := query.Get("limit")
+		offsetStr := query.Get("offset")
+		startTimeStr := query.Get("start_time")
+		endTimeStr := query.Get("end_time")
+
+		limit := 50
+		offset := 0
 		if limitStr != "" {
 			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
 				limit = parsedLimit
 			}
 		}
+		if offsetStr != "" {
+			if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+				offset = parsedOffset
+			}
+		}
 
-		// 獲取最近的工具執行記錄
-		executions := globalToolLogger.GetRecentExecutions(limit)
+		// 獲取工具執行記錄 (優先從資料庫讀取，fallback 到記憶體)
+		var executions []ToolExecution
+		var totalCount int64
+		if globalStorage != nil {
+			var err error
+			if startTimeStr != "" && endTimeStr != "" {
+				if startTime, err1 := time.Parse(time.RFC3339, startTimeStr); err1 == nil {
+					if endTime, err2 := time.Parse(time.RFC3339, endTimeStr); err2 == nil {
+						executions, err = globalStorage.GetToolExecutionsByTimeRange(startTime, endTime, limit)
+						totalCount = int64(len(executions))
+					}
+				}
+			} else {
+				executions, err = globalStorage.GetToolExecutions(limit, offset)
+				totalCount, _ = globalStorage.GetToolExecutionsCount()
+			}
+
+			if err != nil {
+				log.Printf("Database query error, falling back to memory: %v", err)
+				executions = globalToolLogger.GetRecentExecutions(limit)
+				totalCount = int64(len(executions))
+			}
+		} else {
+			executions = globalToolLogger.GetRecentExecutions(limit)
+			totalCount = int64(len(executions))
+		}
 
 		// 轉換為 proto 響應
 		protoExecutions := make([]*alicev1.ToolExecution, len(executions))
@@ -309,13 +346,13 @@ func (wi *WebInterface) handleRecentToolsProto(w http.ResponseWriter, r *http.Re
 		response := &alicev1.ListToolExecutionsResponse{
 			Executions: protoExecutions,
 			Pagination: &alicev1.Pagination{
-				TotalCount: int64(len(executions)),
-				Page:       1,
+				TotalCount: totalCount,
+				Page:       int32((offset / limit) + 1),
 				PageSize:   int32(limit),
+				TotalPages: int32((totalCount + int64(limit) - 1) / int64(limit)),
 			},
 		}
 
-		// 發送響應
 		if err := writeProtoResponse(w, response); err != nil {
 			writeProtoError(w, "Failed to serialize response", http.StatusInternalServerError)
 			return
@@ -627,31 +664,56 @@ func (wi *WebInterface) handleDecisionsProto(w http.ResponseWriter, r *http.Requ
 }
 
 // handleRecentDecisionsProto 使用前端相容 JSON 的最近決策端點處理函數
+// 支援參數: limit, offset, start_time, end_time
 func (wi *WebInterface) handleRecentDecisionsProto(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// 解析 limit 參數
-		limitStr := r.URL.Query().Get("limit")
-		limit := 10 // 預設限制
+		// 解析查詢參數
+		query := r.URL.Query()
+		limitStr := query.Get("limit")
+		offsetStr := query.Get("offset")
+		startTimeStr := query.Get("start_time")
+		endTimeStr := query.Get("end_time")
+
+		limit := 50
+		offset := 0
 		if limitStr != "" {
 			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
 				limit = parsedLimit
 			}
 		}
+		if offsetStr != "" {
+			if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+				offset = parsedOffset
+			}
+		}
 
-		// 獲取最近的決策記錄 (優先從資料庫讀取，fallback 到記憶體)
+		// 獲取決策記錄 (優先從資料庫讀取，fallback 到記憶體)
 		var decisions []DecisionLog
+		var totalCount int64
 		if globalStorage != nil {
-			dbDecisions, err := globalStorage.GetDecisionLogs(limit, 0)
+			var err error
+			if startTimeStr != "" && endTimeStr != "" {
+				if startTime, err1 := time.Parse(time.RFC3339, startTimeStr); err1 == nil {
+					if endTime, err2 := time.Parse(time.RFC3339, endTimeStr); err2 == nil {
+						decisions, err = globalStorage.GetDecisionLogsByTimeRange(startTime, endTime, limit)
+						totalCount = int64(len(decisions))
+					}
+				}
+			} else {
+				decisions, err = globalStorage.GetDecisionLogs(limit, offset)
+				totalCount, _ = globalStorage.GetDecisionLogsCount()
+			}
+
 			if err != nil {
 				log.Printf("Database query error, falling back to memory: %v", err)
 				decisions = globalDecisionLogger.GetRecentDecisions(limit)
-			} else {
-				decisions = dbDecisions
+				totalCount = int64(len(decisions))
 			}
 		} else {
 			decisions = globalDecisionLogger.GetRecentDecisions(limit)
+			totalCount = int64(len(decisions))
 		}
 
 		// 轉換為前端相容的 JSON 格式（非 proto 格式）
@@ -663,9 +725,10 @@ func (wi *WebInterface) handleRecentDecisionsProto(w http.ResponseWriter, r *htt
 		response := map[string]interface{}{
 			"decisions": frontendDecisions,
 			"pagination": map[string]interface{}{
-				"total_count": len(decisions),
-				"page":        1,
+				"total_count": totalCount,
+				"page":        (offset / limit) + 1,
 				"page_size":   limit,
+				"total_pages": (totalCount + int64(limit) - 1) / int64(limit),
 			},
 		}
 

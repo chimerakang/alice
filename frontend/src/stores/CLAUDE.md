@@ -6,7 +6,5 @@
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
 | #1021 | 10:42 PM | ⚖️ | Root Cause Analysis Completed: Historical Data Access Gap Identified | ~564 |
-| #1011 | 10:40 PM | 🔵 | WebSocket Real-Time Broadcasting with Event Buffer | ~445 |
-| #1010 | 10:39 PM | 🔵 | Web API Layer Exposes Historical Data Query Endpoints | ~482 |
-| #1009 | " | 🔵 | SQLite Storage Layer Architecture Analyzed | ~442 |
+| #1013 | 10:40 PM | 🔵 | Frontend State Store Uses Ring Buffers with Limited Capacity | ~449 |
 </claude-mem-context>

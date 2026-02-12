@@ -46,14 +46,16 @@ type DetailedStats struct {
 type WebInterface struct {
 	bot       *TelegramBot
 	staticDir string
+	apiToken  string // Bearer token for control endpoints
 	server    *http.Server
 	mu        sync.RWMutex
 }
 
 // NewWebInterface creates a new web interface instance
-func NewWebInterface(bot *TelegramBot, port, staticDir string) *WebInterface {
+func NewWebInterface(bot *TelegramBot, port, staticDir, apiToken string) *WebInterface {
 	wi := &WebInterface{
 		bot:       bot,
+		apiToken:  apiToken,
 		staticDir: staticDir,
 	}
 
@@ -87,6 +89,8 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/stats", wi.handleStats)
 	mux.HandleFunc("/api/agents", wi.handleAgentsProto)
 	mux.HandleFunc("/api/agents/abort", wi.handleAgentAbort)
+	mux.HandleFunc("/api/agents/reset", wi.handleAgentReset)
+	mux.HandleFunc("/api/agents/project", wi.handleAgentSetProject)
 	mux.HandleFunc("/api/agents/", wi.handleAgentDetailProto)
 	mux.HandleFunc("/api/tools/recent", wi.handleRecentToolsProto)
 	mux.HandleFunc("/api/tools/executions", wi.handleToolExecutionsProto)
@@ -1502,5 +1506,160 @@ func (wi *WebInterface) handleCheckpointStats(w http.ResponseWriter, r *http.Req
 		stats["timestamp"] = time.Now()
 
 		json.NewEncoder(w).Encode(stats)
+	})(w, r)
+}
+
+// handleAgentReset resets an agent's conversation history
+func (wi *WebInterface) handleAgentReset(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse request body
+		var req struct {
+			ChatID   int64 `json:"chat_id"`
+			ThreadID int   `json:"thread_id,omitempty"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON request", http.StatusBadRequest)
+			return
+		}
+
+		// Validate required fields
+		if req.ChatID == 0 {
+			http.Error(w, "chat_id is required", http.StatusBadRequest)
+			return
+		}
+
+		// Find the agent
+		key := chatKey{chatID: req.ChatID, threadID: req.ThreadID}
+		wi.bot.agentsMu.RLock()
+		agent, exists := wi.bot.agents[key]
+		wi.bot.agentsMu.RUnlock()
+
+		if !exists {
+			http.Error(w, "Agent not found", http.StatusNotFound)
+			return
+		}
+
+		// Get stats before reset
+		stats := agent.Stats()
+
+		// Reset the agent
+		agent.Reset()
+
+		// Broadcast WebSocket event for real-time monitoring
+		if globalWebSocketHub != nil {
+			resetEvent := map[string]interface{}{
+				"chat_id":               req.ChatID,
+				"thread_id":             req.ThreadID,
+				"previous_api_calls":    stats.APICallCount,
+				"previous_input_tokens": stats.TotalInputTokens,
+				"previous_output_tokens": stats.TotalOutputTokens,
+				"timestamp":             time.Now(),
+			}
+			globalWebSocketHub.BroadcastEvent("agent_reset", resetEvent)
+		}
+
+		response := map[string]interface{}{
+			"success":   true,
+			"chat_id":   req.ChatID,
+			"thread_id": req.ThreadID,
+			"message":   "Agent conversation history reset successfully",
+			"previous_stats": map[string]interface{}{
+				"api_calls":     stats.APICallCount,
+				"input_tokens":  stats.TotalInputTokens,
+				"output_tokens": stats.TotalOutputTokens,
+			},
+			"timestamp": time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+// handleAgentSetProject switches an agent's project directory
+func (wi *WebInterface) handleAgentSetProject(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse request body
+		var req struct {
+			ChatID     int64  `json:"chat_id"`
+			ThreadID   int    `json:"thread_id,omitempty"`
+			ProjectDir string `json:"project_dir"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid JSON request", http.StatusBadRequest)
+			return
+		}
+
+		// Validate required fields
+		if req.ChatID == 0 {
+			http.Error(w, "chat_id is required", http.StatusBadRequest)
+			return
+		}
+
+		if req.ProjectDir == "" {
+			http.Error(w, "project_dir is required", http.StatusBadRequest)
+			return
+		}
+
+		// Validate project directory exists
+		if _, err := os.Stat(req.ProjectDir); os.IsNotExist(err) {
+			http.Error(w, "Project directory does not exist", http.StatusBadRequest)
+			return
+		}
+
+		// Find the agent
+		key := chatKey{chatID: req.ChatID, threadID: req.ThreadID}
+		wi.bot.agentsMu.RLock()
+		agent, exists := wi.bot.agents[key]
+		wi.bot.agentsMu.RUnlock()
+
+		if !exists {
+			http.Error(w, "Agent not found", http.StatusNotFound)
+			return
+		}
+
+		// Get previous project directory
+		previousProjectDir := agent.ProjectDir()
+
+		// Set new project directory
+		agent.SetProject(req.ProjectDir)
+
+		// Broadcast WebSocket event for real-time monitoring
+		if globalWebSocketHub != nil {
+			projectChangeEvent := map[string]interface{}{
+				"chat_id":               req.ChatID,
+				"thread_id":             req.ThreadID,
+				"previous_project_dir":  previousProjectDir,
+				"new_project_dir":       req.ProjectDir,
+			}
+
+			globalWebSocketHub.BroadcastEvent("agent_project_changed", projectChangeEvent)
+		}
+
+		response := map[string]interface{}{
+			"success":              true,
+			"chat_id":              req.ChatID,
+			"thread_id":            req.ThreadID,
+			"previous_project_dir": previousProjectDir,
+			"new_project_dir":      req.ProjectDir,
+			"message":              fmt.Sprintf("Agent project directory changed from %s to %s", previousProjectDir, req.ProjectDir),
+			"timestamp":            time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(response)
 	})(w, r)
 }

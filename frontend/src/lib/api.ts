@@ -2,6 +2,7 @@ import type {
   AgentInfo,
   ToolExecution,
   DecisionLog,
+  Pagination,
   PerformanceAnalytics,
   PerformanceMetric,
   SecurityEvent,
@@ -32,6 +33,24 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Build query string from optional params, skipping undefined values */
+function buildQuery(params: Record<string, string | number | undefined>): string {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== "") qs.set(k, String(v));
+  }
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
+/** Common time-range + pagination query params */
+export interface TimeRangeQuery {
+  limit?: number;
+  offset?: number;
+  startTime?: string; // RFC3339
+  endTime?: string;   // RFC3339
+}
+
 // ========== Health & Stats ==========
 
 export const api = {
@@ -45,10 +64,13 @@ export const api = {
     fetchJson<AgentInfo>(`/api/agents/?chat_id=${chatId}&thread_id=${threadId}`),
 
   // ========== Tools ==========
-  getRecentTools: (limit = 20) =>
-    fetchJson<{ executions?: ToolExecution[]; pagination: unknown }>(
-      `/api/tools/recent?limit=${limit}`
-    ),
+  getRecentTools: (params: TimeRangeQuery = {}) => {
+    const { limit = 50, offset, startTime, endTime } = params;
+    const qs = buildQuery({ limit, offset, start_time: startTime, end_time: endTime });
+    return fetchJson<{ executions?: ToolExecution[]; pagination: Pagination }>(
+      `/api/tools/recent${qs}`
+    );
+  },
   getToolExecutions: () =>
     fetchJson<{
       total_executions: number;
@@ -57,10 +79,13 @@ export const api = {
     }>("/api/tools/executions"),
 
   // ========== Decisions ==========
-  getRecentDecisions: (limit = 10) =>
-    fetchJson<{ decisions?: DecisionLog[]; pagination: unknown }>(
-      `/api/decisions/recent?limit=${limit}`
-    ),
+  getRecentDecisions: (params: TimeRangeQuery = {}) => {
+    const { limit = 50, offset, startTime, endTime } = params;
+    const qs = buildQuery({ limit, offset, start_time: startTime, end_time: endTime });
+    return fetchJson<{ decisions?: DecisionLog[]; pagination: Pagination }>(
+      `/api/decisions/recent${qs}`
+    );
+  },
 
   // ========== Multi-Agent ==========
   getMultiAgentStatus: () =>
@@ -69,10 +94,13 @@ export const api = {
   // ========== Performance ==========
   getPerformanceAnalytics: () =>
     fetchJson<PerformanceAnalytics>("/api/performance/analytics"),
-  getPerformanceMetrics: (limit = 100) =>
-    fetchJson<{ metrics?: PerformanceMetric[] }>(
-      `/api/performance/metrics?limit=${limit}`
-    ),
+  getPerformanceMetrics: (params: TimeRangeQuery = {}) => {
+    const { limit = 100, offset, startTime, endTime } = params;
+    const qs = buildQuery({ limit, offset, start_time: startTime, end_time: endTime });
+    return fetchJson<{ metrics?: PerformanceMetric[]; total?: number; pagination?: Pagination }>(
+      `/api/performance/metrics${qs}`
+    );
+  },
   getPerformanceTrends: (hours = 24) =>
     fetchJson<unknown>(`/api/performance/trends?hours=${hours}`),
   getPerformanceRecommendations: () =>
@@ -81,10 +109,13 @@ export const api = {
     ),
 
   // ========== Security ==========
-  getSecurityEvents: (limit = 50) =>
-    fetchJson<{ events?: SecurityEvent[] }>(
-      `/api/security/events?limit=${limit}`
-    ),
+  getSecurityEvents: (params: TimeRangeQuery & { severity?: string } = {}) => {
+    const { limit = 50, offset, startTime, endTime, severity } = params;
+    const qs = buildQuery({ limit, offset, start_time: startTime, end_time: endTime, severity });
+    return fetchJson<{ events?: SecurityEvent[]; total?: number; pagination?: Pagination }>(
+      `/api/security/events${qs}`
+    );
+  },
   getSecurityStats: () => fetchJson<SecurityStats>("/api/security/stats"),
 
   // ========== Git ==========

@@ -39,6 +39,12 @@ type Storage interface {
 	GetSecurityEventsByTimeRange(start, end time.Time, limit int) ([]SecurityEvent, error)
 	GetSecurityEventsBySeverity(severity string, limit int) ([]SecurityEvent, error)
 
+	// Count Queries (for pagination)
+	GetToolExecutionsCount() (int64, error)
+	GetDecisionLogsCount() (int64, error)
+	GetPerformanceMetricsCount() (int64, error)
+	GetSecurityEventsCount() (int64, error)
+
 	// Data Retention
 	CleanupOldData(retentionDays int) error
 
@@ -675,6 +681,36 @@ func (s *SQLiteStorage) scanSecurityEvents(rows *sql.Rows) ([]SecurityEvent, err
 	}
 
 	return events, rows.Err()
+}
+
+// ==================== Count Queries (for pagination) ====================
+
+// GetToolExecutionsCount 獲取工具執行記錄總數
+func (s *SQLiteStorage) GetToolExecutionsCount() (int64, error) {
+	var count int64
+	err := s.db.QueryRow("SELECT COUNT(*) FROM tool_executions").Scan(&count)
+	return count, err
+}
+
+// GetDecisionLogsCount 獲取決策記錄總數
+func (s *SQLiteStorage) GetDecisionLogsCount() (int64, error) {
+	var count int64
+	err := s.db.QueryRow("SELECT COUNT(*) FROM decision_logs").Scan(&count)
+	return count, err
+}
+
+// GetPerformanceMetricsCount 獲取效能指標總數
+func (s *SQLiteStorage) GetPerformanceMetricsCount() (int64, error) {
+	var count int64
+	err := s.db.QueryRow("SELECT COUNT(*) FROM performance_metrics").Scan(&count)
+	return count, err
+}
+
+// GetSecurityEventsCount 獲取安全事件總數
+func (s *SQLiteStorage) GetSecurityEventsCount() (int64, error) {
+	var count int64
+	err := s.db.QueryRow("SELECT COUNT(*) FROM security_events").Scan(&count)
+	return count, err
 }
 
 // ==================== Data Retention & Cleanup ====================
