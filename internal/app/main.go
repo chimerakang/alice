@@ -44,6 +44,9 @@ type Config struct {
 	DatabasePath        string `json:"database_path"`
 	DataRetentionDays   int    `json:"data_retention_days"`
 	EnableDataCleanup   bool   `json:"enable_data_cleanup"`
+
+	// Multimedia Settings
+	Multimedia MultimediaConfig `json:"multimedia"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -71,6 +74,13 @@ func LoadConfig() (*Config, error) {
 			RequireAuthentication: false, // Disabled by default
 			SessionTimeoutMinutes: 60,   // 1 hour
 			MaxConcurrentSessions: 100,  // 100 concurrent sessions
+		},
+		Multimedia: MultimediaConfig{
+			EnablePhotoSupport:  true,
+			EnableVoiceSupport:  true,
+			MaxFileSizeMB:       20,             // 20MB limit
+			TempDownloadDir:     "./temp/media", // Temporary download directory
+			VoiceToTextProvider: "openai_whisper", // Default to OpenAI Whisper
 		},
 	}
 
@@ -160,6 +170,28 @@ func LoadConfig() (*Config, error) {
 	}
 	if v := os.Getenv("BLOCKED_IPS"); v != "" {
 		config.Security.BlockedIPs = strings.Split(v, ",")
+	}
+
+	// Multimedia Environment Variables
+	if v := os.Getenv("ENABLE_PHOTO_SUPPORT"); v == "false" {
+		config.Multimedia.EnablePhotoSupport = false
+	}
+	if v := os.Getenv("ENABLE_VOICE_SUPPORT"); v == "false" {
+		config.Multimedia.EnableVoiceSupport = false
+	}
+	if v := os.Getenv("OPENAI_API_KEY"); v != "" {
+		config.Multimedia.OpenAIAPIKey = v
+	}
+	if v := os.Getenv("MAX_FILE_SIZE_MB"); v != "" {
+		if size, err := strconv.Atoi(v); err == nil && size > 0 {
+			config.Multimedia.MaxFileSizeMB = size
+		}
+	}
+	if v := os.Getenv("TEMP_DOWNLOAD_DIR"); v != "" {
+		config.Multimedia.TempDownloadDir = v
+	}
+	if v := os.Getenv("VOICE_TO_TEXT_PROVIDER"); v != "" {
+		config.Multimedia.VoiceToTextProvider = v
 	}
 
 	// 驗證必要欄位

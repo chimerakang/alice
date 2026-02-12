@@ -34,6 +34,16 @@ type SecurityConfig struct {
 	MaxConcurrentSessions int           `json:"max_concurrent_sessions"`
 }
 
+// MultimediaConfig 多媒體處理設定
+type MultimediaConfig struct {
+	EnablePhotoSupport    bool   `json:"enable_photo_support"`
+	EnableVoiceSupport    bool   `json:"enable_voice_support"`
+	OpenAIAPIKey          string `json:"openai_api_key"`
+	MaxFileSizeMB         int    `json:"max_file_size_mb"`
+	TempDownloadDir       string `json:"temp_download_dir"`
+	VoiceToTextProvider   string `json:"voice_to_text_provider"` // "openai_whisper"
+}
+
 // SecurityEvent 安全事件記錄
 type SecurityEvent struct {
 	ID          string                 `json:"id"`

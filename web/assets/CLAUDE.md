@@ -18,3 +18,7 @@
 - 這些檔案由 Vite 自動生成和管理
 - 不應手動編輯或修改
 - `index.html` 會自動引用正確的雜湊檔名
+
+<claude-mem-context>
+
+</claude-mem-context>

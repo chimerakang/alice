@@ -1,7 +1,7 @@
 # Alice AI Agent - Master Tasks
 
 > AI 開發審計系統 — 追蹤 AI 的推理、操作、檔案變更
-> Last updated: 2026-02-12 11:19 PM
+> Last updated: 2026-02-13 12:15 AM
 
 ## Status Legend
 
@@ -25,8 +25,10 @@
 | P4 - Proto-First | Protocol Buffers 架構遷移 | 100% | ✅ |
 | P5 - Frontend Foundation | React + Vite 框架 + 基礎元件 | 100% | ✅ |
 | P6 - AI Audit System | AI 開發追蹤核心功能 | 100% | ✅ |
-| P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 + 歷史資料查詢 | 100% | ✅ |
+| P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 + 歷史資料查詢 | 90% | 🔄 |
 | P8 - Control API | 遠端控制 + 中斷/回溯 | 100% | ✅ |
+| P8.5 - TG 指令增強 | /tasks 待辦清單指令 | 0% | 📋 |
+| P9 - Multimedia Input | 圖片分析 + 語音轉文字 | 0% | 📋 |
 
 ---
 
@@ -111,7 +113,7 @@
 | | — Frontend Timeline/Checkpoint 顯示 AI Thinking 面板 | | ✅ | |
 | | — **🎉 Issue #27 已關閉** (2026-02-12) | | ✅ | |
 
-## P7 - Dashboard & Analytics (✅ 100%)
+## P7 - Dashboard & Analytics (🔄 90%)
 
 | # | Task | Issue | Status | Priority |
 |---|------|-------|--------|----------|
@@ -138,6 +140,14 @@
 | | — 新增時間範圍查詢 API 端點 (decisions/tool-executions/security/performance) ✅ | | ✅ | |
 | | — 實作 DateRangeFilter 元件支援歷史資料瀏覽 ✅ | | ✅ | |
 | | — 統一所有頁面採用混合資料載入模式 (API + WebSocket) ✅ | | ✅ | |
+| | — 🔧 Fixed: WebSocket BroadcastDecisionEvent 缺少 user_prompt/tool_calls 等欄位 ✅ | | ✅ | |
+| 7.5 | Checkpoints 頁面重新定位：AI 決策歷程 + 安全快照 | [#30](https://github.com/chimerakang/alice/issues/30) | 🔄 | P1 |
+| | — 重構頁面佈局：DecisionLog 為主體，Checkpoint 為附註標記 | | 📋 | |
+| | — 加入 DateRangeFilter + server-side 分頁（復用 Timeline 模式） | | 📋 | |
+| | — 重新設計卡片：user prompt → tool chain → outcome 為主，git/snapshot 為 collapsible 次要區塊 | | 📋 | |
+| | — 加入 slide-over Detail Panel（完整 thinking/response/ToolCallGantt/GitDiff + checkpoint restore） | | 📋 | |
+| | — 搜尋與篩選（搜尋 prompts/tools、filter by trigger type/project） | | 📋 | |
+| | — 建置驗證 + Docker dashboard 重建 | | 📋 | |
 
 ## P8 - Remote Control API (✅ 100%)
 
@@ -149,6 +159,36 @@
 | 8.4 | Agent project switch endpoint | [#11](https://github.com/chimerakang/alice/issues/11) | ✅ | P1 |
 | 8.5 | 控制端點認證 (Bearer token) | [#11](https://github.com/chimerakang/alice/issues/11) | ✅ | P2 |
 | | — **🎉 Issue #11 已關閉** (2026-02-12) | | ✅ | |
+
+## P8.5 - Telegram 指令增強 (📋 0%)
+
+| # | Task | Issue | Status | Priority |
+|---|------|-------|--------|----------|
+| 8.6 | **/tasks 指令 — 查看待辦工作清單** | [#31](https://github.com/chimerakang/alice/issues/31) | 📋 | P1 |
+| | — 解析 MASTER_TASKS.md 提取未完成項目（📋/🔄/🧪） | | 📋 | |
+| | — handleCommand 新增 /tasks case | | 📋 | |
+| | — 格式化輸出 Phase + 任務清單到 Telegram | | 📋 | |
+| | — 更新 /help 指令說明 | | 📋 | |
+
+## P9 - Multimedia Input (📋 0%)
+
+| # | Task | Issue | Status | Priority |
+|---|------|-------|--------|----------|
+| 9.1 | **Telegram 圖片訊息支援** | [#28](https://github.com/chimerakang/alice/issues/28) | 📋 | **P0** |
+| | — 擴展 TG update 解析結構（Photo + Caption 欄位） | | 📋 | |
+| | — 實作 Telegram getFile + downloadFile 圖片下載 | | 📋 | |
+| | — 組合圖片路徑 prompt，引導 Claude Read tool 讀取 | | 📋 | |
+| | — 臨時檔案管理（下載目錄 + 使用後清理） | | 📋 | |
+| 9.2 | **Telegram 語音訊息轉文字** | [#29](https://github.com/chimerakang/alice/issues/29) | 📋 | P1 |
+| | — 擴展 TG update 解析結構（Voice 欄位） | | 📋 | |
+| | — 實作 STT 客戶端（OpenAI Whisper API） | | 📋 | |
+| | — 語音下載 → 轉錄 → 文字傳給 Claude CLI | | 📋 | |
+| | — 回覆中顯示轉錄文字供用戶確認 | | 📋 | |
+| 9.3 | 共用媒體基礎設施 | — | 📋 | P0 |
+| | — Telegram 檔案下載共用函數 | | 📋 | |
+| | — 臨時目錄管理 + 定期清理機制 | | 📋 | |
+| | — MultimediaConfig 接線到實際邏輯 | | 📋 | |
+| | — config.example.json 更新多媒體設定範例 | | 📋 | |
 
 ---
 
@@ -198,6 +238,10 @@ Phase 4 (分析) ─── #25 Performance/Security ──→ #11 Remote Control
 | [#26](https://github.com/chimerakang/alice/issues/26) | Checkpoint ↔ DecisionLog 直接關聯 | P7 | ✅ Closed |
 | [#27](https://github.com/chimerakang/alice/issues/27) | 擴充 CallStream 擷取完整 AI 思考內容 | P6 | ✅ Closed |
 | [#11](https://github.com/chimerakang/alice/issues/11) | Remote Control API | P8 | ✅ Closed |
+| [#31](https://github.com/chimerakang/alice/issues/31) | **/tasks 指令 — 查看待辦工作清單** | P8.5 | 📋 Planned |
+| [#28](https://github.com/chimerakang/alice/issues/28) | **Telegram 圖片訊息支援** | P9 | 📋 Planned |
+| [#29](https://github.com/chimerakang/alice/issues/29) | **Telegram 語音訊息轉文字** | P9 | 📋 Planned |
+| [#30](https://github.com/chimerakang/alice/issues/30) | **Checkpoints 頁面重新定位：AI 決策歷程 + 安全快照** | P7 | 🔄 In Progress |
 
 ---
 

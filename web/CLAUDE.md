@@ -22,3 +22,7 @@
 - 此目錄內的檔案是自動生成的，不應手動編輯
 - 編譯時會自動清理並重新生成
 - 檔案名的 hash 值會在每次編譯時改變
+
+<claude-mem-context>
+
+</claude-mem-context>

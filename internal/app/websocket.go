@@ -297,19 +297,8 @@ func BroadcastDecisionEvent(decision DecisionLog) {
 		return
 	}
 
-	data := map[string]interface{}{
-		"session_id":    decision.SessionID,
-		"project_path":  decision.ProjectPath,
-		"chat_id":       decision.ChatID,
-		"thread_id":     decision.ThreadID,
-		"success":       decision.Outcome.Success,
-		"task_type":     decision.Outcome.TaskType,
-		"duration_ms":   decision.DurationMs,
-		"tokens_input":  decision.TokensUsed.TotalInputTokens,
-		"tokens_output": decision.TokensUsed.TotalOutputTokens,
-		"timestamp":     decision.Timestamp,
-	}
-
+	// Use the same converter as REST API so frontend gets consistent structure
+	data := convertDecisionToFrontendJSON(decision)
 	globalWebSocketHub.BroadcastEvent("decision_complete", data)
 }
 

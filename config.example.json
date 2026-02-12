@@ -5,6 +5,15 @@
   "default_project_dir": "/path/to/your/project",
   "allowed_user_ids": [123456789],
 
+  "multimedia": {
+    "enable_photo_support": true,
+    "enable_voice_support": true,
+    "openai_api_key": "sk-xxxxx",
+    "max_file_size_mb": 20,
+    "temp_download_dir": "./temp/media",
+    "voice_to_text_provider": "openai_whisper"
+  },
+
   "enable_web_interface": true,
   "web_port": "8080",
   "web_static_dir": "./web",

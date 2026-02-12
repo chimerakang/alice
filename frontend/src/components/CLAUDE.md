@@ -15,3 +15,7 @@
 - 使用 TypeScript 確保型別安全
 - 採用 Tailwind CSS 進行樣式設計
 - 遵循統一的設計語言和配色方案
+
+<claude-mem-context>
+
+</claude-mem-context>
