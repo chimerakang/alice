@@ -1,15 +1,23 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+// import { useNavigate } from "react-router-dom"; // Not needed in this refactor
 import { api } from "@/lib/api";
+import type { TimeRangeQuery } from "@/lib/api";
 import { useAppStore } from "@/stores/appStore";
-import type { Checkpoint, DecisionLog } from "@/types/alice";
+import type { Checkpoint, DecisionLog, DiffFile } from "@/types/alice";
+import SearchFilter from "@/components/SearchFilter";
+import DateRangeFilter from "@/components/DateRangeFilter";
+import type { DateRange } from "@/components/DateRangeFilter";
+// import TimelineEntry from "@/components/TimelineEntry"; // Not used in this refactor
+import CollapsiblePanel from "@/components/CollapsiblePanel";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import StatusBadge from "@/components/StatusBadge";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
+import DiffViewer from "@/components/DiffViewer";
+import ToolCallGantt from "@/components/ToolCallGantt";
 import {
   Camera,
   RotateCcw,
-  Plus,
+  // Plus, // Removed in refactor
   Clock,
   GitBranch,
   HardDrive,
@@ -17,13 +25,36 @@ import {
   FolderOpen,
   Zap,
   User,
-  ChevronDown,
+  // ChevronDown, // Removed in refactor
   ChevronRight,
   MessageSquare,
   Bot,
   Terminal,
   ExternalLink,
+  X,
+  Brain,
+  ChevronLeft,
+  BarChart3,
+  Filter,
 } from "lucide-react";
+
+// ─── Constants ───────────────────────────────────────
+
+const PAGE_SIZE = 15;
+
+const STATUS_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "success", label: "Success" },
+  { value: "error", label: "Has Errors" },
+  { value: "with_checkpoint", label: "With Checkpoint" },
+];
+
+const TRIGGER_TYPE_OPTIONS = [
+  { value: "all", label: "All" },
+  { value: "manual", label: "Manual" },
+  { value: "pre_danger", label: "Pre-Danger" },
+  { value: "auto", label: "Auto" },
+];
 
 // ─── Helpers ─────────────────────────────────────────
 
@@ -43,6 +74,12 @@ function formatTimestamp(ts: string | { seconds: number; nanos?: number }): stri
     minute: "2-digit",
     second: "2-digit",
   });
+}
+
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${(ms / 60000).toFixed(1)}m`;
 }
 
 function formatSize(bytes: number): string {
@@ -81,351 +118,419 @@ function triggerVariant(triggerType: string): "info" | "neutral" | "warning" {
   return "neutral";
 }
 
-/** Find linked decision — prefer direct ID link, fallback to timestamp proximity */
-function findLinkedDecision(
-  checkpoint: Checkpoint,
-  decisions: DecisionLog[],
-): DecisionLog | null {
+/** Find linked checkpoint for a decision */
+function findLinkedCheckpoint(
+  decision: DecisionLog,
+  checkpoints: Checkpoint[],
+): Checkpoint | null {
   // Priority 1: Direct link via decision_log_id
-  if (checkpoint.decision_log_id) {
-    const direct = decisions.find((d) => d.id === checkpoint.decision_log_id);
-    if (direct) return direct;
-  }
+  const direct = checkpoints.find((cp) => cp.decision_log_id === decision.id);
+  if (direct) return direct;
 
   // Priority 2: Fallback to timestamp proximity (for old checkpoints without decision_log_id)
-  const cpTime = toMs(checkpoint.timestamp);
-  if (!cpTime) return null;
+  const dTime = toMs(decision.timestamp);
+  if (!dTime) return null;
 
-  let best: DecisionLog | null = null;
+  let best: Checkpoint | null = null;
   let bestDist = Infinity;
 
-  for (const d of decisions) {
-    if (d.chat_id !== checkpoint.chat_id) continue;
+  for (const cp of checkpoints) {
+    if (cp.chat_id !== decision.chat_id) continue;
 
-    const dTime = toMs(d.timestamp);
-    const dist = Math.abs(cpTime - dTime);
+    const cpTime = toMs(cp.timestamp);
+    const dist = Math.abs(dTime - cpTime);
     if (dist < 300_000 && dist < bestDist) {
       bestDist = dist;
-      best = d;
+      best = cp;
     }
   }
 
   return best;
 }
 
-// ─── AI Context Panel ────────────────────────────────
+// ─── Decision Entry Card ─────────────────────────────
 
-function AIContextPanel({
+function DecisionEntryCard({
   decision,
-  onViewTimeline,
+  linkedCheckpoint,
+  onViewDetail,
+  onRestoreCheckpoint,
 }: {
   decision: DecisionLog;
-  onViewTimeline: () => void;
+  linkedCheckpoint: Checkpoint | null;
+  onViewDetail: () => void;
+  onRestoreCheckpoint?: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [checkpointExpanded] = useState(false);
   const toolCount = decision.tool_calls?.length || 0;
   const hasError = decision.tool_calls?.some(
     (t) => String(t.status) === "STATUS_ERROR" || String(t.status) === "4",
   );
 
+  const successfulTools = decision.tool_calls?.filter(
+    (t) => String(t.status) !== "STATUS_ERROR" && String(t.status) !== "4"
+  ).length || 0;
+
   return (
-    <div className="mt-3 border-t border-gray-800/60 pt-3">
-      {/* User Prompt */}
-      <div className="mb-2">
-        <div className="flex items-start gap-1.5 text-xs">
-          <MessageSquare className="w-3 h-3 text-primary mt-0.5 shrink-0" />
-          <p className="text-gray-300 leading-relaxed">
-            {decision.user_prompt?.slice(0, 150)}
-            {(decision.user_prompt?.length || 0) > 150 ? "…" : ""}
-          </p>
-        </div>
-      </div>
-
-      {/* Meta row: tools, duration, tokens, status */}
-      <div className="flex items-center gap-3 text-xs text-gray-500 mb-2">
-        <span className="flex items-center gap-1">
-          <Terminal className="w-3 h-3" />
-          {toolCount} tools
-        </span>
-        {decision.duration_ms > 0 && (
-          <span>{(decision.duration_ms / 1000).toFixed(1)}s</span>
-        )}
-        {(decision.tokens_input > 0 || decision.tokens_output > 0) && (
-          <span className="font-mono">
-            {decision.tokens_input + decision.tokens_output} tokens
-          </span>
-        )}
-        <StatusBadge variant={hasError ? "error" : "success"} size="sm" dot>
-          {hasError ? "Error" : "Success"}
-        </StatusBadge>
-        <button
-          onClick={onViewTimeline}
-          className="ml-auto text-primary hover:text-primary-light flex items-center gap-1 transition-colors"
-          title="View in Timeline"
-        >
-          <ExternalLink className="w-3 h-3" />
-          Timeline
-        </button>
-      </div>
-
-      {/* Expandable AI Response */}
-      {decision.agent_response && (
-        <div>
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-300 transition-colors mb-1"
-          >
-            {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-            <Bot className="w-3 h-3" />
-            AI Response
-          </button>
-          {expanded && (
-            <div className="pl-4 border-l-2 border-gray-800 max-h-[300px] overflow-y-auto">
-              <MarkdownRenderer content={decision.agent_response} />
+    <div className="card p-4 hover:border-gray-700/60 transition-colors">
+      {/* Main content: User prompt → Tool chain → Outcome */}
+      <div className="space-y-3">
+        {/* User Prompt */}
+        <div className="flex items-start gap-3">
+          <MessageSquare className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm text-gray-200 leading-relaxed">
+              {decision.user_prompt?.slice(0, 200) || "No prompt"}
+              {(decision.user_prompt?.length || 0) > 200 ? "…" : ""}
+            </p>
+            <div className="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
+              <span className="flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                {formatTimestamp(decision.timestamp)}
+              </span>
+              {decision.project_path && (
+                <span className="flex items-center gap-1">
+                  <FolderOpen className="w-3 h-3" />
+                  {decision.project_path.split("/").pop() || decision.project_path}
+                </span>
+              )}
             </div>
-          )}
+          </div>
         </div>
-      )}
 
-      {/* Tool calls summary (collapsed) */}
-      {toolCount > 0 && expanded && (
-        <div className="mt-2 pl-4 border-l-2 border-gray-800 space-y-1">
-          <div className="text-xs text-gray-500 font-semibold mb-1">Tool Calls:</div>
-          {decision.tool_calls.slice(0, 10).map((t, i) => {
-            const s = String(t.status);
-            const isErr = s === "STATUS_ERROR" || s === "4";
-            return (
-              <div key={t.id || i} className="flex items-center gap-2 text-xs">
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${isErr ? "bg-error" : "bg-success"}`} />
-                <span className="font-mono text-primary-light">{t.tool_name}</span>
-                {t.duration_ms > 0 && (
-                  <span className="text-gray-600">{t.duration_ms}ms</span>
+        {/* Tool Chain & Outcome */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            {/* Tool summary */}
+            <div className="flex items-center gap-2 text-xs">
+              <Terminal className="w-3.5 h-3.5 text-gray-500" />
+              <span className="text-gray-400">
+                {toolCount > 0 ? `${successfulTools}/${toolCount} tools` : "No tools"}
+              </span>
+              {decision.duration_ms > 0 && (
+                <span className="text-gray-600">
+                  {formatDuration(decision.duration_ms)}
+                </span>
+              )}
+              {(decision.tokens_input > 0 || decision.tokens_output > 0) && (
+                <span className="font-mono text-gray-600">
+                  {decision.tokens_input + decision.tokens_output}t
+                </span>
+              )}
+            </div>
+
+            {/* Outcome */}
+            <StatusBadge variant={hasError ? "error" : "success"} size="sm" dot>
+              {hasError ? "Error" : "Success"}
+            </StatusBadge>
+          </div>
+
+          {/* Detail button */}
+          <button
+            onClick={onViewDetail}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-primary border border-primary/30 rounded-lg hover:bg-primary/10 transition-colors"
+          >
+            <ExternalLink className="w-3 h-3" />
+            Detail
+          </button>
+        </div>
+
+        {/* Checkpoint attachment (if exists) */}
+        {linkedCheckpoint && (
+          <CollapsiblePanel
+            title={
+              <div className="flex items-center gap-2">
+                <Camera className="w-3.5 h-3.5 text-accent" />
+                <span className="text-sm font-medium text-gray-300">Safety Checkpoint</span>
+                <StatusBadge variant={triggerVariant(linkedCheckpoint.trigger_type)} size="sm">
+                  {triggerIcon(linkedCheckpoint.trigger_type)}
+                  {triggerLabel(linkedCheckpoint.trigger_type)}
+                </StatusBadge>
+              </div>
+            }
+            defaultOpen={checkpointExpanded}
+            className="border-t border-gray-800/60 pt-3 mt-3"
+          >
+            <div className="space-y-2 text-xs">
+              {/* Description */}
+              <p className="text-gray-300 leading-relaxed">
+                {linkedCheckpoint.description || "Untitled checkpoint"}
+              </p>
+
+              {/* Dangerous operation */}
+              {linkedCheckpoint.dangerous_op && (
+                <div className="flex items-center gap-1.5 text-warning/80">
+                  <Zap className="w-3 h-3" />
+                  <span className="font-mono">{linkedCheckpoint.dangerous_op}</span>
+                </div>
+              )}
+
+              {/* Git + storage info */}
+              <div className="flex items-center gap-4 text-gray-500">
+                {linkedCheckpoint.git_branch && (
+                  <span className="flex items-center gap-1">
+                    <GitBranch className="w-3 h-3" />
+                    <span className="font-mono">{linkedCheckpoint.git_branch}</span>
+                  </span>
+                )}
+                {linkedCheckpoint.git_commit_hash && (
+                  <span className="font-mono">
+                    {linkedCheckpoint.git_commit_hash.slice(0, 8)}
+                  </span>
+                )}
+                {linkedCheckpoint.size > 0 && (
+                  <span className="flex items-center gap-1">
+                    <HardDrive className="w-3 h-3" />
+                    {formatSize(linkedCheckpoint.size)}
+                  </span>
+                )}
+                {onRestoreCheckpoint && !linkedCheckpoint.is_active && (
+                  <button
+                    onClick={onRestoreCheckpoint}
+                    className="ml-auto flex items-center gap-1 px-2 py-1 text-warning border border-warning/30 rounded hover:bg-warning/10 transition-colors"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    Restore
+                  </button>
                 )}
               </div>
-            );
-          })}
-          {toolCount > 10 && (
-            <div className="text-xs text-gray-600">...and {toolCount - 10} more</div>
-          )}
-        </div>
-      )}
+            </div>
+          </CollapsiblePanel>
+        )}
+      </div>
     </div>
   );
 }
 
-// ─── Checkpoint Card ─────────────────────────────────
+// ─── Decision Detail Panel ───────────────────────────
 
-function CheckpointCard({
-  checkpoint,
-  isActive,
-  linkedDecision,
-  onRestore,
-  onViewTimeline,
+function DecisionDetailPanel({
+  decision,
+  decisions,
+  onClose,
+  onNavigate,
 }: {
-  checkpoint: Checkpoint;
-  isActive: boolean;
-  linkedDecision: DecisionLog | null;
-  onRestore: () => void;
-  onViewTimeline: () => void;
+  decision: DecisionLog;
+  decisions: DecisionLog[];
+  onClose: () => void;
+  onNavigate: (d: DecisionLog) => void;
 }) {
-  const [descExpanded, setDescExpanded] = useState(false);
-  const desc = checkpoint.description || "Untitled checkpoint";
-  const descTruncateLen = 200;
-  const isLongDesc = desc.length > descTruncateLen;
-  const displayDesc = isLongDesc && !descExpanded
-    ? desc.slice(0, descTruncateLen) + "…"
-    : desc;
+  const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
+  const [diffLoading, setDiffLoading] = useState(false);
 
-  return (
-    <div
-      className={`card p-4 ${
-        isActive ? "border-primary/40 bg-primary/5" : ""
-      }`}
-    >
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="min-w-0 flex-1">
-          {/* Description */}
-          <div className="text-sm text-white font-medium leading-snug mb-1.5">
-            <Camera className="w-3.5 h-3.5 text-accent inline mr-1.5 -mt-0.5" />
-            <span className="whitespace-pre-wrap break-words">{displayDesc}</span>
-            {isLongDesc && (
-              <button
-                onClick={() => setDescExpanded(!descExpanded)}
-                className="ml-1.5 text-xs text-primary hover:text-primary-light transition-colors"
-              >
-                {descExpanded ? "Show less" : "Show more"}
-              </button>
-            )}
-          </div>
-
-          {/* Timestamp + trigger */}
-          <div className="flex items-center gap-2 text-xs text-gray-500">
-            <Clock className="w-3 h-3" />
-            <span className="font-mono tabular-nums">
-              {formatTimestamp(checkpoint.timestamp)}
-            </span>
-            <StatusBadge variant={triggerVariant(checkpoint.trigger_type)} size="sm">
-              {triggerIcon(checkpoint.trigger_type)}
-              {triggerLabel(checkpoint.trigger_type)}
-            </StatusBadge>
-            {isActive && (
-              <StatusBadge variant="success" size="sm" dot>
-                Active
-              </StatusBadge>
-            )}
-          </div>
-        </div>
-
-        {/* Restore button */}
-        {!isActive && (
-          <button
-            onClick={onRestore}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-warning border border-warning/30 rounded-lg hover:bg-warning/10 transition-colors shrink-0"
-          >
-            <RotateCcw className="w-3 h-3" />
-            Restore
-          </button>
-        )}
-      </div>
-
-      {/* Dangerous operation tag */}
-      {checkpoint.dangerous_op && (
-        <div className="flex items-center gap-1.5 text-xs text-warning/80 mb-2">
-          <Zap className="w-3 h-3 shrink-0" />
-          <span className="font-mono">{checkpoint.dangerous_op}</span>
-        </div>
-      )}
-
-      {/* Git + storage info */}
-      <div className="flex items-center gap-4 text-xs text-gray-500">
-        {checkpoint.git_branch && (
-          <span className="flex items-center gap-1">
-            <GitBranch className="w-3 h-3" />
-            <span className="font-mono">{checkpoint.git_branch}</span>
-          </span>
-        )}
-        {checkpoint.git_commit_hash && (
-          <span className="font-mono text-gray-600">
-            {checkpoint.git_commit_hash.slice(0, 8)}
-          </span>
-        )}
-        {checkpoint.size > 0 && (
-          <span className="flex items-center gap-1">
-            <HardDrive className="w-3 h-3" />
-            {formatSize(checkpoint.size)}
-          </span>
-        )}
-      </div>
-
-      {/* Linked AI Decision Context */}
-      {linkedDecision ? (
-        <AIContextPanel
-          decision={linkedDecision}
-          onViewTimeline={onViewTimeline}
-        />
-      ) : (
-        <div className="mt-3 border-t border-gray-800/60 pt-3 text-xs text-gray-600 italic">
-          No linked AI decision found
-        </div>
-      )}
-    </div>
+  const toolCount = decision.tool_calls?.length || 0;
+  const hasError = decision.tool_calls?.some(
+    (t) => String(t.status) === "STATUS_ERROR" || String(t.status) === "4"
   );
-}
 
-// ─── Create Checkpoint Form ──────────────────────────
+  // Find prev/next in the decisions list
+  const currentIdx = decisions.findIndex((d) => d.id === decision.id);
+  const prevDecision = currentIdx > 0 ? decisions[currentIdx - 1] : null;
+  const nextDecision = currentIdx < decisions.length - 1 ? decisions[currentIdx + 1] : null;
 
-function CreateCheckpointForm({
-  projects,
-  onCreated,
-}: {
-  projects: string[];
-  onCreated: () => void;
-}) {
-  const [projectDir, setProjectDir] = useState(projects[0] || "");
-  const [description, setDescription] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState("");
-
-  const handleCreate = async () => {
-    if (!projectDir || !description.trim()) return;
-    setCreating(true);
-    setError("");
-    try {
-      await api.createCheckpoint(projectDir, description.trim());
-      setDescription("");
-      onCreated();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create checkpoint");
-    } finally {
-      setCreating(false);
+  // Load git diff when decision has a commit hash
+  useEffect(() => {
+    const commitHash = decision.git_state?.commit_hash;
+    const projectPath = decision.project_path;
+    if (!commitHash || !projectPath) {
+      setDiffFiles([]);
+      return;
     }
-  };
+
+    let cancelled = false;
+    setDiffLoading(true);
+    api
+      .getGitDiff({ projectDir: projectPath, commit: commitHash })
+      .then((res) => {
+        if (!cancelled && res.files) setDiffFiles(res.files);
+      })
+      .catch(() => {
+        if (!cancelled) setDiffFiles([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDiffLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [decision.git_state?.commit_hash, decision.project_path]);
 
   return (
-    <div className="card p-4 border-dashed">
-      <h4 className="text-xs font-semibold text-gray-400 mb-3 flex items-center gap-1.5">
-        <Plus className="w-3.5 h-3.5" />
-        Create Checkpoint
-      </h4>
-      <div className="space-y-3">
-        {projects.length > 1 && (
-          <select
-            value={projectDir}
-            onChange={(e) => setProjectDir(e.target.value)}
-            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-primary/50"
-          >
-            {projects.map((p) => (
-              <option key={p} value={p}>
-                {p.split("/").pop() || p}
-              </option>
-            ))}
-          </select>
-        )}
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Checkpoint description..."
-            className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-primary/50"
-            onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-          />
+    <div className="fixed inset-y-0 right-0 w-2/3 bg-gray-950 border-l border-gray-800 z-50 overflow-hidden flex flex-col">
+      {/* Header */}
+      <div className="flex items-center justify-between p-4 border-b border-gray-800">
+        <div className="flex items-center gap-3">
+          <h3 className="text-lg font-semibold text-white">Decision Detail</h3>
+          <StatusBadge variant={hasError ? "error" : "success"} size="sm" dot>
+            {hasError ? "Error" : "Success"}
+          </StatusBadge>
+        </div>
+        <div className="flex items-center gap-2">
+          {/* Navigation */}
           <button
-            onClick={handleCreate}
-            disabled={creating || !description.trim()}
-            className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium bg-primary/20 text-primary border border-primary/30 rounded-lg hover:bg-primary/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            onClick={() => prevDecision && onNavigate(prevDecision)}
+            disabled={!prevDecision}
+            className="p-2 text-gray-400 hover:text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            title="Previous decision"
           >
-            {creating ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Camera className="w-3.5 h-3.5" />
-            )}
-            Create
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => nextDecision && onNavigate(nextDecision)}
+            disabled={!nextDecision}
+            className="p-2 text-gray-400 hover:text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            title="Next decision"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+          <button
+            onClick={onClose}
+            className="p-2 text-gray-400 hover:text-gray-300 transition-colors"
+          >
+            <X className="w-4 h-4" />
           </button>
         </div>
-        {error && <p className="text-xs text-error">{error}</p>}
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-6">
+        {/* Meta info */}
+        <div className="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <span className="text-gray-500">Timestamp:</span>
+            <span className="ml-2 font-mono">{formatTimestamp(decision.timestamp)}</span>
+          </div>
+          <div>
+            <span className="text-gray-500">Duration:</span>
+            <span className="ml-2">{formatDuration(decision.duration_ms)}</span>
+          </div>
+          <div>
+            <span className="text-gray-500">Tokens:</span>
+            <span className="ml-2 font-mono">
+              {decision.tokens_input}↗ + {decision.tokens_output}↙ = {decision.tokens_input + decision.tokens_output}
+            </span>
+          </div>
+          <div>
+            <span className="text-gray-500">Tools:</span>
+            <span className="ml-2">{toolCount} executed</span>
+          </div>
+        </div>
+
+        {/* User Prompt */}
+        <div>
+          <h4 className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
+            <MessageSquare className="w-4 h-4 text-primary" />
+            User Prompt
+          </h4>
+          <div className="bg-gray-900 rounded-lg p-3 text-sm text-gray-200">
+            {decision.user_prompt || "No prompt"}
+          </div>
+        </div>
+
+        {/* AI Thinking */}
+        {decision.thinking_content && (
+          <div>
+            <h4 className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
+              <Brain className="w-4 h-4 text-accent" />
+              AI Thinking Process
+            </h4>
+            <div className="bg-gray-900 rounded-lg p-3 max-h-[300px] overflow-y-auto">
+              <MarkdownRenderer content={decision.thinking_content} />
+            </div>
+          </div>
+        )}
+
+        {/* Tool Calls */}
+        {toolCount > 0 && (
+          <div>
+            <h4 className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
+              <Terminal className="w-4 h-4 text-primary" />
+              Tool Execution Timeline
+            </h4>
+            <ToolCallGantt tools={decision.tool_calls || []} />
+          </div>
+        )}
+
+        {/* AI Response */}
+        {decision.agent_response && (
+          <div>
+            <h4 className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
+              <Bot className="w-4 h-4 text-primary" />
+              AI Response
+            </h4>
+            <div className="bg-gray-900 rounded-lg p-3 max-h-[400px] overflow-y-auto">
+              <MarkdownRenderer content={decision.agent_response} />
+            </div>
+          </div>
+        )}
+
+        {/* Git Diff */}
+        {diffFiles.length > 0 && (
+          <div>
+            <h4 className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
+              <GitBranch className="w-4 h-4 text-primary" />
+              Code Changes
+            </h4>
+            <DiffViewer files={diffFiles} />
+          </div>
+        )}
+        {diffLoading && (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-6 h-6 text-primary animate-spin" />
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+// ─── Legacy AI Context Panel (removed in refactor) ─────────────────────────────────
+// AIContextPanel was removed as it's replaced by DecisionEntryCard + DecisionDetailPanel
+
+// ─── Legacy components (removed in refactor) ─────────────────────────────────
+// CheckpointCard and CreateCheckpointForm were removed as this page now focuses on DecisionLog
 
 // ─── Main Page ───────────────────────────────────────
 
 export default function Checkpoints() {
-  const navigate = useNavigate();
   const { decisions: storeDecisions } = useAppStore();
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [allDecisions, setAllDecisions] = useState<DecisionLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMoreData, setHasMoreData] = useState(true);
+  const [currentPage, setCurrentPage] = useState(0);
+
+  // Filters
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [projectFilter, setProjectFilter] = useState("all");
+  const [triggerTypeFilter, setTriggerTypeFilter] = useState("all");
+  const [dateRange, setDateRange] = useState<DateRange>({});
+
+  // Detail panel
+  const [selectedDecision, setSelectedDecision] = useState<DecisionLog | null>(null);
+
+  // Restore dialog
   const [restoreTarget, setRestoreTarget] = useState<Checkpoint | null>(null);
   const [restoring, setRestoring] = useState(false);
+
+  // Build query parameters
+  const buildQuery = useCallback((): TimeRangeQuery => {
+    return {
+      limit: PAGE_SIZE,
+      offset: currentPage * PAGE_SIZE,
+      startTime: dateRange.startTime,
+      endTime: dateRange.endTime,
+    };
+  }, [currentPage, dateRange]);
 
   // Merge store decisions with API-fetched ones
   const mergedDecisions = useMemo(() => {
     const seen = new Set<string>();
     const merged: DecisionLog[] = [];
-    for (const d of [...storeDecisions, ...allDecisions]) {
+    for (const d of [...(storeDecisions || []), ...allDecisions]) {
       if (!seen.has(d.id)) {
         seen.add(d.id);
         merged.push(d);
@@ -433,6 +538,53 @@ export default function Checkpoints() {
     }
     return merged;
   }, [storeDecisions, allDecisions]);
+
+  // Apply filters to decisions
+  const filteredDecisions = useMemo(() => {
+    let filtered = [...mergedDecisions];
+
+    // Search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter((d) =>
+        d.user_prompt?.toLowerCase().includes(query) ||
+        d.agent_response?.toLowerCase().includes(query) ||
+        d.tool_calls?.some(t => t.tool_name?.toLowerCase().includes(query))
+      );
+    }
+
+    // Status filter
+    if (statusFilter === "success") {
+      filtered = filtered.filter((d) =>
+        !d.tool_calls?.some(t => String(t.status) === "STATUS_ERROR" || String(t.status) === "4")
+      );
+    } else if (statusFilter === "error") {
+      filtered = filtered.filter((d) =>
+        d.tool_calls?.some(t => String(t.status) === "STATUS_ERROR" || String(t.status) === "4")
+      );
+    } else if (statusFilter === "with_checkpoint") {
+      const checkpointDecisionIds = new Set(checkpoints.filter(cp => cp.decision_log_id).map(cp => cp.decision_log_id));
+      filtered = filtered.filter((d) => checkpointDecisionIds.has(d.id));
+    }
+
+    // Project filter
+    if (projectFilter !== "all") {
+      filtered = filtered.filter((d) => d.project_path === projectFilter);
+    }
+
+    // Trigger type filter (based on linked checkpoints)
+    if (triggerTypeFilter !== "all") {
+      const relevantCheckpoints = checkpoints.filter(cp =>
+        triggerTypeFilter === "manual" ? (cp.trigger_type === "manual" || cp.trigger_type === "user") :
+        triggerTypeFilter === "pre_danger" ? (cp.trigger_type === "pre_danger" || cp.trigger_type === "pre_dangerous") :
+        cp.trigger_type === triggerTypeFilter
+      );
+      const checkpointDecisionIds = new Set(relevantCheckpoints.map(cp => cp.decision_log_id).filter(Boolean));
+      filtered = filtered.filter((d) => checkpointDecisionIds.has(d.id));
+    }
+
+    return filtered.sort((a, b) => toMs(b.timestamp) - toMs(a.timestamp));
+  }, [mergedDecisions, searchQuery, statusFilter, projectFilter, triggerTypeFilter, checkpoints]);
 
   // Extract known project paths
   const knownProjects = useMemo(() => {
@@ -444,11 +596,51 @@ export default function Checkpoints() {
   }, [mergedDecisions]);
 
   // Fetch decisions from API
+  const fetchDecisions = useCallback(async (reset = false) => {
+    if (reset) {
+      setCurrentPage(0);
+      setAllDecisions([]);
+    }
+
+    const loading = reset ? setLoading : setLoadingMore;
+    loading(true);
+
+    try {
+      const query = reset ? { ...buildQuery(), offset: 0 } : buildQuery();
+      const res = await api.getRecentDecisions(query);
+
+      if (res.decisions) {
+        if (reset) {
+          setAllDecisions(res.decisions || []);
+        } else {
+          setAllDecisions(prev => [...prev, ...(res.decisions || [])]);
+        }
+        setHasMoreData(res.decisions.length === PAGE_SIZE);
+      }
+    } catch (error) {
+      console.error("Failed to fetch decisions:", error);
+    } finally {
+      loading(false);
+    }
+  }, [buildQuery]);
+
+  // Initial load and filter changes
   useEffect(() => {
-    api.getRecentDecisions({ limit: 50 }).then((res) => {
-      if (res.decisions) setAllDecisions(res.decisions);
-    }).catch(() => {});
-  }, []);
+    fetchDecisions(true);
+  }, [dateRange]);
+
+  // Load more data
+  const loadMore = useCallback(() => {
+    if (!loadingMore && hasMoreData) {
+      setCurrentPage(prev => prev + 1);
+    }
+  }, [loadingMore, hasMoreData]);
+
+  useEffect(() => {
+    if (currentPage > 0) {
+      fetchDecisions(false);
+    }
+  }, [currentPage, fetchDecisions]);
 
   // Fetch checkpoints for all known projects
   const fetchCheckpoints = useCallback(async () => {
@@ -470,36 +662,28 @@ export default function Checkpoints() {
   }, [knownProjects]);
 
   useEffect(() => {
-    const load = async () => {
-      await fetchCheckpoints();
-      setLoading(false);
-    };
-    load();
-  }, [fetchCheckpoints]);
-
-  // Filter by project
-  const filtered = useMemo(() => {
-    if (projectFilter === "all") return checkpoints;
-    return checkpoints.filter((c) => c.project_dir === projectFilter);
-  }, [checkpoints, projectFilter]);
-
-  // Unique project dirs from checkpoints
-  const checkpointProjects = useMemo(() => {
-    const paths = new Set<string>();
-    for (const c of checkpoints) {
-      if (c.project_dir) paths.add(c.project_dir);
+    if (knownProjects.length > 0) {
+      fetchCheckpoints();
     }
-    return Array.from(paths).sort();
-  }, [checkpoints]);
+  }, [fetchCheckpoints, knownProjects]);
 
-  // All known projects (union)
-  const allProjects = useMemo(() => {
-    const all = new Set([...knownProjects, ...checkpointProjects]);
-    return Array.from(all).sort();
-  }, [knownProjects, checkpointProjects]);
+  // Count decisions with checkpoints
+  const decisionStats = useMemo(() => {
+    const withCheckpoints = filteredDecisions.filter(d =>
+      checkpoints.some(cp => cp.decision_log_id === d.id)
+    ).length;
+    return {
+      total: filteredDecisions.length,
+      withCheckpoints,
+    };
+  }, [filteredDecisions, checkpoints]);
 
   // Handle restore
-  const handleRestore = async () => {
+  const handleRestore = async (checkpoint: Checkpoint) => {
+    setRestoreTarget(checkpoint);
+  };
+
+  const confirmRestore = async () => {
     if (!restoreTarget) return;
     setRestoring(true);
     try {
@@ -525,77 +709,123 @@ export default function Checkpoints() {
     <div className="space-y-4 animate-fade-in">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-white">
-          Checkpoint Management
-        </h2>
-        <span className="text-sm text-gray-400">
-          {checkpoints.length} checkpoint{checkpoints.length !== 1 ? "s" : ""}
-        </span>
-      </div>
-
-      {/* Create form */}
-      {allProjects.length > 0 && (
-        <CreateCheckpointForm
-          projects={allProjects}
-          onCreated={fetchCheckpoints}
-        />
-      )}
-
-      {/* Project filter */}
-      {checkpointProjects.length > 1 && (
-        <div className="flex items-center gap-2">
-          <FolderOpen className="w-3.5 h-3.5 text-gray-500" />
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <button
-              onClick={() => setProjectFilter("all")}
-              className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
-                projectFilter === "all"
-                  ? "bg-primary/15 text-primary border-primary/30"
-                  : "text-gray-400 border-gray-700 hover:border-gray-600 hover:text-gray-300"
-              }`}
-            >
-              All
-            </button>
-            {checkpointProjects.map((p) => (
-              <button
-                key={p}
-                onClick={() => setProjectFilter(p)}
-                title={p}
-                className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
-                  projectFilter === p
-                    ? "bg-primary/15 text-primary border-primary/30"
-                    : "text-gray-400 border-gray-700 hover:border-gray-600 hover:text-gray-300"
-                }`}
-              >
-                {p.split("/").pop() || p}
-              </button>
-            ))}
+        <div>
+          <h2 className="text-lg font-semibold text-white">
+            AI Decision History & Safety Checkpoints
+          </h2>
+          <p className="text-sm text-gray-500 mt-1">
+            AI reasoning process with attached safety snapshots
+          </p>
+        </div>
+        <div className="text-sm text-gray-400 text-right">
+          <div>{decisionStats.total} decision{decisionStats.total !== 1 ? "s" : ""}</div>
+          <div className="text-xs text-accent">
+            {decisionStats.withCheckpoints} with checkpoint{decisionStats.withCheckpoints !== 1 ? "s" : ""}
           </div>
         </div>
-      )}
+      </div>
 
-      {/* Checkpoint list */}
-      {filtered.length === 0 ? (
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-4">
+        <DateRangeFilter onChange={setDateRange} compact />
+        <SearchFilter
+          onSearch={setSearchQuery}
+          activeStatus={statusFilter}
+          onStatusChange={setStatusFilter}
+          statusOptions={STATUS_OPTIONS}
+          placeholder="Search prompts, responses, tools..."
+        />
+        {knownProjects.length > 1 && (
+          <div className="flex items-center gap-2">
+            <FolderOpen className="w-3.5 h-3.5 text-gray-500" />
+            <select
+              value={projectFilter}
+              onChange={(e) => setProjectFilter(e.target.value)}
+              className="bg-gray-900 border border-gray-700 rounded px-2.5 py-1 text-xs text-gray-300 focus:outline-none focus:border-primary/50"
+            >
+              <option value="all">All Projects</option>
+              {knownProjects.map((p) => (
+                <option key={p} value={p}>
+                  {p.split("/").pop() || p}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div className="flex items-center gap-2">
+          <Filter className="w-3.5 h-3.5 text-gray-500" />
+          <select
+            value={triggerTypeFilter}
+            onChange={(e) => setTriggerTypeFilter(e.target.value)}
+            className="bg-gray-900 border border-gray-700 rounded px-2.5 py-1 text-xs text-gray-300 focus:outline-none focus:border-primary/50"
+          >
+            {TRIGGER_TYPE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* Decision list */}
+      {filteredDecisions.length === 0 ? (
         <div className="card p-12 text-center">
-          <Camera className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-          <p className="text-gray-400">No checkpoints yet</p>
+          <Brain className="w-12 h-12 text-gray-600 mx-auto mb-4" />
+          <p className="text-gray-400">
+            {searchQuery || statusFilter !== "all" || projectFilter !== "all" || triggerTypeFilter !== "all"
+              ? "No decisions match your filters"
+              : "No AI decisions recorded yet"}
+          </p>
           <p className="text-gray-600 text-sm mt-1">
-            Checkpoints are created automatically during AI operations, or you can create one manually above.
+            Start a conversation with Alice to see AI reasoning and decision history.
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {filtered.map((cp) => (
-            <CheckpointCard
-              key={cp.id}
-              checkpoint={cp}
-              isActive={cp.is_active}
-              linkedDecision={findLinkedDecision(cp, mergedDecisions)}
-              onRestore={() => setRestoreTarget(cp)}
-              onViewTimeline={() => navigate("/timeline")}
-            />
-          ))}
-        </div>
+        <>
+          <div className="space-y-3">
+            {filteredDecisions.map((decision) => (
+              <DecisionEntryCard
+                key={decision.id}
+                decision={decision}
+                linkedCheckpoint={findLinkedCheckpoint(decision, checkpoints)}
+                onViewDetail={() => setSelectedDecision(decision)}
+                onRestoreCheckpoint={() => {
+                  const checkpoint = findLinkedCheckpoint(decision, checkpoints);
+                  if (checkpoint) handleRestore(checkpoint);
+                }}
+              />
+            ))}
+          </div>
+
+          {/* Load more */}
+          {hasMoreData && (
+            <div className="flex justify-center pt-4">
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="flex items-center gap-2 px-4 py-2 text-sm text-gray-400 border border-gray-700 rounded-lg hover:border-gray-600 hover:text-gray-300 disabled:opacity-50 transition-colors"
+              >
+                {loadingMore ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <BarChart3 className="w-4 h-4" />
+                )}
+                {loadingMore ? "Loading..." : "Load More"}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Detail panel */}
+      {selectedDecision && (
+        <DecisionDetailPanel
+          decision={selectedDecision}
+          decisions={filteredDecisions}
+          onClose={() => setSelectedDecision(null)}
+          onNavigate={setSelectedDecision}
+        />
       )}
 
       {/* Restore confirmation dialog */}
@@ -605,7 +835,7 @@ export default function Checkpoints() {
         message={`This will restore the project to "${restoreTarget?.description || "this checkpoint"}". Uncommitted changes may be lost.`}
         confirmLabel={restoring ? "Restoring..." : "Restore"}
         variant="danger"
-        onConfirm={handleRestore}
+        onConfirm={confirmRestore}
         onCancel={() => setRestoreTarget(null)}
       />
     </div>

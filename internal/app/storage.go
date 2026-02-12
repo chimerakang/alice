@@ -80,6 +80,11 @@ func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
+	// 配置連接池以避免 SQLite 並發問題
+	db.SetMaxOpenConns(1)                   // SQLite 只允許一個寫入連接
+	db.SetMaxIdleConns(1)                   // 保持一個空閒連接
+	db.SetConnMaxLifetime(time.Hour)        // 連接最長存活時間
+
 	storage := &SQLiteStorage{
 		db:   db,
 		path: dbPath,
@@ -92,6 +97,32 @@ func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
 	}
 
 	return storage, nil
+}
+
+// execWithRetry 執行資料庫操作，遇到 SQLITE_BUSY 時會重試
+func (s *SQLiteStorage) execWithRetry(operation func() error) error {
+	const maxRetries = 5
+	const retryDelay = 50 * time.Millisecond
+
+	for i := 0; i < maxRetries; i++ {
+		err := operation()
+		if err == nil {
+			return nil
+		}
+
+		// 檢查是否為 SQLite 忙碌錯誤
+		if strings.Contains(err.Error(), "database is locked") ||
+		   strings.Contains(err.Error(), "SQLITE_BUSY") {
+			if i < maxRetries-1 { // 不是最後一次重試
+				time.Sleep(retryDelay * time.Duration(i+1)) // 遞增延遲
+				continue
+			}
+		}
+
+		return err // 非忙碌錯誤或達到最大重試次數
+	}
+
+	return fmt.Errorf("database operation failed after %d retries", maxRetries)
 }
 
 // initTables 初始化資料庫表格
@@ -607,18 +638,20 @@ func (s *SQLiteStorage) scanPerformanceMetrics(rows *sql.Rows) ([]PerformanceMet
 
 // InsertSecurityEvent 插入安全事件
 func (s *SQLiteStorage) InsertSecurityEvent(event SecurityEvent) error {
-	detailsJSON, _ := json.Marshal(event.Details)
+	return s.execWithRetry(func() error {
+		detailsJSON, _ := json.Marshal(event.Details)
 
-	_, err := s.db.Exec(`
-		INSERT INTO security_events
-		(event_id, timestamp, event_type, severity, description, user_id,
-		 ip_address, user_agent, details_json, mitigated)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		event.ID, event.Timestamp, event.EventType, event.Severity,
-		event.Description, event.UserID, event.IP, event.UserAgent,
-		string(detailsJSON), event.Mitigated)
+		_, err := s.db.Exec(`
+			INSERT INTO security_events
+			(event_id, timestamp, event_type, severity, description, user_id,
+			 ip_address, user_agent, details_json, mitigated)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			event.ID, event.Timestamp, event.EventType, event.Severity,
+			event.Description, event.UserID, event.IP, event.UserAgent,
+			string(detailsJSON), event.Mitigated)
 
-	return err
+		return err
+	})
 }
 
 // GetSecurityEvents 獲取安全事件（分頁）
@@ -703,14 +736,16 @@ func (s *SQLiteStorage) scanSecurityEvents(rows *sql.Rows) ([]SecurityEvent, err
 
 // SaveTopicSetting 儲存 topic 對應的專案目錄
 func (s *SQLiteStorage) SaveTopicSetting(chatID int64, threadID int, projectDir string) error {
-	_, err := s.db.Exec(`
-		INSERT INTO topic_settings (chat_id, thread_id, project_dir, updated_at)
-		VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-		ON CONFLICT(chat_id, thread_id) DO UPDATE SET
-			project_dir = excluded.project_dir,
-			updated_at = CURRENT_TIMESTAMP`,
-		chatID, threadID, projectDir)
-	return err
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(`
+			INSERT INTO topic_settings (chat_id, thread_id, project_dir, updated_at)
+			VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(chat_id, thread_id) DO UPDATE SET
+				project_dir = excluded.project_dir,
+				updated_at = CURRENT_TIMESTAMP`,
+			chatID, threadID, projectDir)
+		return err
+	})
 }
 
 // GetTopicSetting 讀取 topic 對應的專案目錄，找不到時回傳空字串

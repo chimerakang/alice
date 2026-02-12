@@ -25,7 +25,7 @@
 | P4 - Proto-First | Protocol Buffers 架構遷移 | 100% | ✅ |
 | P5 - Frontend Foundation | React + Vite 框架 + 基礎元件 | 100% | ✅ |
 | P6 - AI Audit System | AI 開發追蹤核心功能 | 100% | ✅ |
-| P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 + 歷史資料查詢 | 90% | 🔄 |
+| P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 + 歷史資料查詢 | 100% | ✅ |
 | P8 - Control API | 遠端控制 + 中斷/回溯 | 100% | ✅ |
 | P8.5 - TG 指令增強 | /tasks 待辦清單 + Topic 設定持久化 | 100% | ✅ |
 | P9 - Multimedia Input | 圖片分析 + 語音轉文字 | 0% | 📋 |
@@ -142,13 +142,14 @@
 | | — 實作 DateRangeFilter 元件支援歷史資料瀏覽 ✅ | | ✅ | |
 | | — 統一所有頁面採用混合資料載入模式 (API + WebSocket) ✅ | | ✅ | |
 | | — 🔧 Fixed: WebSocket BroadcastDecisionEvent 缺少 user_prompt/tool_calls 等欄位 ✅ | | ✅ | |
-| 7.5 | Checkpoints 頁面重新定位：AI 決策歷程 + 安全快照 | [#30](https://github.com/chimerakang/alice/issues/30) | 🔄 | P1 |
-| | — 重構頁面佈局：DecisionLog 為主體，Checkpoint 為附註標記 | | 📋 | |
-| | — 加入 DateRangeFilter + server-side 分頁（復用 Timeline 模式） | | 📋 | |
-| | — 重新設計卡片：user prompt → tool chain → outcome 為主，git/snapshot 為 collapsible 次要區塊 | | 📋 | |
-| | — 加入 slide-over Detail Panel（完整 thinking/response/ToolCallGantt/GitDiff + checkpoint restore） | | 📋 | |
-| | — 搜尋與篩選（搜尋 prompts/tools、filter by trigger type/project） | | 📋 | |
-| | — 建置驗證 + Docker dashboard 重建 | | 📋 | |
+| 7.5 | Checkpoints 頁面重新定位：AI 決策歷程 + 安全快照 | [#30](https://github.com/chimerakang/alice/issues/30) | ✅ | P1 |
+| | — 重構頁面佈局：DecisionLog 為主體，Checkpoint 為附註標記 ✅ | | ✅ | |
+| | — 加入 DateRangeFilter + server-side 分頁（復用 Timeline 模式） ✅ | | ✅ | |
+| | — 重新設計卡片：user prompt → tool chain → outcome 為主，git/snapshot 為 collapsible 次要區塊 ✅ | | ✅ | |
+| | — 加入 slide-over Detail Panel（完整 thinking/response/ToolCallGantt/GitDiff + checkpoint restore） ✅ | | ✅ | |
+| | — 搜尋與篩選（搜尋 prompts/tools、filter by trigger type/project） ✅ | | ✅ | |
+| | — 建置驗證 + Docker dashboard 重建 ✅ | | ✅ | |
+| | — **🎉 Issue #30 已完成** (2026-02-13) | | ✅ | |
 
 ## P8 - Remote Control API (✅ 100%)
 
@@ -268,7 +269,7 @@ Phase 4 (分析) ─── #25 Performance/Security ──→ #11 Remote Control
 | [#31](https://github.com/chimerakang/alice/issues/31) | **/tasks 指令 — 查看待辦工作清單** | P8.5 | ✅ Closed |
 | [#28](https://github.com/chimerakang/alice/issues/28) | **Telegram 圖片訊息支援** | P9 | 📋 Planned |
 | [#29](https://github.com/chimerakang/alice/issues/29) | **Telegram 語音訊息轉文字** | P9 | 📋 Planned |
-| [#30](https://github.com/chimerakang/alice/issues/30) | **Checkpoints 頁面重新定位：AI 決策歷程 + 安全快照** | P7 | 🔄 In Progress |
+| [#30](https://github.com/chimerakang/alice/issues/30) | **Checkpoints 頁面重新定位：AI 決策歷程 + 安全快照** | P7 | ✅ Closed |
 | [#33](https://github.com/chimerakang/alice/issues/33) | **Topic-Project 對應持久化 — 重啟後保留設定** | P8.5 | ✅ Closed |
 | [#32](https://github.com/chimerakang/alice/issues/32) | **Claude Code Hooks 整合 — 攔截所有互動** | P10 | 📋 Planned |
 

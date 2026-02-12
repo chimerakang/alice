@@ -16,4 +16,14 @@
 | #1011 | 10:40 PM | 🔵 | WebSocket Real-Time Broadcasting with Event Buffer | ~445 |
 | #1010 | 10:39 PM | 🔵 | Web API Layer Exposes Historical Data Query Endpoints | ~482 |
 | #1009 | " | 🔵 | SQLite Storage Layer Architecture Analyzed | ~442 |
+
+### Feb 13, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #1150 | 12:43 AM | 🔴 | Added Retry Logic to InsertSecurityEvent Function | ~249 |
+| #1149 | 12:42 AM | 🟣 | Implemented execWithRetry Helper Function | ~327 |
+| #1148 | " | 🔴 | Added Retry Logic to SaveTopicSetting Function | ~248 |
+| #1147 | " | 🔴 | Fixed SQLite Database Locking with Connection Pool Configuration | ~305 |
+| #1146 | " | 🔵 | SQLite WAL Mode Enabled But No Connection Pool Configuration | ~292 |
 </claude-mem-context>
