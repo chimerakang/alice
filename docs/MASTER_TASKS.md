@@ -1,7 +1,7 @@
 # Alice AI Agent - Master Tasks
 
 > AI 開發審計系統 — 追蹤 AI 的推理、操作、檔案變更
-> Last updated: 2026-02-13 12:15 AM
+> Last updated: 2026-02-13 12:20 AM
 
 ## Status Legend
 
@@ -27,8 +27,9 @@
 | P6 - AI Audit System | AI 開發追蹤核心功能 | 100% | ✅ |
 | P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 + 歷史資料查詢 | 90% | 🔄 |
 | P8 - Control API | 遠端控制 + 中斷/回溯 | 100% | ✅ |
-| P8.5 - TG 指令增強 | /tasks 待辦清單指令 | 100% | ✅ |
+| P8.5 - TG 指令增強 | /tasks 待辦清單 + Topic 設定持久化 | 100% | ✅ |
 | P9 - Multimedia Input | 圖片分析 + 語音轉文字 | 0% | 📋 |
+| P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 0% | 📋 |
 
 ---
 
@@ -171,6 +172,11 @@
 | | — 更新 /help 指令說明 ✅ | | ✅ | |
 | | — 更新指令註冊清單 ✅ | | ✅ | |
 | | — **🎉 Issue #31 已完成** (2026-02-13) | | ✅ | |
+| 8.7 | **Topic-Project 對應持久化 — 重啟後保留設定** | [#33](https://github.com/chimerakang/alice/issues/33) | ✅ | P1 |
+| | — 新增 SQLite `topic_settings` 表 (chat_id, thread_id, project_dir) ✅ | | ✅ | |
+| | — `/project` 切換時同步寫入資料庫 ✅ | | ✅ | |
+| | — `getAgent()` 建立新 Agent 時先查資料庫還原設定 ✅ | | ✅ | |
+| | — **🎉 Issue #33 已完成** (2026-02-13) | | ✅ | |
 
 ## P9 - Multimedia Input (📋 0%)
 
@@ -191,6 +197,25 @@
 | | — 臨時目錄管理 + 定期清理機制 | | 📋 | |
 | | — MultimediaConfig 接線到實際邏輯 | | 📋 | |
 | | — config.example.json 更新多媒體設定範例 | | 📋 | |
+
+## P10 - Claude Code Hooks 整合 (📋 0%)
+
+| # | Task | Issue | Status | Priority |
+|---|------|-------|--------|----------|
+| 10.1 | **Claude Code Hooks 攔截全部互動** | [#32](https://github.com/chimerakang/alice/issues/32) | 📋 | **P0** |
+| | — Hook script：攔截 SessionStart/Stop + UserPromptSubmit 事件 | | 📋 | |
+| | — 解析 transcript_path JSONL 檔案擷取完整對話 | | 📋 | |
+| | — HTTP POST 推送到 Alice API（/api/hooks/claude-code） | | 📋 | |
+| | — 去重邏輯：避免 Telegram 來源重複記錄 | | 📋 | |
+| 10.2 | **Alice 接收端 API + 儲存** | [#32](https://github.com/chimerakang/alice/issues/32) | 📋 | **P0** |
+| | — 新增 /api/hooks/claude-code 端點接收 hook 資料 | | 📋 | |
+| | — 解析 JSONL transcript 轉換為 DecisionLog 格式 | | 📋 | |
+| | — 儲存至 SQLite + WebSocket 即時推播 | | 📋 | |
+| | — 來源標記：terminal / vscode / telegram 區分 | | 📋 | |
+| 10.3 | **Dashboard 多來源整合顯示** | [#32](https://github.com/chimerakang/alice/issues/32) | 📋 | P1 |
+| | — Timeline 顯示來源標籤（Terminal/VSCode/Telegram） | | 📋 | |
+| | — 篩選器支援按來源過濾 | | 📋 | |
+| | — 安裝指南：.claude/settings.json hook 配置說明 | | 📋 | |
 
 ---
 
@@ -240,10 +265,12 @@ Phase 4 (分析) ─── #25 Performance/Security ──→ #11 Remote Control
 | [#26](https://github.com/chimerakang/alice/issues/26) | Checkpoint ↔ DecisionLog 直接關聯 | P7 | ✅ Closed |
 | [#27](https://github.com/chimerakang/alice/issues/27) | 擴充 CallStream 擷取完整 AI 思考內容 | P6 | ✅ Closed |
 | [#11](https://github.com/chimerakang/alice/issues/11) | Remote Control API | P8 | ✅ Closed |
-| [#31](https://github.com/chimerakang/alice/issues/31) | **/tasks 指令 — 查看待辦工作清單** | P8.5 | 📋 Planned |
+| [#31](https://github.com/chimerakang/alice/issues/31) | **/tasks 指令 — 查看待辦工作清單** | P8.5 | ✅ Closed |
 | [#28](https://github.com/chimerakang/alice/issues/28) | **Telegram 圖片訊息支援** | P9 | 📋 Planned |
 | [#29](https://github.com/chimerakang/alice/issues/29) | **Telegram 語音訊息轉文字** | P9 | 📋 Planned |
 | [#30](https://github.com/chimerakang/alice/issues/30) | **Checkpoints 頁面重新定位：AI 決策歷程 + 安全快照** | P7 | 🔄 In Progress |
+| [#33](https://github.com/chimerakang/alice/issues/33) | **Topic-Project 對應持久化 — 重啟後保留設定** | P8.5 | ✅ Closed |
+| [#32](https://github.com/chimerakang/alice/issues/32) | **Claude Code Hooks 整合 — 攔截所有互動** | P10 | 📋 Planned |
 
 ---
 

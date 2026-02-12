@@ -115,7 +115,16 @@ func (t *TelegramBot) getAgent(key chatKey) *Agent {
 		return agent
 	}
 
-	agent := NewAgent(t.client, t.config.DefaultProjectDir, key.chatID, key.threadID)
+	// 從資料庫還原 topic 對應的專案目錄，找不到則用預設值
+	projectDir := t.config.DefaultProjectDir
+	if globalStorage != nil {
+		if saved, err := globalStorage.GetTopicSetting(key.chatID, key.threadID); err == nil && saved != "" {
+			projectDir = saved
+			log.Printf("[telegram] restored project dir for chat=%d thread=%d: %s", key.chatID, key.threadID, saved)
+		}
+	}
+
+	agent := NewAgent(t.client, projectDir, key.chatID, key.threadID)
 	t.agents[key] = agent
 	return agent
 }
@@ -396,6 +405,12 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		}
 		agent := t.getAgent(key)
 		agent.SetProject(dir)
+		// 持久化 topic → project 對應
+		if globalStorage != nil {
+			if err := globalStorage.SaveTopicSetting(key.chatID, key.threadID, dir); err != nil {
+				log.Printf("[telegram] failed to save topic setting: %v", err)
+			}
+		}
 		t.send(key, fmt.Sprintf("✅ 專案已切換到: %s", dir))
 
 	case "/reset":

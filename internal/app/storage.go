@@ -45,6 +45,10 @@ type Storage interface {
 	GetPerformanceMetricsCount() (int64, error)
 	GetSecurityEventsCount() (int64, error)
 
+	// Topic Settings
+	SaveTopicSetting(chatID int64, threadID int, projectDir string) error
+	GetTopicSetting(chatID int64, threadID int) (string, error)
+
 	// Data Retention
 	CleanupOldData(retentionDays int) error
 
@@ -194,12 +198,24 @@ func (s *SQLiteStorage) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_security_events_user_id ON security_events(user_id);
 	`
 
+	// Topic Settings 表（持久化 topic → project 對應）
+	topicSettingsSQL := `
+	CREATE TABLE IF NOT EXISTS topic_settings (
+		chat_id INTEGER NOT NULL,
+		thread_id INTEGER NOT NULL,
+		project_dir TEXT NOT NULL,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (chat_id, thread_id)
+	);
+	`
+
 	// 執行所有 SQL 語句
 	tables := []string{
 		toolExecutionsSQL,
 		decisionLogsSQL,
 		performanceMetricsSQL,
 		securityEventsSQL,
+		topicSettingsSQL,
 	}
 
 	for _, tableSQL := range tables {
@@ -681,6 +697,33 @@ func (s *SQLiteStorage) scanSecurityEvents(rows *sql.Rows) ([]SecurityEvent, err
 	}
 
 	return events, rows.Err()
+}
+
+// ==================== Topic Settings ====================
+
+// SaveTopicSetting 儲存 topic 對應的專案目錄
+func (s *SQLiteStorage) SaveTopicSetting(chatID int64, threadID int, projectDir string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO topic_settings (chat_id, thread_id, project_dir, updated_at)
+		VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+		ON CONFLICT(chat_id, thread_id) DO UPDATE SET
+			project_dir = excluded.project_dir,
+			updated_at = CURRENT_TIMESTAMP`,
+		chatID, threadID, projectDir)
+	return err
+}
+
+// GetTopicSetting 讀取 topic 對應的專案目錄，找不到時回傳空字串
+func (s *SQLiteStorage) GetTopicSetting(chatID int64, threadID int) (string, error) {
+	var projectDir string
+	err := s.db.QueryRow(`
+		SELECT project_dir FROM topic_settings
+		WHERE chat_id = ? AND thread_id = ?`,
+		chatID, threadID).Scan(&projectDir)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return projectDir, err
 }
 
 // ==================== Count Queries (for pagination) ====================
