@@ -1,7 +1,7 @@
 # Alice AI Agent - Master Tasks
 
 > AI 開發審計系統 — 追蹤 AI 的推理、操作、檔案變更
-> Last updated: 2026-02-12 05:00 AM
+> Last updated: 2026-02-12 11:19 PM
 
 ## Status Legend
 
@@ -25,7 +25,7 @@
 | P4 - Proto-First | Protocol Buffers 架構遷移 | 100% | ✅ |
 | P5 - Frontend Foundation | React + Vite 框架 + 基礎元件 | 100% | ✅ |
 | P6 - AI Audit System | AI 開發追蹤核心功能 | 100% | ✅ |
-| P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 | 100% | ✅ |
+| P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 + 歷史資料查詢 | 100% | ✅ |
 | P8 - Control API | 遠端控制 + 中斷/回溯 | 100% | ✅ |
 
 ---
@@ -111,7 +111,7 @@
 | | — Frontend Timeline/Checkpoint 顯示 AI Thinking 面板 | | ✅ | |
 | | — **🎉 Issue #27 已關閉** (2026-02-12) | | ✅ | |
 
-## P7 - Dashboard & Analytics (🔄 50%)
+## P7 - Dashboard & Analytics (✅ 100%)
 
 | # | Task | Issue | Status | Priority |
 |---|------|-------|--------|----------|
@@ -133,6 +133,11 @@
 | | — Performance: 響應時間/Token/成本/記憶體趨勢圖表 ✅ | | ✅ | |
 | | — Security: 事件列表/嚴重度分佈/PII記錄 ✅ | | ✅ | |
 | | — **🎉 Issue #25 已關閉** (2026-02-12) | | ✅ | |
+| 7.4 | Dashboard 歷史資料整合 & API 增強 | Custom Enhancement | ✅ | P1 |
+| | — 修復 Dashboard 僅顯示 WebSocket 緩存問題 ✅ | | ✅ | |
+| | — 新增時間範圍查詢 API 端點 (decisions/tool-executions/security/performance) ✅ | | ✅ | |
+| | — 實作 DateRangeFilter 元件支援歷史資料瀏覽 ✅ | | ✅ | |
+| | — 統一所有頁面採用混合資料載入模式 (API + WebSocket) ✅ | | ✅ | |
 
 ## P8 - Remote Control API (✅ 100%)
 
