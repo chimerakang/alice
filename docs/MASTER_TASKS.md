@@ -29,7 +29,7 @@
 | P8 - Control API | 遠端控制 + 中斷/回溯 | 100% | ✅ |
 | P8.5 - TG 指令增強 | /tasks 待辦清單 + Topic 設定持久化 | 100% | ✅ |
 | P9 - Multimedia Input | 圖片分析 + 語音轉文字 | 100% | ✅ |
-| P9.5 - Multimedia Enhancement | 多張圖片批次處理 + 媒體群組支援 | 70% | 🔄 |
+| P9.5 - Multimedia Enhancement | 多張圖片批次處理 + 媒體群組支援 | 100% | ✅ |
 | P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 0% | 📋 |
 
 ---
@@ -202,28 +202,28 @@
 | | — MultimediaConfig 接線到實際邏輯 ✅ | | ✅ | |
 | | — config.example.json 更新多媒體設定範例 ✅ | | ✅ | |
 
-## P9.5 - Multimedia Enhancement: 多張圖片批次處理 (🔄 70%)
+## P9.5 - Multimedia Enhancement: 多張圖片批次處理 (✅ 100%)
 
 | # | Task | Issue | Status | Priority |
 |---|------|-------|--------|----------|
-| 9.4 | **多張圖片批次處理支援** | [#34](https://github.com/chimerakang/alice/issues/34) | 🔄 | **P0** |
+| 9.4 | **多張圖片批次處理支援** | [#34](https://github.com/chimerakang/alice/issues/34) | ✅ | **P0** |
 | | — 時間窗口批次機制（3-5秒內圖片歸為同批） ✅ | | ✅ | |
 | | — 暫存多張圖片等待組合分析 ✅ | | ✅ | |
 | | — 支援 Telegram media_group_id 偵測 ✅ | | ✅ | |
 | | — 組合 prompt 將多張圖片一起傳給 Claude ✅ | | ✅ | |
-| 9.5 | **媒體群組處理最佳化** | TBD | 📋 | P1 |
+| 9.5 | **媒體群組處理最佳化** | TBD | ✅ | P1 |
 | | — 避免單張圖片觸發多次回應 ✅ | | ✅ | |
-| | — 優雅處理混合媒體（圖片+文字+語音） | | 📋 | |
+| | — 優雅處理混合媒體（圖片+文字+語音） ✅ | | ✅ | |
 | | — 大量圖片記憶體管理與清理 ✅ | | ✅ | |
 | | — 用戶反饋：顯示「正在處理第 X/Y 張圖片...」 ✅ | | ✅ | |
-| 9.6 | **🔧 修復跨專案圖片存取問題** | [#35](https://github.com/chimerakang/alice/issues/35) | 🔄 | **P0** |
+| 9.6 | **🔧 修復跨專案圖片存取問題** | [#35](https://github.com/chimerakang/alice/issues/35) | ✅ | **P0** |
 | | — 圖片複製到目標專案臨時目錄解決路徑問題 ✅ | | ✅ | |
 | | — 確保 Claude CLI 能正確存取圖片檔案 ✅ | | ✅ | |
 | | — 統一臨時檔案清理機制（專案級別） ✅ | | ✅ | |
-| | — **🚨 修復圖片+文字組合處理問題** | | ❌ | |
-| | — 問題：圖片+文字說明時使用 EnhancedCLIClient 啟動新子進程 | | ❌ | |
-| | — 錯誤：需要 CLAUDE_CODE_SESSION_ACCESS_TOKEN 認證 | | ❌ | |
-| | — 解決：改用 agent.Run() 通過現有會話處理，如語音轉文字邏輯 | | 📋 | |
+| | — **🚨 修復圖片+文字組合處理問題** ✅ | | ✅ | |
+| | — 問題：圖片+文字說明時使用 EnhancedCLIClient 啟動新子進程 ✅ | | ✅ | |
+| | — 錯誤：需要 CLAUDE_CODE_SESSION_ACCESS_TOKEN 認證 ✅ | | ✅ | |
+| | — 解決：改用 agent.Run() 通過現有會話處理，如語音轉文字邏輯 ✅ | | ✅ | |
 
 ## P10 - Claude Code Hooks 整合 (📋 0%)
 
@@ -297,8 +297,8 @@ Phase 4 (分析) ─── #25 Performance/Security ──→ #11 Remote Control
 | [#29](https://github.com/chimerakang/alice/issues/29) | **Telegram 語音訊息轉文字** | P9 | ✅ Closed |
 | [#30](https://github.com/chimerakang/alice/issues/30) | **Checkpoints 頁面重新定位：AI 決策歷程 + 安全快照** | P7 | ✅ Closed |
 | [#33](https://github.com/chimerakang/alice/issues/33) | **Topic-Project 對應持久化 — 重啟後保留設定** | P8.5 | ✅ Closed |
-| [#34](https://github.com/chimerakang/alice/issues/34) | **多張圖片批次處理支援** | P9.5 | 🔄 In Progress |
-| [#35](https://github.com/chimerakang/alice/issues/35) | **🔧 修復跨專案圖片存取問題** | P9.5 | 🔄 In Progress |
+| [#34](https://github.com/chimerakang/alice/issues/34) | **多張圖片批次處理支援** | P9.5 | ✅ Completed |
+| [#35](https://github.com/chimerakang/alice/issues/35) | **🔧 修復跨專案圖片存取問題** | P9.5 | ✅ Completed |
 | [#32](https://github.com/chimerakang/alice/issues/32) | **Claude Code Hooks 整合 — 攔截所有互動** | P10 | 📋 Planned |
 
 ---
