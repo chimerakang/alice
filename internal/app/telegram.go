@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,6 +25,18 @@ type chatKey struct {
 	threadID int
 }
 
+// MediaBatch 表示一批媒體訊息（支援多張圖片批次處理）
+type MediaBatch struct {
+	Photos       []PhotoSize
+	Caption      string
+	MediaGroupID string
+	UserID       int64
+	ChatKey      chatKey
+	FirstSeen    time.Time
+	LastSeen     time.Time
+	timer        *time.Timer // 用於延遲處理的計時器
+}
+
 // PhotoSize Telegram 圖片大小資訊
 type PhotoSize struct {
 	FileID       string `json:"file_id"`
@@ -33,12 +46,26 @@ type PhotoSize struct {
 	FileSize     int    `json:"file_size,omitempty"`
 }
 
+// Voice Telegram 語音訊息資訊
+type Voice struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id"`
+	Duration     int    `json:"duration"`
+	MimeType     string `json:"mime_type,omitempty"`
+	FileSize     int    `json:"file_size,omitempty"`
+}
+
 type TelegramBot struct {
-	agents   map[chatKey]*Agent // 每個 chat/topic 一個 agent
-	agentsMu sync.RWMutex       // 保護 agents map 的讀寫鎖
-	client   *CLIClient
-	allowIDs map[int64]bool // 白名單
-	config   *Config
+	agents        map[chatKey]*Agent // 每個 chat/topic 一個 agent
+	agentsMu      sync.RWMutex       // 保護 agents map 的讀寫鎖
+	client        *CLIClient
+	allowIDs      map[int64]bool // 白名單
+	config        *Config
+
+	// 媒體批次處理
+	mediaBatches  map[string]*MediaBatch // mediaGroupID 或 chatKey 作為 key
+	batchMu       sync.RWMutex           // 保護 mediaBatches map
+	batchTimeout  time.Duration          // 批次收集超時時間
 }
 
 func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
@@ -67,10 +94,12 @@ func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
 	log.Printf("[telegram] bot authorized: @%s", me.Result.Username)
 
 	bot := &TelegramBot{
-		agents:   make(map[chatKey]*Agent),
-		client:   client,
-		allowIDs: allowIDs,
-		config:   config,
+		agents:       make(map[chatKey]*Agent),
+		client:       client,
+		allowIDs:     allowIDs,
+		config:       config,
+		mediaBatches: make(map[string]*MediaBatch),
+		batchTimeout: 5 * time.Second, // 5秒批次收集窗口
 	}
 
 	// 註冊 Telegram 指令選單
@@ -191,9 +220,11 @@ func (t *TelegramBot) Start() {
 					Chat *struct {
 						ID int64 `json:"id"`
 					} `json:"chat"`
-					Text    string      `json:"text"`
-					Caption string      `json:"caption"`
-					Photo   []PhotoSize `json:"photo"`
+					Text         string      `json:"text"`
+					Caption      string      `json:"caption"`
+					Photo        []PhotoSize `json:"photo"`
+					Voice        *Voice      `json:"voice"`
+					MediaGroupID string      `json:"media_group_id"`
 				} `json:"message"`
 				CallbackQuery *struct {
 					ID      string `json:"id"`
@@ -230,7 +261,7 @@ func (t *TelegramBot) Start() {
 			if update.Message != nil && update.Message.Chat != nil && update.Message.From != nil {
 				msg := update.Message
 				key := chatKey{chatID: msg.Chat.ID, threadID: msg.MessageThreadID}
-				go t.handleMessage(key, msg.From.ID, msg.Text, msg.Caption, msg.Photo)
+				go t.handleMessage(key, msg.From.ID, msg.Text, msg.Caption, msg.Photo, msg.Voice, msg.MediaGroupID)
 			}
 
 			// Handle callback queries (inline keyboard button clicks)
@@ -243,9 +274,18 @@ func (t *TelegramBot) Start() {
 	}
 }
 
-func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, caption string, photo []PhotoSize) {
+func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, caption string, photo []PhotoSize, voice *Voice, mediaGroupID string) {
+	// 調試日誌
+	var voiceInfo string = "none"
+	if voice != nil {
+		voiceInfo = fmt.Sprintf("duration=%ds,size=%d", voice.Duration, voice.FileSize)
+	}
+	log.Printf("[telegram] handleMessage: userID=%d, text='%s', caption='%s', photo_count=%d, voice=%s, chatID=%d, threadID=%d",
+		userID, text, caption, len(photo), voiceInfo, key.chatID, key.threadID)
+
 	// 權限檢查
 	if !t.isAllowed(userID) {
+		log.Printf("[telegram] user %d not allowed", userID)
 		t.send(key, "⛔ 你沒有使用權限。")
 		return
 	}
@@ -253,9 +293,17 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	text = strings.TrimSpace(text)
 	caption = strings.TrimSpace(caption)
 
-	// Handle photo messages
+	// Handle photo messages - 支援批次處理
 	if len(photo) > 0 {
-		t.handlePhotoMessage(key, userID, photo, caption)
+		log.Printf("[telegram] handling photo message with %d photos, mediaGroupID=%s", len(photo), mediaGroupID)
+		t.handlePhotoMessageBatch(key, userID, photo, caption, mediaGroupID)
+		return
+	}
+
+	// Handle voice messages
+	if voice != nil {
+		log.Printf("[telegram] handling voice message: duration=%ds, size=%d bytes", voice.Duration, voice.FileSize)
+		t.handleVoiceMessage(key, userID, voice, caption)
 		return
 	}
 
@@ -1173,7 +1221,359 @@ func (t *TelegramBot) parseMasterTasks(filePath string) ([]PhaseInfo, error) {
 	return filteredPhases, nil
 }
 
-// handlePhotoMessage 處理圖片訊息
+// handlePhotoMessageBatch 處理圖片訊息，支援多張圖片批次處理
+func (t *TelegramBot) handlePhotoMessageBatch(key chatKey, userID int64, photo []PhotoSize, caption string, mediaGroupID string) {
+	// 檢查多媒體支援是否開啟
+	if !t.config.Multimedia.EnablePhotoSupport {
+		t.send(key, "📷 圖片分析功能目前未啟用。請聯繫管理員開啟 `enable_photo_support` 設定。")
+		return
+	}
+
+	now := time.Now()
+
+	// 生成批次 key：優先使用 mediaGroupID，否則使用 chatKey+時間窗口
+	var batchKey string
+	if mediaGroupID != "" {
+		batchKey = mediaGroupID
+	} else {
+		// 對於沒有 mediaGroupID 的單張圖片，使用時間窗口批次
+		windowStart := now.Truncate(t.batchTimeout)
+		batchKey = fmt.Sprintf("%d_%d_%d", key.chatID, key.threadID, windowStart.Unix())
+	}
+
+	t.batchMu.Lock()
+	defer t.batchMu.Unlock()
+
+	// 檢查是否已有相同批次
+	batch, exists := t.mediaBatches[batchKey]
+	if !exists {
+		// 創建新的批次
+		batch = &MediaBatch{
+			Photos:       make([]PhotoSize, 0),
+			Caption:      caption,
+			MediaGroupID: mediaGroupID,
+			UserID:       userID,
+			ChatKey:      key,
+			FirstSeen:    now,
+			LastSeen:     now,
+		}
+		t.mediaBatches[batchKey] = batch
+		log.Printf("[telegram] created new media batch: %s", batchKey)
+	} else {
+		// 更新現有批次
+		batch.LastSeen = now
+		if caption != "" {
+			batch.Caption = caption // 使用最新的 caption
+		}
+		log.Printf("[telegram] updated existing media batch: %s", batchKey)
+	}
+
+	// 將圖片加入批次
+	batch.Photos = append(batch.Photos, photo...)
+
+	// 取消現有的計時器
+	if batch.timer != nil {
+		batch.timer.Stop()
+	}
+
+	// 設定新的處理計時器
+	batch.timer = time.AfterFunc(t.batchTimeout, func() {
+		t.processBatch(batchKey)
+	})
+
+	log.Printf("[telegram] added %d photos to batch %s, total photos: %d",
+		len(photo), batchKey, len(batch.Photos))
+}
+
+// processBatch 處理完整的媒體批次
+func (t *TelegramBot) processBatch(batchKey string) {
+	t.batchMu.Lock()
+	batch, exists := t.mediaBatches[batchKey]
+	if !exists {
+		t.batchMu.Unlock()
+		return
+	}
+	// 從 map 中移除批次（避免重複處理）
+	delete(t.mediaBatches, batchKey)
+	t.batchMu.Unlock()
+
+	log.Printf("[telegram] processing media batch %s with %d photos", batchKey, len(batch.Photos))
+
+	if len(batch.Photos) == 1 {
+		// 單張圖片，使用原有邏輯
+		t.send(batch.ChatKey, "📷 正在分析圖片...")
+		t.handleSinglePhoto(batch.ChatKey, batch.UserID, []PhotoSize{batch.Photos[0]}, batch.Caption)
+	} else {
+		// 多張圖片，批次處理
+		t.send(batch.ChatKey, fmt.Sprintf("📷 正在分析 %d 張圖片...", len(batch.Photos)))
+		t.handleMultiplePhotos(batch.ChatKey, batch.UserID, batch.Photos, batch.Caption)
+	}
+}
+
+// handleMultiplePhotos 處理多張圖片的批次分析
+func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []PhotoSize, caption string) {
+	// 取得 Agent 和專案目錄
+	agent := t.getAgent(key)
+	projectDir := agent.ProjectDir()
+
+	// 確保專案臨時目錄存在
+	projectTempDir := filepath.Join(projectDir, "temp")
+	if err := os.MkdirAll(projectTempDir, 0755); err != nil {
+		log.Printf("[telegram] create project temp dir error: %v", err)
+		t.send(key, "📷 建立專案臨時目錄失敗。")
+		return
+	}
+
+	// 下載並準備所有圖片
+	aliceImagePaths := make([]string, 0, len(photos))    // Alice 臨時目錄
+	projectImagePaths := make([]string, 0, len(photos))  // 專案臨時目錄
+	relativeImagePaths := make([]string, 0, len(photos)) // 相對路徑
+
+	defer func() {
+		// 清理所有臨時檔案
+		for _, path := range aliceImagePaths {
+			if err := os.Remove(path); err != nil {
+				log.Printf("[telegram] cleanup alice batch photo error: %v", err)
+			}
+		}
+		for _, path := range projectImagePaths {
+			if err := os.Remove(path); err != nil {
+				log.Printf("[telegram] cleanup project batch photo error: %v", err)
+			}
+		}
+	}()
+
+	// 下載所有圖片並複製到專案目錄
+	for i, photoSize := range photos {
+		// 圖片已經是 PhotoSize 結構，直接使用
+		targetPhoto := photoSize
+
+		// 檢查檔案大小
+		maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
+		if targetPhoto.FileSize > maxSizeBytes {
+			t.send(key, fmt.Sprintf("📷 第 %d 張圖片檔案過大（%s），限制為 %dMB。",
+				i+1, formatFileSize(targetPhoto.FileSize), t.config.Multimedia.MaxFileSizeMB))
+			continue
+		}
+
+		// 下載到 Alice 臨時目錄
+		aliceImagePath, err := t.DownloadTelegramFile(targetPhoto.FileID, "photo")
+		if err != nil {
+			log.Printf("[telegram] download photo %d error: %v", i+1, err)
+			t.send(key, fmt.Sprintf("📷 第 %d 張圖片下載失敗", i+1))
+			continue
+		}
+		aliceImagePaths = append(aliceImagePaths, aliceImagePath)
+
+		// 複製到專案臨時目錄
+		fileName := filepath.Base(aliceImagePath)
+		projectImagePath := filepath.Join(projectTempDir, fileName)
+		if err := copyFile(aliceImagePath, projectImagePath); err != nil {
+			log.Printf("[telegram] copy photo %d to project error: %v", i+1, err)
+			t.send(key, fmt.Sprintf("📷 第 %d 張圖片複製失敗", i+1))
+			continue
+		}
+		projectImagePaths = append(projectImagePaths, projectImagePath)
+
+		// 記錄相對路徑
+		relativePath := filepath.Join("temp", fileName)
+		relativeImagePaths = append(relativeImagePaths, relativePath)
+	}
+
+	if len(relativeImagePaths) == 0 {
+		t.send(key, "📷 所有圖片處理失敗，請稍後再試。")
+		return
+	}
+
+	// 組合多張圖片的 prompt，使用相對路徑
+	prompt := fmt.Sprintf("請分析這 %d 張圖片，並進行比較分析：\n", len(relativeImagePaths))
+	for i, relativePath := range relativeImagePaths {
+		prompt += fmt.Sprintf("圖片 %d: %s\n", i+1, relativePath)
+	}
+
+	if caption != "" {
+		prompt += fmt.Sprintf("\n用戶說明: %s", caption)
+	}
+
+	// 安全檢查和事件記錄
+	if globalSecurityManager != nil {
+		globalSecurityManager.LogSecurityEvent(SecurityEvent{
+			EventType:   "telegram_batch_photos_received",
+			Severity:    "medium",
+			Description: fmt.Sprintf("Batch of %d photos received via Telegram", len(relativeImagePaths)),
+			UserID:      userID,
+			Details: map[string]interface{}{
+				"photo_count":  len(relativeImagePaths),
+				"has_caption":  caption != "",
+				"caption_len":  len(caption),
+				"chat_id":      key.chatID,
+			},
+		})
+
+		// PII 檢測 caption
+		if caption != "" {
+			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption)
+			if len(detected) > 0 {
+				globalSecurityManager.LogSecurityEvent(SecurityEvent{
+					EventType:   "pii_detected_batch_caption",
+					Severity:    "high",
+					Description: fmt.Sprintf("PII detected in batch photo caption: %v", detected),
+					UserID:      userID,
+					Details: map[string]interface{}{
+						"detected_types": detected,
+						"chat_id":        key.chatID,
+					},
+				})
+				t.send(key, "⚠️ 圖片說明中偵測到敏感資訊已自動過濾。")
+				caption = filteredCaption
+				// 重新組合 prompt，使用相對路徑
+				prompt = fmt.Sprintf("請分析這 %d 張圖片，並進行比較分析：\n", len(relativeImagePaths))
+				for i, relativePath := range relativeImagePaths {
+					prompt += fmt.Sprintf("圖片 %d: %s\n", i+1, relativePath)
+				}
+				prompt += fmt.Sprintf("\n用戶說明: %s", caption)
+			}
+		}
+	}
+
+	// 發送給 Agent 處理
+	agent = t.getAgent(key)
+
+	_, err := agent.Run(prompt, func(update string, silent bool) {
+		if silent {
+			return
+		}
+		t.send(key, update)
+	})
+
+	if err != nil {
+		log.Printf("[telegram] batch photo analysis error: %v", err)
+		t.send(key, "❌ 圖片批次分析失敗，請稍後再試。")
+		return
+	}
+}
+
+// handleSinglePhoto 處理單張圖片（保留原有邏輯但提取為獨立函數）
+func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []PhotoSize, caption string) {
+	// 取得最高解析度的圖片（通常是陣列最後一個）
+	if len(photo) == 0 {
+		return
+	}
+	targetPhoto := photo[len(photo)-1]
+
+	// 檢查檔案大小限制
+	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
+	if targetPhoto.FileSize > maxSizeBytes {
+		t.send(key, fmt.Sprintf("📷 圖片檔案過大（%s），限制為 %dMB。",
+			formatFileSize(targetPhoto.FileSize), t.config.Multimedia.MaxFileSizeMB))
+		return
+	}
+
+	// 下載圖片到 Alice 臨時目錄
+	aliceImagePath, err := t.DownloadTelegramFile(targetPhoto.FileID, "photo")
+	if err != nil {
+		log.Printf("[telegram] download photo error: %v", err)
+		t.send(key, "📷 下載圖片失敗，請稍後再試。")
+		return
+	}
+
+	// 取得 Agent 和專案目錄
+	agent := t.getAgent(key)
+	projectDir := agent.ProjectDir()
+
+	// 確保專案臨時目錄存在
+	projectTempDir := filepath.Join(projectDir, "temp")
+	if err := os.MkdirAll(projectTempDir, 0755); err != nil {
+		log.Printf("[telegram] create project temp dir error: %v", err)
+		t.send(key, "📷 建立專案臨時目錄失敗。")
+		os.Remove(aliceImagePath) // 清理 Alice 臨時檔案
+		return
+	}
+
+	// 複製圖片到專案臨時目錄
+	fileName := filepath.Base(aliceImagePath)
+	projectImagePath := filepath.Join(projectTempDir, fileName)
+
+	if err := copyFile(aliceImagePath, projectImagePath); err != nil {
+		log.Printf("[telegram] copy photo to project error: %v", err)
+		t.send(key, "📷 複製圖片到專案目錄失敗。")
+		os.Remove(aliceImagePath) // 清理 Alice 臨時檔案
+		return
+	}
+
+	// 確保在函數結束時清理兩個臨時檔案
+	defer func() {
+		if err := os.Remove(aliceImagePath); err != nil {
+			log.Printf("[telegram] cleanup alice temp photo error: %v", err)
+		}
+		if err := os.Remove(projectImagePath); err != nil {
+			log.Printf("[telegram] cleanup project temp photo error: %v", err)
+		}
+	}()
+
+	// 使用相對路徑告訴 Claude 分析圖片
+	relativePath := filepath.Join("temp", fileName)
+	prompt := fmt.Sprintf("請分析這張圖片: %s", relativePath)
+	if caption != "" {
+		prompt = fmt.Sprintf("%s\n\n用戶說明: %s", prompt, caption)
+	}
+
+	// 安全檢查和 PII 檢測（與原有邏輯相同）
+	if globalSecurityManager != nil {
+		globalSecurityManager.LogSecurityEvent(SecurityEvent{
+			EventType:   "telegram_photo_received",
+			Severity:    "medium",
+			Description: "Photo message received via Telegram",
+			UserID:      userID,
+			Details: map[string]interface{}{
+				"file_size":    targetPhoto.FileSize,
+				"width":        targetPhoto.Width,
+				"height":       targetPhoto.Height,
+				"has_caption":  caption != "",
+				"caption_len":  len(caption),
+				"chat_id":      key.chatID,
+			},
+		})
+
+		// PII 檢測 caption
+		if caption != "" {
+			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption)
+			if len(detected) > 0 {
+				globalSecurityManager.LogSecurityEvent(SecurityEvent{
+					EventType:   "pii_detected_photo_caption",
+					Severity:    "high",
+					Description: fmt.Sprintf("PII detected in photo caption: %v", detected),
+					UserID:      userID,
+					Details: map[string]interface{}{
+						"detected_types": detected,
+						"chat_id":        key.chatID,
+					},
+				})
+				t.send(key, "⚠️ 圖片說明中偵測到敏感資訊已自動過濾。")
+				caption = filteredCaption
+				prompt = fmt.Sprintf("請分析這張圖片: %s\n\n用戶說明: %s", relativePath, caption)
+			}
+		}
+	}
+
+	// 發送給 Agent 處理
+	agent = t.getAgent(key)
+
+	_, err = agent.Run(prompt, func(update string, silent bool) {
+		if silent {
+			return
+		}
+		t.send(key, update)
+	})
+
+	if err != nil {
+		log.Printf("[telegram] single photo analysis error: %v", err)
+		t.send(key, "❌ 圖片分析失敗，請稍後再試。")
+		return
+	}
+}
+
+// handlePhotoMessage 處理圖片訊息（原有函數，保留用於向後相容）
 func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []PhotoSize, caption string) {
 	// 檢查多媒體支援是否開啟
 	if !t.config.Multimedia.EnablePhotoSupport {
@@ -1276,6 +1676,29 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 	}
 }
 
+
+// copyFile 複製檔案
+func copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	if err != nil {
+		return err
+	}
+
+	// 確保寫入磁碟
+	return destFile.Sync()
+}
 
 // formatFileSize 格式化檔案大小顯示
 func formatFileSize(bytes int) string {
@@ -1417,4 +1840,208 @@ func (t *TelegramBot) DownloadTelegramFile(fileID, fileType string) (string, err
 	}
 
 	return tempFile, nil
+}
+
+// handleVoiceMessage 處理語音訊息
+func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice, caption string) {
+	// 檢查語音支援是否開啟
+	if !t.config.Multimedia.EnableVoiceSupport {
+		t.send(key, "🎤 語音轉文字功能目前未啟用。請聯繫管理員開啟 `enable_voice_support` 設定。")
+		return
+	}
+
+	// 檢查是否有 OpenAI API Key
+	if t.config.Multimedia.OpenAIAPIKey == "" {
+		t.send(key, "🎤 語音轉文字需要 OpenAI API Key，請聯繫管理員設定 `openai_api_key`。")
+		return
+	}
+
+	// 檢查檔案大小限制
+	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
+	if voice.FileSize > maxSizeBytes {
+		t.send(key, fmt.Sprintf("🎤 語音檔案過大（%s），限制為 %dMB。",
+			formatFileSize(voice.FileSize), t.config.Multimedia.MaxFileSizeMB))
+		return
+	}
+
+	// 檢查語音長度限制（Whisper API 限制 25MB 或約 25 分鐘）
+	if voice.Duration > 25*60 { // 25 分鐘
+		t.send(key, fmt.Sprintf("🎤 語音訊息過長（%d 秒），限制為 25 分鐘。", voice.Duration))
+		return
+	}
+
+	// 下載語音檔案
+	t.send(key, "🎤 正在下載語音檔案...")
+	voicePath, err := t.DownloadTelegramFile(voice.FileID, "voice")
+	if err != nil {
+		log.Printf("[telegram] download voice error: %v", err)
+		t.send(key, "🎤 下載語音檔案失敗，請稍後再試。")
+		return
+	}
+
+	// 確保在函數結束時清理臨時檔案
+	defer func() {
+		if err := os.Remove(voicePath); err != nil {
+			log.Printf("[telegram] cleanup voice error: %v", err)
+		}
+	}()
+
+	// 安全檢查和事件記錄
+	if globalSecurityManager != nil {
+		globalSecurityManager.LogSecurityEvent(SecurityEvent{
+			EventType:   "telegram_voice_received",
+			Severity:    "medium",
+			Description: "Voice message received via Telegram",
+			UserID:      userID,
+			Details: map[string]interface{}{
+				"duration":     voice.Duration,
+				"file_size":    voice.FileSize,
+				"mime_type":    voice.MimeType,
+				"has_caption":  caption != "",
+				"caption_len":  len(caption),
+				"chat_id":      key.chatID,
+			},
+		})
+
+		// PII 檢測 caption
+		if caption != "" {
+			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption)
+			if len(detected) > 0 {
+				globalSecurityManager.LogSecurityEvent(SecurityEvent{
+					EventType:   "pii_detected_voice_caption",
+					Severity:    "high",
+					Description: fmt.Sprintf("PII detected in voice caption: %v", detected),
+					UserID:      userID,
+					Details: map[string]interface{}{
+						"detected_types": detected,
+						"chat_id":        key.chatID,
+					},
+				})
+				t.send(key, "⚠️ 語音說明中偵測到敏感資訊已自動過濾。")
+				caption = filteredCaption
+			}
+		}
+	}
+
+	// 語音轉文字
+	t.send(key, "🎤 正在轉錄語音內容...")
+	transcribedText, err := t.transcribeVoiceWithWhisper(voicePath)
+	if err != nil {
+		log.Printf("[telegram] voice transcription error: %v", err)
+		t.send(key, "🎤 語音轉錄失敗，請稍後再試。")
+		return
+	}
+
+	if transcribedText == "" {
+		t.send(key, "🎤 未能識別語音內容，請嘗試重新錄製。")
+		return
+	}
+
+	// 顯示轉錄結果供用戶確認
+	confirmationMsg := fmt.Sprintf("🎤 *語音轉錄結果*：\n\n「%s」\n\n正在傳送給 AI 分析...", transcribedText)
+	t.sendMarkdown(key, confirmationMsg)
+
+	// 組合 prompt 讓 Claude 處理轉錄的文字
+	prompt := transcribedText
+	if caption != "" {
+		prompt = fmt.Sprintf("%s\n\n附加說明: %s", transcribedText, caption)
+	}
+
+	// 發送給 Agent 處理
+	agent := t.getAgent(key)
+	response, err := agent.Run(prompt, func(update string, silent bool) {
+		if silent {
+			t.sendSilent(key, update)
+		} else {
+			t.send(key, update)
+		}
+	})
+	if err != nil {
+		log.Printf("[telegram] voice analysis error: %v", err)
+		t.send(key, "🎤 語音內容分析失敗，請稍後再試。")
+		return
+	}
+
+	if response != "" {
+		t.send(key, response)
+	}
+}
+
+// transcribeVoiceWithWhisper 使用 OpenAI Whisper API 轉錄語音
+func (t *TelegramBot) transcribeVoiceWithWhisper(audioPath string) (string, error) {
+	// 支援的格式：m4a, mp3, mp4, mpeg, mpga, wav, webm
+	// Telegram 語音訊息通常是 .ogg 格式，Whisper 支援 webm 但不直接支援 ogg
+	// 我們可以嘗試直接發送，如果不行則需要轉換格式
+
+	file, err := os.Open(audioPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to open audio file: %w", err)
+	}
+	defer file.Close()
+
+	// 建立 multipart form
+	var b bytes.Buffer
+	writer := multipart.NewWriter(&b)
+
+	// 添加音頻文件
+	fw, err := writer.CreateFormFile("file", filepath.Base(audioPath))
+	if err != nil {
+		return "", fmt.Errorf("failed to create form file: %w", err)
+	}
+	_, err = io.Copy(fw, file)
+	if err != nil {
+		return "", fmt.Errorf("failed to copy file: %w", err)
+	}
+
+	// 添加模型參數
+	err = writer.WriteField("model", "whisper-1")
+	if err != nil {
+		return "", fmt.Errorf("failed to write model field: %w", err)
+	}
+
+	// 添加語言參數（自動檢測，支援中文）
+	err = writer.WriteField("language", "zh")
+	if err != nil {
+		return "", fmt.Errorf("failed to write language field: %w", err)
+	}
+
+	// 添加響應格式
+	err = writer.WriteField("response_format", "text")
+	if err != nil {
+		return "", fmt.Errorf("failed to write response_format field: %w", err)
+	}
+
+	err = writer.Close()
+	if err != nil {
+		return "", fmt.Errorf("failed to close writer: %w", err)
+	}
+
+	// 發送 API 請求
+	req, err := http.NewRequest("POST", "https://api.openai.com/v1/audio/transcriptions", &b)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+t.config.Multimedia.OpenAIAPIKey)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	// 讀取響應
+	transcription, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+
+	return strings.TrimSpace(string(transcription)), nil
 }
