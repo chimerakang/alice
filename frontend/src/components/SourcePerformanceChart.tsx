@@ -40,7 +40,7 @@ const SOURCE_CONFIG: Record<string, { label: string; icon: React.ComponentType<{
   }
 };
 
-function CustomTooltip({ active, payload, label }: any) {
+function CustomTooltip({ active, payload }: any) {
   if (!active || !payload || !payload.length) return null;
 
   const data = payload[0].payload as PerformanceData;
@@ -49,7 +49,9 @@ function CustomTooltip({ active, payload, label }: any) {
   return (
     <div className="bg-gray-900/95 border border-gray-700 rounded-lg p-3 shadow-lg">
       <div className="flex items-center gap-2 mb-2">
-        <IconComponent className="w-4 h-4" style={{ color: data.color }} />
+        <div className="w-4 h-4 flex items-center justify-center" style={{ color: data.color }}>
+          <IconComponent className="w-4 h-4" />
+        </div>
         <span className="text-sm font-medium text-white">{data.label}</span>
       </div>
       <div className="space-y-1 text-xs text-gray-300">
