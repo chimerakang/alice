@@ -1,7 +1,6 @@
 package app
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -383,17 +382,36 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 
 	var response string
 	var err error
+	var statusMessageID int
+
+	// Create enhanced update callback with stop button support
+	createUpdateCallback := func() func(string, bool) {
+		var firstUpdate = true
+		return func(update string, silent bool) {
+			if firstUpdate && !silent {
+				// Send first status message with stop button
+				if msgID, msgErr := t.sendMessageWithStopButton(key, update); msgErr == nil {
+					statusMessageID = msgID
+				} else {
+					// Fallback to regular message if button fails
+					t.send(key, update)
+				}
+				firstUpdate = false
+			} else {
+				// Subsequent updates
+				if silent {
+					t.sendSilent(key, update)
+				} else {
+					t.send(key, update)
+				}
+			}
+		}
+	}
 
 	// Check if multi-agent coordination should be used
 	if globalAgentCoordinator.IsEnabled() && globalAgentCoordinator.ShouldUseMultiAgent(text) {
 		// Use coordinated multi-agent execution
-		response, err = globalAgentCoordinator.ExecuteCoordinatedTask(text, agent, func(update string, silent bool) {
-			if silent {
-				t.sendSilent(key, update)
-			} else {
-				t.send(key, update)
-			}
-		})
+		response, err = globalAgentCoordinator.ExecuteCoordinatedTask(text, agent, createUpdateCallback())
 	} else if globalAgentCoordinator.IsEnabled() {
 		// Use single specialized agent based on task routing
 		agentType := globalAgentCoordinator.RouteTask(text)
@@ -406,32 +424,27 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 				Description: text,
 				AgentType:   agentType,
 				Status:      TaskStatusInProgress,
-			}, func(update string, silent bool) {
-				if silent {
-					t.sendSilent(key, update)
-				} else {
-					t.send(key, update)
-				}
-			})
+			}, createUpdateCallback())
 		} else {
 			// Fall back to regular agent
-			response, err = agent.Run(text, func(update string, silent bool) {
-				if silent {
-					t.sendSilent(key, update)
-				} else {
-					t.send(key, update)
-				}
-			})
+			response, err = agent.Run(text, createUpdateCallback())
 		}
 	} else {
 		// Regular single agent execution
-		response, err = agent.Run(text, func(update string, silent bool) {
-			if silent {
-				t.sendSilent(key, update)
+		response, err = agent.Run(text, createUpdateCallback())
+	}
+
+	// Remove stop button after completion
+	if statusMessageID != 0 {
+		finalText := "✅ 執行完成"
+		if err != nil {
+			if strings.Contains(err.Error(), "agent aborted by user") {
+				finalText = "🛑 已中斷執行"
 			} else {
-				t.send(key, update)
+				finalText = "❌ 執行錯誤"
 			}
-		})
+		}
+		t.editMessageRemoveStopButton(key, statusMessageID, finalText)
 	}
 
 	if err != nil {
@@ -665,6 +678,10 @@ func (t *TelegramBot) apiCall(method string, params url.Values) {
 	if err != nil {
 		log.Printf("[telegram] %s error: %v", method, err)
 		return
+	}
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		log.Printf("[telegram] %s failed (status %d): %s", method, resp.StatusCode, string(body))
 	}
 	resp.Body.Close()
 }
@@ -1025,15 +1042,28 @@ func (t *TelegramBot) handleCallbackQuery(key chatKey, userID int64, queryID, da
 	}
 
 	// Handle different callback data
-	switch data {
-	case "refresh_dashboard":
+	switch {
+	case data == "refresh_dashboard":
 		// Send updated dashboard
 		t.handleDashboard(key)
 		t.answerCallbackQuery(queryID, "✅ 狀態已刷新")
-	case "show_checkpoints":
+	case data == "show_checkpoints":
 		// Show checkpoints for current project
 		t.handleCheckpointsList(key)
 		t.answerCallbackQuery(queryID, "📸 檢查點信息已更新")
+	case strings.HasPrefix(data, "stop_agent_"):
+		// Handle stop button click
+		agent := t.getAgent(key)
+		if agent.IsProcessing() {
+			if agent.Abort() {
+				t.answerCallbackQuery(queryID, "🛑 已中斷正在執行的任務")
+				log.Printf("Agent task stopped by user via callback button (chat: %d, thread: %d)", key.chatID, key.threadID)
+			} else {
+				t.answerCallbackQuery(queryID, "❌ 無法中斷任務")
+			}
+		} else {
+			t.answerCallbackQuery(queryID, "ℹ️ 沒有正在執行的任務")
+		}
 	default:
 		t.answerCallbackQuery(queryID, "❓ 未知操作")
 	}
@@ -1046,6 +1076,81 @@ func (t *TelegramBot) answerCallbackQuery(queryID, text string) {
 		"text":              text,
 	}
 	t.sendTelegram("answerCallbackQuery", params)
+}
+
+// sendMessageWithStopButton sends a message with a stop button for ongoing operations
+func (t *TelegramBot) sendMessageWithStopButton(key chatKey, text string) (int, error) {
+	keyboard := map[string]interface{}{
+		"inline_keyboard": [][]map[string]interface{}{
+			{
+				{
+					"text":          "🛑 中斷",
+					"callback_data": fmt.Sprintf("stop_agent_%d_%d", key.chatID, key.threadID),
+				},
+			},
+		},
+	}
+
+	params := map[string]interface{}{
+		"chat_id":      key.chatID,
+		"text":         text,
+		"reply_markup": keyboard,
+	}
+
+	if key.threadID != 0 {
+		params["message_thread_id"] = key.threadID
+	}
+
+	// Send message and capture message ID
+	jsonData, err := json.Marshal(params)
+	if err != nil {
+		return 0, err
+	}
+
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.config.TelegramToken)
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("telegram API error: %s", string(body))
+	}
+
+	// Parse response to get message ID
+	var result struct {
+		OK     bool `json:"ok"`
+		Result struct {
+			MessageID int `json:"message_id"`
+		} `json:"result"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+
+	if !result.OK {
+		return 0, fmt.Errorf("telegram API returned ok=false")
+	}
+
+	return result.Result.MessageID, nil
+}
+
+// editMessageRemoveStopButton removes the stop button from a message
+func (t *TelegramBot) editMessageRemoveStopButton(key chatKey, messageID int, newText string) {
+	params := map[string]interface{}{
+		"chat_id":    key.chatID,
+		"message_id": messageID,
+		"text":       newText,
+	}
+
+	if key.threadID != 0 {
+		params["message_thread_id"] = key.threadID
+	}
+
+	t.sendTelegram("editMessageText", params)
 }
 
 // sendTelegram sends JSON data to Telegram API
@@ -1093,7 +1198,7 @@ func (t *TelegramBot) handleTasks(key chatKey) {
 
 	for _, phase := range phases {
 		if len(phase.Tasks) > 0 {
-			phaseHeader := fmt.Sprintf("📋 **%s** (%d%%, %s)",
+			phaseHeader := fmt.Sprintf("📋 *%s* (%d%%, %s)",
 				phase.Name, phase.Progress, phase.Status)
 			var phaseTasks []string
 
@@ -1127,35 +1232,32 @@ func (t *TelegramBot) handleTasks(key chatKey) {
 		}
 	}
 
+	// 取得專案名稱
+	projectName := filepath.Base(strings.TrimRight(projectDir, "/"))
+
 	// 組裝回應訊息
 	var response string
 	if totalPendingCount == 0 {
-		// 統計總完成階段數
-		totalPhases := 0
+		// 從解析結果統計完成階段
 		completedPhases := 0
-		for i := 1; i <= 12; i++ {
-			totalPhases++
-			completedPhases++
+		for _, phase := range phases {
+			if phase.Progress >= 100 {
+				completedPhases++
+			}
 		}
 
-		response = "🎉 *Alice AI Agent - 專案完成！*\n\n"
-		response += fmt.Sprintf("✅ **所有 %d 個開發階段已 100%% 完成**\n\n", completedPhases)
-		response += "📊 **完成項目摘要:**\n"
-		response += "• P1-P4: 後端基礎架構 ✅\n"
-		response += "• P5-P6: 前端 + AI 審計系統 ✅\n"
-		response += "• P7: Dashboard 分析 ✅\n"
-		response += "• P8-P8.5: 遠端控制 + TG 增強 ✅\n"
-		response += "• P9-P9.5: 多媒體支援 ✅\n"
-		response += "• P10: Claude Code Hooks ✅\n"
-		response += "• P11: 用戶體驗改善 ✅\n"
-		response += "• P12: Dashboard Analytics ✅\n\n"
-		response += "🚀 **系統功能完整，可投入生產使用**\n\n"
-		response += "📚 查看完整任務詳情: `docs/MASTER_TASKS.md`"
+		response = fmt.Sprintf("🎉 *%s - 專案完成！*\n\n", projectName)
+		response += fmt.Sprintf("✅ 所有 %d 個開發階段已 100%% 完成\n\n", completedPhases)
+		response += "📊 完成項目摘要:\n"
+		for _, phase := range phases {
+			response += fmt.Sprintf("• %s %s\n", phase.Name, phase.Status)
+		}
+		response += fmt.Sprintf("\n📚 查看完整任務詳情: `docs/MASTER_TASKS.md`")
 	} else {
-		response = fmt.Sprintf("📋 *Alice AI Agent 待辦清單*\n\n")
-		response += fmt.Sprintf("📊 **總計**: %d 個待辦任務\n\n", totalPendingCount)
+		response = fmt.Sprintf("📋 *%s 待辦清單*\n\n", projectName)
+		response += fmt.Sprintf("📊 總計: %d 個待辦任務\n\n", totalPendingCount)
 		response += strings.Join(pendingTasks, "\n")
-		response += "\n💡 *提示*: 使用對應的 GitHub Issue 連結查看詳細資訊"
+		response += "\n💡 使用對應的 GitHub Issue 連結查看詳細資訊"
 	}
 
 	t.sendMarkdown(key, response)
@@ -1177,127 +1279,235 @@ type PhaseInfo struct {
 	Tasks    []TaskInfo // 任務列表
 }
 
-// parseMasterTasks 解析 MASTER_TASKS.md 檔案提取未完成任務
+// parseMasterTasks 解析 MASTER_TASKS.md 檔案，支援多種格式
+// 回傳所有 phase（含已完成的），caller 自行過濾待辦任務
 func (t *TelegramBot) parseMasterTasks(filePath string) ([]PhaseInfo, error) {
-	file, err := os.Open(filePath)
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("無法開啟檔案 %s: %w", filePath, err)
 	}
-	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
+	lines := strings.Split(string(data), "\n")
 	var phases []PhaseInfo
 	var currentPhase *PhaseInfo
-
-	// 用於匹配階段標題的正規表達式
-	phaseRegex := regexp.MustCompile(`^## (P\d+(?:\.\d+)?\s*-\s*.+?)\s*\(([^)]+)\)`)
-	// 用於匹配進度表格行的正規表達式
-	progressRegex := regexp.MustCompile(`^\|\s*(P\d+(?:\.\d+)?[^|]*)\|\s*([^|]*)\|\s*(\d+)%\s*\|\s*([^|]+)\s*\|`)
-	// 用於匹配任務行的正規表達式 (支援有或沒有任務編號的行)
-	taskRegex := regexp.MustCompile(`^\|\s*(\d+\.\d+|)\s*\|\s*(.+?)\s*\|\s*(\[#\d+\]\([^)]+\)|—)\s*\|\s*([📋🔄🧪✅⏸️])\s*\|`)
-
 	isInOverview := false
 
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	// 通用正規表達式
+	// 進度表格行：任何包含 N% 的表格行
+	progressInTable := regexp.MustCompile(`(\d+)%`)
+	// Phase 標題格式1 (Alice): ## P1 - Core Backend (✅ 100%)
+	phaseHeaderA := regexp.MustCompile(`^##\s+(P\d+(?:\.\d+)?\s*-\s*.+?)\s*\(([^)]+)\)`)
+	// Phase 標題格式2 (通用): ## Phase 0: 專案初始化 ✅ (40h)
+	phaseHeaderB := regexp.MustCompile(`^##\s+Phase\s+\d+.*?:\s*(.+)`)
+	// Checkbox 任務: - [ ] 或 - [x]
+	checkboxTask := regexp.MustCompile(`^-\s+\[([ x])\]\s+(.+)`)
+	// Issue 連結
+	issueLink := regexp.MustCompile(`\[#(\d+)\]\([^)]+\)`)
+	// 表格任務行 (Alice): | 1.1 | desc | issue | status |
+	tableTask := regexp.MustCompile(`^\|\s*(\d+\.\d+|)\s*\|\s*(.+?)\s*\|\s*(\[#\d+\]\([^)]+\)|—|TBD)\s*\|\s*([📋🔄🧪✅⏸️])\s*\|`)
+	// 通用表格任務行: 最後一欄為狀態 emoji 的任何表格行
+	genericTableTask := regexp.MustCompile(`^\|[^|]+\|\s*(.+?)\s*\|[^|]+\|\s*([📋🔄🧪✅⏸️❌])\s*\|`)
 
-		// 檢查是否進入 Phase Overview 表格
-		if strings.Contains(line, "## Phase Overview") {
+	for _, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+
+		// 偵測總覽表格開始（支援多種格式）
+		// "## Phase Overview" / "## 總覽" / "## 快速導覽"
+		if strings.HasPrefix(line, "## ") && (strings.Contains(line, "Phase Overview") ||
+			strings.Contains(line, "總覽") || strings.Contains(line, "快速導覽")) {
 			isInOverview = true
 			continue
 		}
 
-		// 如果在 Phase Overview 中，解析進度表格
+		// 解析總覽表格
 		if isInOverview {
-			if strings.HasPrefix(line, "|") && !strings.Contains(line, "Phase") && !strings.Contains(line, "---") {
-				matches := progressRegex.FindStringSubmatch(line)
-				if len(matches) == 5 {
-					phaseName := strings.TrimSpace(matches[1])
-					progress := 0
-					if progressStr := strings.TrimSpace(matches[3]); progressStr != "" {
-						if p, err := strconv.Atoi(progressStr); err == nil {
-							progress = p
-						}
-					}
-					status := strings.TrimSpace(matches[4])
-
-					// 只包含未完成的階段 (進度 < 100% 或狀態不是 ✅)
-					if progress < 100 || status != "✅" {
-						phases = append(phases, PhaseInfo{
-							Name:     phaseName,
-							Progress: progress,
-							Status:   status,
-							Tasks:    []TaskInfo{},
-						})
-					}
-				}
-			} else if line == "---" {
+			if line == "---" || (strings.HasPrefix(line, "## ") && !strings.Contains(line, "---")) {
 				isInOverview = false
+				// 不 continue，讓下面的 phase header 邏輯也能處理
+				if !strings.HasPrefix(line, "## ") {
+					continue
+				}
+			} else if strings.HasPrefix(line, "|") && !strings.Contains(line, "---") {
+				// 跳過表頭行
+				cells := splitTableCells(line)
+				if len(cells) < 3 {
+					continue
+				}
+				// 嘗試找到進度百分比
+				progressMatch := progressInTable.FindStringSubmatch(line)
+				if len(progressMatch) < 2 {
+					continue
+				}
+				progress, _ := strconv.Atoi(progressMatch[1])
+
+				// 第一欄通常是 phase code
+				phaseName := strings.TrimSpace(cells[0])
+				// 如果有第二欄是名稱，合併顯示
+				if len(cells) >= 2 {
+					desc := strings.TrimSpace(cells[1])
+					if desc != "" && desc != phaseName {
+						phaseName = phaseName + " " + desc
+					}
+				}
+
+				// 偵測狀態
+				status := detectStatus(line)
+
+				phases = append(phases, PhaseInfo{
+					Name:     phaseName,
+					Progress: progress,
+					Status:   status,
+				})
+				continue
 			}
+		}
+
+		// Phase 標題（進入某個 phase 的詳細區域）
+		if strings.HasPrefix(line, "## ") {
+			// 格式 A: ## P1 - Core Backend (✅ 100%)
+			if m := phaseHeaderA.FindStringSubmatch(line); len(m) == 3 {
+				phaseName := strings.TrimSpace(m[1])
+				currentPhase = findPhaseByPrefix(&phases, phaseName)
+				continue
+			}
+			// 格式 B: ## Phase 0: 專案初始化 ✅ (40h)
+			if m := phaseHeaderB.FindStringSubmatch(line); len(m) == 2 {
+				currentPhase = findPhaseByOverviewLine(&phases, line)
+				continue
+			}
+			// 格式 C: 通用 fallback (例如 ## PHASE1 — 後端基礎設施層 ✅)
+			currentPhase = findPhaseByOverviewLine(&phases, line)
 			continue
 		}
 
-		// 檢查階段標題
-		matches := phaseRegex.FindStringSubmatch(line)
-		if len(matches) == 3 {
-			phaseName := strings.TrimSpace(matches[1])
-
-			// 尋找對應的階段
-			for i := range phases {
-				if strings.HasPrefix(phases[i].Name, strings.Split(phaseName, " - ")[0]) {
-					currentPhase = &phases[i]
-					break
-				}
-			}
+		if currentPhase == nil {
 			continue
 		}
 
-		// 解析任務表格行
-		if currentPhase != nil && strings.HasPrefix(line, "|") && !strings.Contains(line, "Task") && !strings.Contains(line, "---") {
-			matches := taskRegex.FindStringSubmatch(line)
-			if len(matches) == 5 {
-				taskNumber := strings.TrimSpace(matches[1])
-				description := strings.TrimSpace(matches[2])
-				issueLink := strings.TrimSpace(matches[3])
-				status := strings.TrimSpace(matches[4])
+		// 解析 checkbox 任務: - [ ] / - [x]
+		if m := checkboxTask.FindStringSubmatch(line); len(m) == 3 {
+			isDone := m[1] == "x"
+			desc := strings.TrimSpace(m[2])
 
-				// 只包含未完成的任務
-				if status == "📋" || status == "🔄" || status == "🧪" {
-					task := TaskInfo{
-						Number:      taskNumber,
-						Description: description,
-						Status:      status,
-					}
+			// 提取 issue link
+			link := ""
+			if il := issueLink.FindString(desc); il != "" {
+				link = il
+				// 從描述中移除 issue link 讓顯示更乾淨
+				desc = strings.TrimSpace(issueLink.ReplaceAllString(desc, ""))
+			}
 
-					// 如果沒有任務編號，使用自動編號
-					if taskNumber == "" {
-						task.Number = fmt.Sprintf("%d.x", len(currentPhase.Tasks)+1)
-					}
+			status := "✅"
+			if !isDone {
+				status = "📋"
+			}
+			currentPhase.Tasks = append(currentPhase.Tasks, TaskInfo{
+				Description: desc,
+				IssueLink:   link,
+				Status:      status,
+			})
+			continue
+		}
 
-					// 處理 Issue 連結
-					if issueLink != "—" && issueLink != "" {
-						task.IssueLink = issueLink
-					}
-
-					currentPhase.Tasks = append(currentPhase.Tasks, task)
-				}
+		// 解析表格任務行
+		if strings.HasPrefix(line, "|") && !strings.Contains(line, "Task") && !strings.Contains(line, "任務") && !strings.Contains(line, "---") {
+			// 格式 A (Alice): | 1.1 | desc | issue | status |
+			if m := tableTask.FindStringSubmatch(line); len(m) == 5 {
+				currentPhase.Tasks = append(currentPhase.Tasks, TaskInfo{
+					Number:      strings.TrimSpace(m[1]),
+					Description: strings.TrimSpace(m[2]),
+					IssueLink:   strings.TrimSpace(m[3]),
+					Status:      strings.TrimSpace(m[4]),
+				})
+			} else if m := genericTableTask.FindStringSubmatch(line); len(m) == 3 {
+				// 通用格式: 第二欄為描述，最後欄為狀態
+				currentPhase.Tasks = append(currentPhase.Tasks, TaskInfo{
+					Description: strings.TrimSpace(m[1]),
+					Status:      strings.TrimSpace(m[2]),
+				})
 			}
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("讀取檔案時發生錯誤: %w", err)
-	}
+	return phases, nil
+}
 
-	// 移除沒有待辦任務的階段
-	var filteredPhases []PhaseInfo
-	for _, phase := range phases {
-		if len(phase.Tasks) > 0 {
-			filteredPhases = append(filteredPhases, phase)
+// splitTableCells 分割 markdown 表格的一行為各欄
+func splitTableCells(line string) []string {
+	line = strings.Trim(line, "|")
+	parts := strings.Split(line, "|")
+	var cells []string
+	for _, p := range parts {
+		cells = append(cells, strings.TrimSpace(p))
+	}
+	return cells
+}
+
+// detectStatus 從一行文字偵測狀態 emoji
+func detectStatus(line string) string {
+	if strings.Contains(line, "✅") {
+		return "✅"
+	}
+	if strings.Contains(line, "🔄") {
+		return "🔄"
+	}
+	if strings.Contains(line, "🧪") {
+		return "🧪"
+	}
+	if strings.Contains(line, "📋") {
+		return "📋"
+	}
+	if strings.Contains(line, "⏸") {
+		return "⏸️"
+	}
+	return "📋"
+}
+
+// findPhaseByPrefix 從 phases 中找到 name 前綴匹配的 phase
+func findPhaseByPrefix(phases *[]PhaseInfo, name string) *PhaseInfo {
+	prefix := strings.Split(name, " - ")[0]
+	prefix = strings.Split(prefix, " ")[0] // 取 "P1" 部分
+	// 精確匹配: prefix 後必須接空格、連字號或行尾，避免 "P1" 匹配 "P13"
+	for i := range *phases {
+		pName := (*phases)[i].Name
+		if strings.HasPrefix(pName, prefix) {
+			rest := pName[len(prefix):]
+			if rest == "" || rest[0] == ' ' || rest[0] == '-' {
+				return &(*phases)[i]
+			}
 		}
 	}
+	return nil
+}
 
-	return filteredPhases, nil
+// findPhaseByOverviewLine 從 phase header line 找到對應的總覽 phase
+// 使用計分制：匹配越多關鍵字的 phase 優先
+func findPhaseByOverviewLine(phases *[]PhaseInfo, headerLine string) *PhaseInfo {
+	headerLower := strings.ToLower(headerLine)
+	bestIdx := -1
+	bestScore := 0
+	// 跳過常見的分隔符和狀態 emoji
+	skipWords := map[string]bool{"—": true, "-": true, "|": true, "✅": true, "🔄": true, "🧪": true, "📋": true, "⏸️": true, "❌": true}
+	for i := range *phases {
+		nameParts := strings.Fields((*phases)[i].Name)
+		score := 0
+		for _, part := range nameParts {
+			if len(part) <= 2 || skipWords[part] {
+				continue
+			}
+			if strings.Contains(headerLower, strings.ToLower(part)) {
+				score++
+			}
+		}
+		if score > bestScore {
+			bestScore = score
+			bestIdx = i
+		}
+	}
+	if bestIdx >= 0 {
+		return &(*phases)[bestIdx]
+	}
+	return nil
 }
 
 // handlePhotoMessageBatch 處理圖片訊息，支援多張圖片批次處理
