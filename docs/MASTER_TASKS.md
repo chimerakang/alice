@@ -216,10 +216,14 @@
 | | — 優雅處理混合媒體（圖片+文字+語音） | | 📋 | |
 | | — 大量圖片記憶體管理與清理 ✅ | | ✅ | |
 | | — 用戶反饋：顯示「正在處理第 X/Y 張圖片...」 ✅ | | ✅ | |
-| 9.6 | **🔧 修復跨專案圖片存取問題** | [#35](https://github.com/chimerakang/alice/issues/35) | ✅ | **P0** |
+| 9.6 | **🔧 修復跨專案圖片存取問題** | [#35](https://github.com/chimerakang/alice/issues/35) | 🔄 | **P0** |
 | | — 圖片複製到目標專案臨時目錄解決路徑問題 ✅ | | ✅ | |
 | | — 確保 Claude CLI 能正確存取圖片檔案 ✅ | | ✅ | |
 | | — 統一臨時檔案清理機制（專案級別） ✅ | | ✅ | |
+| | — **🚨 修復圖片+文字組合處理問題** | | ❌ | |
+| | — 問題：圖片+文字說明時使用 EnhancedCLIClient 啟動新子進程 | | ❌ | |
+| | — 錯誤：需要 CLAUDE_CODE_SESSION_ACCESS_TOKEN 認證 | | ❌ | |
+| | — 解決：改用 agent.Run() 通過現有會話處理，如語音轉文字邏輯 | | 📋 | |
 
 ## P10 - Claude Code Hooks 整合 (📋 0%)
 
@@ -294,7 +298,7 @@ Phase 4 (分析) ─── #25 Performance/Security ──→ #11 Remote Control
 | [#30](https://github.com/chimerakang/alice/issues/30) | **Checkpoints 頁面重新定位：AI 決策歷程 + 安全快照** | P7 | ✅ Closed |
 | [#33](https://github.com/chimerakang/alice/issues/33) | **Topic-Project 對應持久化 — 重啟後保留設定** | P8.5 | ✅ Closed |
 | [#34](https://github.com/chimerakang/alice/issues/34) | **多張圖片批次處理支援** | P9.5 | 🔄 In Progress |
-| [#35](https://github.com/chimerakang/alice/issues/35) | **🔧 修復跨專案圖片存取問題** | P9.5 | ✅ Completed |
+| [#35](https://github.com/chimerakang/alice/issues/35) | **🔧 修復跨專案圖片存取問題** | P9.5 | 🔄 In Progress |
 | [#32](https://github.com/chimerakang/alice/issues/32) | **Claude Code Hooks 整合 — 攔截所有互動** | P10 | 📋 Planned |
 
 ---

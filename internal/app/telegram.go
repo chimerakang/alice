@@ -1229,17 +1229,16 @@ func (t *TelegramBot) handlePhotoMessageBatch(key chatKey, userID int64, photo [
 		return
 	}
 
-	now := time.Now()
-
-	// 生成批次 key：優先使用 mediaGroupID，否則使用 chatKey+時間窗口
-	var batchKey string
-	if mediaGroupID != "" {
-		batchKey = mediaGroupID
-	} else {
-		// 對於沒有 mediaGroupID 的單張圖片，使用時間窗口批次
-		windowStart := now.Truncate(t.batchTimeout)
-		batchKey = fmt.Sprintf("%d_%d_%d", key.chatID, key.threadID, windowStart.Unix())
+	// 如果沒有 mediaGroupID，這是單張圖片的多個尺寸，直接處理單張圖片
+	if mediaGroupID == "" {
+		log.Printf("[telegram] single photo with %d size variants, processing as single image", len(photo))
+		t.handleSinglePhoto(key, userID, photo, caption)
+		return
 	}
+
+	// 有 mediaGroupID，這是真正的多張圖片批次
+	now := time.Now()
+	batchKey := mediaGroupID
 
 	t.batchMu.Lock()
 	defer t.batchMu.Unlock()
@@ -1268,8 +1267,12 @@ func (t *TelegramBot) handlePhotoMessageBatch(key chatKey, userID int64, photo [
 		log.Printf("[telegram] updated existing media batch: %s", batchKey)
 	}
 
-	// 將圖片加入批次
-	batch.Photos = append(batch.Photos, photo...)
+	// 將圖片加入批次（只取最高解析度的一張）
+	if len(photo) > 0 {
+		// 取最高解析度的圖片（通常是陣列最後一個）
+		highestRes := photo[len(photo)-1]
+		batch.Photos = append(batch.Photos, highestRes)
+	}
 
 	// 取消現有的計時器
 	if batch.timer != nil {
@@ -1281,7 +1284,7 @@ func (t *TelegramBot) handlePhotoMessageBatch(key chatKey, userID int64, photo [
 		t.processBatch(batchKey)
 	})
 
-	log.Printf("[telegram] added %d photos to batch %s, total photos: %d",
+	log.Printf("[telegram] added 1 photo (from %d size variants) to batch %s, total photos: %d",
 		len(photo), batchKey, len(batch.Photos))
 }
 
@@ -1436,7 +1439,7 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 		}
 	}
 
-	// 發送給 Agent 處理
+	// 發送給 Agent 處理 (使用現有會話，就像語音處理一樣)
 	agent = t.getAgent(key)
 
 	_, err := agent.Run(prompt, func(update string, silent bool) {
@@ -1556,8 +1559,9 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 		}
 	}
 
-	// 發送給 Agent 處理
+	// 發送給 Agent 處理 (使用現有會話，就像語音處理一樣)
 	agent = t.getAgent(key)
+	t.send(key, "📷 正在分析圖片...")
 
 	_, err = agent.Run(prompt, func(update string, silent bool) {
 		if silent {
