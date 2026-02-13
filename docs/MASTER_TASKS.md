@@ -31,7 +31,7 @@
 | P9 - Multimedia Input | 圖片分析 + 語音轉文字 | 100% | ✅ |
 | P9.5 - Multimedia Enhancement | 多張圖片批次處理 + 媒體群組支援 | 100% | ✅ |
 | P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 100% | ✅ |
-| P11 - User Experience | 指令健全性和用戶體驗改善 | 0% | 📋 |
+| P11 - User Experience | 指令健全性和用戶體驗改善 | 100% | ✅ |
 
 ---
 
@@ -246,15 +246,15 @@
 | | — Dashboard 統計圖表（來源分布/效能對比） | [#36](https://github.com/chimerakang/alice/issues/36) | 📋 | |
 | | — 安裝指南：.claude/settings.json hook 配置說明 | [#36](https://github.com/chimerakang/alice/issues/36) | 📋 | |
 
-## P11 - User Experience 改善 (📋 0%)
+## P11 - User Experience 改善 (✅ 100%)
 
 | # | Task | Issue | Status | Priority |
 |---|------|-------|--------|----------|
-| 11.1 | **Telegram 指令健全性增強** | [#37](https://github.com/chimerakang/alice/issues/37) | 📋 | **P0** |
-| | — /project 指令路徑存在性驗證 | | 📋 | |
-| | — 智慧路徑建議（模糊搜尋相似目錄名稱） | | 📋 | |
-| | — 友善的錯誤訊息和設定確認 | | 📋 | |
-| | — 專案有效性檢查（偵測專案類型） | | 📋 | |
+| 11.1 | **Telegram 指令健全性增強** | [#37](https://github.com/chimerakang/alice/issues/37) | ✅ | **P0** |
+| | — /project 指令路徑存在性驗證 ✅ | | ✅ | |
+| | — 智慧路徑建議（模糊搜尋相似目錄名稱） ✅ | | ✅ | |
+| | — 友善的錯誤訊息和設定確認 ✅ | | ✅ | |
+| | — 專案有效性檢查（偵測專案類型） ✅ | | ✅ | |
 
 ---
 
@@ -313,7 +313,7 @@ Phase 4 (分析) ─── #25 Performance/Security ──→ #11 Remote Control
 | [#35](https://github.com/chimerakang/alice/issues/35) | **🔧 修復跨專案圖片存取問題** | P9.5 | ✅ Completed |
 | [#32](https://github.com/chimerakang/alice/issues/32) | **Claude Code Hooks 整合 — 攔截所有互動** | P10 | ✅ Completed |
 | [#36](https://github.com/chimerakang/alice/issues/36) | **Claude Code Hooks UI 增強：Dashboard 統計圖表 + 用戶指南** | P10+ | 📋 Planned |
-| [#37](https://github.com/chimerakang/alice/issues/37) | **🔍 /project 指令路徑驗證：防止設定不存在的專案目錄** | P11 | 📋 Planned |
+| [#37](https://github.com/chimerakang/alice/issues/37) | **🔍 /project 指令路徑驗證：防止設定不存在的專案目錄** | P11 | ✅ Completed |
 
 ---
 
