@@ -21,7 +21,6 @@ go build -o alice ./cmd/alice
 # Docker
 docker build -t alice .
 docker run -d \
-  -e ANTHROPIC_API_KEY="..." \
   -e TELEGRAM_BOT_TOKEN="..." \
   -e ALLOWED_USER_IDS="123456789" \
   -v /path/to/project:/project \
@@ -32,11 +31,16 @@ A Makefile is available — run `make help` for all targets.
 
 ## Configuration
 
+**Note**: Alice uses Claude Code CLI as a subprocess, so you need to have `claude` CLI installed and authenticated. Alice does not use the Anthropic API directly.
+
+Prerequisites:
+1. Install Claude Code: https://code.claude.com/cli
+2. Authenticate with your Claude account: `claude auth`
+
 Config is loaded from `config.json` (see `config.example.json`), overridden by env vars:
 
 | Env Var | Config Key | Required | Default |
 |---------|-----------|----------|---------|
-| `ANTHROPIC_API_KEY` | `anthropic_key` | Yes | — |
 | `TELEGRAM_BOT_TOKEN` | `telegram_token` | Yes | — |
 | `CLAUDE_MODEL` | `model` | No | `claude-sonnet-4-20250514` |
 | `PROJECT_DIR` | `default_project_dir` | No | `.` |
@@ -44,6 +48,9 @@ Config is loaded from `config.json` (see `config.example.json`), overridden by e
 | `ALICE_ENABLE_PERSISTENCE` | `enable_persistence` | No | `true` |
 | `ALICE_DATABASE_PATH` | `database_path` | No | `./data/alice.db` |
 | `ALICE_DATA_RETENTION_DAYS` | `data_retention_days` | No | `30` |
+| `OPENAI_API_KEY` | `openai_api_key` | No* | — |
+
+*Required only if using multimedia features (voice/image processing)
 
 ## Architecture
 

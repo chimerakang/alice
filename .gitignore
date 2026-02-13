@@ -39,3 +39,4 @@ secrets.yaml
 
 # Docker
 .dockerignore
+check_openai_usage.go
