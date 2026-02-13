@@ -55,6 +55,15 @@ type Voice struct {
 	FileSize     int    `json:"file_size,omitempty"`
 }
 
+// Document Telegram 文件資訊
+type Document struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id"`
+	FileName     string `json:"file_name,omitempty"`
+	MimeType     string `json:"mime_type,omitempty"`
+	FileSize     int    `json:"file_size,omitempty"`
+}
+
 type TelegramBot struct {
 	agents        map[chatKey]*Agent // 每個 chat/topic 一個 agent
 	agentsMu      sync.RWMutex       // 保護 agents map 的讀寫鎖
@@ -224,6 +233,7 @@ func (t *TelegramBot) Start() {
 					Caption      string      `json:"caption"`
 					Photo        []PhotoSize `json:"photo"`
 					Voice        *Voice      `json:"voice"`
+					Document     *Document   `json:"document"`
 					MediaGroupID string      `json:"media_group_id"`
 				} `json:"message"`
 				CallbackQuery *struct {
@@ -261,7 +271,7 @@ func (t *TelegramBot) Start() {
 			if update.Message != nil && update.Message.Chat != nil && update.Message.From != nil {
 				msg := update.Message
 				key := chatKey{chatID: msg.Chat.ID, threadID: msg.MessageThreadID}
-				go t.handleMessage(key, msg.From.ID, msg.Text, msg.Caption, msg.Photo, msg.Voice, msg.MediaGroupID)
+				go t.handleMessage(key, msg.From.ID, msg.Text, msg.Caption, msg.Photo, msg.Voice, msg.Document, msg.MediaGroupID)
 			}
 
 			// Handle callback queries (inline keyboard button clicks)
@@ -274,14 +284,18 @@ func (t *TelegramBot) Start() {
 	}
 }
 
-func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, caption string, photo []PhotoSize, voice *Voice, mediaGroupID string) {
+func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, caption string, photo []PhotoSize, voice *Voice, document *Document, mediaGroupID string) {
 	// 調試日誌
 	var voiceInfo string = "none"
 	if voice != nil {
 		voiceInfo = fmt.Sprintf("duration=%ds,size=%d", voice.Duration, voice.FileSize)
 	}
-	log.Printf("[telegram] handleMessage: userID=%d, text='%s', caption='%s', photo_count=%d, voice=%s, chatID=%d, threadID=%d",
-		userID, text, caption, len(photo), voiceInfo, key.chatID, key.threadID)
+	var documentInfo string = "none"
+	if document != nil {
+		documentInfo = fmt.Sprintf("name=%s,size=%d,type=%s", document.FileName, document.FileSize, document.MimeType)
+	}
+	log.Printf("[telegram] handleMessage: userID=%d, text='%s', caption='%s', photo_count=%d, voice=%s, document=%s, chatID=%d, threadID=%d",
+		userID, text, caption, len(photo), voiceInfo, documentInfo, key.chatID, key.threadID)
 
 	// 權限檢查
 	if !t.isAllowed(userID) {
@@ -304,6 +318,13 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	if voice != nil {
 		log.Printf("[telegram] handling voice message: duration=%ds, size=%d bytes", voice.Duration, voice.FileSize)
 		t.handleVoiceMessage(key, userID, voice, caption)
+		return
+	}
+
+	// Handle document messages
+	if document != nil {
+		log.Printf("[telegram] handling document message: name=%s, size=%d bytes, type=%s", document.FileName, document.FileSize, document.MimeType)
+		t.handleDocumentMessage(key, userID, document, caption)
 		return
 	}
 
@@ -1863,6 +1884,8 @@ func (t *TelegramBot) DownloadTelegramFile(fileID, fileType string) (string, err
 			ext = ".jpg"
 		case "voice":
 			ext = ".ogg"
+		case "document":
+			ext = ".txt" // 文件類型的預設擴展名
 		default:
 			ext = ".bin"
 		}
@@ -2088,6 +2111,114 @@ func (t *TelegramBot) transcribeVoiceWithWhisper(audioPath string) (string, erro
 	}
 
 	return strings.TrimSpace(string(transcription)), nil
+}
+
+// handleDocumentMessage 處理文件訊息
+func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document *Document, caption string) {
+	// 檢查檔案大小限制
+	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
+	if document.FileSize > maxSizeBytes {
+		t.send(key, fmt.Sprintf("📁 文件檔案過大（%s），限制為 %dMB。",
+			formatFileSize(document.FileSize), t.config.Multimedia.MaxFileSizeMB))
+		return
+	}
+
+	// 安全檢查和事件記錄
+	if globalSecurityManager != nil {
+		globalSecurityManager.LogSecurityEvent(SecurityEvent{
+			EventType:   "telegram_document_received",
+			Severity:    "medium",
+			Description: "Document file received via Telegram",
+			UserID:      userID,
+			Details: map[string]interface{}{
+				"file_name":    document.FileName,
+				"file_size":    document.FileSize,
+				"mime_type":    document.MimeType,
+				"has_caption":  caption != "",
+				"caption_len":  len(caption),
+				"chat_id":      key.chatID,
+			},
+		})
+	}
+
+	// 下載文件到 Alice 臨時目錄
+	t.send(key, "📁 正在下載文件...")
+	documentPath, err := t.DownloadTelegramFile(document.FileID, "document")
+	if err != nil {
+		log.Printf("[telegram] download document error: %v", err)
+		t.send(key, "📁 下載文件失敗，請稍後再試。")
+		return
+	}
+
+	defer func() {
+		// 清理下載的文件
+		if err := os.Remove(documentPath); err != nil {
+			log.Printf("[telegram] cleanup document error: %v", err)
+		}
+	}()
+
+	// 取得 Agent 和專案目錄
+	agent := t.getAgent(key)
+	projectDir := agent.ProjectDir()
+
+	// 如果有原始檔名，復制到專案目錄並使用原始名稱
+	var finalPath string
+	if document.FileName != "" {
+		// 確保專案臨時目錄存在
+		tempDir := filepath.Join(projectDir, "temp")
+		if err := os.MkdirAll(tempDir, 0755); err != nil {
+			log.Printf("[telegram] create temp dir error: %v", err)
+			t.send(key, "📁 建立臨時目錄失敗。")
+			return
+		}
+
+		// 複製到專案目錄，保留原始檔名
+		finalPath = filepath.Join(tempDir, document.FileName)
+		if err := copyFile(documentPath, finalPath); err != nil {
+			log.Printf("[telegram] copy document to project error: %v", err)
+			t.send(key, "📁 複製文件到專案目錄失敗。")
+			return
+		}
+
+		log.Printf("[telegram] document copied to project: %s", finalPath)
+	} else {
+		finalPath = documentPath
+	}
+
+	// 構建 Claude 的輸入提示
+	prompt := fmt.Sprintf("用戶上傳了一個文件：%s", finalPath)
+	if caption != "" {
+		prompt += fmt.Sprintf("\n用戶說：%s", caption)
+	}
+
+	// 新增文件類型提示
+	if document.MimeType != "" {
+		prompt += fmt.Sprintf("\n文件類型：%s", document.MimeType)
+	}
+
+	prompt += "\n\n請分析這個文件並提供適當的協助。"
+
+	log.Printf("[telegram] sending document analysis request: file=%s, size=%d, type=%s, prompt_len=%d",
+		document.FileName, document.FileSize, document.MimeType, len(prompt))
+
+	// 發送分析訊息
+	t.send(key, "📁 正在分析文件...")
+	response, err := agent.Run(prompt, func(update string, silent bool) {
+		if silent {
+			t.sendSilent(key, update)
+		} else {
+			t.send(key, update)
+		}
+	})
+	if err != nil {
+		log.Printf("[telegram] document analysis error: %v", err)
+		t.send(key, "📁 文件分析失敗，請稍後再試。")
+		return
+	}
+
+	if response != "" {
+		t.send(key, response)
+	}
 }
 
 // validateProjectPath 驗證專案路徑是否存在和有效

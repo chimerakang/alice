@@ -98,6 +98,8 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/decisions/recent", wi.handleRecentDecisionsProto)
 	mux.HandleFunc("/api/decisions/search", wi.handleSearchDecisions)
 	mux.HandleFunc("/api/decisions/export", wi.handleExportDecisions)
+	mux.HandleFunc("/api/decisions/sources/stats", wi.handleSourceStats)
+	mux.HandleFunc("/api/decisions/sources/performance", wi.handleSourcePerformance)
 	mux.HandleFunc("/api/multiagent/status", wi.handleMultiAgentStatusProto)
 	mux.HandleFunc("/api/multiagent/stats", wi.handleMultiAgentStatsProto)
 	mux.HandleFunc("/api/multiagent/agents", wi.handleMultiAgentAgentsProto)
