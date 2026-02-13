@@ -21,6 +21,21 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #1350 | 3:48 PM | 🔵 | handleSinglePhoto() Image Download and Project Path Handling Implementation | ~439 |
+| #1349 | " | 🔵 | Single Photo Processing Includes PII Detection and Agent Analysis | ~412 |
+| #1348 | 3:47 PM | 🔵 | Image Handling Logic Split Between Single and Multiple Photo Processing | ~357 |
+| #1342 | 3:30 PM | 🔵 | Alice Configuration Uses ANTHROPIC_API_KEY Not Session Token | ~306 |
+| #1334 | 3:28 PM | 🔵 | File Parameter Format for Claude CLI | ~327 |
+| #1333 | " | 🔵 | EnhancedCLIClient File Handling Implementation | ~300 |
+| #1332 | 3:27 PM | 🔵 | Multimodal Message Processing Architecture | ~367 |
+| #1331 | " | 🔵 | CreateImageMessageContent Function Structure | ~326 |
+| #1330 | " | 🔵 | Multimodal Agent Processing for Photo Analysis | ~342 |
+| #1329 | " | 🔵 | Photo Analysis Prompt Construction and Security Logging | ~326 |
+| #1328 | " | 🔵 | Photo Download and File Management Implementation | ~306 |
+| #1327 | 3:26 PM | 🔵 | Single Photo Processing Implementation Details | ~324 |
+| #1326 | " | 🔵 | Photo Processing Functions Identified in Telegram Handler | ~302 |
+| #1325 | " | 🔵 | Voice Transcription Implementation Using OpenAI Whisper | ~294 |
+| #1321 | 3:23 PM | 🔵 | Telegram Message Structure Missing Sticker Field | ~303 |
 | #1150 | 12:43 AM | 🔴 | Added Retry Logic to InsertSecurityEvent Function | ~249 |
 | #1149 | 12:42 AM | 🟣 | Implemented execWithRetry Helper Function | ~327 |
 | #1148 | " | 🔴 | Added Retry Logic to SaveTopicSetting Function | ~248 |

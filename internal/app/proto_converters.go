@@ -559,6 +559,7 @@ func convertDecisionToFrontendJSON(decision DecisionLog) map[string]interface{} 
 		"duration_ms":    decision.DurationMs,
 		"tokens_input":   decision.TokensUsed.TotalInputTokens,
 		"tokens_output":  decision.TokensUsed.TotalOutputTokens,
+		"source":         decision.Source,
 	}
 
 	if gitState != nil {
@@ -675,6 +676,7 @@ func (wi *WebInterface) handleRecentDecisionsProto(w http.ResponseWriter, r *htt
 		offsetStr := query.Get("offset")
 		startTimeStr := query.Get("start_time")
 		endTimeStr := query.Get("end_time")
+		sourceFilter := query.Get("source")
 
 		limit := 50
 		offset := 0
@@ -714,6 +716,22 @@ func (wi *WebInterface) handleRecentDecisionsProto(w http.ResponseWriter, r *htt
 		} else {
 			decisions = globalDecisionLogger.GetRecentDecisions(limit)
 			totalCount = int64(len(decisions))
+		}
+
+		// Apply source filter (client-side for simplicity, works with all query paths)
+		if sourceFilter != "" && sourceFilter != "all" {
+			filtered := make([]DecisionLog, 0)
+			for _, d := range decisions {
+				src := d.Source
+				if src == "" {
+					src = "telegram"
+				}
+				if src == sourceFilter {
+					filtered = append(filtered, d)
+				}
+			}
+			totalCount = int64(len(filtered))
+			decisions = filtered
 		}
 
 		// 轉換為前端相容的 JSON 格式（非 proto 格式）

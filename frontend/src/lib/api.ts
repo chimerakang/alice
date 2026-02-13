@@ -49,6 +49,7 @@ export interface TimeRangeQuery {
   offset?: number;
   startTime?: string; // RFC3339
   endTime?: string;   // RFC3339
+  source?: string;    // "telegram" | "terminal" | "vscode" | "all"
 }
 
 // ========== Health & Stats ==========
@@ -80,8 +81,8 @@ export const api = {
 
   // ========== Decisions ==========
   getRecentDecisions: (params: TimeRangeQuery = {}) => {
-    const { limit = 50, offset, startTime, endTime } = params;
-    const qs = buildQuery({ limit, offset, start_time: startTime, end_time: endTime });
+    const { limit = 50, offset, startTime, endTime, source } = params;
+    const qs = buildQuery({ limit, offset, start_time: startTime, end_time: endTime, source });
     return fetchJson<{ decisions?: DecisionLog[]; pagination: Pagination }>(
       `/api/decisions/recent${qs}`
     );

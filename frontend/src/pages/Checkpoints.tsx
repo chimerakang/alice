@@ -179,7 +179,7 @@ function DecisionEntryCard({
         <div className="flex items-start gap-3">
           <MessageSquare className="w-4 h-4 text-primary mt-0.5 shrink-0" />
           <div className="min-w-0 flex-1">
-            <p className="text-sm text-gray-200 leading-relaxed">
+            <p className="text-sm text-gray-200 leading-relaxed break-all overflow-hidden">
               {decision.user_prompt?.slice(0, 200) || "No prompt"}
               {(decision.user_prompt?.length || 0) > 200 ? "…" : ""}
             </p>

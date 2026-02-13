@@ -135,6 +135,9 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/ws", wi.handleWebSocket)
 	mux.HandleFunc("/api/websocket/stats", wi.handleWebSocketStats)
 
+	// Claude Code Hooks Integration
+	mux.HandleFunc("/api/hooks/claude-code", wi.handleClaudeCodeHook)
+
 	// Prometheus metrics endpoint
 	mux.HandleFunc("/metrics", wi.handlePrometheusMetrics)
 

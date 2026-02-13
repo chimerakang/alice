@@ -136,6 +136,7 @@ export interface DecisionLog {
   chat_id: number;
   thread_id: number;
   git_state?: GitState;
+  source?: string; // "telegram" | "terminal" | "vscode" | "unknown"
 }
 
 // ========== Performance ==========
@@ -216,7 +217,8 @@ export type WebSocketEventType =
   | "decision_complete"
   | "performance_metric"
   | "security_alert"
-  | "agent_status";
+  | "agent_status"
+  | "hook_session_active";
 
 // ========== API Responses ==========
 

@@ -261,6 +261,12 @@ func (s *SQLiteStorage) initTables() error {
 		log.Printf("Migration warning (thinking_content): %v", err)
 	}
 
+	// Migration: add source column to decision_logs (for Claude Code Hooks integration)
+	_, err = s.db.Exec(`ALTER TABLE decision_logs ADD COLUMN source TEXT DEFAULT 'telegram'`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		log.Printf("Migration warning (source): %v", err)
+	}
+
 	log.Printf("Database initialized successfully at: %s", s.path)
 	return nil
 }
@@ -379,17 +385,23 @@ func (s *SQLiteStorage) InsertDecisionLog(log DecisionLog) error {
 		}
 	}
 
+	// Default source to "telegram" if not set
+	source := log.Source
+	if source == "" {
+		source = "telegram"
+	}
+
 	_, err := s.db.Exec(`
 		INSERT INTO decision_logs
 		(timestamp, session_id, project_path, chat_id, thread_id, user_prompt, agent_response,
 		 tool_calls_json, context_json, outcome_json, duration_ms, tokens_input, tokens_output,
-		 tokens_total, cost_usd, git_commit_hash, git_branch, thinking_content)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 tokens_total, cost_usd, git_commit_hash, git_branch, thinking_content, source)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		log.Timestamp, log.SessionID, log.ProjectPath, log.ChatID, log.ThreadID,
 		log.UserPrompt, log.AgentResponse, string(toolCallsJSON), string(contextJSON),
 		string(outcomeJSON), log.DurationMs, log.TokensUsed.TotalInputTokens, log.TokensUsed.TotalOutputTokens,
 		log.TokensUsed.TotalInputTokens+log.TokensUsed.TotalOutputTokens, log.TokensUsed.TotalCostUSD,
-		gitCommitHash, gitBranch, log.ThinkingContent)
+		gitCommitHash, gitBranch, log.ThinkingContent, source)
 
 	return err
 }
@@ -400,7 +412,8 @@ func (s *SQLiteStorage) GetDecisionLogs(limit int, offset int) ([]DecisionLog, e
 		SELECT timestamp, session_id, project_path, chat_id, thread_id, user_prompt,
 			   agent_response, tool_calls_json, context_json, outcome_json, duration_ms,
 			   tokens_input, tokens_output, COALESCE(thinking_content, '') as thinking_content,
-			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch
+			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch,
+			   COALESCE(source, 'telegram') as source
 		FROM decision_logs
 		ORDER BY timestamp DESC
 		LIMIT ? OFFSET ?`, limit, offset)
@@ -418,7 +431,8 @@ func (s *SQLiteStorage) GetDecisionLogsByTimeRange(start, end time.Time, limit i
 		SELECT timestamp, session_id, project_path, chat_id, thread_id, user_prompt,
 			   agent_response, tool_calls_json, context_json, outcome_json, duration_ms,
 			   tokens_input, tokens_output, COALESCE(thinking_content, '') as thinking_content,
-			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch
+			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch,
+			   COALESCE(source, 'telegram') as source
 		FROM decision_logs
 		WHERE timestamp BETWEEN ? AND ?
 		ORDER BY timestamp DESC
@@ -437,7 +451,8 @@ func (s *SQLiteStorage) GetDecisionLogsByProject(projectPath string, limit int) 
 		SELECT timestamp, session_id, project_path, chat_id, thread_id, user_prompt,
 			   agent_response, tool_calls_json, context_json, outcome_json, duration_ms,
 			   tokens_input, tokens_output, COALESCE(thinking_content, '') as thinking_content,
-			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch
+			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch,
+			   COALESCE(source, 'telegram') as source
 		FROM decision_logs
 		WHERE project_path = ?
 		ORDER BY timestamp DESC
@@ -462,7 +477,7 @@ func (s *SQLiteStorage) scanDecisionLogs(rows *sql.Rows) ([]DecisionLog, error) 
 			&log.ChatID, &log.ThreadID, &log.UserPrompt, &log.AgentResponse,
 			&toolCallsJSON, &contextJSON, &outcomeJSON, &log.DurationMs,
 			&log.TokensUsed.TotalInputTokens, &log.TokensUsed.TotalOutputTokens,
-			&log.ThinkingContent, &gitCommitHash, &gitBranch)
+			&log.ThinkingContent, &gitCommitHash, &gitBranch, &log.Source)
 		if err != nil {
 			return nil, err
 		}
@@ -480,6 +495,19 @@ func (s *SQLiteStorage) scanDecisionLogs(rows *sql.Rows) ([]DecisionLog, error) 
 	}
 
 	return logs, rows.Err()
+}
+
+// GetDecisionLogCountBySessionID checks if a session_id already exists (for deduplication)
+func (s *SQLiteStorage) GetDecisionLogCountBySessionID(sessionID string) (int64, error) {
+	var count int64
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM decision_logs WHERE session_id = ?`, sessionID).Scan(&count)
+	return count, err
+}
+
+// DeleteDecisionLogsBySessionID removes all decision logs for a given session_id (used for upsert on hook re-trigger)
+func (s *SQLiteStorage) DeleteDecisionLogsBySessionID(sessionID string) error {
+	_, err := s.db.Exec(`DELETE FROM decision_logs WHERE session_id = ?`, sessionID)
+	return err
 }
 
 // ==================== Performance Metrics ====================

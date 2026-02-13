@@ -470,15 +470,55 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			base := filepath.Dir(strings.TrimRight(t.config.DefaultProjectDir, "/"))
 			dir = filepath.Join(base, dir)
 		}
+
+		// 驗證路徑是否存在和有效
+		if err := t.validateProjectPath(dir); err != nil {
+			// 路徑驗證失敗，提供錯誤訊息和建議
+			errorMsg := fmt.Sprintf("❌ %s", err.Error())
+
+			// 嘗試提供相似路徑建議
+			suggestions := t.suggestSimilarPaths(dir)
+			if len(suggestions) > 0 {
+				errorMsg += "\n\n💡 是否要設定這些相似的專案？"
+				for _, suggestion := range suggestions {
+					projectName := filepath.Base(suggestion)
+					errorMsg += fmt.Sprintf("\n• %s", projectName)
+				}
+			}
+
+			t.send(key, errorMsg)
+			return
+		}
+
+		// 路徑驗證通過，設定專案
 		agent := t.getAgent(key)
 		agent.SetProject(dir)
+
 		// 持久化 topic → project 對應
 		if globalStorage != nil {
 			if err := globalStorage.SaveTopicSetting(key.chatID, key.threadID, dir); err != nil {
 				log.Printf("[telegram] failed to save topic setting: %v", err)
 			}
 		}
-		t.send(key, fmt.Sprintf("✅ 專案已切換到: %s", dir))
+
+		// 偵測專案類型
+		projectType := t.detectProjectType(dir)
+		projectName := filepath.Base(dir)
+
+		// 建構成功訊息
+		successMsg := fmt.Sprintf("✅ 專案已設定為：%s", projectName)
+		successMsg += fmt.Sprintf("\n📂 路徑：`%s`", dir)
+		successMsg += fmt.Sprintf("\n🔧 類型：%s", projectType)
+
+		// 檢查是否有 MASTER_TASKS.md (用於 /tasks 功能)
+		tasksFile := filepath.Join(dir, "docs", "MASTER_TASKS.md")
+		if _, err := os.Stat(tasksFile); err == nil {
+			successMsg += "\n📋 可用指令：/tasks, /status, /checkpoints"
+		} else {
+			successMsg += "\n📋 可用指令：/status, /checkpoints"
+		}
+
+		t.sendMarkdown(key, successMsg)
 
 	case "/reset":
 		agent := t.getAgent(key)
@@ -2049,3 +2089,149 @@ func (t *TelegramBot) transcribeVoiceWithWhisper(audioPath string) (string, erro
 
 	return strings.TrimSpace(string(transcription)), nil
 }
+
+// validateProjectPath 驗證專案路徑是否存在和有效
+func (t *TelegramBot) validateProjectPath(projectPath string) error {
+	// 1. 檢查路徑是否存在
+	info, err := os.Stat(projectPath)
+	if os.IsNotExist(err) {
+		return fmt.Errorf("路徑不存在：%s", projectPath)
+	}
+	if err != nil {
+		return fmt.Errorf("無法存取路徑：%s (%v)", projectPath, err)
+	}
+
+	// 2. 檢查是否為目錄
+	if !info.IsDir() {
+		return fmt.Errorf("指定路徑不是目錄：%s", projectPath)
+	}
+
+	// 3. 檢查讀取權限
+	if _, err := os.ReadDir(projectPath); err != nil {
+		return fmt.Errorf("無法讀取目錄：%s (權限不足)", projectPath)
+	}
+
+	return nil
+}
+
+// suggestSimilarPaths 搜尋相似的專案目錄
+func (t *TelegramBot) suggestSimilarPaths(invalidPath string) []string {
+	// 取得基礎路徑 (預設專案目錄的父目錄)
+	baseDir := filepath.Dir(strings.TrimRight(t.config.DefaultProjectDir, "/"))
+
+	// 提取用戶輸入的專案名稱
+	targetName := filepath.Base(invalidPath)
+
+	// 讀取基礎目錄下的所有子目錄
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		log.Printf("[telegram] failed to read base directory %s: %v", baseDir, err)
+		return nil
+	}
+
+	var suggestions []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		dirName := entry.Name()
+		// 檢查相似度
+		if t.isSimilarPath(targetName, dirName) {
+			suggestions = append(suggestions, filepath.Join(baseDir, dirName))
+		}
+	}
+
+	// 限制建議數量
+	if len(suggestions) > 3 {
+		suggestions = suggestions[:3]
+	}
+
+	return suggestions
+}
+
+// isSimilarPath 檢查兩個路徑名稱是否相似
+func (t *TelegramBot) isSimilarPath(target, candidate string) bool {
+	target = strings.ToLower(target)
+	candidate = strings.ToLower(candidate)
+
+	// 完全相同 (應該不會發生，因為已經驗證失敗)
+	if target == candidate {
+		return false
+	}
+
+	// 檢查常見的命名差異
+	variations := [][]string{
+		{"-", "_"},  // 連字號 vs 底線
+		{"_", "-"},  // 底線 vs 連字號
+		{" ", "_"},  // 空格 vs 底線
+		{" ", "-"},  // 空格 vs 連字號
+	}
+
+	for _, variation := range variations {
+		modified := strings.ReplaceAll(target, variation[0], variation[1])
+		if modified == candidate {
+			return true
+		}
+	}
+
+	// 檢查包含關係 (更寬鬆的匹配)
+	if strings.Contains(candidate, target) || strings.Contains(target, candidate) {
+		// 長度差異不能太大
+		if abs(len(target)-len(candidate)) <= 3 {
+			return true
+		}
+	}
+
+	return false
+}
+
+// detectProjectType 偵測專案類型
+func (t *TelegramBot) detectProjectType(projectPath string) string {
+	projectFiles := map[string]string{
+		"go.mod":        "Go",
+		"package.json":  "Node.js",
+		"Cargo.toml":    "Rust",
+		"requirements.txt": "Python",
+		"setup.py":      "Python",
+		"pom.xml":       "Java",
+		"Makefile":      "Make",
+		"docker-compose.yml": "Docker",
+		"Dockerfile":    "Docker",
+	}
+
+	var detectedTypes []string
+	for filename, projectType := range projectFiles {
+		if _, err := os.Stat(filepath.Join(projectPath, filename)); err == nil {
+			detectedTypes = append(detectedTypes, projectType)
+		}
+	}
+
+	if len(detectedTypes) == 0 {
+		return "通用專案"
+	}
+
+	// 去重並返回
+	unique := make(map[string]bool)
+	var result []string
+	for _, t := range detectedTypes {
+		if !unique[t] {
+			unique[t] = true
+			result = append(result, t)
+		}
+	}
+
+	if len(result) == 1 {
+		return result[0]
+	}
+	return strings.Join(result[:min(2, len(result))], "/") // 最多顯示兩種類型
+}
+
+// abs 計算絕對值
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}
+

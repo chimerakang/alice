@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -58,6 +59,7 @@ func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID str
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = projectDir
+	cmd.Env = append(os.Environ(), "ALICE_SKIP_HOOKS=1")
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -124,6 +126,7 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = projectDir
+	cmd.Env = append(os.Environ(), "ALICE_SKIP_HOOKS=1")
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

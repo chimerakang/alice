@@ -47,6 +47,7 @@ type DecisionLog struct {
 	TokensUsed      TokenStats             `json:"tokens_used"`
 	GitCommitHash   string                 `json:"git_commit_hash,omitempty"`
 	GitBranch       string                 `json:"git_branch,omitempty"`
+	Source          string                 `json:"source"` // "telegram", "terminal", "vscode", "unknown"
 }
 
 // ExecutionOutcome represents the result of an AI interaction
@@ -535,17 +536,17 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 	ps := a.current()
 
 	// Determine task type based on tool calls and content
-	taskType := a.inferTaskType(userPrompt, toolCalls)
+	taskType := inferTaskType(userPrompt, toolCalls)
 
 	// Extract files changed from tool calls
-	filesChanged := a.extractFilesChanged(toolCalls)
+	filesChanged := extractFilesChanged(toolCalls)
 
 	// Create execution outcome
 	outcome := ExecutionOutcome{
 		Success:      err == nil,
 		TaskType:     taskType,
 		FilesChanged: filesChanged,
-		Summary:      a.generateSummary(userPrompt, agentResponse, taskType),
+		Summary:      generateSummary(userPrompt, agentResponse, taskType),
 	}
 
 	if err != nil {
@@ -595,6 +596,7 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 		Outcome:         outcome,
 		DurationMs:      int(duration.Milliseconds()),
 		TokensUsed:      tokenStats,
+		Source:          "telegram",
 	}
 
 	// Log the decision
@@ -605,7 +607,7 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 }
 
 // inferTaskType attempts to classify the type of task based on user input and tools used
-func (a *Agent) inferTaskType(userPrompt string, toolCalls []ToolExecution) string {
+func inferTaskType(userPrompt string, toolCalls []ToolExecution) string {
 	prompt := strings.ToLower(userPrompt)
 
 	// Check for specific task patterns
@@ -649,7 +651,7 @@ func (a *Agent) inferTaskType(userPrompt string, toolCalls []ToolExecution) stri
 }
 
 // extractFilesChanged extracts file paths from tool calls
-func (a *Agent) extractFilesChanged(toolCalls []ToolExecution) []string {
+func extractFilesChanged(toolCalls []ToolExecution) []string {
 	filesSet := make(map[string]bool)
 
 	for _, tool := range toolCalls {
@@ -669,7 +671,7 @@ func (a *Agent) extractFilesChanged(toolCalls []ToolExecution) []string {
 }
 
 // generateSummary creates a brief summary of the interaction
-func (a *Agent) generateSummary(userPrompt, agentResponse, taskType string) string {
+func generateSummary(userPrompt, agentResponse, taskType string) string {
 	if len(userPrompt) > 100 {
 		userPrompt = userPrompt[:100] + "..."
 	}

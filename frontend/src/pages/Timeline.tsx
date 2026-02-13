@@ -25,6 +25,9 @@ import {
   FolderOpen,
   GitBranch,
   BarChart3,
+  Monitor,
+  Code2,
+  Send,
 } from "lucide-react";
 
 const PAGE_SIZE = 15;
@@ -33,6 +36,13 @@ const STATUS_OPTIONS = [
   { value: "all", label: "All" },
   { value: "success", label: "Success" },
   { value: "error", label: "Has Errors" },
+];
+
+const SOURCE_OPTIONS = [
+  { value: "all", label: "All Sources", icon: null },
+  { value: "telegram", label: "Telegram", icon: Send },
+  { value: "terminal", label: "Terminal", icon: Monitor },
+  { value: "vscode", label: "VS Code", icon: Code2 },
 ];
 
 function formatDuration(ms: number): string {
@@ -399,10 +409,11 @@ export default function Timeline() {
   const [page, setPage] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const [dateRange, setDateRange] = useState<DateRange>({});
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [selectedDecision, setSelectedDecision] = useState<DecisionLog | null>(null);
 
-  // Fetch decisions from API with server-side pagination + time range
-  const fetchDecisions = useCallback(async (pageNum: number, range: DateRange) => {
+  // Fetch decisions from API with server-side pagination + time range + source
+  const fetchDecisions = useCallback(async (pageNum: number, range: DateRange, src: string) => {
     setLoading(true);
     try {
       const params: TimeRangeQuery = {
@@ -410,6 +421,7 @@ export default function Timeline() {
         offset: pageNum * PAGE_SIZE,
         startTime: range.startTime,
         endTime: range.endTime,
+        source: src !== "all" ? src : undefined,
       };
       const res = await api.getRecentDecisions(params);
       setApiDecisions(res.decisions || []);
@@ -421,10 +433,10 @@ export default function Timeline() {
     }
   }, []);
 
-  // Initial load + refetch when page or date range changes
+  // Initial load + refetch when page, date range, or source filter changes
   useEffect(() => {
-    fetchDecisions(page, dateRange);
-  }, [page, dateRange, fetchDecisions]);
+    fetchDecisions(page, dateRange, sourceFilter);
+  }, [page, dateRange, sourceFilter, fetchDecisions]);
 
   // Merge live WS decisions (newest) on top of API decisions when on first page with no date filter
   const displayDecisions = useMemo(() => {
@@ -458,10 +470,13 @@ export default function Timeline() {
     return Array.from(paths).sort();
   }, [displayDecisions]);
 
-  // Client-side filter (search, status, project) on current page data
+  // Client-side filter (search, status, project, source) on current page data
   const filtered = useMemo(() => {
     return displayDecisions.filter((d) => {
       if (projectFilter !== "all" && d.project_path !== projectFilter) return false;
+
+      // Source filter — needed because live WS decisions bypass server-side source filter
+      if (sourceFilter !== "all" && d.source !== sourceFilter) return false;
 
       if (statusFilter === "success") {
         const hasError = d.tool_calls?.some(
@@ -489,7 +504,7 @@ export default function Timeline() {
 
       return true;
     });
-  }, [displayDecisions, projectFilter, statusFilter, searchQuery]);
+  }, [displayDecisions, projectFilter, statusFilter, searchQuery, sourceFilter]);
 
   // Pagination — use server-side total_count for page calculation
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
@@ -574,6 +589,27 @@ export default function Timeline() {
             </div>
           </div>
         )}
+
+        {/* Source filter */}
+        <div className="flex items-center gap-2">
+          <Monitor className="w-3.5 h-3.5 text-gray-500" />
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {SOURCE_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => { setSourceFilter(opt.value); setPage(0); }}
+                className={`px-2.5 py-1 text-xs rounded-full border transition-colors flex items-center gap-1 ${
+                  sourceFilter === opt.value
+                    ? "bg-primary/15 text-primary border-primary/30"
+                    : "text-gray-400 border-gray-700 hover:border-gray-600 hover:text-gray-300"
+                }`}
+              >
+                {opt.icon && <opt.icon className="w-3 h-3" />}
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* Timeline */}

@@ -564,11 +564,11 @@ export default function Dashboard() {
     return merged;
   }, [decisions, recentDecisions]);
 
-  // Discover project paths from decisions
+  // Discover project paths from decisions (normalize trailing slashes)
   const projectPaths = useMemo(() => {
     const paths = new Set<string>();
     for (const d of allDecisions) {
-      if (d.project_path) paths.add(d.project_path);
+      if (d.project_path) paths.add(d.project_path.replace(/\/+$/, ""));
     }
     return Array.from(paths).sort();
   }, [allDecisions]);

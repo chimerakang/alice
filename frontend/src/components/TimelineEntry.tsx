@@ -8,6 +8,9 @@ import {
   Clock,
   Coins,
   MessageSquare,
+  Monitor,
+  Code2,
+  Send,
 } from "lucide-react";
 import StatusBadge from "./StatusBadge";
 import type { DecisionLog, ToolExecution } from "@/types/alice";
@@ -85,6 +88,33 @@ function ToolCallItem({ tool }: { tool: ToolExecution }) {
   );
 }
 
+function SourceBadge({ source }: { source?: string }) {
+  const src = source || "telegram";
+  if (src === "vscode") {
+    return (
+      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30">
+        <Code2 className="w-2.5 h-2.5" />
+        VS
+      </span>
+    );
+  }
+  if (src === "terminal") {
+    return (
+      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-gray-500/15 text-gray-400 border border-gray-500/30">
+        <Monitor className="w-2.5 h-2.5" />
+        CLI
+      </span>
+    );
+  }
+  // telegram or default
+  return (
+    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">
+      <Send className="w-2.5 h-2.5" />
+      TG
+    </span>
+  );
+}
+
 interface TimelineEntryProps {
   decision: DecisionLog;
   onSelect?: (decision: DecisionLog) => void;
@@ -131,6 +161,7 @@ export default function TimelineEntry({ decision, onSelect }: TimelineEntryProps
               >
                 {isSuccess && !hasError ? "Success" : hasError ? "Has Errors" : "Warning"}
               </StatusBadge>
+              <SourceBadge source={decision.source} />
             </div>
             {/* User prompt */}
             <p className="text-sm text-white font-medium leading-snug">
