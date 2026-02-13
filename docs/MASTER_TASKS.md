@@ -30,7 +30,7 @@
 | P8.5 - TG 指令增強 | /tasks 待辦清單 + Topic 設定持久化 | 100% | ✅ |
 | P9 - Multimedia Input | 圖片分析 + 語音轉文字 | 100% | ✅ |
 | P9.5 - Multimedia Enhancement | 多張圖片批次處理 + 媒體群組支援 | 100% | ✅ |
-| P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 0% | 📋 |
+| P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 95% | ✅ |
 
 ---
 
@@ -225,21 +225,21 @@
 | | — 錯誤：需要 CLAUDE_CODE_SESSION_ACCESS_TOKEN 認證 ✅ | | ✅ | |
 | | — 解決：改用 agent.Run() 通過現有會話處理，如語音轉文字邏輯 ✅ | | ✅ | |
 
-## P10 - Claude Code Hooks 整合 (📋 0%)
+## P10 - Claude Code Hooks 整合 (✅ 95%)
 
 | # | Task | Issue | Status | Priority |
 |---|------|-------|--------|----------|
-| 10.1 | **Claude Code Hooks 攔截全部互動** | [#32](https://github.com/chimerakang/alice/issues/32) | 📋 | **P0** |
-| | — Hook script：攔截 SessionStart/Stop + UserPromptSubmit 事件 | | 📋 | |
-| | — 解析 transcript_path JSONL 檔案擷取完整對話 | | 📋 | |
-| | — HTTP POST 推送到 Alice API（/api/hooks/claude-code） | | 📋 | |
-| | — 去重邏輯：避免 Telegram 來源重複記錄 | | 📋 | |
-| 10.2 | **Alice 接收端 API + 儲存** | [#32](https://github.com/chimerakang/alice/issues/32) | 📋 | **P0** |
-| | — 新增 /api/hooks/claude-code 端點接收 hook 資料 | | 📋 | |
-| | — 解析 JSONL transcript 轉換為 DecisionLog 格式 | | 📋 | |
-| | — 儲存至 SQLite + WebSocket 即時推播 | | 📋 | |
-| | — 來源標記：terminal / vscode / telegram 區分 | | 📋 | |
-| 10.3 | **Dashboard 多來源整合顯示** | [#32](https://github.com/chimerakang/alice/issues/32) | 📋 | P1 |
+| 10.1 | **Claude Code Hooks 攔截全部互動** | [#32](https://github.com/chimerakang/alice/issues/32) | ✅ | **P0** |
+| | — Hook script：攔截 SessionStart/Stop + UserPromptSubmit 事件 ✅ | | ✅ | |
+| | — 解析 transcript_path JSONL 檔案擷取完整對話 ✅ | | ✅ | |
+| | — HTTP POST 推送到 Alice API（/api/hooks/claude-code） ✅ | | ✅ | |
+| | — 去重邏輯：避免 Telegram 來源重複記錄 ✅ | | ✅ | |
+| 10.2 | **Alice 接收端 API + 儲存** | [#32](https://github.com/chimerakang/alice/issues/32) | ✅ | **P0** |
+| | — 新增 /api/hooks/claude-code 端點接收 hook 資料 ✅ | | ✅ | |
+| | — 解析 JSONL transcript 轉換為 DecisionLog 格式 ✅ | | ✅ | |
+| | — 儲存至 SQLite + WebSocket 即時推播 ✅ | | ✅ | |
+| | — 來源標記：terminal / vscode / telegram 區分 ✅ | | ✅ | |
+| 10.3 | **Dashboard 多來源整合顯示** | [#32](https://github.com/chimerakang/alice/issues/32) | ✅ | P1 |
 | | — Timeline 顯示來源標籤（Terminal/VSCode/Telegram） | | 📋 | |
 | | — 篩選器支援按來源過濾 | | 📋 | |
 | | — 安裝指南：.claude/settings.json hook 配置說明 | | 📋 | |
@@ -299,7 +299,7 @@ Phase 4 (分析) ─── #25 Performance/Security ──→ #11 Remote Control
 | [#33](https://github.com/chimerakang/alice/issues/33) | **Topic-Project 對應持久化 — 重啟後保留設定** | P8.5 | ✅ Closed |
 | [#34](https://github.com/chimerakang/alice/issues/34) | **多張圖片批次處理支援** | P9.5 | ✅ Completed |
 | [#35](https://github.com/chimerakang/alice/issues/35) | **🔧 修復跨專案圖片存取問題** | P9.5 | ✅ Completed |
-| [#32](https://github.com/chimerakang/alice/issues/32) | **Claude Code Hooks 整合 — 攔截所有互動** | P10 | 📋 Planned |
+| [#32](https://github.com/chimerakang/alice/issues/32) | **Claude Code Hooks 整合 — 攔截所有互動** | P10 | ✅ Completed |
 
 ---
 
