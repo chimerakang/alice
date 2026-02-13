@@ -32,6 +32,7 @@
 | P9.5 - Multimedia Enhancement | 多張圖片批次處理 + 媒體群組支援 | 100% | ✅ |
 | P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 100% | ✅ |
 | P11 - User Experience | 指令健全性和用戶體驗改善 | 100% | ✅ |
+| P12 - Dashboard Analytics | Claude Code Hooks UI 增強：統計圖表 + 用戶指南 | 100% | ✅ |
 
 ---
 
@@ -243,8 +244,8 @@
 | 10.3 | **Dashboard 多來源整合顯示** | [#32](https://github.com/chimerakang/alice/issues/32) | ✅ | P1 |
 | | — Timeline 顯示來源標籤（Terminal/VSCode/Telegram） ✅ | | ✅ | |
 | | — 篩選器支援按來源過濾 ✅ | | ✅ | |
-| | — Dashboard 統計圖表（來源分布/效能對比） | [#36](https://github.com/chimerakang/alice/issues/36) | 📋 | |
-| | — 安裝指南：.claude/settings.json hook 配置說明 | [#36](https://github.com/chimerakang/alice/issues/36) | 📋 | |
+| | — Dashboard 統計圖表（來源分布/效能對比） ✅ | [#36](https://github.com/chimerakang/alice/issues/36) | ✅ | |
+| | — 安裝指南：.claude/settings.json hook 配置說明 ✅ | [#36](https://github.com/chimerakang/alice/issues/36) | ✅ | |
 
 ## P11 - User Experience 改善 (✅ 100%)
 
@@ -255,6 +256,21 @@
 | | — 智慧路徑建議（模糊搜尋相似目錄名稱） ✅ | | ✅ | |
 | | — 友善的錯誤訊息和設定確認 ✅ | | ✅ | |
 | | — 專案有效性檢查（偵測專案類型） ✅ | | ✅ | |
+
+## P12 - Dashboard Analytics: Claude Code Hooks UI 增強 (✅ 100%)
+
+| # | Task | Issue | Status | Priority |
+|---|------|-------|--------|----------|
+| 12.1 | **Dashboard 來源統計圖表** | [#36](https://github.com/chimerakang/alice/issues/36) | ✅ | **P0** |
+| | — SourceDistributionChart: 來源分布餅狀圖 (Terminal/VSCode/Telegram) ✅ | | ✅ | |
+| | — SourcePerformanceChart: 效能對比柱狀圖 (執行時間/成功率) ✅ | | ✅ | |
+| | — API 端點：/api/decisions/sources/stats + performance ✅ | | ✅ | |
+| | — 完整整合至 Dashboard 頁面 ✅ | | ✅ | |
+| 12.2 | **Claude Code Hooks 用戶指南** | [#36](https://github.com/chimerakang/alice/issues/36) | ✅ | P1 |
+| | — CLAUDE_CODE_HOOKS.md 完整文檔 ✅ | | ✅ | |
+| | — claude-hook.sh 腳本實作 ✅ | | ✅ | |
+| | — install-hooks.sh 自動安裝工具 ✅ | | ✅ | |
+| | — 故障排除和最佳實踐指南 ✅ | | ✅ | |
 
 ---
 
@@ -312,7 +328,7 @@ Phase 4 (分析) ─── #25 Performance/Security ──→ #11 Remote Control
 | [#34](https://github.com/chimerakang/alice/issues/34) | **多張圖片批次處理支援** | P9.5 | ✅ Completed |
 | [#35](https://github.com/chimerakang/alice/issues/35) | **🔧 修復跨專案圖片存取問題** | P9.5 | ✅ Completed |
 | [#32](https://github.com/chimerakang/alice/issues/32) | **Claude Code Hooks 整合 — 攔截所有互動** | P10 | ✅ Completed |
-| [#36](https://github.com/chimerakang/alice/issues/36) | **Claude Code Hooks UI 增強：Dashboard 統計圖表 + 用戶指南** | P10+ | 📋 Planned |
+| [#36](https://github.com/chimerakang/alice/issues/36) | **Claude Code Hooks UI 增強：Dashboard 統計圖表 + 用戶指南** | P10+ | ✅ Completed |
 | [#37](https://github.com/chimerakang/alice/issues/37) | **🔍 /project 指令路徑驗證：防止設定不存在的專案目錄** | P11 | ✅ Completed |
 
 ---
