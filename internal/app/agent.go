@@ -352,7 +352,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	}()
 
 	if onUpdate != nil {
-		onUpdate("🔧 Claude Code 處理中 ...", false)
+		onUpdate("🔧 Claude Code 處理中...", false)
 	}
 
 	ps := a.current()
