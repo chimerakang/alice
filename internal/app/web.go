@@ -457,7 +457,7 @@ func (wi *WebInterface) getDetailedStats() DetailedStats {
 		ToolsExecuted:   toolExecutionCount,
 		TotalProjects:   totalProjects,
 		SuccessRate:     100.0, // Will calculate based on tool execution success/failure
-		UptimeSeconds:   time.Now().Unix(),
+		UptimeSeconds:   GetUptimeSeconds(),
 		Timestamp:       time.Now(),
 		RecentAgents:    recentAgents,
 		TotalTokensUsed: totalTokensUsed,

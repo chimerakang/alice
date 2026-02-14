@@ -285,7 +285,7 @@ function DecisionDetail({
                       </span>
                       <StatusBadge
                         variant={
-                          String(tool.status) === "STATUS_SUCCESS" || String(tool.status) === "2"
+                          String(tool.status) === "STATUS_SUCCESS" || String(tool.status) === "3"
                             ? "success"
                             : String(tool.status) === "STATUS_ERROR" || String(tool.status) === "4"
                               ? "error"
@@ -293,7 +293,7 @@ function DecisionDetail({
                         }
                         size="sm"
                       >
-                        {String(tool.status) === "STATUS_SUCCESS" || String(tool.status) === "2"
+                        {String(tool.status) === "STATUS_SUCCESS" || String(tool.status) === "3"
                           ? "OK"
                           : String(tool.status) === "STATUS_ERROR" || String(tool.status) === "4"
                             ? "Error"

@@ -17,5 +17,12 @@
 - 遵循統一的設計語言和配色方案
 
 <claude-mem-context>
+# Recent Activity
 
+### Feb 14, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #2045 | 4:56 PM | 🔴 | Dashboard data display issues root causes identified: Git integration not initialized, token chart hardcoded 7-day filter, tool executions from WebSocket only | ~759 |
+| #2028 | 4:52 PM | 🔵 | ToolCallGantt component visualizes tool execution timeline | ~354 |
 </claude-mem-context>

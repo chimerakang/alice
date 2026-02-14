@@ -4,27 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Alice (claude-tg-agent) is a Go-based Telegram bot that provides Claude AI agent capabilities for code assistance. It uses the Anthropic Messages API with tool use to implement an agent loop — Claude can read/write files, execute shell commands, and search code iteratively until a task is complete.
+Alice is a Go-based Telegram bot that wraps Claude Code CLI as an AI agent for code assistance. It runs as a native process (bot + API) with a Docker-hosted React dashboard for monitoring AI decisions, tool executions, and project activity.
 
 ## Build & Run
 
 ```bash
-# Run directly
-go run ./cmd/alice
-
-# Build binary (via Makefile)
-make go-build
-
-# Build binary (manual)
+# Build bot binary
 go build -o alice ./cmd/alice
 
-# Docker
-docker build -t alice .
-docker run -d \
-  -e TELEGRAM_BOT_TOKEN="..." \
-  -e ALLOWED_USER_IDS="123456789" \
-  -v /path/to/project:/project \
-  alice
+# Start bot (background)
+nohup ./alice >> alice.log 2>&1 &
+
+# Start dashboard (Docker)
+docker compose up -d dashboard
+
+# Rebuild dashboard after frontend changes
+cd frontend && npm run build && cp -r dist/* ../web/
+docker compose up -d --build dashboard
 ```
 
 A Makefile is available — run `make help` for all targets.
@@ -52,13 +48,53 @@ Config is loaded from `config.json` (see `config.example.json`), overridden by e
 
 *Required only if using multimedia features (voice/image processing)
 
-## Architecture
+## Deployment Architecture
 
 ```
-Telegram ←→ TelegramBot ←→ Agent (loop) ←→ AnthropicClient
-                                ↕
-                          ToolExecutor → local filesystem / shell
+┌─── User Access ────────────────────────────────────────────┐
+│                                                            │
+│  Telegram App ──→ Telegram API ──→ Alice Bot (native)      │
+│                                     ↕                      │
+│  Browser :3939 ──→ Docker nginx ──→ Alice Bot API :8082    │
+│                    (React SPA)      (REST + WebSocket)     │
+│                                                            │
+└────────────────────────────────────────────────────────────┘
 ```
+
+### Port Allocation (DO NOT CHANGE)
+
+| Port | Service | Type | Description |
+|------|---------|------|-------------|
+| `8082` | Alice Bot | Native Go | REST API + WebSocket + static fallback |
+| `3939` | Dashboard | Docker nginx | React SPA + reverse proxy → :8082 |
+
+- Bot `web_port` in config.json **MUST be `8082`** — nginx.conf hardcodes proxy to `host.docker.internal:8082`
+- Dashboard Docker maps `127.0.0.1:3939 → container:8082` (nginx internal port)
+- Users access dashboard at `http://localhost:3939`
+
+### Startup Sequence
+
+```bash
+# 1. Build bot
+go build -o alice ./cmd/alice
+
+# 2. Start bot (native, background)
+nohup ./alice >> alice.log 2>&1 &
+
+# 3. Start dashboard (Docker)
+docker compose up -d dashboard
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `config.json` | Bot runtime config (tokens, ports) — **NOT in git** |
+| `nginx.conf` | Dashboard reverse proxy config |
+| `docker-compose.yml` | Dashboard + optional monitoring stack |
+| `Dockerfile` | Dashboard image (nginx:alpine + web/ assets) |
+| `web/` | Pre-built React SPA (vite build output) |
+| `frontend/` | React source code (build with `cd frontend && npm run build`) |
 
 ### Project Structure
 
@@ -81,7 +117,8 @@ internal/app/             — All application code (package app)
   tools.go                — ToolExecutor, BuildTools() (6 tools)
 gen/                      — Generated protobuf/gRPC code
 proto/                    — Proto definitions
-web/                      — Static web assets (HTML, CSS, JS)
+web/                      — Static web assets (pre-built React SPA)
+frontend/                 — React source (Vite + TypeScript + Tailwind)
 docs/                     — Documentation
 ```
 
@@ -97,6 +134,19 @@ docs/                     — Documentation
 1. Add a `ToolDef` entry in `BuildTools()` in `internal/app/tools.go`
 2. Add a case in `ToolExecutor.Execute()` switch
 3. Implement the handler method on `*ToolExecutor`
+
+## Critical Safety Rules
+
+**YOU ARE RUNNING AS A SUBPROCESS OF THE ALICE BOT. These rules are NON-NEGOTIABLE:**
+
+1. **NEVER modify `config.json`** — It contains runtime secrets (tokens, API keys). Editing it will break the bot.
+2. **NEVER kill, stop, or restart the Alice bot process** — You are running inside it. Killing it is suicide.
+3. **NEVER run `kill`, `pkill`, `killall` targeting the `alice` process**
+4. **NEVER run `go build` or `go run` for this project** — The bot is already running; rebuilding is the operator's job.
+5. **NEVER commit or push to git** without explicit user instruction in the current message.
+6. **NEVER remove or clear API keys, tokens, or credentials** from any file — this is not a "security fix", it breaks the system.
+
+If a user asks you to restart the bot, reply: "請在外部終端重啟 bot，我無法安全地重啟自己。"
 
 ## Dependencies
 

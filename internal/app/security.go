@@ -212,6 +212,11 @@ func (sm *SecurityManager) RateLimitMiddleware(next http.Handler) http.Handler {
 		}
 
 		ip := getClientIP(r)
+		// Skip rate limiting for localhost/private IPs (dashboard, internal services)
+		if isLocalOrPrivateIP(ip) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if !sm.rateLimiter.Allow(ip) {
 			sm.LogSecurityEvent(SecurityEvent{
 				EventType:   "rate_limit_exceeded",
@@ -332,9 +337,9 @@ func (rl *RateLimiter) Allow(key string) bool {
 	}
 	visitor.blocked = false
 
-	// 更新令牌
+	// 更新令牌（按秒計算，避免不滿一分鐘時 token 無法補充）
 	elapsed := now.Sub(visitor.lastSeen)
-	tokensToAdd := int(elapsed.Minutes()) * rl.rpm
+	tokensToAdd := int(elapsed.Seconds() * float64(rl.rpm) / 60.0)
 	if tokensToAdd > 0 {
 		visitor.tokens = min(rl.burst, visitor.tokens+tokensToAdd)
 		visitor.lastSeen = now
@@ -546,6 +551,29 @@ func (sm *SecurityManager) GetSecurityStats() map[string]interface{} {
 }
 
 // getClientIP 獲取客戶端 IP
+// isLocalOrPrivateIP checks if an IP is localhost or a private/Docker network address.
+func isLocalOrPrivateIP(ipStr string) bool {
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	// Docker bridge networks (172.16-31.x.x, 10.x.x.x, 192.168.x.x)
+	privateRanges := []net.IPNet{
+		{IP: net.IP{10, 0, 0, 0}, Mask: net.CIDRMask(8, 32)},
+		{IP: net.IP{172, 16, 0, 0}, Mask: net.CIDRMask(12, 32)},
+		{IP: net.IP{192, 168, 0, 0}, Mask: net.CIDRMask(16, 32)},
+	}
+	for _, r := range privateRanges {
+		if r.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 func getClientIP(r *http.Request) string {
 	// 檢查 X-Forwarded-For 標頭
 	forwarded := r.Header.Get("X-Forwarded-For")

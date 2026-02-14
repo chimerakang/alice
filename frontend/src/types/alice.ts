@@ -133,6 +133,7 @@ export interface DecisionLog {
   duration_ms: number;
   tokens_input: number;
   tokens_output: number;
+  cost_usd: number;
   chat_id: number;
   thread_id: number;
   git_state?: GitState;

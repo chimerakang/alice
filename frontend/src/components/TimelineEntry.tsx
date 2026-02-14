@@ -45,7 +45,7 @@ function truncate(text: string, max: number): string {
 function ToolCallItem({ tool }: { tool: ToolExecution }) {
   const [expanded, setExpanded] = useState(false);
   const s = String(tool.status);
-  const isSuccess = s === "STATUS_SUCCESS" || s === "2";
+  const isSuccess = s === "STATUS_SUCCESS" || s === "3";
   const isError = s === "STATUS_ERROR" || s === "4";
 
   return (

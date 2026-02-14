@@ -65,12 +65,13 @@ function CustomLegend({ payload }: any) {
   return (
     <div className="flex flex-wrap justify-center gap-4 mt-4">
       {payload?.map((entry: any, index: number) => {
-        const IconComponent = entry.payload.icon;
+        const IconComponent = entry.icon;
+        if (!IconComponent) return null;
         return (
           <div key={index} className="flex items-center gap-2">
             <IconComponent className="w-3 h-3" style={{ color: entry.color }} />
-            <span className="text-xs text-gray-400">{entry.payload.label}</span>
-            <span className="text-xs text-gray-500">({entry.payload.value})</span>
+            <span className="text-xs text-gray-400">{entry.label}</span>
+            <span className="text-xs text-gray-500">({entry.value})</span>
           </div>
         );
       })}

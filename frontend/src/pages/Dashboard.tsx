@@ -439,16 +439,31 @@ function TokenChart({ decisions }: { decisions: DecisionLog[] }) {
 }
 
 // ─── Chart: Tool Success Rate (Pie) ──────────────────
-function ToolSuccessChart({ decisions }: { decisions: DecisionLog[] }) {
+function ToolSuccessChart({ toolExecutions, decisions }: { toolExecutions: any[]; decisions: DecisionLog[] }) {
   const data = useMemo(() => {
     let success = 0;
     let error = 0;
 
-    for (const d of decisions) {
-      for (const t of d.tool_calls || []) {
+    const isSuccess = (s: string) =>
+      s === "STATUS_SUCCESS" || s === "3" || s === "executed" || s === "success";
+    const isError = (s: string) =>
+      s === "STATUS_ERROR" || s === "4" || s === "error";
+
+    // First try to use toolExecutions data if available
+    if (toolExecutions && toolExecutions.length > 0) {
+      for (const t of toolExecutions) {
         const s = String(t.status);
-        if (s === "STATUS_SUCCESS" || s === "2") success++;
-        else if (s === "STATUS_ERROR" || s === "4") error++;
+        if (isSuccess(s)) success++;
+        else if (isError(s)) error++;
+      }
+    } else {
+      // Fallback to decisions data
+      for (const d of decisions) {
+        for (const t of d.tool_calls || []) {
+          const s = String(t.status);
+          if (isSuccess(s)) success++;
+          else if (isError(s)) error++;
+        }
       }
     }
 
@@ -457,7 +472,7 @@ function ToolSuccessChart({ decisions }: { decisions: DecisionLog[] }) {
       { name: "Success", value: success, color: "#22c55e" },
       { name: "Error", value: error, color: "#ef4444" },
     ];
-  }, [decisions]);
+  }, [toolExecutions, decisions]);
 
   if (data.length === 0) {
     return <EmptyChart label="No tool execution data" />;
@@ -512,7 +527,7 @@ function EmptyChart({ label }: { label: string }) {
 
 // ─── Main Dashboard ──────────────────────────────────
 export default function Dashboard() {
-  const { stats, setStats, decisions, wsConnected, toolExecutions } = useAppStore();
+  const { stats, setStats, decisions, wsConnected, toolExecutions, setToolExecutions } = useAppStore();
   const [loading, setLoading] = useState(true);
   const [projectGitStates, setProjectGitStates] = useState<Map<string, GitState>>(new Map());
   const [recentDecisions, setRecentDecisions] = useState<DecisionLog[]>([]);
@@ -523,17 +538,23 @@ export default function Dashboard() {
     setDateRange(range);
   }, []);
 
-  // First: fetch decisions + basic stats to discover project paths
+  // Fetch decisions + basic stats to discover project paths
   useEffect(() => {
     const load = async () => {
       const results = await Promise.allSettled([
         api.getStats(),
         api.getRecentDecisions({
-          limit: 200,
+          limit: 2000,
           startTime: dateRange.startTime,
           endTime: dateRange.endTime,
         }),
         api.getStorageStats(),
+        // Load tool execution history for ToolSuccessChart
+        api.getRecentTools({
+          limit: 500,
+          startTime: dateRange.startTime,
+          endTime: dateRange.endTime,
+        }),
       ]);
 
       if (results[0].status === "fulfilled") setStats(results[0].value);
@@ -543,6 +564,12 @@ export default function Dashboard() {
       }
       if (results[2].status === "fulfilled") {
         setStorageStats(results[2].value as StorageStats);
+      }
+      if (results[3].status === "fulfilled") {
+        const toolsData = results[3].value;
+        if (toolsData.executions) {
+          setToolExecutions(toolsData.executions);
+        }
       }
 
       setLoading(false);
@@ -601,17 +628,34 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [projectPaths]);
 
-  const s: StatsResponse = stats ?? {
-    active_sessions: 0,
-    total_sessions: 0,
-    tools_executed: 0,
-    total_projects: 0,
-    success_rate: 100,
-    uptime_seconds: 0,
-    timestamp: "",
-    total_tokens_used: 0,
-    total_cost_usd: 0,
-  };
+  // Compute time-filtered stats from decisions (respects DateRangeFilter)
+  const filteredStats = useMemo(() => {
+    const sessionIds = new Set<string>();
+    let toolCount = 0;
+    let successCount = 0;
+    let totalTokens = 0;
+    let totalCost = 0;
+
+    for (const d of allDecisions) {
+      if (d.session_id) sessionIds.add(d.session_id);
+      toolCount += d.tool_calls?.length || 0;
+      if (d.outcome?.success) successCount++;
+      totalTokens += (d.tokens_input || 0) + (d.tokens_output || 0);
+      totalCost += d.cost_usd || 0;
+    }
+
+    const total = allDecisions.length;
+    const successRate = total > 0 ? (successCount / total) * 100 : 100;
+
+    return {
+      sessions: sessionIds.size,
+      tools: toolCount,
+      decisions: total,
+      successRate,
+      totalTokens,
+      totalCost,
+    };
+  }, [allDecisions]);
 
   if (loading) {
     return (
@@ -632,38 +676,38 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <MetricCard
           label="Sessions"
-          value={s.active_sessions}
-          sub={`${s.total_sessions} total`}
+          value={filteredStats.sessions}
+          sub={`${filteredStats.sessions} total`}
           icon={Cpu}
           color="text-success"
         />
         <MetricCard
           label="Tools"
-          value={toolExecutions.length || s.tools_executed}
+          value={filteredStats.tools}
           icon={Terminal}
           color="text-primary"
         />
         <MetricCard
           label="Decisions"
-          value={allDecisions.length}
+          value={filteredStats.decisions}
           icon={Zap}
           color="text-accent"
         />
         <MetricCard
           label="Success"
-          value={`${s.success_rate.toFixed(0)}%`}
+          value={`${filteredStats.successRate.toFixed(0)}%`}
           icon={Activity}
           color="text-success"
         />
         <MetricCard
           label="Tokens"
-          value={s.total_tokens_used > 1000 ? `${(s.total_tokens_used / 1000).toFixed(1)}k` : s.total_tokens_used}
+          value={filteredStats.totalTokens > 1000 ? `${(filteredStats.totalTokens / 1000).toFixed(1)}k` : filteredStats.totalTokens}
           icon={FileCode2}
           color="text-warning"
         />
         <MetricCard
           label="Cost"
-          value={`$${s.total_cost_usd.toFixed(2)}`}
+          value={`$${filteredStats.totalCost.toFixed(2)}`}
           icon={HardDrive}
           color="text-primary-light"
         />
@@ -682,7 +726,7 @@ export default function Dashboard() {
             <CheckCircle2 className="w-4 h-4 text-success" />
             Tool Execution
           </h3>
-          <ToolSuccessChart decisions={allDecisions} />
+          <ToolSuccessChart toolExecutions={toolExecutions} decisions={allDecisions} />
         </div>
       </div>
 
@@ -738,8 +782,8 @@ export default function Dashboard() {
             <div className="space-y-2 max-h-[280px] overflow-y-auto">
               {toolExecutions.slice(0, 10).map((t, i) => {
                 const ts = String(t.status);
-                const isOk = ts === "STATUS_SUCCESS" || ts === "2";
-                const isErr = ts === "STATUS_ERROR" || ts === "4";
+                const isOk = ts === "STATUS_SUCCESS" || ts === "3" || ts === "executed" || ts === "success";
+                const isErr = ts === "STATUS_ERROR" || ts === "4" || ts === "error";
                 return (
                   <div
                     key={t.id || i}

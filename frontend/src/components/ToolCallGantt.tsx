@@ -40,7 +40,7 @@ export default function ToolCallGantt({ tools, className }: ToolCallGanttProps) 
     <div className={clsx("space-y-1", className)}>
       {tools.map((tool, i) => {
         const s = String(tool.status);
-        const isSuccess = s === "STATUS_SUCCESS" || s === "2";
+        const isSuccess = s === "STATUS_SUCCESS" || s === "3";
         const isError = s === "STATUS_ERROR" || s === "4";
         const start = toMs(tool.timestamp);
         const duration = Math.max(tool.duration_ms || 0, 1);

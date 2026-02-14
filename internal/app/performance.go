@@ -403,6 +403,16 @@ func InitPerformanceMonitor() {
 	performanceMonitor = NewPerformanceMonitor()
 }
 
+// GetUptimeSeconds returns the uptime in seconds from the performance monitor
+func GetUptimeSeconds() int64 {
+	if performanceMonitor == nil {
+		return 0
+	}
+	performanceMonitor.mu.RLock()
+	defer performanceMonitor.mu.RUnlock()
+	return int64(time.Since(performanceMonitor.startTime).Seconds())
+}
+
 // RecordAPICall 記錄 API 呼叫效能
 func RecordAPICall(latency time.Duration, success bool, tokensUsed int, cost float64, chatID int64, errorType string) {
 	if performanceMonitor != nil {

@@ -253,7 +253,7 @@ func convertToProtoToolExecution(exec ToolExecution) *alicev1.ToolExecution {
 	switch exec.Status {
 	case "running":
 		status = alicev1.Status_STATUS_RUNNING
-	case "success":
+	case "success", "executed":
 		status = alicev1.Status_STATUS_SUCCESS
 	case "error":
 		status = alicev1.Status_STATUS_ERROR
@@ -559,6 +559,7 @@ func convertDecisionToFrontendJSON(decision DecisionLog) map[string]interface{} 
 		"duration_ms":    decision.DurationMs,
 		"tokens_input":   decision.TokensUsed.TotalInputTokens,
 		"tokens_output":  decision.TokensUsed.TotalOutputTokens,
+		"cost_usd":       decision.TokensUsed.TotalCostUSD,
 		"source":         decision.Source,
 	}
 
@@ -640,12 +641,8 @@ func (wi *WebInterface) handleDecisionsProto(w http.ResponseWriter, r *http.Requ
 		}
 
 		// 建立統計響應 — 使用前端相容的 JSON 格式
-		recentLimit := 10
-		if totalDecisions < recentLimit {
-			recentLimit = totalDecisions
-		}
-		recent := make([]interface{}, recentLimit)
-		for i := 0; i < recentLimit; i++ {
+		recent := make([]interface{}, totalDecisions)
+		for i := 0; i < totalDecisions; i++ {
 			recent[i] = convertDecisionToFrontendJSON(decisions[i])
 		}
 

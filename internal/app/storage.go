@@ -125,6 +125,13 @@ func (s *SQLiteStorage) execWithRetry(operation func() error) error {
 	return fmt.Errorf("database operation failed after %d retries", maxRetries)
 }
 
+// formatTimeForSQLite formats a time.Time for SQLite string comparison.
+// Timestamps are stored via time.Time.String() in local timezone (e.g. "2026-02-14 19:58:43 +0800 CST").
+// SQLite BETWEEN does lexicographic comparison, so query params must use matching local timezone format.
+func formatTimeForSQLite(t time.Time) string {
+	return t.Local().Format("2006-01-02 15:04:05")
+}
+
 // initTables 初始化資料庫表格
 func (s *SQLiteStorage) initTables() error {
 	// 啟用外鍵約束和 WAL 模式（提升並發性能）
@@ -314,12 +321,14 @@ func (s *SQLiteStorage) GetToolExecutions(limit int, offset int) ([]ToolExecutio
 
 // GetToolExecutionsByTimeRange 按時間範圍獲取工具執行記錄
 func (s *SQLiteStorage) GetToolExecutionsByTimeRange(start, end time.Time, limit int) ([]ToolExecution, error) {
+	startStr := formatTimeForSQLite(start)
+	endStr := formatTimeForSQLite(end)
 	rows, err := s.db.Query(`
 		SELECT timestamp, tool_name, input_json, status, duration_ms, chat_id, thread_id, error
 		FROM tool_executions
 		WHERE timestamp BETWEEN ? AND ?
 		ORDER BY timestamp DESC
-		LIMIT ?`, start, end, limit)
+		LIMIT ?`, startStr, endStr, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +420,8 @@ func (s *SQLiteStorage) GetDecisionLogs(limit int, offset int) ([]DecisionLog, e
 	rows, err := s.db.Query(`
 		SELECT timestamp, session_id, project_path, chat_id, thread_id, user_prompt,
 			   agent_response, tool_calls_json, context_json, outcome_json, duration_ms,
-			   tokens_input, tokens_output, COALESCE(thinking_content, '') as thinking_content,
+			   tokens_input, tokens_output, COALESCE(cost_usd, 0) as cost_usd,
+			   COALESCE(thinking_content, '') as thinking_content,
 			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch,
 			   COALESCE(source, 'telegram') as source
 		FROM decision_logs
@@ -427,16 +437,19 @@ func (s *SQLiteStorage) GetDecisionLogs(limit int, offset int) ([]DecisionLog, e
 
 // GetDecisionLogsByTimeRange 按時間範圍獲取決策記錄
 func (s *SQLiteStorage) GetDecisionLogsByTimeRange(start, end time.Time, limit int) ([]DecisionLog, error) {
+	startStr := formatTimeForSQLite(start)
+	endStr := formatTimeForSQLite(end)
 	rows, err := s.db.Query(`
 		SELECT timestamp, session_id, project_path, chat_id, thread_id, user_prompt,
 			   agent_response, tool_calls_json, context_json, outcome_json, duration_ms,
-			   tokens_input, tokens_output, COALESCE(thinking_content, '') as thinking_content,
+			   tokens_input, tokens_output, COALESCE(cost_usd, 0) as cost_usd,
+			   COALESCE(thinking_content, '') as thinking_content,
 			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch,
 			   COALESCE(source, 'telegram') as source
 		FROM decision_logs
 		WHERE timestamp BETWEEN ? AND ?
 		ORDER BY timestamp DESC
-		LIMIT ?`, start, end, limit)
+		LIMIT ?`, startStr, endStr, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -450,7 +463,8 @@ func (s *SQLiteStorage) GetDecisionLogsByProject(projectPath string, limit int) 
 	rows, err := s.db.Query(`
 		SELECT timestamp, session_id, project_path, chat_id, thread_id, user_prompt,
 			   agent_response, tool_calls_json, context_json, outcome_json, duration_ms,
-			   tokens_input, tokens_output, COALESCE(thinking_content, '') as thinking_content,
+			   tokens_input, tokens_output, COALESCE(cost_usd, 0) as cost_usd,
+			   COALESCE(thinking_content, '') as thinking_content,
 			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch,
 			   COALESCE(source, 'telegram') as source
 		FROM decision_logs
@@ -477,6 +491,7 @@ func (s *SQLiteStorage) scanDecisionLogs(rows *sql.Rows) ([]DecisionLog, error) 
 			&log.ChatID, &log.ThreadID, &log.UserPrompt, &log.AgentResponse,
 			&toolCallsJSON, &contextJSON, &outcomeJSON, &log.DurationMs,
 			&log.TokensUsed.TotalInputTokens, &log.TokensUsed.TotalOutputTokens,
+			&log.TokensUsed.TotalCostUSD,
 			&log.ThinkingContent, &gitCommitHash, &gitBranch, &log.Source)
 		if err != nil {
 			return nil, err
@@ -547,6 +562,8 @@ func (s *SQLiteStorage) GetPerformanceMetrics(limit int, offset int) ([]Performa
 
 // GetPerformanceMetricsByTimeRange 按時間範圍獲取效能指標
 func (s *SQLiteStorage) GetPerformanceMetricsByTimeRange(start, end time.Time, limit int) ([]PerformanceMetrics, error) {
+	startStr := formatTimeForSQLite(start)
+	endStr := formatTimeForSQLite(end)
 	rows, err := s.db.Query(`
 		SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
 			   tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
@@ -554,7 +571,7 @@ func (s *SQLiteStorage) GetPerformanceMetricsByTimeRange(start, end time.Time, l
 		FROM performance_metrics
 		WHERE timestamp BETWEEN ? AND ?
 		ORDER BY timestamp DESC
-		LIMIT ?`, start, end, limit)
+		LIMIT ?`, startStr, endStr, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -566,7 +583,7 @@ func (s *SQLiteStorage) GetPerformanceMetricsByTimeRange(start, end time.Time, l
 // GetPerformanceAnalytics 獲取效能分析數據
 func (s *SQLiteStorage) GetPerformanceAnalytics(hours int) (PerformanceAnalytics, error) {
 	var analytics PerformanceAnalytics
-	since := time.Now().Add(-time.Duration(hours) * time.Hour)
+	sinceStr := formatTimeForSQLite(time.Now().Add(-time.Duration(hours) * time.Hour))
 
 	// 基礎統計查詢
 	row := s.db.QueryRow(`
@@ -580,7 +597,7 @@ func (s *SQLiteStorage) GetPerformanceAnalytics(hours int) (PerformanceAnalytics
 			MAX(memory_usage) as peak_memory,
 			COUNT(*) / CAST(? as REAL) as requests_per_hour
 		FROM performance_metrics
-		WHERE timestamp >= ?`, hours, since)
+		WHERE timestamp >= ?`, hours, sinceStr)
 
 	var avgAPILatencyMs, avgToolExecutionMs float64
 	err := row.Scan(&analytics.TotalRequests, &analytics.SuccessRate,
@@ -605,7 +622,7 @@ func (s *SQLiteStorage) GetPerformanceAnalytics(hours int) (PerformanceAnalytics
 		SELECT error_type, COUNT(*) as count
 		FROM performance_metrics
 		WHERE timestamp >= ? AND error_type IS NOT NULL AND error_type != ''
-		GROUP BY error_type`, since)
+		GROUP BY error_type`, sinceStr)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -623,7 +640,7 @@ func (s *SQLiteStorage) GetPerformanceAnalytics(hours int) (PerformanceAnalytics
 		SELECT tool_execution_type, COUNT(*) as count
 		FROM performance_metrics
 		WHERE timestamp >= ? AND tool_execution_type IS NOT NULL AND tool_execution_type != ''
-		GROUP BY tool_execution_type`, since)
+		GROUP BY tool_execution_type`, sinceStr)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -700,13 +717,15 @@ func (s *SQLiteStorage) GetSecurityEvents(limit int, offset int) ([]SecurityEven
 
 // GetSecurityEventsByTimeRange 按時間範圍獲取安全事件
 func (s *SQLiteStorage) GetSecurityEventsByTimeRange(start, end time.Time, limit int) ([]SecurityEvent, error) {
+	startStr := formatTimeForSQLite(start)
+	endStr := formatTimeForSQLite(end)
 	rows, err := s.db.Query(`
 		SELECT event_id, timestamp, event_type, severity, description, user_id,
 			   ip_address, user_agent, details_json, mitigated
 		FROM security_events
 		WHERE timestamp BETWEEN ? AND ?
 		ORDER BY timestamp DESC
-		LIMIT ?`, start, end, limit)
+		LIMIT ?`, startStr, endStr, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -823,7 +842,7 @@ func (s *SQLiteStorage) GetSecurityEventsCount() (int64, error) {
 
 // CleanupOldData 清理舊資料
 func (s *SQLiteStorage) CleanupOldData(retentionDays int) error {
-	cutoffTime := time.Now().AddDate(0, 0, -retentionDays)
+	cutoffStr := formatTimeForSQLite(time.Now().AddDate(0, 0, -retentionDays))
 
 	// 清理各個表格的舊資料
 	tables := []string{
@@ -840,7 +859,7 @@ func (s *SQLiteStorage) CleanupOldData(retentionDays int) error {
 
 	var totalDeleted int64
 	for _, table := range tables {
-		result, err := tx.Exec(fmt.Sprintf("DELETE FROM %s WHERE timestamp < ?", table), cutoffTime)
+		result, err := tx.Exec(fmt.Sprintf("DELETE FROM %s WHERE timestamp < ?", table), cutoffStr)
 		if err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to cleanup %s: %w", table, err)
