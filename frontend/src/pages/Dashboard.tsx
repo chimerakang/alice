@@ -449,21 +449,21 @@ function ToolSuccessChart({ toolExecutions, decisions }: { toolExecutions: any[]
     const isError = (s: string) =>
       s === "STATUS_ERROR" || s === "4" || s === "error";
 
-    // First try to use toolExecutions data if available
+    // Extract tool calls from decisions (primary source — tool_executions table is not populated)
+    for (const d of decisions) {
+      for (const t of d.tool_calls || []) {
+        const s = String(t.status);
+        if (isSuccess(s)) success++;
+        else if (isError(s)) error++;
+      }
+    }
+
+    // Also count any live WebSocket tool executions not yet in decisions
     if (toolExecutions && toolExecutions.length > 0) {
       for (const t of toolExecutions) {
         const s = String(t.status);
         if (isSuccess(s)) success++;
         else if (isError(s)) error++;
-      }
-    } else {
-      // Fallback to decisions data
-      for (const d of decisions) {
-        for (const t of d.tool_calls || []) {
-          const s = String(t.status);
-          if (isSuccess(s)) success++;
-          else if (isError(s)) error++;
-        }
       }
     }
 
