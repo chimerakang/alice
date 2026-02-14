@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { api } from "@/lib/api";
 import type { SecurityStats, SecurityEvent } from "@/types/alice";
 import { useAppStore } from "@/stores/appStore";
@@ -129,43 +129,60 @@ export default function Security() {
     },
   ].filter(item => item.value > 0);
 
-  // Event trends over time (simulated hourly data for demo)
-  const eventTrends: EventTrend[] = Array.from({ length: 12 }, (_, i) => {
-    const hour = 12 - i;
-    const time = `${hour.toString().padStart(2, '0')}:00`;
-    return {
-      timestamp: time,
-      low: Math.floor(Math.random() * 5),
-      medium: Math.floor(Math.random() * 3),
-      high: Math.floor(Math.random() * 2),
-      critical: Math.random() > 0.8 ? 1 : 0,
-    };
-  }).reverse();
+  // Event trends over time (from real data)
+  const eventTrends: EventTrend[] = useMemo(() => {
+    if (allEvents.length === 0) return [];
 
-  // Sample PII detection records
-  const piiRecords: PIIRecord[] = [
-    {
-      id: "pii_001",
-      timestamp: "2026-02-12 13:30:15",
-      type: "Email",
-      location: "Chat message",
-      masked_value: "user@*****.com"
-    },
-    {
-      id: "pii_002",
-      timestamp: "2026-02-12 13:25:42",
-      type: "Credit Card",
-      location: "File content",
-      masked_value: "**** **** **** 1234"
-    },
-    {
-      id: "pii_003",
-      timestamp: "2026-02-12 13:20:18",
-      type: "SSN",
-      location: "Tool output",
-      masked_value: "***-**-1234"
-    },
-  ];
+    // Group events by hour
+    const hourBuckets: Record<string, EventTrend> = {};
+    const now = new Date();
+
+    // Initialize last 12 hours
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getTime() - i * 60 * 60 * 1000);
+      const key = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:00`;
+      hourBuckets[key] = { timestamp: key, low: 0, medium: 0, high: 0, critical: 0 };
+    }
+
+    allEvents.forEach(event => {
+      const d = new Date(event.timestamp);
+      if (isNaN(d.getTime())) return;
+      const key = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:00`;
+      if (hourBuckets[key]) {
+        const sev = getSeverityLevel(event.severity);
+        hourBuckets[key][sev as keyof Omit<EventTrend, 'timestamp'>]++;
+      }
+    });
+
+    return Object.values(hourBuckets);
+  }, [allEvents]);
+
+  // Extract real PII detection records from security events
+  const piiRecords: PIIRecord[] = useMemo(() => {
+    return allEvents
+      .filter(e => e.event_type?.includes("pii"))
+      .map((e, i) => {
+        // Extract PII type from description (e.g. "PII detected: Email")
+        const typeMatch = e.description?.match(/PII detected(?:\s+in\s+\w+\s+\w+)?:\s*(.+)/);
+        const piiType = typeMatch ? typeMatch[1] : e.event_type || "Unknown";
+
+        // Derive location from event_type
+        let location = "System";
+        if (e.event_type?.includes("telegram")) location = "Telegram message";
+        else if (e.event_type?.includes("caption")) location = "Photo caption";
+        else if (e.event_type?.includes("voice")) location = "Voice caption";
+        else if (e.event_type?.includes("batch")) location = "Batch upload";
+
+        return {
+          id: e.event_id || `pii_${i}`,
+          timestamp: e.timestamp ? new Date(e.timestamp).toLocaleString() : "N/A",
+          type: piiType,
+          location,
+          masked_value: "[redacted]",
+        };
+      })
+      .slice(0, 20); // Show last 20
+  }, [allEvents]);
 
   // Filter and sort events
   const filteredEvents = allEvents
@@ -205,7 +222,7 @@ export default function Security() {
         e.event_type,
         e.severity,
         e.description || "",
-        e.ip || ""
+        e.ip || (e.event_type?.includes("telegram") ? "Telegram" : "System")
       ])
     ].map(row => row.join(",")).join("\n");
 
@@ -534,7 +551,13 @@ export default function Security() {
                     {event.description || "No description"}
                   </td>
                   <td className="py-2 text-gray-400 font-mono">
-                    {event.ip || "Unknown"}
+                    {event.ip || (
+                      event.event_type?.includes("telegram") ? "Telegram" :
+                      event.event_type?.includes("rate_limit") ? "HTTP" :
+                      event.event_type?.includes("blocked") ? "HTTP" :
+                      event.event_type?.includes("pii") ? "Telegram" :
+                      "System"
+                    )}
                   </td>
                 </tr>
               ))}

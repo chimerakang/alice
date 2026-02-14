@@ -34,6 +34,11 @@ secrets.yaml
 .idea/
 *.swp
 
+# Claude Code local config
+.claude/
+**/CLAUDE.md
+!CLAUDE.md
+
 # OS
 .DS_Store
 

@@ -1,3 +1,155 @@
+<p align="center">
+  <h1 align="center">👁️ Alice Monitor</h1>
+  <p align="center"><strong>The Local-First AI Agent Observability & Security Platform.</strong></p>
+  <p align="center">Stop debugging your LLM agents with <code>print()</code>. Visualize reasoning, track API costs, and catch security leaks in real-time.</p>
+</p>
+
+<p align="center">
+  <a href="#-why-alice-monitor">Why?</a> &bull;
+  <a href="#-key-features">Features</a> &bull;
+  <a href="#-quick-start">Quick Start</a> &bull;
+  <a href="#-tech-stack">Tech Stack</a> &bull;
+  <a href="#-support--enterprise">Enterprise</a> &bull;
+  <a href="#-license">License</a>
+</p>
+
+---
+
+## 🚀 Why Alice Monitor?
+
+As AI agents move from experimental scripts to production systems, terminal logs are no longer enough. Alice Monitor acts as the **flight data recorder** for your AI agents.
+
+Built entirely in **Go**, it ships as a single, lightweight binary with a gorgeous **OLED dark-mode dashboard**. It's designed specifically for developers who care about **data privacy**, **cost control**, and **deep observability** — without sending sensitive data to third-party cloud platforms.
+
+### ✨ See it in action
+
+![Dashboard Overview](docs/screenshots/dashboard.png)
+
+---
+
+## 🔥 Key Features
+
+### 🔒 Enterprise-Grade Security & PII Redaction
+
+Don't leak your users' data to LLMs. Alice Monitor intercepts and **automatically masks Personally Identifiable Information** (PII) like emails, credit cards, and SSNs before they hit the LLM API, complete with a full security audit log.
+
+![Security & PII Masking](docs/screenshots/security.png)
+
+### 💰 Real-Time Cost & Token Tracking
+
+Prevent "infinite loop" API bankruptcies. Track token usage, estimate costs in real-time, and visualize performance bottlenecks across multiple agents and projects simultaneously.
+
+![Cost & Token Tracking](docs/screenshots/performance.png)
+
+### ⏪ Time-Travel Debugging (Timeline)
+
+Understand exactly *why* your agent made a decision. Alice tracks the entire Chain-of-Thought, showing precise tool execution times, pre-danger safety checkpoints, and Git commit associations.
+
+![Timeline Debugging](docs/screenshots/timeline.png)
+
+### ⚡ Zero-Dependency & Local-First
+
+No complex microservices. Run it locally alongside your codebase. Your logs, your prompts, and your data **stay on your machine**.
+
+---
+
+## 🛠️ Quick Start
+
+Getting started is as simple as running a single Go command.
+
+### Prerequisites
+
+- **Go 1.24+** installed
+- **Claude Code CLI** installed and authenticated:
+  ```bash
+  npm install -g @anthropic-ai/claude-code
+  claude auth
+  ```
+- A **Telegram Bot Token** from [@BotFather](https://t.me/BotFather)
+
+### Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/chimerakang/alice.git
+cd alice
+
+# Copy and edit config
+cp config.example.json config.json
+# Edit config.json with your Telegram token and settings
+
+# Build the bot
+go build -o alice ./cmd/alice
+
+# Start the bot
+./alice
+```
+
+### Launch the Dashboard
+
+The OLED dark-mode dashboard runs as a Docker container:
+
+```bash
+# Start the dashboard
+docker compose up -d dashboard
+
+# Open your browser
+open http://localhost:3939
+```
+
+> **Tip:** The bot runs natively on port `8082` (REST API + WebSocket). The dashboard at port `3939` is an nginx reverse proxy serving the React SPA and forwarding API calls to the bot.
+
+---
+
+## 💻 Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| **Backend** | Go (high-concurrency, WebSocket streaming, SQLite storage) |
+| **Frontend** | React + TypeScript + Vite (Tailwind CSS, OLED dark-mode) |
+| **Integration** | Telegram Bot API for real-time mobile alerts |
+| **Monitoring** | Optional Prometheus + Grafana stack |
+
+---
+
+## 🤝 Support & Enterprise
+
+Alice Monitor is open-source and free for personal and community use.
+
+### 🏢 Looking for Enterprise Features?
+
+If you are building commercial multi-tenant SaaS or deploying agents in strict compliance environments (Healthcare, FinTech), we offer a **Commercial License** and **Pro Features** including:
+
+| Tier | Price | Highlights |
+|------|-------|-----------|
+| **Community** | Free | Core monitoring, basic PII detection, single-user dashboard |
+| **Team** | $99/mo | Custom PII rules, Team RBAC, priority support (up to 20 users) |
+| **Enterprise** | $299/mo | Full SSO (SAML/OIDC), audit exports, SIEM integration, SLA |
+| **Custom** | Contact us | On-premise deployment, custom integrations, dedicated support |
+
+> Annual plans receive a 20% discount.
+
+📩 For enterprise inquiries, see our full [Commercialization Plan](docs/COMMERCIALIZATION.md) or contact us at <!-- TODO: Add contact email -->.
+
+---
+
+## 📄 License
+
+This project is dual-licensed:
+
+- **Open-source** — [AGPL-3.0](LICENSE) for personal, community, and open-source use
+- **Commercial** — A proprietary license for closed-source SaaS and commercial products
+
+> If you intend to use Alice Monitor as part of a closed-source commercial product or SaaS, a commercial license is required. See [docs/COMMERCIALIZATION.md](docs/COMMERCIALIZATION.md) for details.
+
+---
+
+<br>
+
+<h1 align="center">📖 繁體中文文件</h1>
+
+---
+
 # Alice — Claude Code Telegram Agent
 
 透過 Telegram 操控的 AI 程式開發助手。底層呼叫 Claude Code CLI，搭配 Claude Max 訂閱使用，無額外 token 費用。
@@ -94,7 +246,7 @@ cp config.example.json config.json
   "allowed_user_ids": [你的UserID],
 
   "enable_web_interface": true,
-  "web_port": "8081",
+  "web_port": "8082",
   "web_static_dir": "./web",
 
   "enable_persistence": true,
@@ -115,31 +267,31 @@ export ALLOWED_USER_IDS="123456789"
 ### 3. 執行
 
 ```bash
-# 直接跑
-go run .
+# Build
+go build -o alice ./cmd/alice
 
-# 或 build
-go build -o claude-tg-agent .
-./claude-tg-agent
+# 啟動 bot
+./alice
+
+# 啟動 Dashboard (Docker)
+docker compose up -d dashboard
+
+# 打開瀏覽器訪問
+open http://localhost:3939
 ```
 
 ### 4. 🌐 Web Dashboard 使用
 
-啟動後，Web Dashboard 將在配置的端口上運行（預設 8081）：
-
-```bash
-# 打開瀏覽器訪問
-http://localhost:8081
-```
+啟動後，Web Dashboard 在 `http://localhost:3939` 運行：
 
 #### 🎨 主要功能頁面
 
-| 頁面 | URL | 功能描述 |
-|------|-----|----------|
-| **主儀表板** | `/` | 系統概覽、快速操作 |
-| **Timeline 監控** | `/timeline.html` | 即時 AI 決策過程時間軸 |
-| **Terminal 模擬器** | `/terminal.html` | 彩色系統日誌顯示 |
-| **測試套件** | `/test-timeline.html` | 組件功能測試 |
+| 頁面 | 功能描述 |
+|------|----------|
+| **Dashboard** | 系統概覽、指標統計、成本追蹤 |
+| **Timeline** | 即時 AI 決策過程時間軸 |
+| **Security** | PII 檢測、安全審計日誌 |
+| **Performance** | 性能指標、回應時間分析 |
 
 #### 📊 REST API 端點
 
@@ -225,7 +377,7 @@ Bot 需要以下基本權限：
 
 直接傳送文字訊息就會啟動 Claude Code 來處理你的需求。
 
-### Forum Topics 支援 🆕
+### Forum Topics 支援
 
 在 Telegram 群組中開啟 Topics 功能，Alice 會為每個 Topic 維護獨立的：
 - 對話歷史
@@ -277,44 +429,6 @@ Bot: 我來分析 API 端點的效能...
 - 對話上下文和歷史
 - CLI session 和工作進度
 
-## 群組使用指南
-
-### 👥 團隊協作最佳實務
-
-**方案 1: 單一群組多 Topics**
-- 適合：小團隊（2-5人）處理相關專案
-- 設定：一個群組，多個 Topics 分別對應不同專案
-- 優點：集中管理、容易切換專案討論
-
-**方案 2: 多群組分離**
-- 適合：大團隊或機敏專案
-- 設定：每個主要專案建立獨立群組
-- 優點：更好的權限控制、避免干擾
-
-### 📋 常見使用情境
-
-**日常開發流程：**
-```
-1. 進入對應 Topic
-2. /status 查看目前專案狀態
-3. 直接描述需求：「幫我修復登入 bug」
-4. Alice 自動分析程式碼並提供解決方案
-5. /usage 查看本次開發的 token 用量
-```
-
-**專案交接：**
-```
-1. 新成員加入群組
-2. 在相關 Topic 中使用 /help 了解指令
-3. 使用 /project 確認專案目錄設定
-4. 開始協作開發
-```
-
-**故障排除：**
-- 如果 Bot 沒有回應，檢查是否在白名單中
-- 如果專案路徑錯誤，使用 `/project` 重新設定
-- 如果對話混亂，使用 `/reset` 清除歷史
-
 ## 模型選擇
 
 在 `config.json` 的 `model` 欄位或 `CLAUDE_MODEL` 環境變數中設定：
@@ -322,67 +436,3 @@ Bot: 我來分析 API 端點的效能...
 - `claude-sonnet-4-20250514` — 預設，性價比最好
 - `claude-opus-4-20250514` — 最強，複雜任務
 - `claude-haiku-4-5-20251001` — 最快，簡單任務
-
-## Docker 部署（需額外設定）
-
-```bash
-docker build -t claude-tg-agent .
-
-docker run -d \
-  -v $(pwd)/config.json:/app/config.json:ro \
-  -v /path/to/your/project:/project \
-  -v ~/.claude:/home/claude/.claude \
-  claude-tg-agent
-```
-
-注意：Docker 內的 Claude CLI 需要獨立登入認證。若主機認證存在 OS Keychain 中，需在容器內執行 `claude login` 完成認證。
-
-## 🚀 項目里程碑
-
-### ✅ 已完成功能 (v1.0)
-
-| 里程碑 | 狀態 | 描述 |
-|--------|------|------|
-| **Issue #2** | ✅ | AI Agent 透明度與決策日誌系統 |
-| **Issue #3** | ✅ | 多代理協調系統 (Code, Review, Test, Deploy, Security, Debug) |
-| **Issue #4** | ✅ | 性能監控與分析 (實時指標、記憶體追蹤、工具執行分析) |
-| **Issue #5** | ✅ | 安全與隱私增強 (速率限制、PII 檢測、審計日誌) |
-| **Issue #6** | ✅ | 部署與 DevOps 改進 (Docker、Kubernetes、CI/CD) |
-| **Issue #10** | ✅ | **檢查點與狀態快照系統** |
-
-### 📸 Issue #10 亮點功能
-
-**Checkpoint & State Snapshot System** — 企業級狀態管理
-- 🔄 **自動檢查點** - 危險操作前自動建立快照
-- 💾 **SQLite 持久化** - 完整檢查點數據存儲 (794 行核心代碼)
-- 🎯 **智能檢測** - 自動識別 file_write、rm 等危險命令
-- 🌐 **REST API** - 完整 CRUD 操作支援
-- ⚡ **實時監控** - WebSocket 即時事件廣播
-- 📊 **Timeline 視覺化** - 1200+ 行交互式時間軸組件
-- 💻 **Terminal 模擬器** - 800+ 行彩色終端組件
-- 🎨 **OLED 優化主題** - 專業級深黑 UI 設計
-
-### 🎯 技術成就
-
-- **📈 代碼規模**: 5400+ 行新增代碼 (20 個新檔案)
-- **🧪 測試覆蓋率**: 100% 核心功能測試
-- **⚡ 性能優化**: < 50ms 事件渲染延遲
-- **🔒 安全級別**: 企業級安全審計通過
-- **📱 響應式設計**: 支援桌面/平板/手機全平台
-- **🌐 多接口支援**: Telegram + Web Dashboard + REST API
-
-### 🔮 未來規劃
-
-- [ ] **更多 AI 模型支援** - GPT-4, Gemini 整合
-- [ ] **插件系統** - 第三方工具擴展
-- [ ] **高級分析** - AI 決策模式分析
-- [ ] **企業功能** - SSO、RBAC、高可用部署
-- [ ] **移動 App** - iOS/Android 原生應用
-
----
-
-Alice AI Agent 現已發展為功能完整的企業級 AI 開發助手平台，具備專業的監控、狀態管理和多接口支援能力。🎉
-
-## License
-
-MIT

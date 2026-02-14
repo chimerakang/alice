@@ -977,12 +977,60 @@ func (wi *WebInterface) handleSecurityEventsProto(w http.ResponseWriter, r *http
 func (wi *WebInterface) handleSecurityStatsProto(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+
+		totalEvents := 0
+		blockedAttempts := 0
+		piiDetections := 0
+		threatLevel := "low"
+
+		// Get real stats from security manager
+		if globalSecurityManager != nil {
+			stats := globalSecurityManager.GetSecurityStats()
+			if te, ok := stats["total_events"].(int); ok {
+				totalEvents = te
+			}
+			// Count blocked attempts and PII detections from event types
+			if eventTypes, ok := stats["event_types"].(map[string]int); ok {
+				for eventType, count := range eventTypes {
+					if eventType == "rate_limit_exceeded" || eventType == "blocked_ip_access" || eventType == "unauthorized_ip_access" {
+						blockedAttempts += count
+					}
+					if len(eventType) >= 3 && eventType[:3] == "pii" {
+						piiDetections += count
+					}
+				}
+			}
+			// Determine threat level from severities
+			if severities, ok := stats["severities"].(map[string]int); ok {
+				if severities["critical"] > 0 {
+					threatLevel = "critical"
+				} else if severities["high"] > 5 {
+					threatLevel = "high"
+				} else if severities["medium"] > 10 {
+					threatLevel = "medium"
+				}
+			}
+		}
+
+		// Also check database for total count if available
+		if globalStorage != nil {
+			if dbEvents, err := globalStorage.GetSecurityEvents(1, 0); err == nil && len(dbEvents) > 0 {
+				// Use count from DB if larger (memory may have been trimmed)
+				if countRow := globalStorage.(*SQLiteStorage).db.QueryRow("SELECT COUNT(*) FROM security_events"); countRow != nil {
+					var dbCount int
+					if err := countRow.Scan(&dbCount); err == nil && dbCount > totalEvents {
+						totalEvents = dbCount
+					}
+				}
+			}
+		}
+
 		response := map[string]interface{}{
-			"total_events":      0,
-			"threat_level":      "low",
-			"blocked_attempts":  0,
-			"pii_detections":    0,
-			"timestamp":         time.Now(),
+			"total_events":     totalEvents,
+			"threat_level":     threatLevel,
+			"blocked_attempts": blockedAttempts,
+			"pii_detections":   piiDetections,
+			"timestamp":        time.Now(),
 		}
 		writeProtoResponse(w, response)
 	})(w, r)
