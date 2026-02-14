@@ -1,0 +1,219 @@
+name: Sync MASTER_TASKS.md
+
+on:
+  issues:
+    types: [opened, edited, closed, reopened, labeled, unlabeled, milestoned, demilestoned, deleted]
+  milestone:
+    types: [created, edited, closed, deleted]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: read
+
+jobs:
+  sync:
+    name: Generate MASTER_TASKS.md from Issues
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: main
+
+    - name: Generate MASTER_TASKS.md
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        set -euo pipefail
+
+        REPO="${{ github.repository }}"
+        OUTPUT="docs/MASTER_TASKS.md"
+        TIMESTAMP=$(TZ='Asia/Taipei' date '+%Y-%m-%d %I:%M %p')
+
+        # Fetch all milestones
+        MILESTONES=$(gh api "repos/${REPO}/milestones?state=all&sort=title&direction=asc&per_page=100" 2>/dev/null || echo "[]")
+        MS_COUNT=$(echo "$MILESTONES" | jq 'length')
+
+        if [ "$MS_COUNT" -eq 0 ]; then
+          echo "No milestones found, skipping generation"
+          exit 0
+        fi
+
+        # Get repo description
+        REPO_DESC=$(gh repo view --json description -q '.description // ""')
+        REPO_NAME=$(gh repo view --json name -q '.name')
+
+        # Start generating
+        {
+          echo "# ${REPO_NAME} - Master Tasks"
+          echo ""
+          echo "> ${REPO_DESC}"
+          echo "> Last updated: ${TIMESTAMP}"
+          echo "> Auto-generated from GitHub Issues — do not edit manually."
+          echo ""
+          echo "## Status Legend"
+          echo ""
+          echo "| Status | Label |"
+          echo "|--------|-------|"
+          echo "| 📋 | 規劃中 |"
+          echo "| 🔄 | 開發中 |"
+          echo "| 🧪 | 測試中 |"
+          echo "| ✅ | 已完成 |"
+          echo "| ⏸️ | 暫停 |"
+          echo "| ❌ | 已取消 |"
+          echo ""
+          echo "## Phase Overview"
+          echo ""
+          echo "| Phase | Description | Progress | Status |"
+          echo "|-------|-------------|----------|--------|"
+
+          # Overview table
+          echo "$MILESTONES" | jq -c '.[]' | while IFS= read -r ms; do
+            title=$(echo "$ms" | jq -r '.title')
+            desc=$(echo "$ms" | jq -r '.description // ""' | head -1 | cut -c1-60)
+            open=$(echo "$ms" | jq -r '.open_issues')
+            closed=$(echo "$ms" | jq -r '.closed_issues')
+            total=$((open + closed))
+
+            if [ $total -gt 0 ]; then
+              progress=$((closed * 100 / total))
+            else
+              progress=0
+            fi
+
+            if [ $progress -eq 100 ]; then
+              status="✅"
+            elif [ $progress -gt 0 ]; then
+              status="🔄"
+            else
+              status="📋"
+            fi
+
+            echo "| ${title} | ${desc} | ${progress}% | ${status} |"
+          done
+
+          echo ""
+          echo "---"
+          echo ""
+
+          # Detailed sections
+          echo "$MILESTONES" | jq -c '.[]' | while IFS= read -r ms; do
+            ms_num=$(echo "$ms" | jq -r '.number')
+            ms_title=$(echo "$ms" | jq -r '.title')
+            open=$(echo "$ms" | jq -r '.open_issues')
+            closed=$(echo "$ms" | jq -r '.closed_issues')
+            total=$((open + closed))
+
+            if [ $total -gt 0 ]; then
+              progress=$((closed * 100 / total))
+            else
+              progress=0
+            fi
+
+            if [ $progress -eq 100 ]; then
+              status="✅"
+            elif [ $progress -gt 0 ]; then
+              status="🔄"
+            else
+              status="📋"
+            fi
+
+            echo "## ${ms_title} (${status} ${progress}%)"
+            echo ""
+            echo "| # | Task | Issue | Status |"
+            echo "|---|------|-------|--------|"
+
+            # Extract phase prefix for task IDs
+            phase_prefix=$(echo "$ms_title" | grep -oE '^P[0-9]+(\.[0-9]+)?' || echo "")
+            task_idx=0
+
+            # Fetch issues for this milestone
+            gh api "repos/${REPO}/issues?milestone=${ms_num}&state=all&sort=created&direction=asc&per_page=100" 2>/dev/null | jq -c '.[]' | while IFS= read -r issue; do
+              task_idx=$((task_idx + 1))
+              i_num=$(echo "$issue" | jq -r '.number')
+              i_title=$(echo "$issue" | jq -r '.title' | sed 's/|/｜/g')
+              i_state=$(echo "$issue" | jq -r '.state')
+              i_url=$(echo "$issue" | jq -r '.html_url')
+              i_labels=$(echo "$issue" | jq -r '[.labels[].name] | join(",")')
+
+              # Status emoji
+              if [ "$i_state" = "closed" ]; then
+                emoji="✅"
+              elif echo "$i_labels" | grep -qi "testing"; then
+                emoji="🧪"
+              elif echo "$i_labels" | grep -qi "paused"; then
+                emoji="⏸️"
+              elif echo "$i_labels" | grep -qi "planning"; then
+                emoji="📋"
+              else
+                emoji="🔄"
+              fi
+
+              task_id="${phase_prefix:+${phase_prefix}.}${task_idx}"
+              echo "| ${task_id} | **${i_title}** | [#${i_num}](${i_url}) | ${emoji} |"
+
+              # Parse task list from body
+              i_body=$(echo "$issue" | jq -r '.body // ""')
+              if [ -n "$i_body" ]; then
+                echo "$i_body" | grep -E '^\s*- \[([ xX])\]' | while IFS= read -r line; do
+                  task_text=$(echo "$line" | sed 's/^\s*- \[[ xX]\]\s*//' | sed 's/|/｜/g')
+                  if echo "$line" | grep -qE '\[[xX]\]'; then
+                    echo "| | — ${task_text} ✅ | | ✅ |"
+                  else
+                    echo "| | — ${task_text} | | 📋 |"
+                  fi
+                done
+              fi
+
+              # Completion note
+              if [ "$i_state" = "closed" ]; then
+                closed_at=$(echo "$issue" | jq -r '.closed_at // ""' | cut -c1-10)
+                if [ -n "$closed_at" ]; then
+                  echo "| | — **🎉 Issue #${i_num} 已完成** (${closed_at}) | | ✅ |"
+                fi
+              fi
+            done
+
+            echo ""
+          done
+
+          # Issue tracker section
+          echo "---"
+          echo ""
+          echo "## Issue Tracker"
+          echo ""
+          echo "| Issue | Title | Phase | Status |"
+          echo "|-------|-------|-------|--------|"
+
+          gh issue list --state all --limit 200 --json number,title,state,milestone,labels 2>/dev/null | jq -c '.[] | sort_by(.number)[]' 2>/dev/null | while IFS= read -r issue; do
+            i_num=$(echo "$issue" | jq -r '.number')
+            i_title=$(echo "$issue" | jq -r '.title' | sed 's/|/｜/g')
+            i_state=$(echo "$issue" | jq -r '.state')
+            i_ms=$(echo "$issue" | jq -r '.milestone.title // "—"')
+
+            if [ "$i_state" = "CLOSED" ] || [ "$i_state" = "closed" ]; then
+              state_text="✅ Closed"
+            else
+              state_text="🔄 Open"
+            fi
+
+            echo "| [#${i_num}](https://github.com/${REPO}/issues/${i_num}) | ${i_title} | ${i_ms} | ${state_text} |"
+          done
+
+        } > "$OUTPUT"
+
+        echo "Generated $OUTPUT with $MS_COUNT milestones"
+
+    - name: Commit and push
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git add docs/MASTER_TASKS.md
+        if git diff --staged --quiet; then
+          echo "No changes to commit"
+        else
+          git commit -m "📋 Auto-sync MASTER_TASKS.md from GitHub Issues"
+          git push
+        fi

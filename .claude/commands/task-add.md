@@ -1,40 +1,78 @@
 ---
-description: Add a new project or task to tracking (e.g., /task-add NEW-PROJECT)
-argument-hint: <project-code> [task-description]
-allowed-tools: Read, Grep, Glob, Write, Edit
+description: Create a new GitHub Issue as a task (e.g., /task-add P13 新功能描述)
+argument-hint: <phase> <title> [--body <description>]
+allowed-tools: Bash, Read
 ---
 
-# Task Add - Add Project or Task
+# Task Add — Create GitHub Issue
 
 ## Task
 
-Add a new item to task tracking: **$ARGUMENTS**
+Create a new GitHub Issue and assign to a milestone: **$ARGUMENTS**
 
 ## Steps
 
-### 1. Read Configuration
+### 1. Parse Arguments
 
-Read `.tasks/config.yaml` for status definitions and valid status keys.
+Parse `$ARGUMENTS` as: `<phase> <title> [--body <description>]`
 
-### 2. Determine Action
+- Phase: milestone name prefix (e.g., "P13", "P8.5")
+- Title: issue title
+- Body (optional): detailed description
 
-If `$ARGUMENTS` is a new project code (no matching file in `.tasks/projects/`):
-- Create a new project YAML file at `.tasks/projects/<code-lowercase>.yaml`
-- Ask user for: name, description, status, estimated hours
-- Use the ProjectSchema format:
-  ```yaml
-  code: NEW-CODE
-  name: "Project Name"
-  status: planning
-  progress: 0
-  description: "What this project does"
-  ```
+If only a title is given without a phase, ask the user which milestone to assign it to.
 
-If matching an existing project:
-- Read the existing YAML
-- Add a new phase or task to it
-- Save the updated YAML
+### 2. Detect Repository
 
-### 3. Remind to Regenerate
+```bash
+gh repo view --json nameWithOwner -q .nameWithOwner
+```
 
-After changes, tell user to run `npx devtask generate` to update MASTER_TASKS.md.
+### 3. Find Milestone
+
+Look up the milestone matching the phase prefix:
+
+```bash
+gh api "repos/{owner}/{repo}/milestones?state=all&per_page=100" \
+  --jq '.[] | select(.title | startswith("P13"))'
+```
+
+If no matching milestone exists, ask the user if they want to create one:
+```bash
+gh api "repos/{owner}/{repo}/milestones" -X POST \
+  -f title="P14 - New Phase" -f description="Phase description"
+```
+
+### 4. Create Issue
+
+```bash
+gh issue create \
+  --title "{title}" \
+  --body "{body_with_task_list}" \
+  --milestone "{milestone_title}" \
+  --label "enhancement"
+```
+
+If the user provides sub-tasks, format the body with a task list:
+```markdown
+## Tasks
+
+- [ ] Sub-task 1
+- [ ] Sub-task 2
+- [ ] Sub-task 3
+```
+
+### 5. Confirm and Suggest
+
+After creation:
+- Show the issue URL
+- Suggest running `/task-sync` to update MASTER_TASKS.md
+- Mention `/task-status` to update progress later
+
+### 6. Label Convention
+
+Apply appropriate labels based on context:
+- `enhancement` — new feature
+- `bug` — bug fix
+- `documentation` — docs work
+- Priority labels: `P0` (highest), `P1` (high), `P2` (medium)

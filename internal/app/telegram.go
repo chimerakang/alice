@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -1178,21 +1179,105 @@ func (t *TelegramBot) sendTelegram(method string, params map[string]interface{})
 
 // handleTasks 處理 /tasks 命令，顯示未完成的工作清單
 func (t *TelegramBot) handleTasks(key chatKey) {
-	// 獲取專案根目錄
 	agent := t.getAgent(key)
 	projectDir := agent.ProjectDir()
+	projectName := filepath.Base(strings.TrimRight(projectDir, "/"))
 
-	// MASTER_TASKS.md 檔案路徑
+	// 嘗試從 GitHub Issues API 取得任務（優先）
+	repo, err := detectGitHubRepo(projectDir)
+	if err == nil {
+		milestones, fetchErr := fetchGitHubMilestones(repo)
+		if fetchErr == nil && len(milestones) > 0 {
+			t.handleTasksFromGitHub(key, projectName, repo, milestones)
+			return
+		}
+	}
+
+	// Fallback: 從 MASTER_TASKS.md 解析
+	t.handleTasksFromFile(key, projectDir, projectName)
+}
+
+// handleTasksFromGitHub 從 GitHub Issues + Milestones 顯示任務進度
+func (t *TelegramBot) handleTasksFromGitHub(key chatKey, projectName, repo string, milestones []ghMilestone) {
+	var response strings.Builder
+	response.WriteString(fmt.Sprintf("📊 *%s 專案進度*\n", projectName))
+	response.WriteString(fmt.Sprintf("_(via GitHub Issues: %s)_\n\n", repo))
+
+	var totalOpen, totalClosed int
+	var activePhases []string
+
+	for _, ms := range milestones {
+		total := ms.OpenIssues + ms.ClosedIssues
+		progress := 0
+		if total > 0 {
+			progress = ms.ClosedIssues * 100 / total
+		}
+		totalOpen += ms.OpenIssues
+		totalClosed += ms.ClosedIssues
+
+		status := "📋"
+		if total == 0 {
+			status = "—"
+		} else if progress == 100 {
+			status = "✅"
+		} else if progress > 0 {
+			status = "🔄"
+		}
+
+		if ms.OpenIssues > 0 {
+			activePhases = append(activePhases,
+				fmt.Sprintf("*%s* (%d%%)\n  📋 %d open / ✅ %d closed",
+					ms.Title, progress, ms.OpenIssues, ms.ClosedIssues))
+		} else if total > 0 {
+			// 已完成的 phase 簡短顯示
+		} else {
+			// 空 phase
+		}
+
+		_ = status // used in full display mode
+	}
+
+	totalAll := totalOpen + totalClosed
+	completedPhases := 0
+	for _, ms := range milestones {
+		total := ms.OpenIssues + ms.ClosedIssues
+		if total > 0 && ms.OpenIssues == 0 {
+			completedPhases++
+		}
+	}
+
+	if totalOpen == 0 {
+		response.WriteString(fmt.Sprintf("🎉 所有階段已完成！\n\n"))
+		response.WriteString(fmt.Sprintf("✅ %d 個階段 / %d 個 Issues 全部完成\n\n", completedPhases, totalClosed))
+		response.WriteString("📊 階段摘要:\n")
+		for _, ms := range milestones {
+			total := ms.OpenIssues + ms.ClosedIssues
+			if total > 0 {
+				response.WriteString(fmt.Sprintf("  ✅ %s (%d issues)\n", ms.Title, total))
+			}
+		}
+	} else {
+		response.WriteString(fmt.Sprintf("📋 Open: %d  ✅ Closed: %d  Total: %d\n\n", totalOpen, totalClosed, totalAll))
+		for _, ph := range activePhases {
+			response.WriteString(ph + "\n\n")
+		}
+		if completedPhases > 0 {
+			response.WriteString(fmt.Sprintf("✅ 另有 %d 個階段已完成\n", completedPhases))
+		}
+	}
+
+	t.sendMarkdown(key, response.String())
+}
+
+// handleTasksFromFile 從 MASTER_TASKS.md 解析任務（fallback）
+func (t *TelegramBot) handleTasksFromFile(key chatKey, projectDir, projectName string) {
 	tasksFile := filepath.Join(projectDir, "docs", "MASTER_TASKS.md")
-
-	// 解析 MASTER_TASKS.md
 	phases, err := t.parseMasterTasks(tasksFile)
 	if err != nil {
-		t.send(key, fmt.Sprintf("❌ 無法讀取任務清單: %v", err))
+		t.send(key, fmt.Sprintf("❌ 無法讀取任務清單: %v\n\n💡 請先執行 /task-init 設定 GitHub Milestones", err))
 		return
 	}
 
-	// 統計未完成任務
 	var pendingTasks []string
 	var totalPendingCount int
 
@@ -1212,14 +1297,12 @@ func (t *TelegramBot) handleTasks(key chatKey) {
 				case "🧪":
 					taskStatus = "🧪 測試中"
 				default:
-					continue // 跳過已完成的任務
+					continue
 				}
-
 				taskLine := fmt.Sprintf("  %s %s", taskStatus, task.Description)
 				if task.IssueLink != "" {
 					taskLine += fmt.Sprintf(" %s", task.IssueLink)
 				}
-
 				phaseTasks = append(phaseTasks, taskLine)
 				totalPendingCount++
 			}
@@ -1227,40 +1310,111 @@ func (t *TelegramBot) handleTasks(key chatKey) {
 			if len(phaseTasks) > 0 {
 				pendingTasks = append(pendingTasks, phaseHeader)
 				pendingTasks = append(pendingTasks, phaseTasks...)
-				pendingTasks = append(pendingTasks, "") // 空行分隔
+				pendingTasks = append(pendingTasks, "")
 			}
 		}
 	}
 
-	// 取得專案名稱
-	projectName := filepath.Base(strings.TrimRight(projectDir, "/"))
-
-	// 組裝回應訊息
 	var response string
 	if totalPendingCount == 0 {
-		// 從解析結果統計完成階段
 		completedPhases := 0
 		for _, phase := range phases {
 			if phase.Progress >= 100 {
 				completedPhases++
 			}
 		}
-
 		response = fmt.Sprintf("🎉 *%s - 專案完成！*\n\n", projectName)
 		response += fmt.Sprintf("✅ 所有 %d 個開發階段已 100%% 完成\n\n", completedPhases)
 		response += "📊 完成項目摘要:\n"
 		for _, phase := range phases {
 			response += fmt.Sprintf("• %s %s\n", phase.Name, phase.Status)
 		}
-		response += fmt.Sprintf("\n📚 查看完整任務詳情: `docs/MASTER_TASKS.md`")
+		response += "\n📚 查看完整任務詳情: `docs/MASTER_TASKS.md`"
 	} else {
-		response = fmt.Sprintf("📋 *%s 待辦清單*\n\n", projectName)
+		response = fmt.Sprintf("📋 *%s 待辦清單* _(from MD)_\n\n", projectName)
 		response += fmt.Sprintf("📊 總計: %d 個待辦任務\n\n", totalPendingCount)
 		response += strings.Join(pendingTasks, "\n")
-		response += "\n💡 使用對應的 GitHub Issue 連結查看詳細資訊"
+		response += "\n💡 使用 /task-init 設定 GitHub Milestones 以啟用 Issues 同步"
 	}
 
 	t.sendMarkdown(key, response)
+}
+
+// --- GitHub API helpers ---
+
+// ghMilestone represents a GitHub milestone
+type ghMilestone struct {
+	Number       int    `json:"number"`
+	Title        string `json:"title"`
+	Description  string `json:"description"`
+	State        string `json:"state"`
+	OpenIssues   int    `json:"open_issues"`
+	ClosedIssues int    `json:"closed_issues"`
+}
+
+// detectGitHubRepo extracts "owner/repo" from git remote origin URL
+func detectGitHubRepo(projectDir string) (string, error) {
+	cmd := exec.Command("git", "remote", "get-url", "origin")
+	cmd.Dir = projectDir
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("not a git repo or no remote: %w", err)
+	}
+
+	remote := strings.TrimSpace(string(output))
+
+	// git@github.com:owner/repo.git
+	if strings.HasPrefix(remote, "git@github.com:") {
+		repo := strings.TrimPrefix(remote, "git@github.com:")
+		repo = strings.TrimSuffix(repo, ".git")
+		return repo, nil
+	}
+
+	// https://github.com/owner/repo.git
+	if strings.Contains(remote, "github.com/") {
+		idx := strings.Index(remote, "github.com/")
+		repo := remote[idx+len("github.com/"):]
+		repo = strings.TrimSuffix(repo, ".git")
+		return repo, nil
+	}
+
+	return "", fmt.Errorf("not a GitHub repo: %s", remote)
+}
+
+// fetchGitHubMilestones queries GitHub API for all milestones
+func fetchGitHubMilestones(repo string) ([]ghMilestone, error) {
+	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/milestones?state=all&sort=title&direction=asc&per_page=100", repo)
+
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "alice-bot")
+
+	// 使用 GITHUB_TOKEN 避免 rate limit（可選）
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub API error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("GitHub API %d: %s", resp.StatusCode, string(body))
+	}
+
+	var milestones []ghMilestone
+	if err := json.NewDecoder(resp.Body).Decode(&milestones); err != nil {
+		return nil, fmt.Errorf("JSON decode error: %w", err)
+	}
+
+	return milestones, nil
 }
 
 // TaskInfo 表示單個任務資訊

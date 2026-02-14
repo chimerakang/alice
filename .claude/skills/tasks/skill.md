@@ -1,10 +1,30 @@
 ---
 name: tasks
-description: Display and manage development task progress. Activated when user says "tasks", "progress", "todo", "what to do", "next step", "任務", "進度", "待辦".
-allowed-tools: Read, Grep, Glob
+description: Display and manage development task progress via GitHub Issues. Activated when user says "tasks", "progress", "todo", "what to do", "next step", "任務", "進度", "待辦".
+allowed-tools: Bash, Read, Grep, Glob, Write
 ---
 
-# Tasks - Task Tracking Assistant
+# Tasks - GitHub Issues Task Tracking
+
+## Overview
+
+This skill manages project tasks using **GitHub Issues as the single source of truth**.
+
+**Architecture:**
+```
+GitHub Issues + Milestones (source of truth)
+       ↕ gh CLI
+Claude Code Skills/Commands (interactive)
+       ↓
+docs/MASTER_TASKS.md (auto-generated, read-only)
+```
+
+**Conventions:**
+- **Milestones** = Phases (e.g., "P1 - Core Backend", "P13 - Future Enhancements")
+- **Issues** = Tasks within a phase (assigned to milestone)
+- **Task lists in Issue body** = Sub-tasks (`- [x] done`, `- [ ] todo`)
+- **Issue state** = open (🔄 進行中) / closed (✅ 已完成)
+- **Labels** for refinement: `planning` (📋), `testing` (🧪), `paused` (⏸️)
 
 ## When to Use
 
@@ -12,45 +32,61 @@ When the user:
 - Says "show tasks", "task progress", "current status"
 - Says "what to do", "next step", "todo items"
 - Says "查看任務", "任務進度", "要做什麼", "下一步", "待辦"
-- Runs `/tasks` or `/tasks <project-code>`
+- Runs `/tasks` or `/tasks <milestone-name>`
 
 ## Execution Steps
 
-### 1. Load Configuration
+### 1. Detect Repository
 
-Read `.tasks/config.yaml` to discover:
-- Project name and settings
-- Status definitions and their emojis
-- Language preference
+Run `gh repo view --json nameWithOwner -q .nameWithOwner` in the project directory to auto-detect the GitHub repo. No configuration needed.
 
-### 2. Discover All Projects
+### 2. Fetch Project Status
 
-Scan `.tasks/projects/*.yaml` to find all project definitions.
+Use `gh` CLI to query milestones and issues:
 
-For each project YAML file, extract:
-- `code`: Project code (e.g., BIL-SVC)
-- `name`: Project name
-- `status`: Current status key (must match config statuses)
-- `progress`: Completion percentage (0-100)
-- `phases`: Phase breakdown if available
+```bash
+# List all milestones (= phases) with progress
+gh api "repos/{owner}/{repo}/milestones?state=all&sort=title&direction=asc&per_page=100"
+
+# List issues for a specific milestone
+gh issue list --milestone "P13 - Future Enhancements" --state all --json number,title,state,labels,body
+```
 
 ### 3. Display Status Summary
 
-Group projects by status:
-- **Active**: statuses listed in `active_statuses` config
-- **Completed**: statuses listed in `completed_statuses` config
-- **Cancelled**: statuses listed in `cancelled_statuses` config
+Show all milestones as phases with progress:
 
-### 4. If User Specifies a Project Code
+For each milestone, calculate:
+- **Progress** = closed_issues / (open_issues + closed_issues) × 100%
+- **Status emoji**: 100% → ✅, >0% → 🔄, 0% → 📋
 
-When a specific project code is mentioned:
-1. Read `.tasks/projects/<code-lowercase>.yaml`
-2. Display phase-by-phase breakdown with task statuses
-3. If `detail_link` field exists, also read that file for full details
-4. Show time estimates vs actuals if available
+Format as a table:
+```
+📊 專案進度
+
+| Phase | Progress | Status |
+|-------|----------|--------|
+| P1 - Core Backend | 100% | ✅ |
+| P13 - Future | 0% | 📋 |
+```
+
+### 4. If User Specifies a Phase
+
+When a specific phase/milestone is mentioned:
+1. Fetch issues for that milestone: `gh issue list --milestone "<name>" --state all --json number,title,state,labels,body`
+2. Display each issue as a task with status
+3. Parse task lists from issue body (`- [x]` / `- [ ]`) as sub-tasks
+4. Show completion details
 
 ### 5. Suggest Next Steps
 
-Based on project statuses, suggest:
-- Projects needing attention (in_progress with low progress)
-- Next logical tasks to work on
+Based on open issues:
+- Highlight issues with `P0` or `P1` labels (high priority)
+- Suggest next logical tasks to work on
+- Flag stale issues (open but no recent activity)
+
+## Related Commands
+
+- `/task-sync` — Generate MASTER_TASKS.md from GitHub Issues
+- `/task-add` — Create a new GitHub Issue
+- `/task-status` — Update issue state (close, label, etc.)
