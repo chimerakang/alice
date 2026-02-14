@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // chatKey 用於識別獨立對話（支援 Forum Topics）
@@ -64,6 +66,15 @@ type Document struct {
 	FileSize     int    `json:"file_size,omitempty"`
 }
 
+// TelegramMessage represents a message to be sent through the rate-limited queue
+type TelegramMessage struct {
+	Method    string                 `json:"method"`
+	Params    map[string]interface{} `json:"params"`
+	Retries   int                    `json:"retries"`
+	MaxRetries int                   `json:"max_retries"`
+	CreatedAt time.Time             `json:"created_at"`
+}
+
 type TelegramBot struct {
 	agents        map[chatKey]*Agent // 每個 chat/topic 一個 agent
 	agentsMu      sync.RWMutex       // 保護 agents map 的讀寫鎖
@@ -75,6 +86,12 @@ type TelegramBot struct {
 	mediaBatches  map[string]*MediaBatch // mediaGroupID 或 chatKey 作為 key
 	batchMu       sync.RWMutex           // 保護 mediaBatches map
 	batchTimeout  time.Duration          // 批次收集超時時間
+
+	// Rate limiting and message queue
+	messageQueue  chan *TelegramMessage  // 訊息佇列
+	queueCtx      context.Context        // 佇列上下文
+	queueCancel   context.CancelFunc     // 佇列取消函數
+	rateLimiter   *time.Ticker          // 速率限制器
 }
 
 func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
@@ -102,6 +119,9 @@ func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
 
 	log.Printf("[telegram] bot authorized: @%s", me.Result.Username)
 
+	// Initialize context for message queue
+	queueCtx, queueCancel := context.WithCancel(context.Background())
+
 	bot := &TelegramBot{
 		agents:       make(map[chatKey]*Agent),
 		client:       client,
@@ -109,7 +129,17 @@ func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
 		config:       config,
 		mediaBatches: make(map[string]*MediaBatch),
 		batchTimeout: 5 * time.Second, // 5秒批次收集窗口
+
+		// Rate limiting - Telegram Bot API allows ~30 msg/sec for groups, ~3 msg/sec for private chats
+		// We'll be conservative and use 2 msg/sec to avoid rate limits
+		messageQueue: make(chan *TelegramMessage, 1000), // Large buffer for queuing
+		queueCtx:     queueCtx,
+		queueCancel:  queueCancel,
+		rateLimiter:  time.NewTicker(500 * time.Millisecond), // 2 messages per second
 	}
+
+	// Start message queue worker
+	go bot.messageQueueWorker()
 
 	// 註冊 Telegram 指令選單
 	bot.registerCommands()
@@ -673,24 +703,218 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 
 // --- Send helpers (直接用 Telegram HTTP API 以支援 message_thread_id) ---
 
-func (t *TelegramBot) apiCall(method string, params url.Values) {
-	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/%s", t.config.TelegramToken, method)
-	resp, err := http.PostForm(apiURL, params)
+// sanitizeUTF8 cleans invalid UTF-8 bytes from text to prevent Telegram API errors
+func sanitizeUTF8(text string) string {
+	if utf8.ValidString(text) {
+		return text
+	}
+
+	// Log the issue for debugging
+	log.Printf("[telegram] UTF-8 cleaning applied to message (length: %d bytes)", len(text))
+
+	// Use Go's standard library to replace invalid UTF-8 sequences
+	return strings.ToValidUTF8(text, "\uFFFD")
+}
+
+// messageQueueWorker processes messages from the queue with rate limiting and retry logic
+func (t *TelegramBot) messageQueueWorker() {
+	log.Printf("[telegram] Message queue worker started (rate: 2 msg/sec)")
+
+	for {
+		select {
+		case <-t.queueCtx.Done():
+			log.Printf("[telegram] Message queue worker stopping")
+			t.rateLimiter.Stop()
+			return
+
+		case msg := <-t.messageQueue:
+			// Wait for rate limiter
+			<-t.rateLimiter.C
+
+			// Send the message
+			success := t.sendMessageDirect(msg)
+
+			// Handle retry logic for failed messages
+			if !success && msg.Retries < msg.MaxRetries {
+				msg.Retries++
+				log.Printf("[telegram] Retrying message (attempt %d/%d)", msg.Retries, msg.MaxRetries)
+
+				// Exponential backoff: 1s, 2s, 4s, 8s...
+				backoffDelay := time.Duration(1<<uint(msg.Retries-1)) * time.Second
+				if backoffDelay > 30*time.Second {
+					backoffDelay = 30 * time.Second
+				}
+
+				go func(message *TelegramMessage) {
+					time.Sleep(backoffDelay)
+					select {
+					case t.messageQueue <- message:
+						// Successfully re-queued
+					case <-t.queueCtx.Done():
+						// Context cancelled, give up
+					default:
+						// Queue full, drop message
+						log.Printf("[telegram] Failed to re-queue message: queue full")
+					}
+				}(msg)
+			} else if !success {
+				log.Printf("[telegram] Message failed after %d retries, giving up", msg.MaxRetries)
+			}
+		}
+	}
+}
+
+// sendMessageDirect sends a message directly to Telegram API with 429 handling
+func (t *TelegramBot) sendMessageDirect(msg *TelegramMessage) bool {
+	// Marshal parameters to JSON
+	jsonData, err := json.Marshal(msg.Params)
 	if err != nil {
-		log.Printf("[telegram] %s error: %v", method, err)
-		return
+		log.Printf("[telegram] Error marshaling message params: %v", err)
+		return false
 	}
+
+	// Make API call
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/%s", t.config.TelegramToken, msg.Method)
+	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Printf("[telegram] %s error: %v", msg.Method, err)
+		return false
+	}
+	defer resp.Body.Close()
+
+	// Handle response
+	if resp.StatusCode == 200 {
+		return true // Success
+	}
+
+	// Read error response
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+
+	// Handle 429 Rate Limiting
+	if resp.StatusCode == 429 {
+		var errorResp struct {
+			OK          bool `json:"ok"`
+			ErrorCode   int  `json:"error_code"`
+			Description string `json:"description"`
+			Parameters  struct {
+				RetryAfter int `json:"retry_after"`
+			} `json:"parameters"`
+		}
+
+		if err := json.Unmarshal(body, &errorResp); err == nil && errorResp.Parameters.RetryAfter > 0 {
+			retryAfter := time.Duration(errorResp.Parameters.RetryAfter) * time.Second
+			log.Printf("[telegram] Rate limited! Retry after %v (attempt %d/%d)",
+				retryAfter, msg.Retries+1, msg.MaxRetries)
+
+			// Sleep for the specified duration, then return false to trigger retry
+			time.Sleep(retryAfter)
+			return false
+		}
+	}
+
+	// Log other errors
+	log.Printf("[telegram] %s failed (status %d): %s", msg.Method, resp.StatusCode, string(body))
+	return false
+}
+
+// queueMessage adds a message to the rate-limited sending queue
+func (t *TelegramBot) queueMessage(method string, params map[string]interface{}) {
+	msg := &TelegramMessage{
+		Method:     method,
+		Params:     params,
+		Retries:    0,
+		MaxRetries: 3, // Allow up to 3 retries
+		CreatedAt:  time.Now(),
+	}
+
+	select {
+	case t.messageQueue <- msg:
+		// Successfully queued
+	case <-time.After(1 * time.Second):
+		// Queue is full or blocked, log and drop
+		log.Printf("[telegram] Message queue full, dropping %s message", method)
+	}
+}
+
+// sendMessageSync sends a message synchronously and returns the response
+// Use this only for messages that need to return data (like message ID)
+func (t *TelegramBot) sendMessageSync(method string, params map[string]interface{}) (map[string]interface{}, error) {
+	// Wait for rate limiter to avoid hitting rate limits
+	<-t.rateLimiter.C
+
+	jsonData, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling params: %w", err)
+	}
+
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/%s", t.config.TelegramToken, method)
+	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("HTTP error: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("error reading response: %w", err)
+	}
+
+	// Handle 429 Rate Limiting
+	if resp.StatusCode == 429 {
+		var errorResp struct {
+			OK          bool `json:"ok"`
+			ErrorCode   int  `json:"error_code"`
+			Description string `json:"description"`
+			Parameters  struct {
+				RetryAfter int `json:"retry_after"`
+			} `json:"parameters"`
+		}
+
+		if json.Unmarshal(body, &errorResp) == nil && errorResp.Parameters.RetryAfter > 0 {
+			retryAfter := time.Duration(errorResp.Parameters.RetryAfter) * time.Second
+			log.Printf("[telegram] Rate limited! Waiting %v before retry", retryAfter)
+			time.Sleep(retryAfter)
+
+			// Retry once
+			return t.sendMessageSync(method, params)
+		}
+	}
+
 	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		log.Printf("[telegram] %s failed (status %d): %s", method, resp.StatusCode, string(body))
+		return nil, fmt.Errorf("telegram API error (status %d): %s", resp.StatusCode, string(body))
 	}
-	resp.Body.Close()
+
+	// Parse response
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("error parsing response: %w", err)
+	}
+
+	return result, nil
+}
+
+func (t *TelegramBot) apiCall(method string, params url.Values) {
+	// Convert url.Values to map[string]interface{} for JSON
+	jsonParams := make(map[string]interface{})
+	for key, values := range params {
+		if len(values) == 1 {
+			jsonParams[key] = values[0]
+		} else {
+			jsonParams[key] = values
+		}
+	}
+
+	// Queue the message instead of sending directly
+	t.queueMessage(method, jsonParams)
 }
 
 func (t *TelegramBot) send(key chatKey, text string) {
+	// Clean invalid UTF-8 characters to prevent API errors
+	cleanText := sanitizeUTF8(text)
+
 	params := url.Values{
 		"chat_id": {strconv.FormatInt(key.chatID, 10)},
-		"text":    {text},
+		"text":    {cleanText},
 	}
 	if key.threadID != 0 {
 		params.Set("message_thread_id", strconv.Itoa(key.threadID))
@@ -699,9 +923,12 @@ func (t *TelegramBot) send(key chatKey, text string) {
 }
 
 func (t *TelegramBot) sendSilent(key chatKey, text string) {
+	// Clean invalid UTF-8 characters to prevent API errors
+	cleanText := sanitizeUTF8(text)
+
 	params := url.Values{
 		"chat_id":              {strconv.FormatInt(key.chatID, 10)},
-		"text":                 {text},
+		"text":                 {cleanText},
 		"disable_notification": {"true"},
 	}
 	if key.threadID != 0 {
@@ -711,26 +938,20 @@ func (t *TelegramBot) sendSilent(key chatKey, text string) {
 }
 
 func (t *TelegramBot) sendMarkdown(key chatKey, text string) {
+	// Clean invalid UTF-8 characters to prevent API errors
+	cleanText := sanitizeUTF8(text)
+
 	params := url.Values{
 		"chat_id":    {strconv.FormatInt(key.chatID, 10)},
-		"text":       {text},
+		"text":       {cleanText},
 		"parse_mode": {"Markdown"},
 	}
 	if key.threadID != 0 {
 		params.Set("message_thread_id", strconv.Itoa(key.threadID))
 	}
 
-	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.config.TelegramToken)
-	resp, err := http.PostForm(apiURL, params)
-	if err != nil || resp.StatusCode != 200 {
-		if resp != nil {
-			resp.Body.Close()
-		}
-		// fallback to plain text
-		t.send(key, text)
-		return
-	}
-	resp.Body.Close()
+	// Use the API call which now goes through the queue
+	t.apiCall("sendMessage", params)
 }
 
 func (t *TelegramBot) sendTyping(key chatKey) {
@@ -1004,6 +1225,9 @@ func (t *TelegramBot) handleCheckpointsStats(key chatKey) {
 
 // sendDashboardWithWebApp sends dashboard with refresh button
 func (t *TelegramBot) sendDashboardWithWebApp(key chatKey, text string) {
+	// Clean invalid UTF-8 characters to prevent API errors
+	cleanText := sanitizeUTF8(text)
+
 	// Create inline keyboard with refresh button only (Web App requires HTTPS)
 	keyboard := map[string]interface{}{
 		"inline_keyboard": [][]map[string]interface{}{
@@ -1022,7 +1246,7 @@ func (t *TelegramBot) sendDashboardWithWebApp(key chatKey, text string) {
 
 	msg := map[string]interface{}{
 		"chat_id":      key.chatID,
-		"text":         text,
+		"text":         cleanText,
 		"parse_mode":   "Markdown",
 		"reply_markup": keyboard,
 	}
@@ -1081,6 +1305,9 @@ func (t *TelegramBot) answerCallbackQuery(queryID, text string) {
 
 // sendMessageWithStopButton sends a message with a stop button for ongoing operations
 func (t *TelegramBot) sendMessageWithStopButton(key chatKey, text string) (int, error) {
+	// Clean invalid UTF-8 characters to prevent API errors
+	cleanText := sanitizeUTF8(text)
+
 	keyboard := map[string]interface{}{
 		"inline_keyboard": [][]map[string]interface{}{
 			{
@@ -1094,7 +1321,7 @@ func (t *TelegramBot) sendMessageWithStopButton(key chatKey, text string) (int, 
 
 	params := map[string]interface{}{
 		"chat_id":      key.chatID,
-		"text":         text,
+		"text":         cleanText,
 		"reply_markup": keyboard,
 	}
 
@@ -1102,41 +1329,28 @@ func (t *TelegramBot) sendMessageWithStopButton(key chatKey, text string) (int, 
 		params["message_thread_id"] = key.threadID
 	}
 
-	// Send message and capture message ID
-	jsonData, err := json.Marshal(params)
+	// Send message synchronously to get message ID
+	response, err := t.sendMessageSync("sendMessage", params)
 	if err != nil {
 		return 0, err
 	}
 
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.config.TelegramToken)
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return 0, fmt.Errorf("telegram API error: %s", string(body))
+	// Extract message ID from response
+	if result, ok := response["result"].(map[string]interface{}); ok {
+		if messageID, ok := result["message_id"].(float64); ok {
+			return int(messageID), nil
+		}
 	}
 
-	// Parse response to get message ID
-	var result struct {
-		OK     bool `json:"ok"`
-		Result struct {
-			MessageID int `json:"message_id"`
-		} `json:"result"`
-	}
+	return 0, fmt.Errorf("failed to extract message_id from response")
+}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return 0, err
+// Close gracefully shuts down the TelegramBot and its message queue
+func (t *TelegramBot) Close() {
+	if t.queueCancel != nil {
+		log.Printf("[telegram] Shutting down message queue...")
+		t.queueCancel()
 	}
-
-	if !result.OK {
-		return 0, fmt.Errorf("telegram API returned ok=false")
-	}
-
-	return result.Result.MessageID, nil
 }
 
 // editMessageRemoveStopButton removes the stop button from a message
@@ -1154,27 +1368,10 @@ func (t *TelegramBot) editMessageRemoveStopButton(key chatKey, messageID int, ne
 	t.sendTelegram("editMessageText", params)
 }
 
-// sendTelegram sends JSON data to Telegram API
+// sendTelegram sends JSON data to Telegram API via the message queue
 func (t *TelegramBot) sendTelegram(method string, params map[string]interface{}) {
-	jsonData, err := json.Marshal(params)
-	if err != nil {
-		log.Printf("Error marshaling Telegram API params: %v", err)
-		return
-	}
-
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/%s", t.config.TelegramToken, method)
-
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		log.Printf("Error calling Telegram API: %v", err)
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		log.Printf("Telegram API error: %s", string(body))
-	}
+	// Queue the message instead of sending directly
+	t.queueMessage(method, params)
 }
 
 // handleTasks 處理 /tasks 命令，顯示未完成的工作清單
@@ -1831,14 +2028,17 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 		return
 	}
 
-	// 組合多張圖片的 prompt，使用相對路徑
-	prompt := fmt.Sprintf("請分析這 %d 張圖片，並進行比較分析：\n", len(relativeImagePaths))
+	// 組合多張圖片的 prompt，caption 為主指令時優先
+	imageList := ""
 	for i, relativePath := range relativeImagePaths {
-		prompt += fmt.Sprintf("圖片 %d: %s\n", i+1, relativePath)
+		imageList += fmt.Sprintf("圖片 %d: %s\n", i+1, relativePath)
 	}
 
+	var prompt string
 	if caption != "" {
-		prompt += fmt.Sprintf("\n用戶說明: %s", caption)
+		prompt = fmt.Sprintf("%s\n\n（參考附件 %d 張圖片：\n%s）", caption, len(relativeImagePaths), imageList)
+	} else {
+		prompt = fmt.Sprintf("請分析這 %d 張圖片，並進行比較分析：\n%s", len(relativeImagePaths), imageList)
 	}
 
 	// 安全檢查和事件記錄
@@ -1872,12 +2072,8 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 				})
 				t.send(key, "⚠️ 圖片說明中偵測到敏感資訊已自動過濾。")
 				caption = filteredCaption
-				// 重新組合 prompt，使用相對路徑
-				prompt = fmt.Sprintf("請分析這 %d 張圖片，並進行比較分析：\n", len(relativeImagePaths))
-				for i, relativePath := range relativeImagePaths {
-					prompt += fmt.Sprintf("圖片 %d: %s\n", i+1, relativePath)
-				}
-				prompt += fmt.Sprintf("\n用戶說明: %s", caption)
+				// 重新組合 prompt
+				prompt = fmt.Sprintf("%s\n\n（參考附件 %d 張圖片：\n%s）", caption, len(relativeImagePaths), imageList)
 			}
 		}
 	}
@@ -1885,17 +2081,22 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 	// 發送給 Agent 處理 (使用現有會話，就像語音處理一樣)
 	agent = t.getAgent(key)
 
-	_, err := agent.Run(prompt, func(update string, silent bool) {
+	response, err := agent.Run(prompt, func(update string, silent bool) {
 		if silent {
-			return
+			t.sendSilent(key, update)
+		} else {
+			t.send(key, update)
 		}
-		t.send(key, update)
 	})
 
 	if err != nil {
 		log.Printf("[telegram] batch photo analysis error: %v", err)
 		t.send(key, "❌ 圖片批次分析失敗，請稍後再試。")
 		return
+	}
+
+	if response != "" {
+		t.sendLong(key, response)
 	}
 }
 
@@ -1957,11 +2158,13 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 		}
 	}()
 
-	// 使用相對路徑告訴 Claude 分析圖片
+	// 使用相對路徑，caption 為主指令時優先
 	relativePath := filepath.Join("temp", fileName)
-	prompt := fmt.Sprintf("請分析這張圖片: %s", relativePath)
+	var prompt string
 	if caption != "" {
-		prompt = fmt.Sprintf("%s\n\n用戶說明: %s", prompt, caption)
+		prompt = fmt.Sprintf("%s\n\n（參考附件圖片: %s）", caption, relativePath)
+	} else {
+		prompt = fmt.Sprintf("請分析這張圖片: %s", relativePath)
 	}
 
 	// 安全檢查和 PII 檢測（與原有邏輯相同）
@@ -1997,7 +2200,7 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 				})
 				t.send(key, "⚠️ 圖片說明中偵測到敏感資訊已自動過濾。")
 				caption = filteredCaption
-				prompt = fmt.Sprintf("請分析這張圖片: %s\n\n用戶說明: %s", relativePath, caption)
+				prompt = fmt.Sprintf("%s\n\n（參考附件圖片: %s）", caption, relativePath)
 			}
 		}
 	}
@@ -2006,17 +2209,22 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 	agent = t.getAgent(key)
 	t.send(key, "📷 正在分析圖片...")
 
-	_, err = agent.Run(prompt, func(update string, silent bool) {
+	response, err := agent.Run(prompt, func(update string, silent bool) {
 		if silent {
-			return
+			t.sendSilent(key, update)
+		} else {
+			t.send(key, update)
 		}
-		t.send(key, update)
 	})
 
 	if err != nil {
 		log.Printf("[telegram] single photo analysis error: %v", err)
 		t.send(key, "❌ 圖片分析失敗，請稍後再試。")
 		return
+	}
+
+	if response != "" {
+		t.sendLong(key, response)
 	}
 }
 
