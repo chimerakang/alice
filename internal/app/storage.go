@@ -32,6 +32,7 @@ type Storage interface {
 	GetPerformanceMetrics(limit int, offset int) ([]PerformanceMetrics, error)
 	GetPerformanceMetricsByTimeRange(start, end time.Time, limit int) ([]PerformanceMetrics, error)
 	GetPerformanceAnalytics(hours int) (PerformanceAnalytics, error)
+	GetToolExecutionStats() (map[string]map[string]interface{}, error)
 
 	// Security Events
 	InsertSecurityEvent(event SecurityEvent) error
@@ -653,6 +654,49 @@ func (s *SQLiteStorage) GetPerformanceAnalytics(hours int) (PerformanceAnalytics
 	}
 
 	return analytics, nil
+}
+
+// GetToolExecutionStats 獲取工具執行統計數據
+func (s *SQLiteStorage) GetToolExecutionStats() (map[string]map[string]interface{}, error) {
+	stats := make(map[string]map[string]interface{})
+
+	// 查詢過去24小時的工具執行統計
+	sinceStr := formatTimeForSQLite(time.Now().Add(-24 * time.Hour))
+
+	rows, err := s.db.Query(`
+		SELECT
+			tool_execution_type,
+			COUNT(*) as count,
+			AVG(tool_execution_time_ms) as avg_execution_time
+		FROM performance_metrics
+		WHERE timestamp >= ?
+			AND tool_execution_type IS NOT NULL
+			AND tool_execution_type != ''
+			AND tool_execution_time_ms > 0
+		GROUP BY tool_execution_type
+		ORDER BY count DESC`, sinceStr)
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var toolType string
+		var count int64
+		var avgExecutionTime float64
+
+		if err := rows.Scan(&toolType, &count, &avgExecutionTime); err != nil {
+			continue
+		}
+
+		stats[toolType] = map[string]interface{}{
+			"count": count,
+			"avg_execution_time": avgExecutionTime,
+		}
+	}
+
+	return stats, rows.Err()
 }
 
 // scanPerformanceMetrics 掃描效能指標結果

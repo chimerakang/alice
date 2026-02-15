@@ -884,8 +884,26 @@ func (wi *WebInterface) handlePerformanceMetricsProto(w http.ResponseWriter, r *
 			metrics = performanceMonitor.GetRecentMetrics(limit)
 		}
 
+		// Convert metrics to frontend-compatible format
+		convertedMetrics := make([]map[string]interface{}, 0, len(metrics))
+		for _, metric := range metrics {
+			convertedMetrics = append(convertedMetrics, map[string]interface{}{
+				"timestamp":         metric.Timestamp,
+				"api_latency_ms":    int64(metric.APICallLatency.Milliseconds()),
+				"api_success":       metric.APICallSuccess,
+				"tool_execution_time": metric.ToolExecutionTime.Milliseconds(),
+				"tool_execution_type": metric.ToolExecutionType,
+				"tokens_used":       metric.TokensUsed,
+				"estimated_cost":    metric.EstimatedCost,
+				"memory_usage":      metric.MemoryUsage,
+				"error_type":        metric.ErrorType,
+				"chat_id":          metric.ChatID,
+				"agent_type":       metric.AgentType,
+			})
+		}
+
 		response := map[string]interface{}{
-			"metrics":   metrics,
+			"metrics":   convertedMetrics,
 			"total":     len(metrics),
 			"timestamp": time.Now(),
 		}
@@ -912,6 +930,48 @@ func (wi *WebInterface) handlePerformanceRecommendationsProto(w http.ResponseWri
 			"recommendations": []interface{}{},
 			"total":           0,
 			"timestamp":       time.Now(),
+		}
+		writeProtoResponse(w, response)
+	})(w, r)
+}
+
+func (wi *WebInterface) handleToolDistributionProto(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		var toolDistribution []map[string]interface{}
+
+		// 從資料庫或記憶體中獲取工具執行統計
+		if globalStorage != nil {
+			if stats, err := globalStorage.GetToolExecutionStats(); err == nil {
+				for toolType, data := range stats {
+					toolDistribution = append(toolDistribution, map[string]interface{}{
+						"tool_type":           toolType,
+						"avg_execution_time":  data["avg_execution_time"],
+						"count":               data["count"],
+					})
+				}
+			}
+		}
+
+		// 如果資料庫沒有資料，從記憶體中的 PerformanceMonitor 獲取
+		if len(toolDistribution) == 0 && performanceMonitor != nil {
+			analytics := performanceMonitor.GetAnalytics()
+			for toolType, count := range analytics.ToolUsageStats {
+				// 從最近的metrics中計算平均執行時間
+				avgTime := wi.calculateAverageToolExecutionTime(toolType)
+				toolDistribution = append(toolDistribution, map[string]interface{}{
+					"tool_type":           toolType,
+					"avg_execution_time":  avgTime,
+					"count":               count,
+				})
+			}
+		}
+
+		response := map[string]interface{}{
+			"tool_distribution": toolDistribution,
+			"total":            len(toolDistribution),
+			"timestamp":        time.Now(),
 		}
 		writeProtoResponse(w, response)
 	})(w, r)
@@ -1499,6 +1559,30 @@ func (wi *WebInterface) handleWebSocketStats(w http.ResponseWriter, r *http.Requ
 		stats := GetWebSocketStats()
 		writeProtoResponse(w, stats)
 	})(w, r)
+}
+
+// calculateAverageToolExecutionTime 計算特定工具的平均執行時間（毫秒）
+func (wi *WebInterface) calculateAverageToolExecutionTime(toolType string) float64 {
+	if performanceMonitor == nil {
+		return 0.0
+	}
+
+	metrics := performanceMonitor.GetRecentMetrics(1000) // 獲取最近1000個記錄
+	var totalTime time.Duration
+	var count int
+
+	for _, metric := range metrics {
+		if metric.ToolExecutionType == toolType && metric.ToolExecutionTime > 0 {
+			totalTime += metric.ToolExecutionTime
+			count++
+		}
+	}
+
+	if count == 0 {
+		return 0.0
+	}
+
+	return float64(totalTime.Milliseconds()) / float64(count)
 }
 
 // writeProtoResponse 將 proto message 序列化為 JSON 並寫入響應

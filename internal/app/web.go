@@ -109,6 +109,7 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/performance/metrics", wi.handlePerformanceMetricsProto)
 	mux.HandleFunc("/api/performance/trends", wi.handlePerformanceTrendsProto)
 	mux.HandleFunc("/api/performance/recommendations", wi.handlePerformanceRecommendationsProto)
+	mux.HandleFunc("/api/performance/tool-distribution", wi.handleToolDistributionProto)
 	mux.HandleFunc("/api/performance/export", wi.handlePerformanceExportProto)
 
 	// Security APIs
