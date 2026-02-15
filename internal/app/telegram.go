@@ -1424,14 +1424,32 @@ func (t *TelegramBot) handleTasks(key chatKey) {
 	t.handleTasksFromFile(key, projectDir, projectName)
 }
 
+// escapeTgMarkdown escapes Telegram legacy Markdown special characters in dynamic text
+func escapeTgMarkdown(s string) string {
+	r := strings.NewReplacer(
+		"*", "\\*",
+		"_", "\\_",
+		"`", "\\`",
+		"[", "\\[",
+	)
+	return r.Replace(s)
+}
+
 // handleTasksFromGitHub 從 GitHub Issues + Milestones 顯示任務進度
 func (t *TelegramBot) handleTasksFromGitHub(key chatKey, projectName, repo string, milestones []ghMilestone) {
 	var response strings.Builder
-	response.WriteString(fmt.Sprintf("📊 *%s 專案進度*\n", projectName))
-	response.WriteString(fmt.Sprintf("_(via GitHub Issues: %s)_\n\n", repo))
+	response.WriteString(fmt.Sprintf("📊 *%s 專案進度*\n", escapeTgMarkdown(projectName)))
+	response.WriteString(fmt.Sprintf("_(via GitHub Issues: %s)_\n\n", escapeTgMarkdown(repo)))
 
 	var totalOpen, totalClosed int
-	var activePhases []string
+
+	// 分類 milestones
+	type phaseEntry struct {
+		ms       ghMilestone
+		progress int
+		status   string
+	}
+	var completedPhases, activePhases, pendingPhases []phaseEntry
 
 	for _, ms := range milestones {
 		total := ms.OpenIssues + ms.ClosedIssues
@@ -1442,58 +1460,120 @@ func (t *TelegramBot) handleTasksFromGitHub(key chatKey, projectName, repo strin
 		totalOpen += ms.OpenIssues
 		totalClosed += ms.ClosedIssues
 
-		status := "📋"
+		entry := phaseEntry{ms: ms, progress: progress}
 		if total == 0 {
-			status = "—"
+			entry.status = "—"
 		} else if progress == 100 {
-			status = "✅"
-		} else if progress > 0 {
-			status = "🔄"
-		}
-
-		if ms.OpenIssues > 0 {
-			activePhases = append(activePhases,
-				fmt.Sprintf("*%s* (%d%%)\n  📋 %d open / ✅ %d closed",
-					ms.Title, progress, ms.OpenIssues, ms.ClosedIssues))
-		} else if total > 0 {
-			// 已完成的 phase 簡短顯示
+			entry.status = "✅"
+			completedPhases = append(completedPhases, entry)
+			continue
+		} else if ms.ClosedIssues > 0 {
+			entry.status = "🔄"
+			activePhases = append(activePhases, entry)
+			continue
 		} else {
-			// 空 phase
+			entry.status = "📋"
+			pendingPhases = append(pendingPhases, entry)
+			continue
 		}
-
-		_ = status // used in full display mode
+		// 空 milestone
+		pendingPhases = append(pendingPhases, entry)
 	}
 
 	totalAll := totalOpen + totalClosed
-	completedPhases := 0
-	for _, ms := range milestones {
-		total := ms.OpenIssues + ms.ClosedIssues
-		if total > 0 && ms.OpenIssues == 0 {
-			completedPhases++
+	overallProgress := 0
+	if totalAll > 0 {
+		overallProgress = totalClosed * 100 / totalAll
+	}
+	response.WriteString(fmt.Sprintf("📈 整體進度: %d%% (%d/%d)\n\n", overallProgress, totalClosed, totalAll))
+
+	// 已完成階段
+	if len(completedPhases) > 0 {
+		response.WriteString(fmt.Sprintf("*✅ 已完成 (%d 階段)*\n", len(completedPhases)))
+		for _, p := range completedPhases {
+			response.WriteString(fmt.Sprintf("  ✅ %s (%d/%d)\n", escapeTgMarkdown(p.ms.Title), p.ms.ClosedIssues, p.ms.OpenIssues+p.ms.ClosedIssues))
 		}
+		response.WriteString("\n")
 	}
 
-	if totalOpen == 0 {
-		response.WriteString(fmt.Sprintf("🎉 所有階段已完成！\n\n"))
-		response.WriteString(fmt.Sprintf("✅ %d 個階段 / %d 個 Issues 全部完成\n\n", completedPhases, totalClosed))
-		response.WriteString("📊 階段摘要:\n")
-		for _, ms := range milestones {
-			total := ms.OpenIssues + ms.ClosedIssues
-			if total > 0 {
-				response.WriteString(fmt.Sprintf("  ✅ %s (%d issues)\n", ms.Title, total))
+	// 進行中階段 — 顯示 open issues 細節
+	if len(activePhases) > 0 {
+		response.WriteString(fmt.Sprintf("*🔄 進行中 (%d 階段)*\n", len(activePhases)))
+		for _, p := range activePhases {
+			total := p.ms.OpenIssues + p.ms.ClosedIssues
+			response.WriteString(fmt.Sprintf("\n*%s* (%d%%, %d/%d)\n", escapeTgMarkdown(p.ms.Title), p.progress, p.ms.ClosedIssues, total))
+
+			// 取得該 milestone 的 open issues
+			issues := fetchMilestoneOpenIssues(repo, p.ms.Number)
+			for _, iss := range issues {
+				priority := ""
+				for _, l := range iss.Labels {
+					if strings.HasPrefix(l, "priority:") {
+						priority = " [" + strings.TrimPrefix(l, "priority:") + "]"
+						break
+					}
+				}
+				response.WriteString(fmt.Sprintf("  📋 #%d %s%s\n", iss.Number, escapeTgMarkdown(iss.Title), priority))
 			}
 		}
-	} else {
-		response.WriteString(fmt.Sprintf("📋 Open: %d  ✅ Closed: %d  Total: %d\n\n", totalOpen, totalClosed, totalAll))
-		for _, ph := range activePhases {
-			response.WriteString(ph + "\n\n")
-		}
-		if completedPhases > 0 {
-			response.WriteString(fmt.Sprintf("✅ 另有 %d 個階段已完成\n", completedPhases))
+		response.WriteString("\n")
+	}
+
+	// 待開始階段
+	if len(pendingPhases) > 0 {
+		response.WriteString(fmt.Sprintf("*📋 待開始 (%d 階段)*\n", len(pendingPhases)))
+		for _, p := range pendingPhases {
+			total := p.ms.OpenIssues + p.ms.ClosedIssues
+			if total > 0 {
+				response.WriteString(fmt.Sprintf("  📋 %s (%d issues)\n", escapeTgMarkdown(p.ms.Title), total))
+			} else {
+				response.WriteString(fmt.Sprintf("  — %s\n", escapeTgMarkdown(p.ms.Title)))
+			}
 		}
 	}
 
 	t.sendMarkdown(key, response.String())
+}
+
+// ghIssue represents a GitHub issue (lightweight)
+type ghIssue struct {
+	Number int      `json:"number"`
+	Title  string   `json:"title"`
+	Labels []string `json:"-"` // parsed from nested JSON
+}
+
+// ghIssueRaw is the raw JSON structure from GitHub API
+type ghIssueRaw struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+}
+
+// fetchMilestoneOpenIssues returns open issues for a milestone using gh CLI
+func fetchMilestoneOpenIssues(repo string, milestoneNumber int) []ghIssue {
+	apiURL := fmt.Sprintf("repos/%s/issues?milestone=%d&state=open&per_page=30&sort=created&direction=asc", repo, milestoneNumber)
+	cmd := exec.Command("gh", "api", apiURL)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	var rawIssues []ghIssueRaw
+	if err := json.Unmarshal(output, &rawIssues); err != nil {
+		return nil
+	}
+
+	issues := make([]ghIssue, 0, len(rawIssues))
+	for _, raw := range rawIssues {
+		iss := ghIssue{Number: raw.Number, Title: raw.Title}
+		for _, l := range raw.Labels {
+			iss.Labels = append(iss.Labels, l.Name)
+		}
+		issues = append(issues, iss)
+	}
+	return issues
 }
 
 // handleTasksFromFile 從 MASTER_TASKS.md 解析任務（fallback）
