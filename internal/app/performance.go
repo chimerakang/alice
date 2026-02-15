@@ -150,6 +150,38 @@ func (pm *PerformanceMonitor) GetAnalytics() PerformanceAnalytics {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
 
+	// 優先從資料庫獲取統計數據（過去24小時）
+	if globalStorage != nil {
+		if dbAnalytics, err := globalStorage.GetPerformanceAnalytics(24); err == nil {
+			// 補充記憶體相關資訊（資料庫中沒有的）
+			var currentMemory uint64
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			currentMemory = m.Alloc
+
+			uptime := time.Since(pm.startTime)
+
+			dbAnalytics.CurrentMemoryUsage = currentMemory
+			dbAnalytics.UptimeSeconds = int64(uptime.Seconds())
+
+			// 如果資料庫中沒有錯誤統計，使用記憶體中的
+			if len(dbAnalytics.ErrorsByType) == 0 {
+				dbAnalytics.ErrorsByType = pm.copyErrorCounts()
+			}
+			if len(dbAnalytics.ToolUsageStats) == 0 {
+				dbAnalytics.ToolUsageStats = pm.copyToolUsage()
+			}
+
+			// 確保峰值記憶體不為0（取較大值）
+			if pm.peakMemory > dbAnalytics.PeakMemoryUsage {
+				dbAnalytics.PeakMemoryUsage = pm.peakMemory
+			}
+
+			return dbAnalytics
+		}
+	}
+
+	// 如果資料庫不可用，回退到記憶體統計
 	uptime := time.Since(pm.startTime)
 
 	var avgAPILatency, avgToolExecution time.Duration

@@ -801,12 +801,32 @@ func (wi *WebInterface) handleMultiAgentAgentsProto(w http.ResponseWriter, r *ht
 func (wi *WebInterface) handlePerformanceAnalyticsProto(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+
+		// 檢查 performanceMonitor 是否可用
+		if performanceMonitor == nil {
+			http.Error(w, "Performance monitor not available", http.StatusServiceUnavailable)
+			return
+		}
+
+		// 獲取真實的性能分析數據
+		analytics := performanceMonitor.GetAnalytics()
+
+		// 計算錯誤率：1.0 - (成功率 / 100)
+		errorRate := 0.0
+		if analytics.SuccessRate > 0 {
+			errorRate = (100.0 - analytics.SuccessRate) / 100.0
+		}
+
 		response := map[string]interface{}{
-			"total_operations":    0,
-			"avg_response_time":   0,
-			"error_rate":          0.0,
-			"throughput":          0,
-			"resource_usage":      map[string]interface{}{},
+			"total_operations":    analytics.TotalRequests,
+			"avg_response_time":   analytics.AvgAPILatency.Milliseconds(),
+			"error_rate":          errorRate,
+			"throughput":          analytics.RequestsPerHour,
+			"resource_usage":      map[string]interface{}{
+				"peak_memory_mb":    analytics.PeakMemoryUsage / 1024 / 1024,
+				"current_memory_mb": analytics.CurrentMemoryUsage / 1024 / 1024,
+				"uptime_seconds":    analytics.UptimeSeconds,
+			},
 			"timestamp":           time.Now(),
 		}
 		writeProtoResponse(w, response)
