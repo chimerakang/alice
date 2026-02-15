@@ -33,6 +33,7 @@ type Storage interface {
 	GetPerformanceMetricsByTimeRange(start, end time.Time, limit int) ([]PerformanceMetrics, error)
 	GetPerformanceAnalytics(hours int) (PerformanceAnalytics, error)
 	GetToolExecutionStats() (map[string]map[string]interface{}, error)
+	GetToolExecutionStatsByTimeRange(start, end time.Time) (map[string]map[string]interface{}, error)
 
 	// Security Events
 	InsertSecurityEvent(event SecurityEvent) error
@@ -656,31 +657,38 @@ func (s *SQLiteStorage) GetPerformanceAnalytics(hours int) (PerformanceAnalytics
 	return analytics, nil
 }
 
-// GetToolExecutionStats 獲取工具執行統計數據
+// GetToolExecutionStats 獲取工具執行統計數據 (默認過去24小時)
 func (s *SQLiteStorage) GetToolExecutionStats() (map[string]map[string]interface{}, error) {
+	return s.GetToolExecutionStatsByTimeRange(time.Now().Add(-24*time.Hour), time.Now())
+}
+
+// GetToolExecutionStatsByTimeRange 獲取指定時間範圍的工具執行統計數據
+func (s *SQLiteStorage) GetToolExecutionStatsByTimeRange(start, end time.Time) (map[string]map[string]interface{}, error) {
 	stats := make(map[string]map[string]interface{})
 
-	// 查詢過去24小時的工具執行統計
-	sinceStr := formatTimeForSQLite(time.Now().Add(-24 * time.Hour))
+	startStr := formatTimeForSQLite(start)
+	endStr := formatTimeForSQLite(end)
 
+	// 首先嘗試從 performance_metrics 表獲取數據
 	rows, err := s.db.Query(`
 		SELECT
 			tool_execution_type,
 			COUNT(*) as count,
 			AVG(tool_execution_time_ms) as avg_execution_time
 		FROM performance_metrics
-		WHERE timestamp >= ?
+		WHERE timestamp BETWEEN ? AND ?
 			AND tool_execution_type IS NOT NULL
 			AND tool_execution_type != ''
 			AND tool_execution_time_ms > 0
 		GROUP BY tool_execution_type
-		ORDER BY count DESC`, sinceStr)
+		ORDER BY count DESC`, startStr, endStr)
 
 	if err != nil {
-		return nil, err
+		return stats, err
 	}
 	defer rows.Close()
 
+	hasData := false
 	for rows.Next() {
 		var toolType string
 		var count int64
@@ -694,6 +702,44 @@ func (s *SQLiteStorage) GetToolExecutionStats() (map[string]map[string]interface
 			"count": count,
 			"avg_execution_time": avgExecutionTime,
 		}
+		hasData = true
+	}
+
+	// 如果 performance_metrics 表沒有數據，回退到 tool_executions 表
+	if !hasData {
+		rows2, err2 := s.db.Query(`
+			SELECT
+				tool_name,
+				COUNT(*) as count,
+				AVG(duration_ms) as avg_execution_time
+			FROM tool_executions
+			WHERE timestamp BETWEEN ? AND ?
+				AND tool_name IS NOT NULL
+				AND tool_name != ''
+				AND duration_ms > 0
+			GROUP BY tool_name
+			ORDER BY count DESC`, startStr, endStr)
+
+		if err2 != nil {
+			return stats, err2
+		}
+		defer rows2.Close()
+
+		for rows2.Next() {
+			var toolType string
+			var count int64
+			var avgExecutionTime float64
+
+			if err := rows2.Scan(&toolType, &count, &avgExecutionTime); err != nil {
+				continue
+			}
+
+			stats[toolType] = map[string]interface{}{
+				"count": count,
+				"avg_execution_time": avgExecutionTime,
+			}
+		}
+		return stats, rows2.Err()
 	}
 
 	return stats, rows.Err()

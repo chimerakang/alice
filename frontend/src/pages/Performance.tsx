@@ -57,7 +57,10 @@ export default function Performance() {
             endTime: dateRange.endTime,
           }),
           api.getPerformanceRecommendations(),
-          api.getToolDistribution(),
+          api.getToolDistribution({
+            startTime: dateRange.startTime,
+            endTime: dateRange.endTime,
+          }),
         ]);
 
         if (analyticsData.status === "fulfilled") setAnalytics(analyticsData.value);

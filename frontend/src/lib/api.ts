@@ -108,10 +108,13 @@ export const api = {
     fetchJson<{ recommendations?: unknown[] }>(
       "/api/performance/recommendations"
     ),
-  getToolDistribution: () =>
-    fetchJson<{ tool_distribution?: { tool_type: string; avg_execution_time: number; count: number }[]; total?: number }>(
-      "/api/performance/tool-distribution"
-    ),
+  getToolDistribution: (params: TimeRangeQuery = {}) => {
+    const { limit, offset, startTime, endTime } = params;
+    const qs = buildQuery({ limit, offset, start_time: startTime, end_time: endTime });
+    return fetchJson<{ tool_distribution?: { tool_type: string; avg_execution_time: number; count: number }[]; total?: number }>(
+      `/api/performance/tool-distribution${qs}`
+    );
+  },
 
   // ========== Security ==========
   getSecurityEvents: (params: TimeRangeQuery & { severity?: string } = {}) => {

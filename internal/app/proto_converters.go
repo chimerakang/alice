@@ -939,11 +939,38 @@ func (wi *WebInterface) handleToolDistributionProto(w http.ResponseWriter, r *ht
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
+		// 解析時間範圍參數
+		startTimeStr := r.URL.Query().Get("start_time")
+		endTimeStr := r.URL.Query().Get("end_time")
+
+		var startTime, endTime time.Time
+		var err error
+
+		if startTimeStr != "" {
+			startTime, err = time.Parse(time.RFC3339, startTimeStr)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Invalid start_time format: %v", err), http.StatusBadRequest)
+				return
+			}
+		} else {
+			startTime = time.Now().Add(-24 * time.Hour) // 默認過去24小時
+		}
+
+		if endTimeStr != "" {
+			endTime, err = time.Parse(time.RFC3339, endTimeStr)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Invalid end_time format: %v", err), http.StatusBadRequest)
+				return
+			}
+		} else {
+			endTime = time.Now()
+		}
+
 		var toolDistribution []map[string]interface{}
 
-		// 從資料庫或記憶體中獲取工具執行統計
+		// 從資料庫獲取指定時間範圍的工具執行統計
 		if globalStorage != nil {
-			if stats, err := globalStorage.GetToolExecutionStats(); err == nil {
+			if stats, err := globalStorage.GetToolExecutionStatsByTimeRange(startTime, endTime); err == nil {
 				for toolType, data := range stats {
 					toolDistribution = append(toolDistribution, map[string]interface{}{
 						"tool_type":           toolType,
