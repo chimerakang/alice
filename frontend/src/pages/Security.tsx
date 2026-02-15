@@ -69,7 +69,10 @@ export default function Security() {
       try {
         setLoading(true);
         const [statsData, eventsData] = await Promise.allSettled([
-          api.getSecurityStats(),
+          api.getSecurityStats({
+            startTime: dateRange.startTime,
+            endTime: dateRange.endTime,
+          }),
           api.getSecurityEvents({
             limit: 200,
             startTime: dateRange.startTime,
@@ -166,12 +169,32 @@ export default function Security() {
         const typeMatch = e.description?.match(/PII detected(?:\s+in\s+\w+\s+\w+)?:\s*(.+)/);
         const piiType = typeMatch ? typeMatch[1] : e.event_type || "Unknown";
 
-        // Derive location from event_type
+        // Derive location from event_type and details
         let location = "System";
-        if (e.event_type?.includes("telegram")) location = "Telegram message";
-        else if (e.event_type?.includes("caption")) location = "Photo caption";
-        else if (e.event_type?.includes("voice")) location = "Voice caption";
-        else if (e.event_type?.includes("batch")) location = "Batch upload";
+
+        // Check details first for more specific context
+        const context = e.details?.context;
+        if (context) {
+          switch (context) {
+            case "telegram_photo": location = "Telegram Photo"; break;
+            case "telegram_batch_photo": location = "Batch Photos"; break;
+            case "telegram_voice": location = "Voice Message"; break;
+            case "telegram_single_photo": location = "Single Photo"; break;
+            default: location = context.replace(/_/g, " ");
+          }
+        }
+        // Fallback to event_type parsing
+        else if (e.event_type?.includes("telegram")) {
+          location = "Telegram Message";
+        } else if (e.event_type?.includes("voice_caption")) {
+          location = "Voice Caption";
+        } else if (e.event_type?.includes("photo_caption")) {
+          location = "Photo Caption";
+        } else if (e.event_type?.includes("batch_caption")) {
+          location = "Batch Upload Caption";
+        } else if (e.event_type?.includes("filtered_in_logs")) {
+          location = "Agent Logs";
+        }
 
         return {
           id: e.event_id || `pii_${i}`,

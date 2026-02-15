@@ -377,14 +377,14 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			},
 		})
 
-		// PII 檢測和過濾
-		filteredText, detected := globalSecurityManager.DetectAndFilterPII(text)
+		// PII 檢測和過濾 (自動記錄事件)
+		filteredText, detected := globalSecurityManager.DetectAndFilterPII(text, true)
 		if len(detected) > 0 {
-			// 記錄 PII 檢測事件
+			// PII 事件已由 DetectAndFilterPII 自動記錄，這裡添加額外的 Telegram 特定資訊
 			globalSecurityManager.LogSecurityEvent(SecurityEvent{
 				EventType:   "pii_detected_telegram",
-				Severity:    "high",
-				Description: fmt.Sprintf("PII detected in Telegram message: %v", detected),
+				Severity:    "medium", // 降低嚴重性，避免重複高優先級警告
+				Description: fmt.Sprintf("Telegram message contained PII (filtered): %v", detected),
 				UserID:      userID,
 				Details: map[string]interface{}{
 					"detected_types": detected,
@@ -2082,18 +2082,20 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 			},
 		})
 
-		// PII 檢測 caption
+		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
-			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption)
+			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true)
 			if len(detected) > 0 {
+				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
 				globalSecurityManager.LogSecurityEvent(SecurityEvent{
 					EventType:   "pii_detected_batch_caption",
-					Severity:    "high",
-					Description: fmt.Sprintf("PII detected in batch photo caption: %v", detected),
+					Severity:    "low", // 降低嚴重性，主要事件已由 DetectAndFilterPII 記錄
+					Description: fmt.Sprintf("Batch photo caption contained PII (filtered): %v", detected),
 					UserID:      userID,
 					Details: map[string]interface{}{
 						"detected_types": detected,
 						"chat_id":        key.chatID,
+						"context":        "telegram_batch_photo",
 					},
 				})
 				t.send(key, "⚠️ 圖片說明中偵測到敏感資訊已自動過濾。")
@@ -2210,18 +2212,20 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 			},
 		})
 
-		// PII 檢測 caption
+		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
-			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption)
+			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true)
 			if len(detected) > 0 {
+				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
 				globalSecurityManager.LogSecurityEvent(SecurityEvent{
 					EventType:   "pii_detected_photo_caption",
-					Severity:    "high",
-					Description: fmt.Sprintf("PII detected in photo caption: %v", detected),
+					Severity:    "low", // 降低嚴重性，主要事件已記錄
+					Description: fmt.Sprintf("Photo caption contained PII (filtered): %v", detected),
 					UserID:      userID,
 					Details: map[string]interface{}{
 						"detected_types": detected,
 						"chat_id":        key.chatID,
+						"context":        "telegram_photo",
 					},
 				})
 				t.send(key, "⚠️ 圖片說明中偵測到敏感資訊已自動過濾。")
@@ -2314,18 +2318,20 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 			},
 		})
 
-		// PII 檢測 caption
+		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
-			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption)
+			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true)
 			if len(detected) > 0 {
+				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
 				globalSecurityManager.LogSecurityEvent(SecurityEvent{
 					EventType:   "pii_detected_photo_caption",
-					Severity:    "high",
-					Description: fmt.Sprintf("PII detected in photo caption: %v", detected),
+					Severity:    "low", // 降低嚴重性，主要事件已記錄
+					Description: fmt.Sprintf("Single photo caption contained PII (filtered): %v", detected),
 					UserID:      userID,
 					Details: map[string]interface{}{
 						"detected_types": detected,
 						"chat_id":        key.chatID,
+						"context":        "telegram_single_photo",
 					},
 				})
 				t.send(key, "⚠️ 圖片說明中偵測到敏感資訊已自動過濾。")
@@ -2586,18 +2592,20 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 			},
 		})
 
-		// PII 檢測 caption
+		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
-			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption)
+			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true)
 			if len(detected) > 0 {
+				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
 				globalSecurityManager.LogSecurityEvent(SecurityEvent{
 					EventType:   "pii_detected_voice_caption",
-					Severity:    "high",
-					Description: fmt.Sprintf("PII detected in voice caption: %v", detected),
+					Severity:    "low", // 降低嚴重性，主要事件已記錄
+					Description: fmt.Sprintf("Voice caption contained PII (filtered): %v", detected),
 					UserID:      userID,
 					Details: map[string]interface{}{
 						"detected_types": detected,
 						"chat_id":        key.chatID,
+						"context":        "telegram_voice",
 					},
 				})
 				t.send(key, "⚠️ 語音說明中偵測到敏感資訊已自動過濾。")

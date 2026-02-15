@@ -184,7 +184,8 @@ func getDefaultPIIPatterns() []PIIPattern {
 		},
 		{
 			Name:        "credit_card",
-			Pattern:     `\b\d{4}[-.\s]?\d{4}[-.\s]?\d{4}[-.\s]?\d{4}\b`,
+			// 更嚴格的信用卡檢測：必須有分隔符或上下文關鍵詞
+			Pattern:     `(?i)(?:card\s*(?:number|#)?[:=\s]*)?(?:\b\d{4}[\s-]\d{4}[\s-]\d{4}[\s-]\d{4}\b|\b\d{4}\s\d{4}\s\d{4}\s\d{4}\b)`,
 			Severity:    "high",
 			Replacement: "[CARD_REDACTED]",
 		},
@@ -392,7 +393,7 @@ func (rl *RateLimiter) cleanupExpired() {
 }
 
 // DetectAndFilterPII 偵測和過濾 PII
-func (sm *SecurityManager) DetectAndFilterPII(text string) (filtered string, detected []string) {
+func (sm *SecurityManager) DetectAndFilterPII(text string, logEvent bool) (filtered string, detected []string) {
 	if !sm.config.EnablePIIDetection {
 		return text, nil
 	}
@@ -411,16 +412,21 @@ func (sm *SecurityManager) DetectAndFilterPII(text string) (filtered string, det
 			detected = append(detected, pattern.Name)
 			filtered = regex.ReplaceAllString(filtered, pattern.Replacement)
 
-			// 記錄 PII 偵測事件
-			sm.LogSecurityEvent(SecurityEvent{
-				EventType:   "pii_detected",
-				Severity:    pattern.Severity,
-				Description: fmt.Sprintf("PII detected: %s", pattern.Name),
-				Details: map[string]interface{}{
-					"pattern": pattern.Name,
-					"matches": len(matches),
-				},
-			})
+			// 只在需要時記錄 PII 偵測事件
+			if logEvent {
+				sm.LogSecurityEvent(SecurityEvent{
+					EventType:   "pii_detected",
+					Severity:    pattern.Severity,
+					Description: fmt.Sprintf("PII detected: %s", pattern.Name),
+					Details: map[string]interface{}{
+						"pattern":     pattern.Name,
+						"matches":     len(matches),
+						"context":     "generic",
+						"location":    "System",
+						"source_type": "text_processing",
+					},
+				})
+			}
 		}
 	}
 

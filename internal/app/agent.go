@@ -711,20 +711,8 @@ func generateSummary(userPrompt, agentResponse, taskType string) string {
 func (a *Agent) filterSensitiveData(text string) string {
 	// Use security manager's PII detection if available
 	if globalSecurityManager != nil {
-		filtered, detected := globalSecurityManager.DetectAndFilterPII(text)
-		if len(detected) > 0 {
-			// Log security event for PII detection in agent logs
-			globalSecurityManager.LogSecurityEvent(SecurityEvent{
-				EventType:   "pii_filtered_in_logs",
-				Severity:    "medium",
-				Description: fmt.Sprintf("PII filtered from agent logs: %v", detected),
-				UserID:      a.chatID,
-				Details: map[string]interface{}{
-					"detected_types": detected,
-					"agent_context":  "decision_logging",
-				},
-			})
-		}
+		// Don't log events here to avoid double-logging (the original detection point should log)
+		filtered, _ := globalSecurityManager.DetectAndFilterPII(text, false)
 		return filtered
 	}
 
