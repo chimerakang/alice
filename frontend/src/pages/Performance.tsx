@@ -37,6 +37,7 @@ export default function Performance() {
   const [analytics, setAnalytics] = useState<PerformanceAnalytics | null>(null);
   const [metrics, setMetrics] = useState<PerformanceMetric[]>([]);
   const [recommendations, setRecommendations] = useState<{ text: string; priority: string }[]>([]);
+  const [toolDistribution, setToolDistribution] = useState<ToolDistribution[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState<DateRange>({});
 
@@ -48,7 +49,7 @@ export default function Performance() {
     const loadData = async () => {
       try {
         setLoading(true);
-        const [analyticsData, metricsData, recsData] = await Promise.allSettled([
+        const [analyticsData, metricsData, recsData, toolDistData] = await Promise.allSettled([
           api.getPerformanceAnalytics(),
           api.getPerformanceMetrics({
             limit: 200,
@@ -56,6 +57,7 @@ export default function Performance() {
             endTime: dateRange.endTime,
           }),
           api.getPerformanceRecommendations(),
+          api.getToolDistribution(),
         ]);
 
         if (analyticsData.status === "fulfilled") setAnalytics(analyticsData.value);
@@ -65,6 +67,9 @@ export default function Performance() {
         if (recsData.status === "fulfilled") {
           const recommendations = (recsData.value.recommendations || []) as { text: string; priority: string }[];
           setRecommendations(recommendations);
+        }
+        if (toolDistData.status === "fulfilled") {
+          setToolDistribution(toolDistData.value.tool_distribution || []);
         }
       } catch (error) {
         console.error("Failed to load performance data:", error);
@@ -94,15 +99,7 @@ export default function Performance() {
       success_rate: m.api_success ? 100 : 0,
     }));
 
-  // Tool distribution (simulated since we don't have tool execution data in current metrics)
-  const toolDistribution: ToolDistribution[] = [
-    { tool_type: "Read", avg_execution_time: 45, count: 120 },
-    { tool_type: "Edit", avg_execution_time: 180, count: 85 },
-    { tool_type: "Write", avg_execution_time: 95, count: 65 },
-    { tool_type: "Bash", avg_execution_time: 320, count: 45 },
-    { tool_type: "Grep", avg_execution_time: 25, count: 90 },
-    { tool_type: "Glob", avg_execution_time: 15, count: 110 },
-  ];
+  // Tool distribution is now loaded from API endpoint via state
 
   if (loading) {
     return (

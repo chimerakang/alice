@@ -533,6 +533,7 @@ export default function Dashboard() {
   const [recentDecisions, setRecentDecisions] = useState<DecisionLog[]>([]);
   const [storageStats, setStorageStats] = useState<StorageStats | null>(null);
   const [dateRange, setDateRange] = useState<DateRange>({});
+  const [tokenChartDecisions, setTokenChartDecisions] = useState<DecisionLog[]>([]);
 
   const handleDateRangeChange = useCallback((range: DateRange) => {
     setDateRange(range);
@@ -580,6 +581,29 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [setStats, dateRange]);
 
+  // Fetch 7-day data specifically for Token Usage chart
+  useEffect(() => {
+    const loadTokenChartData = async () => {
+      const now = new Date();
+      const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+      try {
+        const response = await api.getRecentDecisions({
+          limit: 2000,
+          startTime: sevenDaysAgo.toISOString(),
+          endTime: now.toISOString(),
+        });
+        setTokenChartDecisions(response.decisions || []);
+      } catch (error) {
+        console.error("Failed to load token chart data:", error);
+      }
+    };
+
+    loadTokenChartData();
+    const interval = setInterval(loadTokenChartData, 60000); // Refresh every minute
+    return () => clearInterval(interval);
+  }, []);
+
   // Merge store decisions with API-fetched ones for charts
   const allDecisions = useMemo(() => {
     const seen = new Set<string>();
@@ -599,6 +623,12 @@ export default function Dashboard() {
     for (const d of allDecisions) {
       if (d.project_path) paths.add(d.project_path.replace(/\/+$/, ""));
     }
+
+    // Always include current directory as default project
+    if (paths.size === 0) {
+      paths.add(".");
+    }
+
     return Array.from(paths).sort();
   }, [allDecisions]);
 
@@ -744,7 +774,7 @@ export default function Dashboard() {
             <Zap className="w-4 h-4 text-warning" />
             Token Usage (7d)
           </h3>
-          <TokenChart decisions={allDecisions} />
+          <TokenChart decisions={tokenChartDecisions} />
         </div>
         <div className="card p-5">
           <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">

@@ -108,6 +108,10 @@ export const api = {
     fetchJson<{ recommendations?: unknown[] }>(
       "/api/performance/recommendations"
     ),
+  getToolDistribution: () =>
+    fetchJson<{ tool_distribution?: { tool_type: string; avg_execution_time: number; count: number }[]; total?: number }>(
+      "/api/performance/tool-distribution"
+    ),
 
   // ========== Security ==========
   getSecurityEvents: (params: TimeRangeQuery & { severity?: string } = {}) => {
