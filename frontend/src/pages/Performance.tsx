@@ -50,7 +50,10 @@ export default function Performance() {
       try {
         setLoading(true);
         const [analyticsData, metricsData, recsData, toolDistData] = await Promise.allSettled([
-          api.getPerformanceAnalytics(),
+          api.getPerformanceAnalytics({
+            startTime: dateRange.startTime,
+            endTime: dateRange.endTime,
+          }),
           api.getPerformanceMetrics({
             limit: 200,
             startTime: dateRange.startTime,

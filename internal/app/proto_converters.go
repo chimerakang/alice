@@ -696,8 +696,14 @@ func (wi *WebInterface) handleRecentDecisionsProto(w http.ResponseWriter, r *htt
 			if startTimeStr != "" && endTimeStr != "" {
 				if startTime, err1 := time.Parse(time.RFC3339, startTimeStr); err1 == nil {
 					if endTime, err2 := time.Parse(time.RFC3339, endTimeStr); err2 == nil {
-						decisions, err = globalStorage.GetDecisionLogsByTimeRange(startTime, endTime, limit)
-						totalCount = int64(len(decisions))
+						// Use the new method that supports offset for time range queries
+						decisions, err = globalStorage.GetDecisionLogsByTimeRangeWithOffset(startTime, endTime, limit, offset)
+						// Get accurate total count for the time range
+						if totalCount, countErr := globalStorage.GetDecisionLogsCountByTimeRange(startTime, endTime); countErr == nil {
+							totalCount = totalCount
+						} else {
+							totalCount = int64(len(decisions)) // fallback to length if count fails
+						}
 					}
 				}
 			} else {
@@ -802,14 +808,37 @@ func (wi *WebInterface) handlePerformanceAnalyticsProto(w http.ResponseWriter, r
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// 檢查 performanceMonitor 是否可用
-		if performanceMonitor == nil {
-			http.Error(w, "Performance monitor not available", http.StatusServiceUnavailable)
+		// 解析查詢參數
+		query := r.URL.Query()
+		startTimeStr := query.Get("start_time")
+		endTimeStr := query.Get("end_time")
+
+		// 計算時間範圍，如果沒有提供則默認 24 小時
+		hours := 24
+		if startTimeStr != "" && endTimeStr != "" {
+			if startTime, err := time.Parse(time.RFC3339, startTimeStr); err == nil {
+				if endTime, err := time.Parse(time.RFC3339, endTimeStr); err == nil {
+					duration := endTime.Sub(startTime)
+					hours = int(duration.Hours())
+					if hours <= 0 {
+						hours = 24 // 安全預設值
+					}
+				}
+			}
+		}
+
+		// 檢查 storage 是否可用
+		if globalStorage == nil {
+			http.Error(w, "Storage not available", http.StatusServiceUnavailable)
 			return
 		}
 
-		// 獲取真實的性能分析數據
-		analytics := performanceMonitor.GetAnalytics()
+		// 從資料庫獲取指定時間範圍的性能分析數據
+		analytics, err := globalStorage.GetPerformanceAnalytics(hours)
+		if err != nil {
+			http.Error(w, "Failed to get performance analytics", http.StatusInternalServerError)
+			return
+		}
 
 		// 計算錯誤率：1.0 - (成功率 / 100)
 		errorRate := 0.0
@@ -1085,51 +1114,95 @@ func (wi *WebInterface) handleSecurityStatsProto(w http.ResponseWriter, r *http.
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
+		// Parse time range parameters
+		startTimeStr := r.URL.Query().Get("start_time")
+		endTimeStr := r.URL.Query().Get("end_time")
+
+		var startTime, endTime time.Time
+		var err error
+
+		// Parse time parameters if provided
+		if startTimeStr != "" {
+			startTime, err = time.Parse(time.RFC3339, startTimeStr)
+			if err != nil {
+				http.Error(w, "Invalid start_time format. Use RFC3339.", http.StatusBadRequest)
+				return
+			}
+		}
+		if endTimeStr != "" {
+			endTime, err = time.Parse(time.RFC3339, endTimeStr)
+			if err != nil {
+				http.Error(w, "Invalid end_time format. Use RFC3339.", http.StatusBadRequest)
+				return
+			}
+		}
+
 		totalEvents := 0
 		blockedAttempts := 0
 		piiDetections := 0
 		threatLevel := "low"
 
-		// Get real stats from security manager
-		if globalSecurityManager != nil {
-			stats := globalSecurityManager.GetSecurityStats()
-			if te, ok := stats["total_events"].(int); ok {
-				totalEvents = te
+		// 檢查 globalStorage 是否可用
+		if globalStorage == nil {
+			http.Error(w, "Storage not available", http.StatusServiceUnavailable)
+			return
+		}
+
+		// 優先使用時間範圍篩選的結果，如果沒有提供時間則使用全部資料
+		var events []SecurityEvent
+		var err error
+
+		if startTimeStr != "" && endTimeStr != "" {
+			// 使用指定的時間範圍
+			events, err = globalStorage.GetSecurityEventsByTimeRange(startTime, endTime, 10000)
+		} else {
+			// 沒有時間限制，獲取全部事件
+			events, err = globalStorage.GetSecurityEvents(10000, 0)
+		}
+
+		if err != nil {
+			http.Error(w, "Failed to get security events", http.StatusInternalServerError)
+			return
+		}
+
+		totalEvents = len(events)
+
+		// Count event types from results
+		eventTypeCounts := make(map[string]int)
+		for _, event := range events {
+			eventTypeCounts[event.EventType]++
+
+			// Count blocked attempts
+			if event.EventType == "rate_limit_exceeded" || event.EventType == "blocked_ip_access" || event.EventType == "unauthorized_ip_access" {
+				blockedAttempts++
 			}
-			// Count blocked attempts and PII detections from event types
-			if eventTypes, ok := stats["event_types"].(map[string]int); ok {
-				for eventType, count := range eventTypes {
-					if eventType == "rate_limit_exceeded" || eventType == "blocked_ip_access" || eventType == "unauthorized_ip_access" {
-						blockedAttempts += count
-					}
-					if len(eventType) >= 3 && eventType[:3] == "pii" {
-						piiDetections += count
-					}
-				}
-			}
-			// Determine threat level from severities
-			if severities, ok := stats["severities"].(map[string]int); ok {
-				if severities["critical"] > 0 {
-					threatLevel = "critical"
-				} else if severities["high"] > 5 {
-					threatLevel = "high"
-				} else if severities["medium"] > 10 {
-					threatLevel = "medium"
-				}
+			// Count PII detections
+			if len(event.EventType) >= 3 && event.EventType[:3] == "pii" {
+				piiDetections++
 			}
 		}
 
-		// Also check database for total count if available
-		if globalStorage != nil {
-			if dbEvents, err := globalStorage.GetSecurityEvents(1, 0); err == nil && len(dbEvents) > 0 {
-				// Use count from DB if larger (memory may have been trimmed)
-				if countRow := globalStorage.(*SQLiteStorage).db.QueryRow("SELECT COUNT(*) FROM security_events"); countRow != nil {
-					var dbCount int
-					if err := countRow.Scan(&dbCount); err == nil && dbCount > totalEvents {
-						totalEvents = dbCount
-					}
-				}
+		// Determine threat level from events
+		criticalCount := 0
+		highCount := 0
+		mediumCount := 0
+		for _, event := range events {
+			switch event.Severity {
+			case "critical":
+				criticalCount++
+			case "high":
+				highCount++
+			case "medium":
+				mediumCount++
 			}
+		}
+
+		if criticalCount > 0 {
+			threatLevel = "critical"
+		} else if highCount > 5 {
+			threatLevel = "high"
+		} else if mediumCount > 10 {
+			threatLevel = "medium"
 		}
 
 		response := map[string]interface{}{

@@ -1270,14 +1270,43 @@ func (wi *WebInterface) handleListCheckpoints(w http.ResponseWriter, r *http.Req
 		}
 	}
 
+	// Parse time range parameters
+	startTimeStr := r.URL.Query().Get("start_time")
+	endTimeStr := r.URL.Query().Get("end_time")
+
+	var startTime, endTime time.Time
+	var err error
+
+	// Parse time parameters if provided
+	if startTimeStr != "" {
+		startTime, err = time.Parse(time.RFC3339, startTimeStr)
+		if err != nil {
+			http.Error(w, "Invalid start_time format. Use RFC3339.", http.StatusBadRequest)
+			return
+		}
+	}
+	if endTimeStr != "" {
+		endTime, err = time.Parse(time.RFC3339, endTimeStr)
+		if err != nil {
+			http.Error(w, "Invalid end_time format. Use RFC3339.", http.StatusBadRequest)
+			return
+		}
+	}
+
 	// Check if checkpoint manager is available
 	if globalCheckpointManager == nil {
 		http.Error(w, "Checkpoint manager not available", http.StatusServiceUnavailable)
 		return
 	}
 
-	// Get checkpoints
-	checkpoints, err := globalCheckpointManager.ListCheckpoints(projectDir, limit)
+	// Get checkpoints with time range support
+	var checkpoints []Checkpoint
+	if startTimeStr != "" && endTimeStr != "" {
+		checkpoints, err = globalCheckpointManager.ListCheckpointsByTimeRange(projectDir, startTime, endTime, limit)
+	} else {
+		checkpoints, err = globalCheckpointManager.ListCheckpoints(projectDir, limit)
+	}
+
 	if err != nil {
 		log.Printf("Error listing checkpoints: %v", err)
 		http.Error(w, "Failed to list checkpoints", http.StatusInternalServerError)

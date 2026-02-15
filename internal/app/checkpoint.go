@@ -559,6 +559,68 @@ func (cm *CheckpointManager) ListCheckpoints(projectDir string, limit int) ([]Ch
 	return checkpoints, rows.Err()
 }
 
+// ListCheckpointsByTimeRange retrieves checkpoints for a project within a time range
+func (cm *CheckpointManager) ListCheckpointsByTimeRange(projectDir string, startTime, endTime time.Time, limit int) ([]Checkpoint, error) {
+	var checkpoints []Checkpoint
+
+	query := `
+		SELECT id, timestamp, project_dir, git_commit_hash, git_branch, git_stash_ref,
+			   description, trigger_type, session_id, chat_id, decision_log_id,
+			   files_snapshot_json, pre_condition, dangerous_op, created_by, size, is_active
+		FROM checkpoints
+		WHERE project_dir = ? AND is_active = 1
+		  AND timestamp >= ? AND timestamp <= ?
+		ORDER BY timestamp DESC
+	`
+
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	db := cm.storage.GetDB().(*sql.DB)
+	rows, err := db.Query(query, projectDir, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query checkpoints by time range: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cp Checkpoint
+		var triggerType string
+		var fileSnapshotsJSON string
+		var decisionLogID sql.NullString
+
+		err := rows.Scan(
+			&cp.ID, &cp.Timestamp, &cp.ProjectDir, &cp.GitCommitHash,
+			&cp.GitBranch, &cp.GitStashRef, &cp.Description, &triggerType,
+			&cp.SessionID, &cp.ChatID, &decisionLogID, &fileSnapshotsJSON,
+			&cp.PreCondition, &cp.DangerousOp, &cp.CreatedBy, &cp.Size, &cp.IsActive,
+		)
+		if decisionLogID.Valid {
+			cp.DecisionLogID = decisionLogID.String
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan checkpoint: %w", err)
+		}
+
+		cp.TriggerType = CheckpointTrigger(triggerType)
+
+		// Unmarshal file snapshots
+		if fileSnapshotsJSON != "" {
+			if err := json.Unmarshal([]byte(fileSnapshotsJSON), &cp.FileSnapshots); err != nil {
+				log.Printf("Warning: Failed to unmarshal file snapshots for checkpoint %s: %v", cp.ID, err)
+				cp.FileSnapshots = make(map[string]string)
+			}
+		} else {
+			cp.FileSnapshots = make(map[string]string)
+		}
+
+		checkpoints = append(checkpoints, cp)
+	}
+
+	return checkpoints, rows.Err()
+}
+
 // RestoreCheckpoint restores a project to a previous checkpoint
 func (cm *CheckpointManager) RestoreCheckpoint(checkpointID, projectDir string) error {
 	if !cm.enabled {

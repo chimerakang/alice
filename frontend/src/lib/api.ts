@@ -93,8 +93,11 @@ export const api = {
     fetchJson<MultiAgentStatus>("/api/multiagent/status"),
 
   // ========== Performance ==========
-  getPerformanceAnalytics: () =>
-    fetchJson<PerformanceAnalytics>("/api/performance/analytics"),
+  getPerformanceAnalytics: (params: TimeRangeQuery = {}) => {
+    const { limit, offset, startTime, endTime } = params;
+    const qs = buildQuery({ limit, offset, start_time: startTime, end_time: endTime });
+    return fetchJson<PerformanceAnalytics>(`/api/performance/analytics${qs}`);
+  },
   getPerformanceMetrics: (params: TimeRangeQuery = {}) => {
     const { limit = 100, offset, startTime, endTime } = params;
     const qs = buildQuery({ limit, offset, start_time: startTime, end_time: endTime });
@@ -124,7 +127,16 @@ export const api = {
       `/api/security/events${qs}`
     );
   },
-  getSecurityStats: () => fetchJson<SecurityStats>("/api/security/stats"),
+  getSecurityStats: (params: TimeRangeQuery = {}) => {
+    const { limit, offset, startTime, endTime } = params;
+    const qs = buildQuery({
+      limit,
+      offset,
+      start_time: startTime,
+      end_time: endTime,
+    });
+    return fetchJson<SecurityStats>(`/api/security/stats${qs}`);
+  },
 
   // ========== Git ==========
   getGitStatus: (projectDir?: string) => {
@@ -143,10 +155,17 @@ export const api = {
   },
 
   // ========== Checkpoints ==========
-  getCheckpoints: (projectDir: string) =>
-    fetchJson<{ checkpoints?: Checkpoint[] }>(
-      `/api/checkpoints?project_dir=${encodeURIComponent(projectDir)}`
-    ),
+  getCheckpoints: (projectDir: string, params: TimeRangeQuery = {}) => {
+    const { limit, offset, startTime, endTime } = params;
+    const qs = buildQuery({
+      project_dir: projectDir,
+      limit,
+      offset,
+      start_time: startTime,
+      end_time: endTime
+    });
+    return fetchJson<{ checkpoints?: Checkpoint[] }>(`/api/checkpoints${qs}`);
+  },
   createCheckpoint: (projectDir: string, description: string) =>
     postJson<Checkpoint>("/api/checkpoints/create", {
       project_dir: projectDir,

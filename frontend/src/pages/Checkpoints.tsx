@@ -543,6 +543,20 @@ export default function Checkpoints() {
   const filteredDecisions = useMemo(() => {
     let filtered = [...mergedDecisions];
 
+    // Date range filter - filter out WebSocket data outside time range
+    if (dateRange.startTime || dateRange.endTime) {
+      filtered = filtered.filter((d) => {
+        const timestamp = toMs(d.timestamp);
+        if (dateRange.startTime && timestamp < new Date(dateRange.startTime).getTime()) {
+          return false;
+        }
+        if (dateRange.endTime && timestamp > new Date(dateRange.endTime).getTime()) {
+          return false;
+        }
+        return true;
+      });
+    }
+
     // Search filter
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
@@ -584,7 +598,7 @@ export default function Checkpoints() {
     }
 
     return filtered.sort((a, b) => toMs(b.timestamp) - toMs(a.timestamp));
-  }, [mergedDecisions, searchQuery, statusFilter, projectFilter, triggerTypeFilter, checkpoints]);
+  }, [mergedDecisions, searchQuery, statusFilter, projectFilter, triggerTypeFilter, checkpoints, dateRange]);
 
   // Extract known project paths
   const knownProjects = useMemo(() => {
@@ -649,7 +663,10 @@ export default function Checkpoints() {
 
     for (const proj of projects) {
       try {
-        const res = await api.getCheckpoints(proj);
+        const res = await api.getCheckpoints(proj, {
+          startTime: dateRange.startTime,
+          endTime: dateRange.endTime,
+        });
         if (res.checkpoints) all.push(...res.checkpoints);
       } catch {
         // Project may not have checkpoints
@@ -659,7 +676,7 @@ export default function Checkpoints() {
     // Sort by timestamp descending
     all.sort((a, b) => toMs(b.timestamp) - toMs(a.timestamp));
     setCheckpoints(all);
-  }, [knownProjects]);
+  }, [knownProjects, dateRange]);
 
   useEffect(() => {
     if (knownProjects.length > 0) {
