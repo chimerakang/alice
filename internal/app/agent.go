@@ -411,9 +411,22 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		}
 	})
 	if err != nil {
-		// Log decision for transparency (error case)
-		a.logDecision(userMessage, "", toolCallsForDecision, startTime, nil, err)
-		return "", fmt.Errorf("CLI call failed: %w", err)
+		// Even on error, resp may contain partial text content from streaming
+		partialText := ""
+		if resp != nil {
+			partialText = resp.TextContent
+			// Still save session ID and stats for partial results
+			if resp.SessionID != "" {
+				ps.sessionID = resp.SessionID
+			}
+			ps.stats.APICallCount++
+			ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
+			ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
+			ps.stats.TotalCostUSD += resp.TotalCostUSD
+			ps.lastActivity = time.Now()
+		}
+		a.logDecision(userMessage, partialText, toolCallsForDecision, startTime, resp, err)
+		return partialText, fmt.Errorf("CLI call failed: %w", err)
 	}
 
 	// 保存 session ID 以便下次 --resume

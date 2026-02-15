@@ -471,6 +471,8 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		if err != nil {
 			if strings.Contains(err.Error(), "agent aborted by user") {
 				finalText = "🛑 已中斷執行"
+			} else if response != "" {
+				finalText = "⚠️ 部分完成"
 			} else {
 				finalText = "❌ 執行錯誤"
 			}
@@ -483,7 +485,13 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			// 已由 /abort 指令回饋，不再發送重複訊息
 			return
 		}
-		t.send(key, fmt.Sprintf("❌ 錯誤: %v", err))
+		if response != "" {
+			// Partial success: send accumulated content, then show error
+			t.sendLong(key, response)
+			t.send(key, fmt.Sprintf("⚠️ 過程中發生錯誤: %s", extractErrorReason(err.Error())))
+			return
+		}
+		t.send(key, fmt.Sprintf("❌ 錯誤: %s", extractErrorReason(err.Error())))
 		return
 	}
 
@@ -493,6 +501,24 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 
 	// Telegram 訊息限制 4096 字元，分段發送
 	t.sendLong(key, response)
+}
+
+// extractErrorReason extracts a human-readable error message from API error strings.
+func extractErrorReason(errStr string) string {
+	// Try to extract "message" field from JSON error response
+	if idx := strings.Index(errStr, `"message":"`); idx != -1 {
+		start := idx + len(`"message":"`)
+		if end := strings.Index(errStr[start:], `"`); end != -1 {
+			return errStr[start : start+end]
+		}
+	}
+	// Remove common prefixes for cleaner output
+	errStr = strings.TrimPrefix(errStr, "CLI call failed: ")
+	errStr = strings.TrimPrefix(errStr, "CLI returned error: ")
+	if len(errStr) > 200 {
+		return errStr[:200] + "..."
+	}
+	return errStr
 }
 
 func (t *TelegramBot) handleCommand(key chatKey, text string) {
