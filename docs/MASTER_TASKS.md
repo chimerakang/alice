@@ -34,7 +34,7 @@
 | P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 100% | ✅ |
 | P11 - User Experience | 指令健全性和用戶體驗改善 | 100% | ✅ |
 | P12 - Dashboard Analytics | Claude Code Hooks UI 增強：統計圖表 + 用戶指南 | 100% | ✅ |
-| P13 - Future Enhancements | 未來功能增強與優化 | 20% | 🔄 |
+| P13 - Future Enhancements | 未來功能增強與優化 | 17% | 🔄 |
 | P14 - Commercialization Strategy | Alice AI Agent 商業化發展策略與產品定位 | 0% | 📋 |
 
 ---
@@ -201,7 +201,7 @@ _No issues tracked in this milestone._
 
 ---
 
-## P13 - Future Enhancements (🔄 20%)
+## P13 - Future Enhancements (🔄 17%)
 
 > 未來功能增強與優化
 
@@ -217,6 +217,8 @@ _No issues tracked in this milestone._
 | 13.8 | **🚨 智能異常檢測系統 - AI 使用模式風險預警** | [#59](https://github.com/chimerakang/alice/issues/59) | 🔄 |
 | 13.9 | **💰【商業功能】Alice SecureGuard - AI 開發防洩密系統** | [#60](https://github.com/chimerakang/alice/issues/60) | 🔄 |
 | 13.10 | **🔍 智能 Token 檢測引擎 - SecureGuard 核心功能** | [#61](https://github.com/chimerakang/alice/issues/61) | 🔄 |
+| 13.11 | **Security 頁面：PII Detection Records 缺乏上下文資訊，無法判斷問題內容** | [#69](https://github.com/chimerakang/alice/issues/69) | 🔄 |
+| 13.12 | **Security 頁面：Events Trend 圖表未跟隨時間篩選器 + 標題硬編碼** | [#70](https://github.com/chimerakang/alice/issues/70) | 🔄 |
 
 ---
 
@@ -226,31 +228,43 @@ _No issues tracked in this milestone._
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
-| 14.1 | **Alice 商業化：單機版隱私優先定位策略** | [#49](https://github.com/chimerakang/alice/issues/49) | 🔄 |
-| 14.2 | **多人版架構設計：從單機到團隊協作** | [#51](https://github.com/chimerakang/alice/issues/51) | 🔄 |
-| 14.3 | **競品分析深化：Entire Checkpoints vs Alice 差異化策略** | [#53](https://github.com/chimerakang/alice/issues/53) | 🔄 |
-| 14.4 | **產品授權與定價模式設計** | [#54](https://github.com/chimerakang/alice/issues/54) | 🔄 |
-| 14.5 | **品牌定位與行銷策略規劃** | [#56](https://github.com/chimerakang/alice/issues/56) | 🔄 |
-| 14.6 | **Alice 商業化執行藍圖：6個月行動計畫** | [#58](https://github.com/chimerakang/alice/issues/58) | 🔄 |
+| 14.1 | **Alice 商業化：單機版隱私優先定位策略** | [#49](https://github.com/chimerakang/alice/issues/49) | 📋 |
+| 14.2 | **多人版架構設計：從單機到團隊協作** | [#51](https://github.com/chimerakang/alice/issues/51) | 📋 |
+| 14.3 | **競品分析深化：Entire Checkpoints vs Alice 差異化策略** | [#53](https://github.com/chimerakang/alice/issues/53) | 📋 |
+| 14.4 | **產品授權與定價模式設計** | [#54](https://github.com/chimerakang/alice/issues/54) | 📋 |
+| 14.5 | **品牌定位與行銷策略規劃** | [#56](https://github.com/chimerakang/alice/issues/56) | 📋 |
+| 14.6 | **Alice 商業化執行藍圖：6個月行動計畫** | [#58](https://github.com/chimerakang/alice/issues/58) | 📋 |
 
 ---
 
-## Bug Tracker (Unassigned)
+## Bug Tracker (無 Milestone)
 
 | Issue | Title | Status |
 |-------|-------|--------|
-| [#68](https://github.com/chimerakang/alice/issues/68) | 🐛 Hook 腳本未提取 session duration 和 token 數據 | ✅ |
-| [#67](https://github.com/chimerakang/alice/issues/67) | Performance Analytics: Stats Cards 不支援時間範圍篩選 | ✅ |
-| [#66](https://github.com/chimerakang/alice/issues/66) | PII Detection 雙重記錄 (double-logging) 問題 | 🔄 |
-| [#65](https://github.com/chimerakang/alice/issues/65) | Performance Analytics: Avg Response Time 顯示天文數字 + Error Rate 計算錯誤 | 🔄 |
-| [#64](https://github.com/chimerakang/alice/issues/64) | Bug: Performance / Security / Checkpoints 頁面時間範圍篩選器部分無效 | ✅ |
-| [#63](https://github.com/chimerakang/alice/issues/63) | Performance Bug: Tool Execution Time Distribution 仍顯示 0ms | ✅ |
-| [#62](https://github.com/chimerakang/alice/issues/62) | Performance Bug: 時間範圍篩選器對 Tool Distribution 無效 | ✅ |
-| [#47](https://github.com/chimerakang/alice/issues/47) | Performance Bug: Tool Execution Time Distribution 全部 0ms | ✅ |
-| [#46](https://github.com/chimerakang/alice/issues/46) | Performance Bug: API Response Time Trend 圖表空白 | ✅ |
-| [#45](https://github.com/chimerakang/alice/issues/45) | Performance Bug: 統計卡片全顯示 0 | ✅ |
-| [#44](https://github.com/chimerakang/alice/issues/44) | Dashboard Bug: Storage 顯示 — + 端口衝突 | ✅ |
-| [#43](https://github.com/chimerakang/alice/issues/43) | Dashboard Bug: Uptime 顯示錯誤 | ✅ |
-| [#42](https://github.com/chimerakang/alice/issues/42) | Dashboard Bug: Token Usage (7d) 只顯示當天數據 | ✅ |
-| [#41](https://github.com/chimerakang/alice/issues/41) | Dashboard Bug: Tool Execution 圖表永遠顯示空白 | ✅ |
 | [#40](https://github.com/chimerakang/alice/issues/40) | Dashboard Bug: Git Status 顯示空白 | ✅ |
+| [#41](https://github.com/chimerakang/alice/issues/41) | Dashboard Bug: Tool Execution 圖表永遠顯示空白 | ✅ |
+| [#42](https://github.com/chimerakang/alice/issues/42) | Dashboard Bug: Token Usage (7d) 只顯示當天數據 | ✅ |
+| [#43](https://github.com/chimerakang/alice/issues/43) | Dashboard Bug: Uptime 顯示錯誤 | ✅ |
+| [#44](https://github.com/chimerakang/alice/issues/44) | Dashboard Bug: Storage 顯示 — + 端口衝突 | ✅ |
+| [#45](https://github.com/chimerakang/alice/issues/45) | Performance Bug: 統計卡片全顯示 0 | ✅ |
+| [#46](https://github.com/chimerakang/alice/issues/46) | Performance Bug: API Response Time Trend 圖表空白 | ✅ |
+| [#47](https://github.com/chimerakang/alice/issues/47) | Performance Bug: Tool Execution Time Distribution 全部 0ms | ✅ |
+| [#62](https://github.com/chimerakang/alice/issues/62) | Performance Bug: 時間範圍篩選器對 Tool Distribution 無效 | ✅ |
+| [#63](https://github.com/chimerakang/alice/issues/63) | Performance Bug: Tool Execution Time Distribution 仍顯示 0ms | ✅ |
+| [#64](https://github.com/chimerakang/alice/issues/64) | Bug: Performance / Security / Checkpoints 頁面時間範圍篩選器部分無效 | ✅ |
+| [#65](https://github.com/chimerakang/alice/issues/65) | Performance Analytics: Avg Response Time 天文數字 + Error Rate 計算錯誤 | ✅ |
+| [#66](https://github.com/chimerakang/alice/issues/66) | PII Detection 雙重記錄 (double-logging) 問題 | ✅ |
+| [#67](https://github.com/chimerakang/alice/issues/67) | Performance Analytics: Stats Cards 不支援時間範圍篩選 | ✅ |
+| [#68](https://github.com/chimerakang/alice/issues/68) | 🐛 Hook 腳本未提取 session duration 和 token 數據 | ✅ |
+
+---
+
+## Summary
+
+| Metric | Count |
+|--------|-------|
+| Total Milestones | 16 |
+| Total Issues | 70 |
+| Open Issues | 16 |
+| Closed Issues | 54 |
+| Overall Progress | 77% |
