@@ -120,6 +120,9 @@ thinking_blocks = []
 tool_calls = []
 files_changed = set()
 detected_source = 'terminal'
+timestamps = []
+total_input_tokens = 0
+total_output_tokens = 0
 
 # Regex patterns for IDE-injected metadata tags
 IDE_TAG_PATTERNS = [
@@ -144,6 +147,11 @@ with open(transcript_file, 'r') as f:
             continue
 
         msg_type = entry.get('type', '')
+
+        # Collect timestamps for duration calculation
+        ts = entry.get('timestamp')
+        if ts:
+            timestamps.append(ts)
 
         # Detect VS Code format: uses type 'user' instead of 'human'
         if msg_type == 'user':
@@ -171,8 +179,15 @@ with open(transcript_file, 'r') as f:
         elif msg_type == 'assistant':
             content = entry.get('content', '')
             msg = entry.get('message', {})
-            if isinstance(msg, dict) and msg.get('content'):
-                content = msg['content']
+            if isinstance(msg, dict):
+                # Extract per-turn token usage from message.usage
+                # Only count non-cached input_tokens to match CLI result event format
+                usage = msg.get('usage', {})
+                if usage:
+                    total_input_tokens += usage.get('input_tokens', 0)
+                    total_output_tokens += usage.get('output_tokens', 0)
+                if msg.get('content'):
+                    content = msg['content']
             if isinstance(content, list):
                 for block in content:
                     if isinstance(block, dict):
@@ -194,6 +209,17 @@ with open(transcript_file, 'r') as f:
             elif isinstance(content, str) and content:
                 assistant_responses.append(content)
 
+# Calculate session duration from first to last timestamp
+duration_ms = 0
+if len(timestamps) >= 2:
+    from datetime import datetime, timezone
+    try:
+        first = datetime.fromisoformat(timestamps[0].replace('Z', '+00:00'))
+        last = datetime.fromisoformat(timestamps[-1].replace('Z', '+00:00'))
+        duration_ms = int((last - first).total_seconds() * 1000)
+    except (ValueError, TypeError):
+        pass
+
 summary = {
     'user_prompt': user_prompts[0] if user_prompts else '',
     'agent_response': assistant_responses[-1][:2000] if assistant_responses else '',
@@ -202,6 +228,9 @@ summary = {
     'files_changed': list(files_changed),
     'success': True,
     'detected_source': detected_source,
+    'duration_ms': duration_ms,
+    'tokens_input': total_input_tokens,
+    'tokens_output': total_output_tokens,
 }
 
 print(json.dumps(summary))
@@ -235,8 +264,8 @@ curl -s -X POST "$ALICE_API" \
             tool_calls: .tool_calls,
             files_changed: .files_changed,
             success: .success,
-            duration_ms: 0,
-            tokens_input: 0,
-            tokens_output: 0
+            duration_ms: .duration_ms,
+            tokens_input: .tokens_input,
+            tokens_output: .tokens_output
         }')" \
     > /dev/null 2>&1 || true
