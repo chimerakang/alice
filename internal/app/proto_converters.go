@@ -840,9 +840,9 @@ func (wi *WebInterface) handlePerformanceAnalyticsProto(w http.ResponseWriter, r
 			return
 		}
 
-		// 計算錯誤率：1.0 - (成功率 / 100)
+		// 計算錯誤率：SuccessRate 現在是 0-100 範圍，ErrorRate 為 (100-SuccessRate)/100
 		errorRate := 0.0
-		if analytics.SuccessRate > 0 {
+		if analytics.SuccessRate >= 0 && analytics.SuccessRate <= 100 {
 			errorRate = (100.0 - analytics.SuccessRate) / 100.0
 		}
 
@@ -1150,7 +1150,6 @@ func (wi *WebInterface) handleSecurityStatsProto(w http.ResponseWriter, r *http.
 
 		// 優先使用時間範圍篩選的結果，如果沒有提供時間則使用全部資料
 		var events []SecurityEvent
-		var err error
 
 		if startTimeStr != "" && endTimeStr != "" {
 			// 使用指定的時間範圍

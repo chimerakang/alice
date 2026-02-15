@@ -33,6 +33,22 @@ interface ToolDistribution {
   count: number;
 }
 
+// 格式化響應時間為人類可讀格式
+function formatResponseTime(ms: number): string {
+  if (ms >= 60000) {
+    // >= 1 minute: show as "2m 35s"
+    const minutes = Math.floor(ms / 60000);
+    const seconds = Math.floor((ms % 60000) / 1000);
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  } else if (ms >= 1000) {
+    // >= 1 second: show as "1.5s"
+    return `${(ms / 1000).toFixed(1)}s`;
+  } else {
+    // < 1 second: show as "123ms"
+    return `${Math.round(ms)}ms`;
+  }
+}
+
 export default function Performance() {
   const [analytics, setAnalytics] = useState<PerformanceAnalytics | null>(null);
   const [metrics, setMetrics] = useState<PerformanceMetric[]>([]);
@@ -146,7 +162,7 @@ export default function Performance() {
               <span className="text-sm text-gray-400">Avg Response Time</span>
             </div>
             <div className="text-2xl font-bold font-mono text-white">
-              {analytics.avg_response_time.toFixed(0)}ms
+              {formatResponseTime(analytics.avg_response_time)}
             </div>
           </div>
 

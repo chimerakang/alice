@@ -25,6 +25,7 @@ type Storage interface {
 	InsertDecisionLog(log DecisionLog) error
 	GetDecisionLogs(limit int, offset int) ([]DecisionLog, error)
 	GetDecisionLogsByTimeRange(start, end time.Time, limit int) ([]DecisionLog, error)
+	GetDecisionLogsByTimeRangeWithOffset(start, end time.Time, limit int, offset int) ([]DecisionLog, error)
 	GetDecisionLogsByProject(projectPath string, limit int) ([]DecisionLog, error)
 
 	// Performance Metrics
@@ -44,6 +45,7 @@ type Storage interface {
 	// Count Queries (for pagination)
 	GetToolExecutionsCount() (int64, error)
 	GetDecisionLogsCount() (int64, error)
+	GetDecisionLogsCountByTimeRange(start, end time.Time) (int64, error)
 	GetPerformanceMetricsCount() (int64, error)
 	GetSecurityEventsCount() (int64, error)
 
@@ -460,6 +462,29 @@ func (s *SQLiteStorage) GetDecisionLogsByTimeRange(start, end time.Time, limit i
 	return s.scanDecisionLogs(rows)
 }
 
+// GetDecisionLogsByTimeRangeWithOffset 按時間範圍和偏移量獲取決策記錄
+func (s *SQLiteStorage) GetDecisionLogsByTimeRangeWithOffset(start, end time.Time, limit int, offset int) ([]DecisionLog, error) {
+	startStr := formatTimeForSQLite(start)
+	endStr := formatTimeForSQLite(end)
+	rows, err := s.db.Query(`
+		SELECT timestamp, session_id, project_path, chat_id, thread_id, user_prompt,
+			   agent_response, tool_calls_json, context_json, outcome_json, duration_ms,
+			   tokens_input, tokens_output, COALESCE(cost_usd, 0) as cost_usd,
+			   COALESCE(thinking_content, '') as thinking_content,
+			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch,
+			   COALESCE(source, 'telegram') as source
+		FROM decision_logs
+		WHERE timestamp BETWEEN ? AND ?
+		ORDER BY timestamp DESC
+		LIMIT ? OFFSET ?`, startStr, endStr, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.scanDecisionLogs(rows)
+}
+
 // GetDecisionLogsByProject 按專案路徑獲取決策記錄
 func (s *SQLiteStorage) GetDecisionLogsByProject(projectPath string, limit int) ([]DecisionLog, error) {
 	rows, err := s.db.Query(`
@@ -591,7 +616,7 @@ func (s *SQLiteStorage) GetPerformanceAnalytics(hours int) (PerformanceAnalytics
 	row := s.db.QueryRow(`
 		SELECT
 			COUNT(*) as total_requests,
-			AVG(CASE WHEN api_call_success THEN 1.0 ELSE 0.0 END) as success_rate,
+			AVG(CASE WHEN api_call_success THEN 1.0 ELSE 0.0 END) * 100.0 as success_rate,
 			AVG(api_call_latency_ms) as avg_api_latency_ms,
 			AVG(tool_execution_time_ms) as avg_tool_execution_ms,
 			SUM(tokens_used) as total_tokens,
@@ -911,6 +936,15 @@ func (s *SQLiteStorage) GetToolExecutionsCount() (int64, error) {
 func (s *SQLiteStorage) GetDecisionLogsCount() (int64, error) {
 	var count int64
 	err := s.db.QueryRow("SELECT COUNT(*) FROM decision_logs").Scan(&count)
+	return count, err
+}
+
+// GetDecisionLogsCountByTimeRange 獲取指定時間範圍內的決策記錄總數
+func (s *SQLiteStorage) GetDecisionLogsCountByTimeRange(start, end time.Time) (int64, error) {
+	startStr := formatTimeForSQLite(start)
+	endStr := formatTimeForSQLite(end)
+	var count int64
+	err := s.db.QueryRow("SELECT COUNT(*) FROM decision_logs WHERE timestamp BETWEEN ? AND ?", startStr, endStr).Scan(&count)
 	return count, err
 }
 
