@@ -3,7 +3,7 @@ services:
   dashboard:
     build: .
     container_name: alice-dashboard
-    restart: unless-stopped
+    restart: always
     ports:
       - "127.0.0.1:3939:8082"
     environment:
