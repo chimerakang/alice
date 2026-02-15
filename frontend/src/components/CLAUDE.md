@@ -25,4 +25,11 @@
 |----|------|---|-------|------|
 | #2045 | 4:56 PM | 🔴 | Dashboard data display issues root causes identified: Git integration not initialized, token chart hardcoded 7-day filter, tool executions from WebSocket only | ~759 |
 | #2028 | 4:52 PM | 🔵 | ToolCallGantt component visualizes tool execution timeline | ~354 |
+
+### Feb 15, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #2911 | 6:02 PM | 🔵 | TimelineEntry Component Structure and Data Display Logic | ~490 |
+| #2909 | " | 🔵 | ToolCallGantt Component Implementation and Non-Interactive Design | ~455 |
 </claude-mem-context>

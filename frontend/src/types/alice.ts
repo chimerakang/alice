@@ -174,6 +174,7 @@ export interface SecurityEvent {
   ip: string;
   mitigated: boolean;
   timestamp: string;
+  details?: Record<string, string>;
 }
 
 export interface SecurityStats {

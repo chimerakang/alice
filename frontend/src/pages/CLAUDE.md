@@ -17,4 +17,14 @@
 |----|------|---|-------|------|
 | #2045 | 4:56 PM | 🔴 | Dashboard data display issues root causes identified: Git integration not initialized, token chart hardcoded 7-day filter, tool executions from WebSocket only | ~759 |
 | #2030 | 4:52 PM | 🔵 | Dashboard component data fetching reveals token usage date range limitation | ~447 |
+
+### Feb 15, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #2908 | 6:02 PM | 🔵 | Timeline Page Architecture and Comparison with Checkpoints Page | ~540 |
+| #2907 | 6:01 PM | 🔵 | Checkpoints Page Architecture and Decision Detail Panel Structure | ~512 |
+| #2823 | 4:20 PM | 🔵 | Complete PII Detection Investigation Summary | ~541 |
+| #2807 | 4:17 PM | 🔵 | Dashboard PII Records Display and Data Interpretation | ~474 |
+| #2803 | " | 🔵 | Security Dashboard Frontend Implementation | ~397 |
 </claude-mem-context>
