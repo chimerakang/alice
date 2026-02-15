@@ -1414,6 +1414,10 @@ func (t *TelegramBot) handleTasks(key chatKey) {
 			t.handleTasksFromGitHub(key, projectName, repo, milestones)
 			return
 		}
+		// 記錄 GitHub API 失敗原因，但不直接顯示給用戶
+		log.Printf("[telegram] GitHub API failed for %s: %v", repo, fetchErr)
+	} else {
+		log.Printf("[telegram] Not a GitHub repo or detection failed: %v", err)
 	}
 
 	// Fallback: 從 MASTER_TASKS.md 解析
@@ -1497,7 +1501,14 @@ func (t *TelegramBot) handleTasksFromFile(key chatKey, projectDir, projectName s
 	tasksFile := filepath.Join(projectDir, "docs", "MASTER_TASKS.md")
 	phases, err := t.parseMasterTasks(tasksFile)
 	if err != nil {
-		t.send(key, fmt.Sprintf("❌ 無法讀取任務清單: %v\n\n💡 請先執行 /task-init 設定 GitHub Milestones", err))
+		// 檢查是否是 GitHub repo
+		if _, repoErr := detectGitHubRepo(projectDir); repoErr == nil {
+			// 是 GitHub repo 但讀取失敗，建議檢查 gh CLI 認證
+			t.send(key, fmt.Sprintf("❌ 無法取得任務資料\n\n可能原因：\n• GitHub API 認證問題 - 請檢查 `gh auth status`\n• MASTER_TASKS.md 不存在 - 請執行 /task-sync\n\n詳細錯誤: %v", err))
+		} else {
+			// 不是 GitHub repo，建議初始化
+			t.send(key, fmt.Sprintf("❌ 無法讀取任務清單: %v\n\n💡 請先執行 /task-init 設定 GitHub Milestones", err))
+		}
 		return
 	}
 
@@ -1604,36 +1615,24 @@ func detectGitHubRepo(projectDir string) (string, error) {
 	return "", fmt.Errorf("not a GitHub repo: %s", remote)
 }
 
-// fetchGitHubMilestones queries GitHub API for all milestones
+// fetchGitHubMilestones queries GitHub API for all milestones using gh CLI
 func fetchGitHubMilestones(repo string) ([]ghMilestone, error) {
-	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/milestones?state=all&sort=title&direction=asc&per_page=100", repo)
+	// 使用 gh api CLI 命令，利用已有的認證
+	// 參數作為 URL 查詢參數傳遞
+	apiURL := fmt.Sprintf("repos/%s/milestones?state=all&sort=title&direction=asc&per_page=100", repo)
+	cmd := exec.Command("gh", "api", apiURL)
 
-	req, err := http.NewRequest("GET", apiURL, nil)
+	output, err := cmd.Output()
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "alice-bot")
-
-	// 使用 GITHUB_TOKEN 避免 rate limit（可選）
-	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("GitHub API error: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("GitHub API %d: %s", resp.StatusCode, string(body))
+		// 檢查是否是 gh CLI 認證問題
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("gh CLI error (status %d): %s", exitErr.ExitCode(), string(exitErr.Stderr))
+		}
+		return nil, fmt.Errorf("gh CLI execution error: %w", err)
 	}
 
 	var milestones []ghMilestone
-	if err := json.NewDecoder(resp.Body).Decode(&milestones); err != nil {
+	if err := json.Unmarshal(output, &milestones); err != nil {
 		return nil, fmt.Errorf("JSON decode error: %w", err)
 	}
 

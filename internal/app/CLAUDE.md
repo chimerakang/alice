@@ -1,12 +1,6 @@
 <claude-mem-context>
 # Recent Activity
 
-### Feb 12, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #1052 | 11:48 PM | ⚖️ | Decision to Convert Multimedia Requirements into Work Items for Future Implementation | ~688 |
-
 ### Feb 13, 2026
 
 | ID | Time | T | Title | Read |
@@ -32,10 +26,6 @@
 | #1325 | " | 🔵 | Voice Transcription Implementation Using OpenAI Whisper | ~294 |
 | #1321 | 3:23 PM | 🔵 | Telegram Message Structure Missing Sticker Field | ~303 |
 | #1150 | 12:43 AM | 🔴 | Added Retry Logic to InsertSecurityEvent Function | ~249 |
-| #1149 | 12:42 AM | 🟣 | Implemented execWithRetry Helper Function | ~327 |
-| #1148 | " | 🔴 | Added Retry Logic to SaveTopicSetting Function | ~248 |
-| #1147 | " | 🔴 | Fixed SQLite Database Locking with Connection Pool Configuration | ~305 |
-| #1146 | " | 🔵 | SQLite WAL Mode Enabled But No Connection Pool Configuration | ~292 |
 
 ### Feb 14, 2026
 
@@ -52,6 +42,11 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #3006 | 7:08 PM | 🔵 | Agent ProjectDir method returns projectDir field set during agent creation or modification | ~410 |
+| #3005 | " | 🔵 | Telegram bot getAgent restores project directory from database topic settings on agent creation | ~513 |
+| #3001 | 7:07 PM | ⚖️ | Telegram bot /tasks command bug identified and deferred for later resolution | ~584 |
+| #3000 | 7:06 PM | 🔵 | detectGitHubRepo parses git remote origin URL to extract owner/repo identifier | ~588 |
+| #2999 | " | 🔵 | parseMasterTasks function implements multi-format markdown parser with regex-based pattern matching | ~622 |
 | #2916 | 6:04 PM | 🔵 | Root Cause Identified: Tool Execution Durations Not Updated Before Decision Log Creation | ~567 |
 | #2915 | " | 🔵 | Frontend-Compatible JSON Conversion Function Exists But Flattens Token Fields Correctly | ~560 |
 | #2914 | 6:03 PM | 🔵 | Web API Response Structure Does Not Transform DecisionLog JSON For Frontend | ~544 |
