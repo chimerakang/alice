@@ -414,7 +414,6 @@ export default function Timeline() {
 
   // Fetch decisions from API with server-side pagination + time range + source
   const fetchDecisions = useCallback(async (pageNum: number, range: DateRange, src: string) => {
-    setLoading(true);
     try {
       const params: TimeRangeQuery = {
         limit: PAGE_SIZE,

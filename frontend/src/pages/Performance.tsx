@@ -64,7 +64,6 @@ export default function Performance() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        setLoading(true);
         const [analyticsData, metricsData, recsData, toolDistData] = await Promise.allSettled([
           api.getPerformanceAnalytics({
             startTime: dateRange.startTime,

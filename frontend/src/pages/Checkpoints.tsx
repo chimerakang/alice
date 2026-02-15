@@ -616,8 +616,7 @@ export default function Checkpoints() {
       setAllDecisions([]);
     }
 
-    const loading = reset ? setLoading : setLoadingMore;
-    loading(true);
+    setLoadingMore(true);
 
     try {
       const query = reset ? { ...buildQuery(), offset: 0 } : buildQuery();
@@ -634,7 +633,8 @@ export default function Checkpoints() {
     } catch (error) {
       console.error("Failed to fetch decisions:", error);
     } finally {
-      loading(false);
+      setLoading(false);
+      setLoadingMore(false);
     }
   }, [buildQuery]);
 

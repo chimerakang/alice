@@ -67,7 +67,6 @@ export default function Security() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        setLoading(true);
         const [statsData, eventsData] = await Promise.allSettled([
           api.getSecurityStats({
             startTime: dateRange.startTime,
@@ -220,8 +219,8 @@ export default function Security() {
       return matchesSearch && matchesSeverity;
     })
     .sort((a, b) => {
-      const aValue = a[sortField];
-      const bValue = b[sortField];
+      const aValue = a[sortField] ?? "";
+      const bValue = b[sortField] ?? "";
 
       if (aValue < bValue) return sortOrder === "asc" ? -1 : 1;
       if (aValue > bValue) return sortOrder === "asc" ? 1 : -1;
