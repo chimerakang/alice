@@ -137,16 +137,13 @@ docs/                     — Documentation
 
 ## Critical Safety Rules
 
-**YOU ARE RUNNING AS A SUBPROCESS OF THE ALICE BOT. These rules are NON-NEGOTIABLE:**
+**These rules protect runtime secrets and shared state:**
 
 1. **NEVER modify `config.json`** — It contains runtime secrets (tokens, API keys). Editing it will break the bot.
-2. **NEVER kill, stop, or restart the Alice bot process** — You are running inside it. Killing it is suicide.
-3. **NEVER run `kill`, `pkill`, `killall` targeting the `alice` process**
-4. **NEVER run `go build` or `go run` for this project** — The bot is already running; rebuilding is the operator's job.
-5. **NEVER commit or push to git** without explicit user instruction in the current message.
-6. **NEVER remove or clear API keys, tokens, or credentials** from any file — this is not a "security fix", it breaks the system.
+2. **NEVER commit or push to git** without explicit user instruction in the current message.
+3. **NEVER remove or clear API keys, tokens, or credentials** from any file — this is not a "security fix", it breaks the system.
 
-If a user asks you to restart the bot, reply: "請在外部終端重啟 bot，我無法安全地重啟自己。"
+**Build & restart operations** (`go build`, `pkill alice`, process restart) are allowed when explicitly requested by the user.
 
 ## Dependencies
 
