@@ -52,9 +52,9 @@ export function SavingsBanner({ hours = 168 }: SavingsBannerProps) {
 
   if (loading) {
     return (
-      <div className="bg-gradient-to-r from-green-900/20 to-emerald-900/20 border border-green-700/30 rounded-lg p-6 animate-pulse">
-        <div className="h-8 bg-green-700/30 rounded w-1/3 mb-4"></div>
-        <div className="h-4 bg-green-700/30 rounded w-2/5"></div>
+      <div className="card p-6 border-l-4 border-l-success animate-pulse">
+        <div className="h-8 bg-gray-700/30 rounded w-1/3 mb-4"></div>
+        <div className="h-4 bg-gray-700/30 rounded w-2/5"></div>
       </div>
     );
   }
@@ -74,24 +74,24 @@ export function SavingsBanner({ hours = 168 }: SavingsBannerProps) {
   const actualCost = report.actual_cost;
 
   return (
-    <div className="bg-gradient-to-r from-green-900/30 to-emerald-900/20 border border-green-700/50 rounded-lg p-6 shadow-lg">
+    <div className="card p-6 border-l-4 border-l-success">
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3">
-          <div className="p-3 bg-green-900/40 rounded-lg">
-            <TrendingDown className="w-6 h-6 text-green-400" />
+          <div className="p-2 bg-gray-800/50 rounded-lg">
+            <TrendingDown className="w-5 h-5 text-success" />
           </div>
           <div>
-            <h3 className="text-lg font-semibold text-white">Smart Routing Savings</h3>
-            <p className="text-xs text-gray-400">
+            <h3 className="text-base font-semibold text-white">Smart Routing Savings</h3>
+            <p className="text-xs text-gray-500">
               Last {report.period_hours} hours ({new Date(report.start_time).toLocaleDateString()} - {new Date(report.end_time).toLocaleDateString()})
             </p>
           </div>
         </div>
         <div className="text-right">
-          <div className="text-3xl font-bold text-green-400">
+          <div className="text-2xl font-bold text-success">
             ${savingsAmount.toFixed(2)}
           </div>
-          <div className="text-sm text-green-300">Saved ({savingsPercentage}%)</div>
+          <div className="text-xs text-gray-400">Saved ({savingsPercentage}%)</div>
         </div>
       </div>
 
@@ -99,44 +99,40 @@ export function SavingsBanner({ hours = 168 }: SavingsBannerProps) {
         {/* Progress Bar */}
         <div className="space-y-1">
           <div className="flex justify-between text-xs">
-            <span className="text-gray-400">Actual Cost</span>
+            <span className="text-gray-500">Actual Cost</span>
             <span className="text-gray-300 font-medium">${actualCost.toFixed(2)}</span>
           </div>
-          <div className="w-full bg-gray-800/50 rounded-full h-2 overflow-hidden border border-gray-700/30">
+          <div className="w-full bg-gray-800/50 rounded-full h-2 overflow-hidden">
             <div
-              className="h-full bg-gradient-to-r from-green-500 to-emerald-400 transition-all duration-500"
+              className="h-full bg-success transition-all duration-500"
               style={{
                 width: `${Math.min((actualCost / report.default_model_cost) * 100, 100)}%`,
               }}
             />
           </div>
           <div className="flex justify-between text-xs">
-            <span className="text-gray-400">If using Sonnet (default)</span>
+            <span className="text-gray-500">If using Sonnet (default)</span>
             <span className="text-gray-300 font-medium">${report.default_model_cost.toFixed(2)}</span>
           </div>
         </div>
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 pt-4 border-t border-gray-700/30">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 pt-4 border-t border-gray-800/50">
           <StatCard
             label="Total Requests"
             value={report.total_requests.toString()}
-            icon="📊"
           />
           <StatCard
             label="Cost per Request"
             value={`$${(actualCost / report.total_requests).toFixed(4)}`}
-            icon="💵"
           />
           <StatCard
             label="Models Used"
             value={Object.keys(report.by_model).length.toString()}
-            icon="🔄"
           />
           <StatCard
             label="Efficiency"
             value={`${savingsPercentage}%`}
-            icon="⚡"
           />
         </div>
       </div>
@@ -144,13 +140,10 @@ export function SavingsBanner({ hours = 168 }: SavingsBannerProps) {
   );
 }
 
-function StatCard({ label, value, icon }: { label: string; value: string; icon: string }) {
+function StatCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="bg-gray-800/40 rounded p-3 border border-gray-700/20">
-      <div className="flex items-center gap-2 mb-1">
-        <span className="text-lg">{icon}</span>
-        <span className="text-xs text-gray-500">{label}</span>
-      </div>
+    <div className="text-center">
+      <div className="text-xs text-gray-500 mb-1">{label}</div>
       <div className="text-sm font-semibold text-white">{value}</div>
     </div>
   );

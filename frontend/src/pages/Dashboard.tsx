@@ -24,6 +24,7 @@ import {
   FileCode2,
   AlertTriangle,
   Loader2,
+  TrendingDown,
 } from "lucide-react";
 import {
   AreaChart,
@@ -801,9 +802,17 @@ export default function Dashboard() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className="card p-5">
+            <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
+              <Zap className="w-4 h-4 text-warning" />
+              Model Distribution
+            </h3>
             <ModelDistributionChart hours={168} />
           </div>
           <div className="card p-5">
+            <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
+              <TrendingDown className="w-4 h-4 text-success" />
+              Cost Trend
+            </h3>
             <CostTrendChart hours={168} />
           </div>
         </div>
