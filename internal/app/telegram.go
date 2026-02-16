@@ -1639,8 +1639,8 @@ func (t *TelegramBot) handleTasks(key chatKey) {
 // handleTasksFromGitHub 從 GitHub Issues + Milestones 顯示任務進度
 func (t *TelegramBot) handleTasksFromGitHub(key chatKey, projectName, repo string, milestones []ghMilestone) {
 	var response strings.Builder
-	response.WriteString(fmt.Sprintf("📊 *%s 專案進度*\n", projectName))
-	response.WriteString(fmt.Sprintf("_(via GitHub Issues: %s)_\n\n", repo))
+	response.WriteString(fmt.Sprintf("📊 %s 專案進度\n", projectName))
+	response.WriteString(fmt.Sprintf("(via GitHub Issues: %s)\n\n", repo))
 
 	var totalOpen, totalClosed int
 	var activePhases []string
@@ -1665,8 +1665,8 @@ func (t *TelegramBot) handleTasksFromGitHub(key chatKey, projectName, repo strin
 
 		if ms.OpenIssues > 0 {
 			activePhases = append(activePhases,
-				fmt.Sprintf("*%s* (%d%%)\n  📋 %d open / ✅ %d closed",
-					ms.Title, progress, ms.OpenIssues, ms.ClosedIssues))
+				fmt.Sprintf("%s %s (%d%%)\n  📋 %d open / ✅ %d closed",
+					status, ms.Title, progress, ms.OpenIssues, ms.ClosedIssues))
 		} else if total > 0 {
 			// 已完成的 phase 簡短顯示
 		} else {
@@ -1705,7 +1705,7 @@ func (t *TelegramBot) handleTasksFromGitHub(key chatKey, projectName, repo strin
 		}
 	}
 
-	t.sendMarkdown(key, response.String())
+	t.send(key, response.String())
 }
 
 // handleTasksFromFile 從 MASTER_TASKS.md 解析任務（fallback）
