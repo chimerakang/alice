@@ -1652,7 +1652,9 @@ func (t *TelegramBot) handleTasks(key chatKey) {
 	tasksFile := filepath.Join(projectDir, "docs", "MASTER_TASKS.md")
 	data, err := os.ReadFile(tasksFile)
 	if err != nil {
-		t.send(key, fmt.Sprintf("❌ 無法讀取任務清單\n\n請執行 /task-sync 生成 MASTER_TASKS.md\n\n錯誤: %v", err))
+		errMsg := t.getLocalizedMessage(key.chatID, "tasks_read_failed", nil)
+		errMsg = strings.ReplaceAll(errMsg, "{error}", err.Error())
+		t.send(key, errMsg)
 		return
 	}
 
@@ -1674,7 +1676,8 @@ func (t *TelegramBot) handleTasks(key chatKey) {
 		extracted := rest[:endIdx]
 		t.send(key, extracted)
 	} else {
-		t.send(key, "❌ MASTER_TASKS.md 格式不正確，請執行 /task-sync 重新生成")
+		errMsg := t.getLocalizedMessage(key.chatID, "tasks_format_invalid", nil)
+		t.send(key, errMsg)
 	}
 }
 
@@ -1762,11 +1765,13 @@ func (t *TelegramBot) processBatch(batchKey string) {
 
 	if len(batch.Photos) == 1 {
 		// 單張圖片，使用原有邏輯
-		t.send(batch.ChatKey, "📷 正在分析圖片...")
+		t.send(batch.ChatKey, t.getLocalizedMessage(batch.ChatKey.chatID, "photo_analyzing_single", nil))
 		t.handleSinglePhoto(batch.ChatKey, batch.UserID, []PhotoSize{batch.Photos[0]}, batch.Caption)
 	} else {
 		// 多張圖片，批次處理
-		t.send(batch.ChatKey, fmt.Sprintf("📷 正在分析 %d 張圖片...", len(batch.Photos)))
+		msg := t.getLocalizedMessage(batch.ChatKey.chatID, "photo_analyzing_batch", nil)
+		msg = strings.ReplaceAll(msg, "{count}", fmt.Sprintf("%d", len(batch.Photos)))
+		t.send(batch.ChatKey, msg)
 		t.handleMultiplePhotos(batch.ChatKey, batch.UserID, batch.Photos, batch.Caption)
 	}
 }
@@ -1781,7 +1786,7 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 	projectTempDir := filepath.Join(projectDir, "temp")
 	if err := os.MkdirAll(projectTempDir, 0755); err != nil {
 		log.Printf("[telegram] create project temp dir error: %v", err)
-		t.send(key, "📷 建立專案臨時目錄失敗。")
+		t.send(key, t.getLocalizedMessage(key.chatID, "photo_mkdir_failed", nil))
 		return
 	}
 
@@ -1812,8 +1817,11 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 		// 檢查檔案大小
 		maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
 		if targetPhoto.FileSize > maxSizeBytes {
-			t.send(key, fmt.Sprintf("📷 第 %d 張圖片檔案過大（%s），限制為 %dMB。",
-				i+1, formatFileSize(targetPhoto.FileSize), t.config.Multimedia.MaxFileSizeMB))
+			msg := t.getLocalizedMessage(key.chatID, "photo_file_too_large", nil)
+			msg = strings.ReplaceAll(msg, "{index}", fmt.Sprintf("%d", i+1))
+			msg = strings.ReplaceAll(msg, "{size}", formatFileSize(targetPhoto.FileSize))
+			msg = strings.ReplaceAll(msg, "{limit}", fmt.Sprintf("%d", t.config.Multimedia.MaxFileSizeMB))
+			t.send(key, msg)
 			continue
 		}
 
@@ -1821,7 +1829,9 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 		aliceImagePath, err := t.DownloadTelegramFile(targetPhoto.FileID, "photo")
 		if err != nil {
 			log.Printf("[telegram] download photo %d error: %v", i+1, err)
-			t.send(key, fmt.Sprintf("📷 第 %d 張圖片下載失敗", i+1))
+			msg := t.getLocalizedMessage(key.chatID, "photo_download_failed", nil)
+			msg = strings.ReplaceAll(msg, "{index}", fmt.Sprintf("%d", i+1))
+			t.send(key, msg)
 			continue
 		}
 		aliceImagePaths = append(aliceImagePaths, aliceImagePath)
@@ -1831,7 +1841,9 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 		projectImagePath := filepath.Join(projectTempDir, fileName)
 		if err := copyFile(aliceImagePath, projectImagePath); err != nil {
 			log.Printf("[telegram] copy photo %d to project error: %v", i+1, err)
-			t.send(key, fmt.Sprintf("📷 第 %d 張圖片複製失敗", i+1))
+			msg := t.getLocalizedMessage(key.chatID, "photo_copy_failed", nil)
+			msg = strings.ReplaceAll(msg, "{index}", fmt.Sprintf("%d", i+1))
+			t.send(key, msg)
 			continue
 		}
 		projectImagePaths = append(projectImagePaths, projectImagePath)
@@ -1842,21 +1854,31 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 	}
 
 	if len(relativeImagePaths) == 0 {
-		t.send(key, "📷 所有圖片處理失敗，請稍後再試。")
+		msg := t.getLocalizedMessage(key.chatID, "photo_all_failed", nil)
+		t.send(key, msg)
 		return
 	}
 
 	// 組合多張圖片的 prompt，caption 為主指令時優先
 	imageList := ""
 	for i, relativePath := range relativeImagePaths {
-		imageList += fmt.Sprintf("圖片 %d: %s\n", i+1, relativePath)
+		item := t.getLocalizedMessage(key.chatID, "photo_list_item", nil)
+		item = strings.ReplaceAll(item, "{index}", fmt.Sprintf("%d", i+1))
+		item = strings.ReplaceAll(item, "{path}", relativePath)
+		imageList += item
 	}
 
 	var prompt string
 	if caption != "" {
-		prompt = fmt.Sprintf("%s\n\n（參考附件 %d 張圖片：\n%s）", caption, len(relativeImagePaths), imageList)
+		refBatch := t.getLocalizedMessage(key.chatID, "photo_reference_batch", nil)
+		refBatch = strings.ReplaceAll(refBatch, "{count}", fmt.Sprintf("%d", len(relativeImagePaths)))
+		refBatch = strings.ReplaceAll(refBatch, "{list}", imageList)
+		prompt = fmt.Sprintf("%s%s", caption, refBatch)
 	} else {
-		prompt = fmt.Sprintf("請分析這 %d 張圖片，並進行比較分析：\n%s", len(relativeImagePaths), imageList)
+		analyzePrompt := t.getLocalizedMessage(key.chatID, "photo_analyze_batch_prompt", nil)
+		analyzePrompt = strings.ReplaceAll(analyzePrompt, "{count}", fmt.Sprintf("%d", len(relativeImagePaths)))
+		analyzePrompt = strings.ReplaceAll(analyzePrompt, "{list}", imageList)
+		prompt = analyzePrompt
 	}
 
 	// 安全檢查和事件記錄
@@ -1890,10 +1912,14 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 						"context":        "telegram_batch_photo",
 					},
 				})
-				t.send(key, "⚠️ 圖片說明中偵測到敏感資訊已自動過濾。")
+				msg := t.getLocalizedMessage(key.chatID, "photo_caption_pii", nil)
+				t.send(key, msg)
 				caption = filteredCaption
 				// 重新組合 prompt
-				prompt = fmt.Sprintf("%s\n\n（參考附件 %d 張圖片：\n%s）", caption, len(relativeImagePaths), imageList)
+				refBatch := t.getLocalizedMessage(key.chatID, "photo_reference_batch", nil)
+				refBatch = strings.ReplaceAll(refBatch, "{count}", fmt.Sprintf("%d", len(relativeImagePaths)))
+				refBatch = strings.ReplaceAll(refBatch, "{list}", imageList)
+				prompt = fmt.Sprintf("%s%s", caption, refBatch)
 			}
 		}
 	}
@@ -1911,7 +1937,8 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 
 	if err != nil {
 		log.Printf("[telegram] batch photo analysis error: %v", err)
-		t.send(key, "❌ 圖片批次分析失敗，請稍後再試。")
+		msg := t.getLocalizedMessage(key.chatID, "photo_analysis_failed", nil)
+		t.send(key, msg)
 		return
 	}
 
@@ -1931,8 +1958,11 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 	// 檢查檔案大小限制
 	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
 	if targetPhoto.FileSize > maxSizeBytes {
-		t.send(key, fmt.Sprintf("📷 圖片檔案過大（%s），限制為 %dMB。",
-			formatFileSize(targetPhoto.FileSize), t.config.Multimedia.MaxFileSizeMB))
+		msg := t.getLocalizedMessage(key.chatID, "photo_file_too_large", nil)
+		msg = strings.ReplaceAll(msg, "{index}", "1")
+		msg = strings.ReplaceAll(msg, "{size}", formatFileSize(targetPhoto.FileSize))
+		msg = strings.ReplaceAll(msg, "{limit}", fmt.Sprintf("%d", t.config.Multimedia.MaxFileSizeMB))
+		t.send(key, msg)
 		return
 	}
 
@@ -1940,7 +1970,9 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 	aliceImagePath, err := t.DownloadTelegramFile(targetPhoto.FileID, "photo")
 	if err != nil {
 		log.Printf("[telegram] download photo error: %v", err)
-		t.send(key, "📷 下載圖片失敗，請稍後再試。")
+		msg := t.getLocalizedMessage(key.chatID, "photo_download_failed", nil)
+		msg = strings.ReplaceAll(msg, "{index}", "1")
+		t.send(key, msg)
 		return
 	}
 
@@ -1952,7 +1984,8 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 	projectTempDir := filepath.Join(projectDir, "temp")
 	if err := os.MkdirAll(projectTempDir, 0755); err != nil {
 		log.Printf("[telegram] create project temp dir error: %v", err)
-		t.send(key, "📷 建立專案臨時目錄失敗。")
+		msg := t.getLocalizedMessage(key.chatID, "photo_mkdir_failed", nil)
+		t.send(key, msg)
 		os.Remove(aliceImagePath) // 清理 Alice 臨時檔案
 		return
 	}
@@ -1963,7 +1996,9 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 
 	if err := copyFile(aliceImagePath, projectImagePath); err != nil {
 		log.Printf("[telegram] copy photo to project error: %v", err)
-		t.send(key, "📷 複製圖片到專案目錄失敗。")
+		msg := t.getLocalizedMessage(key.chatID, "photo_copy_failed", nil)
+		msg = strings.ReplaceAll(msg, "{index}", "1")
+		t.send(key, msg)
 		os.Remove(aliceImagePath) // 清理 Alice 臨時檔案
 		return
 	}
@@ -1982,9 +2017,13 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 	relativePath := filepath.Join("temp", fileName)
 	var prompt string
 	if caption != "" {
-		prompt = fmt.Sprintf("%s\n\n（參考附件圖片: %s）", caption, relativePath)
+		refSingle := t.getLocalizedMessage(key.chatID, "photo_reference_single", nil)
+		refSingle = strings.ReplaceAll(refSingle, "{path}", relativePath)
+		prompt = fmt.Sprintf("%s%s", caption, refSingle)
 	} else {
-		prompt = fmt.Sprintf("請分析這張圖片: %s", relativePath)
+		analyzePrompt := t.getLocalizedMessage(key.chatID, "photo_analyze_single_prompt", nil)
+		analyzePrompt = strings.ReplaceAll(analyzePrompt, "{path}", relativePath)
+		prompt = analyzePrompt
 	}
 
 	// 安全檢查和 PII 檢測（與原有邏輯相同）
@@ -2020,16 +2059,20 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 						"context":        "telegram_photo",
 					},
 				})
-				t.send(key, "⚠️ 圖片說明中偵測到敏感資訊已自動過濾。")
+				msg := t.getLocalizedMessage(key.chatID, "photo_caption_pii", nil)
+				t.send(key, msg)
 				caption = filteredCaption
-				prompt = fmt.Sprintf("%s\n\n（參考附件圖片: %s）", caption, relativePath)
+				refSingle := t.getLocalizedMessage(key.chatID, "photo_reference_single", nil)
+				refSingle = strings.ReplaceAll(refSingle, "{path}", relativePath)
+				prompt = fmt.Sprintf("%s%s", caption, refSingle)
 			}
 		}
 	}
 
 	// 發送給 Agent 處理 (使用現有會話，就像語音處理一樣)
 	agent = t.getAgent(key)
-	t.send(key, "📷 正在分析圖片...")
+	msg := t.getLocalizedMessage(key.chatID, "photo_analyzing_single", nil)
+	t.send(key, msg)
 
 	response, err := agent.Run(prompt, func(update string, silent bool) {
 		if silent {
@@ -2041,7 +2084,8 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 
 	if err != nil {
 		log.Printf("[telegram] single photo analysis error: %v", err)
-		t.send(key, "❌ 圖片分析失敗，請稍後再試。")
+		errMsg := t.getLocalizedMessage(key.chatID, "photo_analysis_failed", nil)
+		t.send(key, errMsg)
 		return
 	}
 
@@ -2753,8 +2797,10 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 	// 檢查檔案大小限制
 	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
 	if document.FileSize > maxSizeBytes {
-		t.send(key, fmt.Sprintf("📁 文件檔案過大（%s），限制為 %dMB。",
-			formatFileSize(document.FileSize), t.config.Multimedia.MaxFileSizeMB))
+		msg := t.getLocalizedMessage(key.chatID, "document_file_too_large", nil)
+		msg = strings.ReplaceAll(msg, "{size}", formatFileSize(document.FileSize))
+		msg = strings.ReplaceAll(msg, "{limit}", fmt.Sprintf("%d", t.config.Multimedia.MaxFileSizeMB))
+		t.send(key, msg)
 		return
 	}
 
@@ -2777,11 +2823,13 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 	}
 
 	// 下載文件到 Alice 臨時目錄
-	t.send(key, "📁 正在下載文件...")
+	downloadMsg := t.getLocalizedMessage(key.chatID, "document_downloading", nil)
+	t.send(key, downloadMsg)
 	documentPath, err := t.DownloadTelegramFile(document.FileID, "document")
 	if err != nil {
 		log.Printf("[telegram] download document error: %v", err)
-		t.send(key, "📁 下載文件失敗，請稍後再試。")
+		errMsg := t.getLocalizedMessage(key.chatID, "document_download_failed", nil)
+		t.send(key, errMsg)
 		return
 	}
 
@@ -2803,7 +2851,8 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 		tempDir := filepath.Join(projectDir, "temp")
 		if err := os.MkdirAll(tempDir, 0755); err != nil {
 			log.Printf("[telegram] create temp dir error: %v", err)
-			t.send(key, "📁 建立臨時目錄失敗。")
+			mkdirMsg := t.getLocalizedMessage(key.chatID, "document_mkdir_failed", nil)
+			t.send(key, mkdirMsg)
 			return
 		}
 
@@ -2811,7 +2860,8 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 		finalPath = filepath.Join(tempDir, document.FileName)
 		if err := copyFile(documentPath, finalPath); err != nil {
 			log.Printf("[telegram] copy document to project error: %v", err)
-			t.send(key, "📁 複製文件到專案目錄失敗。")
+			copyMsg := t.getLocalizedMessage(key.chatID, "document_copy_failed", nil)
+			t.send(key, copyMsg)
 			return
 		}
 
@@ -2821,23 +2871,31 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 	}
 
 	// 構建 Claude 的輸入提示
-	prompt := fmt.Sprintf("用戶上傳了一個文件：%s", finalPath)
+	promptPrefix := t.getLocalizedMessage(key.chatID, "document_prompt_prefix", nil)
+	promptPrefix = strings.ReplaceAll(promptPrefix, "{path}", finalPath)
+	prompt := promptPrefix
 	if caption != "" {
-		prompt += fmt.Sprintf("\n用戶說：%s", caption)
+		userNote := t.getLocalizedMessage(key.chatID, "document_user_note", nil)
+		userNote = strings.ReplaceAll(userNote, "{caption}", caption)
+		prompt += userNote
 	}
 
 	// 新增文件類型提示
 	if document.MimeType != "" {
-		prompt += fmt.Sprintf("\n文件類型：%s", document.MimeType)
+		fileType := t.getLocalizedMessage(key.chatID, "document_file_type", nil)
+		fileType = strings.ReplaceAll(fileType, "{mime}", document.MimeType)
+		prompt += fileType
 	}
 
-	prompt += "\n\n請分析這個文件並提供適當的協助。"
+	analyzePrompt := t.getLocalizedMessage(key.chatID, "document_analyzing", nil)
+	prompt += analyzePrompt
 
 	log.Printf("[telegram] sending document analysis request: file=%s, size=%d, type=%s, prompt_len=%d",
 		document.FileName, document.FileSize, document.MimeType, len(prompt))
 
 	// 發送分析訊息
-	t.send(key, "📁 正在分析文件...")
+	analyzeMsg := t.getLocalizedMessage(key.chatID, "document_analyzing", nil)
+	t.send(key, analyzeMsg)
 	response, err := agent.Run(prompt, func(update string, silent bool) {
 		if silent {
 			t.sendSilent(key, update)
@@ -2847,7 +2905,8 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 	})
 	if err != nil {
 		log.Printf("[telegram] document analysis error: %v", err)
-		t.send(key, "📁 文件分析失敗，請稍後再試。")
+		errMsg := t.getLocalizedMessage(key.chatID, "document_analysis_failed", nil)
+		t.send(key, errMsg)
 		return
 	}
 
