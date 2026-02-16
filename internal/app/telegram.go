@@ -3004,9 +3004,18 @@ func (t *TelegramBot) handleLangCommand(key chatKey, text string) {
 		// 沒有參數，顯示當前語言和可用語言
 		currentLang := t.getChatLanguage(key.chatID)
 		langName := t.i18n.GetLanguageName(currentLang)
+		currentLangMsg := t.getLocalizedMessage(key.chatID, "lang_current", map[string]string{
+			"lang": fmt.Sprintf("%s (%s)", langName, currentLang),
+		})
 
-		msg := fmt.Sprintf("🌐 目前語言：%s (%s)\n\n", langName, currentLang)
-		msg += "支援語言：\n"
+		msg := fmt.Sprintf("🌐 %s\n\n", currentLangMsg)
+
+		// 根據語言顯示支援語言標題
+		if currentLang == "en" {
+			msg += "Supported languages:\n"
+		} else {
+			msg += "支援語言：\n"
+		}
 
 		for code, name := range t.i18n.GetAvailableLanguages() {
 			icon := " "
@@ -3016,8 +3025,8 @@ func (t *TelegramBot) handleLangCommand(key chatKey, text string) {
 			msg += fmt.Sprintf("[%s] %s (%s)\n", icon, name, code)
 		}
 
-		msg += "\n用法：/lang <語言代碼>\n"
-		msg += "例如：/lang en （切換為英文）"
+		usageMsg := t.getLocalizedMessage(key.chatID, "lang_usage", nil)
+		msg += "\n" + usageMsg
 
 		t.sendMarkdown(key, msg)
 		return
@@ -3027,8 +3036,10 @@ func (t *TelegramBot) handleLangCommand(key chatKey, text string) {
 	requestedLang := parts[1]
 
 	if !t.i18n.IsLanguageSupported(requestedLang) {
-		t.send(key, fmt.Sprintf("❌ 不支援的語言: %s\n\n支援的語言：%v",
-			requestedLang, t.i18n.GetAvailableLanguages()))
+		errMsg := t.getLocalizedMessage(key.chatID, "lang_not_found", map[string]string{
+			"lang": requestedLang,
+		})
+		t.send(key, errMsg)
 		return
 	}
 
@@ -3036,7 +3047,10 @@ func (t *TelegramBot) handleLangCommand(key chatKey, text string) {
 	t.setChatlanguage(key.chatID, requestedLang)
 
 	langName := t.i18n.GetLanguageName(requestedLang)
-	t.send(key, fmt.Sprintf("✅ 語言已切換為：%s (%s)", langName, requestedLang))
+	msg := t.getLocalizedMessage(key.chatID, "lang_switched", map[string]string{
+		"lang": fmt.Sprintf("%s (%s)", langName, requestedLang),
+	})
+	t.send(key, msg)
 
 	log.Printf("[telegram] chat %d switched language to %s", key.chatID, requestedLang)
 }
