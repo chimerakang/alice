@@ -543,6 +543,17 @@ export default function Dashboard() {
     setDateRange(range);
   }, []);
 
+  // Calculate hours from dateRange for cost/savings charts
+  const chartHours = useMemo(() => {
+    if (!dateRange.startTime || !dateRange.endTime) {
+      return 168; // Default to 7 days if no range selected
+    }
+    const start = new Date(dateRange.startTime);
+    const end = new Date(dateRange.endTime);
+    const hours = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60));
+    return Math.max(1, hours); // Minimum 1 hour
+  }, [dateRange]);
+
   // Fetch decisions + basic stats to discover project paths
   useEffect(() => {
     const load = async () => {
@@ -798,7 +809,7 @@ export default function Dashboard() {
 
       {/* ── Row 4: Smart Routing Savings (Issue #74) ── */}
       <div className="space-y-4">
-        <SavingsBanner hours={168} />
+        <SavingsBanner hours={chartHours} />
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <div className="card p-5">
@@ -806,14 +817,14 @@ export default function Dashboard() {
               <Zap className="w-4 h-4 text-warning" />
               Model Distribution
             </h3>
-            <ModelDistributionChart hours={168} />
+            <ModelDistributionChart hours={chartHours} />
           </div>
           <div className="card p-5">
             <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
               <TrendingDown className="w-4 h-4 text-success" />
               Cost Trend
             </h3>
-            <CostTrendChart hours={168} />
+            <CostTrendChart hours={chartHours} />
           </div>
         </div>
       </div>
