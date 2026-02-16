@@ -129,6 +129,66 @@ docs/                     — Documentation
 - **file_patch requires unique match**: Exactly one occurrence of `old_text` must exist, otherwise it errors — prevents ambiguous edits
 - **Agent communicates in Traditional Chinese** (繁體中文) by default via system prompt
 
+## Dynamic Model Routing (Issue #72)
+
+Alice supports dynamic model routing to optimize token costs by intelligently routing tasks to different Claude models based on complexity:
+
+### Three-Tier Routing Priority
+
+1. **User Command Override** (0ms latency)
+   - `/fast` — Forces fast model (Haiku) for simple tasks
+   - `/deep` — Forces deep model (Opus) for complex tasks
+   - `/auto` — Returns to automatic routing mode
+
+2. **AI Triage** (~300ms latency)
+   - Uses OpenAI GPT-4o-mini to classify task complexity
+   - Classifies as "fast" (simple tasks) or "deep" (complex tasks)
+   - Requires: `openai_api_key` in config and `use_gpt4o_mini_for_triage: true`
+
+3. **Default Model** (Static fallback)
+   - Falls back to configured default model if routing disabled or AI triage fails
+
+### Configuration
+
+```json
+{
+  "model_routing": {
+    "enable_dynamic_routing": false,
+    "fast_model": "claude-haiku-4-5-20251001",
+    "deep_model": "claude-opus-4-6",
+    "use_gpt4o_mini_for_triage": false
+  }
+}
+```
+
+### Environment Variables
+
+| Env Var | Purpose |
+|---------|---------|
+| `CLAUDE_MODEL` | Default model (fallback) |
+| `OPENAI_API_KEY` | Required for GPT-4o-mini triage |
+
+### Commands
+
+```
+/fast     — Fast mode (⚡ Haiku) - simple, one-off questions
+/deep     — Deep mode (🧠 Opus) - complex analysis, multi-file refactoring
+/auto     — Auto mode 🤖 - AI decides based on task complexity
+/status   — Shows current model mode
+```
+
+### Implementation Details
+
+- **Session Continuity**: When model changes, a new session is created (forces fresh context)
+- **Last Used Model Tracking**: Agent remembers which model was last used to detect changes
+- **Logging**: Model selection decisions are logged with tag `[telegram] model routing:`
+
+### Expected Cost Savings
+
+- ~40-50% reduction in token costs
+- Simple tasks routed to Haiku (7-10x cheaper than Opus)
+- Complex tasks routed to Opus for quality
+
 ## Adding New Tools
 
 1. Add a `ToolDef` entry in `BuildTools()` in `internal/app/tools.go`
