@@ -20,6 +20,30 @@ type TokenStats struct {
 	Model             string  // NEW: 使用的模型（haiku, sonnet, opus）
 }
 
+// CostSavingsReport 成本節省報告（用於 Dashboard 展示）
+type CostSavingsReport struct {
+	PeriodHours       int                            `json:"period_hours"`
+	StartTime         time.Time                      `json:"start_time"`
+	EndTime           time.Time                      `json:"end_time"`
+	ActualCost        float64                        `json:"actual_cost"`        // 實際花費
+	DefaultModelCost  float64                        `json:"default_model_cost"` // 假設全用預設模型花費
+	SavingsCost       float64                        `json:"savings_cost"`       // 節省金額
+	SavingsPercent    float64                        `json:"savings_percent"`    // 節省百分比
+	TotalRequests     int                            `json:"total_requests"`
+	ByModel           map[string]ModelCostBreakdown  `json:"by_model"`
+	RoutingMethodStat map[string]int                 `json:"routing_method_stat"`
+}
+
+// ModelCostBreakdown 按模型的成本分解
+type ModelCostBreakdown struct {
+	Calls           int     `json:"calls"`
+	ActualCost      float64 `json:"actual_cost"`
+	WouldHaveCost   float64 `json:"would_have_cost"`   // 假設用預設模型的成本
+	Saved           float64 `json:"saved"`             // 節省金額
+	InputTokens     int     `json:"input_tokens"`
+	OutputTokens    int     `json:"output_tokens"`
+}
+
 // ToolExecution represents a single tool execution event
 type ToolExecution struct {
 	Timestamp time.Time              `json:"timestamp"`
@@ -686,7 +710,7 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 		DurationMs:      int(duration.Milliseconds()),
 		TokensUsed:      tokenStats,
 		Source:          "telegram",
-		Model:           ExtractModelShortName(a.client.Model), // 使用的模型
+		Model:           ExtractModelShortName(a.lastUsedModel), // 使用的模型
 		RoutingReason:   routingReason,                         // 路由原因
 		RoutingLatency:  routingLatency,                         // 路由延遲 (ms)
 	}
