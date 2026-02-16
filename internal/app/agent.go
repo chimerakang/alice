@@ -16,6 +16,7 @@ type TokenStats struct {
 	TotalOutputTokens int64   // 累計 output tokens
 	TotalCostUSD      float64 // 累計費用（Max 訂閱下為 0）
 	APICallCount      int     // CLI 呼叫次數
+	Model             string  // NEW: 使用的模型（haiku, sonnet, opus）
 }
 
 // ToolExecution represents a single tool execution event
@@ -48,6 +49,9 @@ type DecisionLog struct {
 	GitCommitHash   string                 `json:"git_commit_hash,omitempty"`
 	GitBranch       string                 `json:"git_branch,omitempty"`
 	Source          string                 `json:"source"` // "telegram", "terminal", "vscode", "unknown"
+	Model           string                 `json:"model"` // NEW: "haiku", "sonnet", "opus"
+	RoutingReason   string                 `json:"routing_reason"` // NEW: "user_command", "ai_router", "static_rule", "default"
+	RoutingLatency  int                    `json:"routing_latency_ms"` // NEW: 路由判斷耗時 (ms)
 }
 
 // ExecutionOutcome represents the result of an AI interaction
@@ -278,11 +282,13 @@ type projectState struct {
 }
 
 type Agent struct {
-	client     *CLIClient
-	projectDir string
-	projects   map[string]*projectState // projectDir → state
-	chatID     int64                    // Telegram chat ID
-	threadID   int                      // Telegram thread ID (for forum topics)
+	client                *CLIClient
+	projectDir            string
+	projects              map[string]*projectState // projectDir → state
+	chatID                int64                    // Telegram chat ID
+	threadID              int                      // Telegram thread ID (for forum topics)
+	currentModelOverride  string                   // Current model override for this agent (for dynamic routing)
+	lastUsedModel         string                   // Last model used (for session continuity)
 	// Abort control
 	cancelFunc context.CancelFunc // 取消正在執行的 CLI 子程序
 	cancelMu   sync.Mutex         // 保護 cancelFunc 的併發存取
@@ -316,6 +322,11 @@ func (a *Agent) IsProcessing() bool {
 	a.cancelMu.Lock()
 	defer a.cancelMu.Unlock()
 	return a.processing
+}
+
+// SetModelOverride 設定此 agent 的模型覆蓋（用於動態路由）
+func (a *Agent) SetModelOverride(model string) {
+	a.currentModelOverride = model
 }
 
 // current 取得目前專案的狀態，不存在則建立
@@ -356,7 +367,18 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	}
 
 	ps := a.current()
-	log.Printf("[agent] calling CLI (stream), session=%s, project=%s", ps.sessionID, a.projectDir)
+
+	// Handle model override for dynamic routing
+	// If model changed, clear session to start fresh
+	if a.currentModelOverride != "" && a.currentModelOverride != a.lastUsedModel {
+		ps.sessionID = ""  // Force new session when model changes
+	}
+	a.lastUsedModel = a.currentModelOverride
+	if a.lastUsedModel == "" {
+		a.lastUsedModel = a.client.Model  // Use default if no override
+	}
+
+	log.Printf("[agent] calling CLI (stream), session=%s, project=%s, model=%s", ps.sessionID, a.projectDir, a.lastUsedModel)
 
 	// Pre-generate decision ID so checkpoints created during streaming
 	// can reference the decision that will be created after streaming completes.
@@ -365,7 +387,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	// Track tool executions for this decision
 	var toolCallsForDecision []ToolExecution
 
-	resp, err := a.client.CallStream(ctx, userMessage, a.projectDir, ps.sessionID, func(toolName string, toolInput map[string]interface{}) {
+	resp, err := a.client.CallStream(ctx, userMessage, a.projectDir, ps.sessionID, a.currentModelOverride, func(toolName string, toolInput map[string]interface{}) {
 		// Check if we should create a checkpoint before executing this tool
 		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
 
@@ -580,7 +602,9 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 	}
 
 	// Create token stats for this interaction
-	tokenStats := TokenStats{}
+	tokenStats := TokenStats{
+		Model: ExtractModelShortName(a.client.Model), // NEW: 記錄使用的模型
+	}
 	if resp != nil {
 		tokenStats.TotalInputTokens = int64(resp.Usage.InputTokens)
 		tokenStats.TotalOutputTokens = int64(resp.Usage.OutputTokens)
@@ -610,6 +634,9 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 		DurationMs:      int(duration.Milliseconds()),
 		TokensUsed:      tokenStats,
 		Source:          "telegram",
+		Model:           ExtractModelShortName(a.client.Model), // NEW: 使用的模型
+		RoutingReason:   "static_rule",                         // NEW: 路由原因（預設為靜態規則）
+		RoutingLatency:  0,                                     // NEW: 路由延遲（未實現路由時設為 0）
 	}
 
 	// Log the decision

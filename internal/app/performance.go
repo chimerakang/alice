@@ -5,9 +5,37 @@ import (
 	"fmt"
 	"log"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 )
+
+// ModelPricing 模型費率表（每百萬 tokens 美元）
+var ModelPricing = map[string]struct {
+	InputPerMTok  float64
+	OutputPerMTok float64
+}{
+	"haiku":  {1.00, 5.00},     // Claude Haiku 4.5
+	"sonnet": {3.00, 15.00},    // Claude Sonnet 4.5
+	"opus":   {15.00, 75.00},   // Claude Opus 4.6
+}
+
+// ExtractModelShortName 從完整模型 ID 提取簡短名稱
+// 例如: "claude-opus-4-6" → "opus", "claude-haiku-4-5-20251001" → "haiku"
+func ExtractModelShortName(fullModelID string) string {
+	// 嘗試匹配常見模型名稱
+	if strings.Contains(fullModelID, "opus") {
+		return "opus"
+	}
+	if strings.Contains(fullModelID, "sonnet") {
+		return "sonnet"
+	}
+	if strings.Contains(fullModelID, "haiku") {
+		return "haiku"
+	}
+	// 如果無法識別，返回完整 ID
+	return fullModelID
+}
 
 // PerformanceMetrics 效能指標結構
 type PerformanceMetrics struct {
@@ -22,6 +50,7 @@ type PerformanceMetrics struct {
 	ErrorType         string         `json:"error_type,omitempty"`
 	ChatID            int64          `json:"chat_id"`
 	AgentType         string         `json:"agent_type,omitempty"`
+	Model             string         `json:"model,omitempty"` // NEW: "haiku", "sonnet", "opus"
 }
 
 // PerformanceAnalytics 效能分析數據
@@ -446,7 +475,7 @@ func GetUptimeSeconds() int64 {
 }
 
 // RecordAPICall 記錄 API 呼叫效能
-func RecordAPICall(latency time.Duration, success bool, tokensUsed int, cost float64, chatID int64, errorType string) {
+func RecordAPICall(latency time.Duration, success bool, tokensUsed int, cost float64, chatID int64, errorType string, model string) {
 	if performanceMonitor != nil {
 		metric := PerformanceMetrics{
 			APICallLatency: latency,
@@ -455,6 +484,7 @@ func RecordAPICall(latency time.Duration, success bool, tokensUsed int, cost flo
 			EstimatedCost:  cost,
 			ChatID:         chatID,
 			ErrorType:      errorType,
+			Model:          model, // NEW: 模型資訊
 		}
 		performanceMonitor.RecordMetric(metric)
 	}

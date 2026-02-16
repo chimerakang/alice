@@ -112,6 +112,10 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/performance/tool-distribution", wi.handleToolDistributionProto)
 	mux.HandleFunc("/api/performance/export", wi.handlePerformanceExportProto)
 
+	// Cost Tracking APIs (Issue #73)
+	mux.HandleFunc("/api/costs/by-model", wi.handleCostsByModel)
+	mux.HandleFunc("/api/costs/summary", wi.handleCostsSummary)
+
 	// Security APIs
 	mux.HandleFunc("/api/security/events", wi.handleSecurityEventsProto)
 	mux.HandleFunc("/api/security/stats", wi.handleSecurityStatsProto)
@@ -966,6 +970,150 @@ func (wi *WebInterface) handlePerformanceExport(w http.ResponseWriter, r *http.R
 		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 
 		w.Write(data)
+	})(w, r)
+}
+
+// === Cost Tracking API Handlers (Issue #73) ===
+
+// handleCostsByModel returns cost breakdown by model
+func (wi *WebInterface) handleCostsByModel(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalStorage == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Storage is unavailable",
+			})
+			return
+		}
+
+		// Parse query parameters (hours to look back)
+		hoursStr := r.URL.Query().Get("hours")
+		hours := 168 // default 1 week
+		if h, err := strconv.Atoi(hoursStr); err == nil && h > 0 {
+			hours = h
+		}
+
+		// Query performance metrics for the time range
+		startTime := time.Now().Add(-time.Duration(hours) * time.Hour)
+		endTime := time.Now()
+		metrics, err := globalStorage.GetPerformanceMetricsByTimeRange(startTime, endTime, 10000)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": fmt.Sprintf("Query failed: %v", err),
+			})
+			return
+		}
+
+		// Aggregate by model
+		costsByModel := make(map[string]struct {
+			Calls       int     `json:"calls"`
+			Tokens      int     `json:"tokens"`
+			Cost        float64 `json:"cost"`
+			InputTokens int     `json:"input_tokens"`
+		})
+
+		for _, metric := range metrics {
+			model := metric.Model
+			if model == "" {
+				model = "unknown"
+			}
+			stats := costsByModel[model]
+			stats.Calls++
+			stats.Tokens += metric.TokensUsed
+			stats.Cost += metric.EstimatedCost
+			costsByModel[model] = stats
+		}
+
+		// Return response
+		response := map[string]interface{}{
+			"period_hours": hours,
+			"start_time":   startTime.Format(time.RFC3339),
+			"end_time":     endTime.Format(time.RFC3339),
+			"by_model":     costsByModel,
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// handleCostsSummary returns overall cost summary
+func (wi *WebInterface) handleCostsSummary(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalStorage == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Storage is unavailable",
+			})
+			return
+		}
+
+		// Parse query parameters (hours to look back)
+		hoursStr := r.URL.Query().Get("hours")
+		hours := 168 // default 1 week
+		if h, err := strconv.Atoi(hoursStr); err == nil && h > 0 {
+			hours = h
+		}
+
+		// Query performance metrics for the time range
+		startTime := time.Now().Add(-time.Duration(hours) * time.Hour)
+		endTime := time.Now()
+		metrics, err := globalStorage.GetPerformanceMetricsByTimeRange(startTime, endTime, 10000)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": fmt.Sprintf("Query failed: %v", err),
+			})
+			return
+		}
+
+		// Calculate totals and by-model breakdown
+		totalCost := 0.0
+		totalCalls := 0
+		totalTokens := 0
+		costsByModel := make(map[string]struct {
+			Calls int     `json:"calls"`
+			Cost  float64 `json:"cost"`
+		})
+
+		for _, metric := range metrics {
+			totalCost += metric.EstimatedCost
+			totalCalls += 1
+			totalTokens += metric.TokensUsed
+
+			model := metric.Model
+			if model == "" {
+				model = "unknown"
+			}
+			stats := costsByModel[model]
+			stats.Calls++
+			stats.Cost += metric.EstimatedCost
+			costsByModel[model] = stats
+		}
+
+		// Calculate average cost per call
+		avgCostPerCall := 0.0
+		if totalCalls > 0 {
+			avgCostPerCall = totalCost / float64(totalCalls)
+		}
+
+		// Return response
+		response := map[string]interface{}{
+			"period_hours":        hours,
+			"start_time":          startTime.Format(time.RFC3339),
+			"end_time":            endTime.Format(time.RFC3339),
+			"total_cost":          totalCost,
+			"total_calls":         totalCalls,
+			"total_tokens":        totalTokens,
+			"avg_cost_per_call":   avgCostPerCall,
+			"by_model":            costsByModel,
+		}
+
+		json.NewEncoder(w).Encode(response)
 	})(w, r)
 }
 

@@ -188,12 +188,16 @@ func (s *SQLiteStorage) initTables() error {
 		cost_usd REAL,
 		git_commit_hash TEXT,
 		git_branch TEXT,
+		model TEXT DEFAULT '',
+		routing_reason TEXT DEFAULT '',
+		routing_latency_ms INTEGER DEFAULT 0,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 	CREATE INDEX IF NOT EXISTS idx_decision_logs_timestamp ON decision_logs(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_decision_logs_session_id ON decision_logs(session_id);
 	CREATE INDEX IF NOT EXISTS idx_decision_logs_project_path ON decision_logs(project_path);
 	CREATE INDEX IF NOT EXISTS idx_decision_logs_chat_id ON decision_logs(chat_id);
+	CREATE INDEX IF NOT EXISTS idx_decision_logs_model ON decision_logs(model);
 	`
 
 	// Performance Metrics 表
@@ -211,11 +215,13 @@ func (s *SQLiteStorage) initTables() error {
 		error_type TEXT,
 		chat_id INTEGER,
 		agent_type TEXT,
+		model TEXT DEFAULT '',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
 	CREATE INDEX IF NOT EXISTS idx_performance_metrics_timestamp ON performance_metrics(timestamp);
 	CREATE INDEX IF NOT EXISTS idx_performance_metrics_chat_id ON performance_metrics(chat_id);
 	CREATE INDEX IF NOT EXISTS idx_performance_metrics_tool_type ON performance_metrics(tool_execution_type);
+	CREATE INDEX IF NOT EXISTS idx_performance_metrics_model ON performance_metrics(model);
 	`
 
 	// Security Events 表
@@ -277,6 +283,34 @@ func (s *SQLiteStorage) initTables() error {
 	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
 		log.Printf("Migration warning (source): %v", err)
 	}
+
+	// Migration: add model column to decision_logs
+	_, err = s.db.Exec(`ALTER TABLE decision_logs ADD COLUMN model TEXT DEFAULT ''`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		log.Printf("Migration warning (model): %v", err)
+	}
+
+	// Migration: add routing_reason column to decision_logs
+	_, err = s.db.Exec(`ALTER TABLE decision_logs ADD COLUMN routing_reason TEXT DEFAULT ''`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		log.Printf("Migration warning (routing_reason): %v", err)
+	}
+
+	// Migration: add routing_latency_ms column to decision_logs
+	_, err = s.db.Exec(`ALTER TABLE decision_logs ADD COLUMN routing_latency_ms INTEGER DEFAULT 0`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		log.Printf("Migration warning (routing_latency_ms): %v", err)
+	}
+
+	// Migration: add model column to performance_metrics
+	_, err = s.db.Exec(`ALTER TABLE performance_metrics ADD COLUMN model TEXT DEFAULT ''`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		log.Printf("Migration warning (performance_metrics.model): %v", err)
+	}
+
+	// Create indexes for new columns if they don't exist
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_decision_logs_model ON decision_logs(model)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_performance_metrics_model ON performance_metrics(model)`)
 
 	log.Printf("Database initialized successfully at: %s", s.path)
 	return nil
@@ -408,13 +442,15 @@ func (s *SQLiteStorage) InsertDecisionLog(log DecisionLog) error {
 		INSERT INTO decision_logs
 		(timestamp, session_id, project_path, chat_id, thread_id, user_prompt, agent_response,
 		 tool_calls_json, context_json, outcome_json, duration_ms, tokens_input, tokens_output,
-		 tokens_total, cost_usd, git_commit_hash, git_branch, thinking_content, source)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 tokens_total, cost_usd, git_commit_hash, git_branch, thinking_content, source,
+		 model, routing_reason, routing_latency_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		log.Timestamp, log.SessionID, log.ProjectPath, log.ChatID, log.ThreadID,
 		log.UserPrompt, log.AgentResponse, string(toolCallsJSON), string(contextJSON),
 		string(outcomeJSON), log.DurationMs, log.TokensUsed.TotalInputTokens, log.TokensUsed.TotalOutputTokens,
 		log.TokensUsed.TotalInputTokens+log.TokensUsed.TotalOutputTokens, log.TokensUsed.TotalCostUSD,
-		gitCommitHash, gitBranch, log.ThinkingContent, source)
+		gitCommitHash, gitBranch, log.ThinkingContent, source,
+		log.Model, log.RoutingReason, log.RoutingLatency)
 
 	return err
 }
@@ -427,7 +463,9 @@ func (s *SQLiteStorage) GetDecisionLogs(limit int, offset int) ([]DecisionLog, e
 			   tokens_input, tokens_output, COALESCE(cost_usd, 0) as cost_usd,
 			   COALESCE(thinking_content, '') as thinking_content,
 			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch,
-			   COALESCE(source, 'telegram') as source
+			   COALESCE(source, 'telegram') as source,
+			   COALESCE(model, '') as model, COALESCE(routing_reason, '') as routing_reason,
+			   COALESCE(routing_latency_ms, 0) as routing_latency_ms
 		FROM decision_logs
 		ORDER BY timestamp DESC
 		LIMIT ? OFFSET ?`, limit, offset)
@@ -449,7 +487,9 @@ func (s *SQLiteStorage) GetDecisionLogsByTimeRange(start, end time.Time, limit i
 			   tokens_input, tokens_output, COALESCE(cost_usd, 0) as cost_usd,
 			   COALESCE(thinking_content, '') as thinking_content,
 			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch,
-			   COALESCE(source, 'telegram') as source
+			   COALESCE(source, 'telegram') as source,
+			   COALESCE(model, '') as model, COALESCE(routing_reason, '') as routing_reason,
+			   COALESCE(routing_latency_ms, 0) as routing_latency_ms
 		FROM decision_logs
 		WHERE timestamp BETWEEN ? AND ?
 		ORDER BY timestamp DESC
@@ -519,7 +559,8 @@ func (s *SQLiteStorage) scanDecisionLogs(rows *sql.Rows) ([]DecisionLog, error) 
 			&toolCallsJSON, &contextJSON, &outcomeJSON, &log.DurationMs,
 			&log.TokensUsed.TotalInputTokens, &log.TokensUsed.TotalOutputTokens,
 			&log.TokensUsed.TotalCostUSD,
-			&log.ThinkingContent, &gitCommitHash, &gitBranch, &log.Source)
+			&log.ThinkingContent, &gitCommitHash, &gitBranch, &log.Source,
+			&log.Model, &log.RoutingReason, &log.RoutingLatency)
 		if err != nil {
 			return nil, err
 		}
@@ -560,12 +601,12 @@ func (s *SQLiteStorage) InsertPerformanceMetric(metric PerformanceMetrics) error
 		INSERT INTO performance_metrics
 		(timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
 		 tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
-		 chat_id, agent_type)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 chat_id, agent_type, model)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		metric.Timestamp, metric.APICallLatency.Milliseconds(), metric.APICallSuccess,
 		metric.ToolExecutionTime.Milliseconds(), metric.ToolExecutionType,
 		metric.TokensUsed, metric.EstimatedCost, metric.MemoryUsage,
-		metric.ErrorType, metric.ChatID, metric.AgentType)
+		metric.ErrorType, metric.ChatID, metric.AgentType, metric.Model)
 
 	return err
 }
@@ -575,7 +616,7 @@ func (s *SQLiteStorage) GetPerformanceMetrics(limit int, offset int) ([]Performa
 	rows, err := s.db.Query(`
 		SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
 			   tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
-			   chat_id, agent_type
+			   chat_id, agent_type, COALESCE(model, '') as model
 		FROM performance_metrics
 		ORDER BY timestamp DESC
 		LIMIT ? OFFSET ?`, limit, offset)
@@ -594,7 +635,7 @@ func (s *SQLiteStorage) GetPerformanceMetricsByTimeRange(start, end time.Time, l
 	rows, err := s.db.Query(`
 		SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
 			   tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
-			   chat_id, agent_type
+			   chat_id, agent_type, COALESCE(model, '') as model
 		FROM performance_metrics
 		WHERE timestamp BETWEEN ? AND ?
 		ORDER BY timestamp DESC
@@ -780,7 +821,7 @@ func (s *SQLiteStorage) scanPerformanceMetrics(rows *sql.Rows) ([]PerformanceMet
 		err := rows.Scan(&metric.Timestamp, &apiLatencyMs, &metric.APICallSuccess,
 			&toolExecutionMs, &metric.ToolExecutionType, &metric.TokensUsed,
 			&metric.EstimatedCost, &metric.MemoryUsage, &metric.ErrorType,
-			&metric.ChatID, &metric.AgentType)
+			&metric.ChatID, &metric.AgentType, &metric.Model)
 		if err != nil {
 			return nil, err
 		}
