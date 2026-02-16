@@ -763,21 +763,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── Row 3: Smart Routing Savings (Issue #74) ── */}
-      <div className="space-y-4">
-        <SavingsBanner hours={168} />
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="card p-5">
-            <ModelDistributionChart hours={168} />
-          </div>
-          <div className="card p-5">
-            <CostTrendChart hours={168} />
-          </div>
-        </div>
-      </div>
-
-      {/* ── Row 5: Charts ── */}
+      {/* ── Row 3: Charts ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-4">
         <div className="card p-5">
           <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
@@ -806,6 +792,20 @@ export default function Dashboard() {
             Source Performance
           </h3>
           <SourcePerformanceChart decisions={allDecisions} />
+        </div>
+      </div>
+
+      {/* ── Row 4: Smart Routing Savings (Issue #74) ── */}
+      <div className="space-y-4">
+        <SavingsBanner hours={168} />
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="card p-5">
+            <ModelDistributionChart hours={168} />
+          </div>
+          <div className="card p-5">
+            <CostTrendChart hours={168} />
+          </div>
         </div>
       </div>
 
