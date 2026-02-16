@@ -35,6 +35,7 @@ type Storage interface {
 	GetPerformanceAnalytics(hours int) (PerformanceAnalytics, error)
 	GetToolExecutionStats() (map[string]map[string]interface{}, error)
 	GetToolExecutionStatsByTimeRange(start, end time.Time) (map[string]map[string]interface{}, error)
+	GetCostSavings(hours int) (CostSavingsReport, error)
 
 	// Security Events
 	InsertSecurityEvent(event SecurityEvent) error
@@ -809,6 +810,109 @@ func (s *SQLiteStorage) GetToolExecutionStatsByTimeRange(start, end time.Time) (
 	}
 
 	return stats, rows.Err()
+}
+
+// GetCostSavings 計算指定時間範圍內的成本節省報告
+func (s *SQLiteStorage) GetCostSavings(hours int) (CostSavingsReport, error) {
+	startTime := time.Now().Add(-time.Duration(hours) * time.Hour)
+	endTime := time.Now()
+	report := CostSavingsReport{
+		PeriodHours:       hours,
+		StartTime:         startTime,
+		EndTime:           endTime,
+		ByModel:           make(map[string]ModelCostBreakdown),
+		RoutingMethodStat: make(map[string]int),
+	}
+
+	// 查詢 decision_logs 按模型分類
+	rows, err := s.db.Query(`
+		SELECT
+			COALESCE(model, 'unknown') as model,
+			COALESCE(routing_reason, 'unknown') as routing_reason,
+			COUNT(*) as calls,
+			SUM(CASE WHEN tokens_input IS NOT NULL THEN tokens_input ELSE 0 END) as total_input_tokens,
+			SUM(CASE WHEN tokens_output IS NOT NULL THEN tokens_output ELSE 0 END) as total_output_tokens,
+			SUM(CASE WHEN cost_usd IS NOT NULL THEN cost_usd ELSE 0.0 END) as total_cost
+		FROM decision_logs
+		WHERE timestamp BETWEEN ? AND ?
+		GROUP BY model, routing_reason
+		ORDER BY total_cost DESC`,
+		startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
+
+	if err != nil {
+		return report, fmt.Errorf("failed to query decision_logs: %w", err)
+	}
+	defer rows.Close()
+
+	actualCostByModel := make(map[string]float64)
+	callsByModel := make(map[string]int)
+	tokensByModel := make(map[string][2]int) // [input, output]
+
+	for rows.Next() {
+		var model, routingReason string
+		var calls int
+		var inputTokens, outputTokens int64
+		var cost float64
+
+		if err := rows.Scan(&model, &routingReason, &calls, &inputTokens, &outputTokens, &cost); err != nil {
+			continue
+		}
+
+		// 累計實際成本和請求數
+		report.TotalRequests += calls
+		report.ActualCost += cost
+		actualCostByModel[model] = cost
+		callsByModel[model] += calls
+		report.RoutingMethodStat[routingReason] += calls
+
+		// 保存 token 用量
+		tokens := tokensByModel[model]
+		tokens[0] += int(inputTokens)
+		tokens[1] += int(outputTokens)
+		tokensByModel[model] = tokens
+	}
+
+	if err = rows.Err(); err != nil {
+		return report, fmt.Errorf("error scanning decision_logs: %w", err)
+	}
+
+	// 計算假設全用預設模型（Sonnet）的成本
+	defaultModel := "sonnet"
+	defaultPricing := ModelPricing[defaultModel]
+
+	for model, cost := range actualCostByModel {
+		tokens := tokensByModel[model]
+		inputTokens := tokens[0]
+		outputTokens := tokens[1]
+		calls := callsByModel[model]
+
+		// 假設此模型的請求用 Sonnet 處理的成本
+		wouldHaveCost := (float64(inputTokens) * defaultPricing.InputPerMTok / 1_000_000) +
+			(float64(outputTokens) * defaultPricing.OutputPerMTok / 1_000_000)
+
+		saved := wouldHaveCost - cost
+
+		// 累計到預設模型成本
+		report.DefaultModelCost += wouldHaveCost
+
+		// 按模型分解
+		report.ByModel[model] = ModelCostBreakdown{
+			Calls:         calls,
+			ActualCost:    cost,
+			WouldHaveCost: wouldHaveCost,
+			Saved:         saved,
+			InputTokens:   inputTokens,
+			OutputTokens:  outputTokens,
+		}
+	}
+
+	// 計算節省統計
+	report.SavingsCost = report.DefaultModelCost - report.ActualCost
+	if report.DefaultModelCost > 0 {
+		report.SavingsPercent = (report.SavingsCost / report.DefaultModelCost) * 100
+	}
+
+	return report, nil
 }
 
 // scanPerformanceMetrics 掃描效能指標結果

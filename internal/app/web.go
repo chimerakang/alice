@@ -120,6 +120,9 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/costs/by-model", wi.handleCostsByModel)
 	mux.HandleFunc("/api/costs/summary", wi.handleCostsSummary)
 
+	// Cost Savings APIs (Issue #74)
+	mux.HandleFunc("/api/costs/savings", wi.handleCostSavings)
+
 	// Security APIs
 	mux.HandleFunc("/api/security/events", wi.handleSecurityEventsProto)
 	mux.HandleFunc("/api/security/stats", wi.handleSecurityStatsProto)
@@ -1118,6 +1121,42 @@ func (wi *WebInterface) handleCostsSummary(w http.ResponseWriter, r *http.Reques
 		}
 
 		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// handleCostSavings returns cost savings report (Issue #74)
+func (wi *WebInterface) handleCostSavings(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalStorage == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Storage is unavailable",
+			})
+			return
+		}
+
+		// Parse query parameters (hours to look back)
+		hoursStr := r.URL.Query().Get("hours")
+		hours := 168 // default 1 week
+		if h, err := strconv.Atoi(hoursStr); err == nil && h > 0 {
+			hours = h
+		}
+
+		// Get cost savings report
+		report, err := globalStorage.GetCostSavings(hours)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": fmt.Sprintf("Query failed: %v", err),
+			})
+			return
+		}
+
+		// Return response
+		w.Header().Set("Cache-Control", "public, max-age=60") // Cache for 1 minute
+		json.NewEncoder(w).Encode(report)
 	})(w, r)
 }
 

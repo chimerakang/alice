@@ -256,6 +256,74 @@ func (t *TelegramBot) setUserModelPreference(key chatKey, mode string) {
 	}
 }
 
+// handleSavingsCommand 處理 /savings 指令 - 顯示本週路由統計和節省金額
+func (t *TelegramBot) handleSavingsCommand(key chatKey) {
+	if globalStorage == nil {
+		t.send(key, "❌ 儲存系統不可用")
+		return
+	}
+
+	// 默認查詢最近 7 天的數據
+	report, err := globalStorage.GetCostSavings(168)
+	if err != nil {
+		log.Printf("[telegram] failed to get cost savings: %v", err)
+		t.send(key, fmt.Sprintf("❌ 無法取得成本數據: %v", err))
+		return
+	}
+
+	if report.TotalRequests == 0 {
+		t.send(key, "📊 本週路由統計\n\n還沒有任何路由數據")
+		return
+	}
+
+	// 組建回應訊息
+	var msg strings.Builder
+	msg.WriteString("📊 *本週智慧路由統計*\n\n")
+
+	// 按模型分類
+	for model, breakdown := range report.ByModel {
+		modelIcon := "🟢"
+		if model == "sonnet" {
+			modelIcon = "🟡"
+		} else if model == "opus" {
+			modelIcon = "🔴"
+		}
+
+		savedAmount := breakdown.Saved
+		savedSign := ""
+		if savedAmount > 0 {
+			savedSign = "✅"
+		} else if savedAmount < 0 {
+			savedSign = "⬆️"
+		}
+
+		msg.WriteString(fmt.Sprintf("%s *%s*: %d 次\n", modelIcon, model, breakdown.Calls))
+		msg.WriteString(fmt.Sprintf("  成本: $%.2f (假設 Sonnet: $%.2f) %s\n\n",
+			breakdown.ActualCost, breakdown.WouldHaveCost, savedSign))
+	}
+
+	// 節省統計
+	msg.WriteString("💰 *節省金額統計*\n")
+	msg.WriteString(fmt.Sprintf("實際花費: $%.2f\n", report.ActualCost))
+	msg.WriteString(fmt.Sprintf("假設全用 Sonnet: $%.2f\n", report.DefaultModelCost))
+	msg.WriteString(fmt.Sprintf("節省金額: *$%.2f* (%.1f%%)\n\n",
+		report.SavingsCost, report.SavingsPercent))
+
+	// 路由方式統計
+	if len(report.RoutingMethodStat) > 0 {
+		msg.WriteString("🎯 *路由方式分佈*\n")
+		for method, count := range report.RoutingMethodStat {
+			percent := 0.0
+			if report.TotalRequests > 0 {
+				percent = float64(count) / float64(report.TotalRequests) * 100
+			}
+			msg.WriteString(fmt.Sprintf("• %s: %d 次 (%.1f%%)\n", method, count, percent))
+		}
+	}
+
+	t.send(key, msg.String())
+}
+
 func (t *TelegramBot) isAllowed(userID int64) bool {
 	if len(t.allowIDs) == 0 {
 		return true // 沒設白名單就全部放行
@@ -611,6 +679,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 /fast — 切換至快速模式 ⚡ (Haiku)
 /deep — 切換至深度模式 🧠 (Opus)
 /auto — 自動路由模式 🤖
+/savings — 查看本週路由節省金額 💰
 
 *進階指令：*
 /dashboard — 查看系統監控面板
@@ -829,6 +898,9 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		}
 		t.setUserModelPreference(key, "")
 		t.send(key, "✅ 已切換至自動路由模式")
+
+	case "/savings":
+		t.handleSavingsCommand(key)
 
 	default:
 		t.send(key, "未知指令，輸入 /help 查看可用指令")
