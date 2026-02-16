@@ -1622,12 +1622,23 @@ func (t *TelegramBot) handleTasks(key chatKey) {
 		return
 	}
 
-	// 直接提取 Phase Overview 到底部的內容
+	// 提取 Phase Overview 部分（簡潔摘要）
 	content := string(data)
 	if idx := strings.Index(content, "## Phase Overview"); idx >= 0 {
-		// 取出 Phase Overview 之後的內容
-		extracted := content[idx:]
-		t.sendLong(key, extracted)
+		// 找出 Phase Overview 區塊的結尾（下一個 ## 或 --- 分隔符）
+		rest := content[idx:]
+		endIdx := strings.Index(rest[20:], "\n## ")
+		if endIdx < 0 {
+			endIdx = strings.Index(rest[20:], "\n---")
+		}
+		if endIdx < 0 {
+			endIdx = len(rest)
+		} else {
+			endIdx += 20
+		}
+
+		extracted := rest[:endIdx]
+		t.send(key, extracted)
 	} else {
 		t.send(key, "❌ MASTER_TASKS.md 格式不正確，請執行 /task-sync 重新生成")
 	}
