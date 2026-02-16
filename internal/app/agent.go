@@ -439,7 +439,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	// Track tool executions for this decision
 	var toolCallsForDecision []ToolExecution
 
-	resp, err := a.client.CallStream(ctx, userMessage, a.projectDir, ps.sessionID, a.currentModelOverride, func(toolName string, toolInput map[string]interface{}) {
+	resp, err := a.client.CallStream(ctx, userMessage, a.projectDir, ps.sessionID, a.lastUsedModel, func(toolName string, toolInput map[string]interface{}) {
 		// Check if we should create a checkpoint before executing this tool
 		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
 
