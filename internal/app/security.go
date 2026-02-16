@@ -44,6 +44,14 @@ type MultimediaConfig struct {
 	VoiceToTextProvider   string `json:"voice_to_text_provider"` // "openai_whisper"
 }
 
+// ModelRoutingConfig 動態模型路由設定
+type ModelRoutingConfig struct {
+	EnableDynamicRouting bool   `json:"enable_dynamic_routing"`
+	FastModel            string `json:"fast_model"`
+	DeepModel            string `json:"deep_model"`
+	UseGPT4oMini         bool   `json:"use_gpt4o_mini_for_triage"`
+}
+
 // SecurityEvent 安全事件記錄
 type SecurityEvent struct {
 	ID          string                 `json:"id"`

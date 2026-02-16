@@ -47,6 +47,9 @@ type Config struct {
 
 	// Multimedia Settings
 	Multimedia MultimediaConfig `json:"multimedia"`
+
+	// Model Routing Settings
+	ModelRouting ModelRoutingConfig `json:"model_routing"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -81,6 +84,12 @@ func LoadConfig() (*Config, error) {
 			MaxFileSizeMB:       20,             // 20MB limit
 			TempDownloadDir:     "./temp/media", // Temporary download directory
 			VoiceToTextProvider: "openai_whisper", // Default to OpenAI Whisper
+		},
+		ModelRouting: ModelRoutingConfig{
+			EnableDynamicRouting: false, // Disabled by default
+			FastModel:            "claude-haiku-4-5-20251001",
+			DeepModel:            "claude-opus-4-6",
+			UseGPT4oMini:         false,
 		},
 	}
 

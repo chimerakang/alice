@@ -92,6 +92,10 @@ type TelegramBot struct {
 	queueCtx      context.Context        // 佇列上下文
 	queueCancel   context.CancelFunc     // 佇列取消函數
 	rateLimiter   *time.Ticker          // 速率限制器
+
+	// Model routing preferences per chat/thread
+	modelPreferences map[chatKey]string // "fast", "deep", or ""
+	prefMu           sync.RWMutex       // Protect model preferences
 }
 
 func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
@@ -136,6 +140,9 @@ func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
 		queueCtx:     queueCtx,
 		queueCancel:  queueCancel,
 		rateLimiter:  time.NewTicker(500 * time.Millisecond), // 2 messages per second
+
+		// Model routing preferences
+		modelPreferences: make(map[chatKey]string),
 	}
 
 	// Start message queue worker
@@ -154,6 +161,9 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "reset", "description": "清除對話歷史"},
 		{"command": "status", "description": "查看目前狀態"},
 		{"command": "usage", "description": "查看 token 用量"},
+		{"command": "fast", "description": "切換至快速模式 (Haiku)"},
+		{"command": "deep", "description": "切換至深度模式 (Opus)"},
+		{"command": "auto", "description": "自動模式 (AI 路由)"},
 		{"command": "abort", "description": "中斷正在執行的任務"},
 		{"command": "dashboard", "description": "查看系統監控面板"},
 		{"command": "checkpoints", "description": "查看檢查點狀態"},
@@ -224,6 +234,26 @@ func (t *TelegramBot) GetAgentCount() int {
 	t.agentsMu.RLock()
 	defer t.agentsMu.RUnlock()
 	return len(t.agents)
+}
+
+// getUserModelPreference 安全地獲取用戶的模型偏好設定
+// 返回值: "fast", "deep", 或 "" (自動模式)
+func (t *TelegramBot) getUserModelPreference(key chatKey) string {
+	t.prefMu.RLock()
+	defer t.prefMu.RUnlock()
+	return t.modelPreferences[key]
+}
+
+// setUserModelPreference 安全地設定用戶的模型偏好設定
+// mode: "fast", "deep", 或 "" (自動模式)
+func (t *TelegramBot) setUserModelPreference(key chatKey, mode string) {
+	t.prefMu.Lock()
+	defer t.prefMu.Unlock()
+	if mode == "" {
+		delete(t.modelPreferences, key)
+	} else {
+		t.modelPreferences[key] = mode
+	}
 }
 
 func (t *TelegramBot) isAllowed(userID int64) bool {
@@ -408,6 +438,41 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	// 一般訊息 → agent 處理
 	agent := t.getAgent(key)
 
+	// Model routing: Three-tier priority system
+	var modelOverride string
+	if t.config.ModelRouting.EnableDynamicRouting {
+		// Priority 1: User explicit preference (/fast or /deep)
+		userPref := t.getUserModelPreference(key)
+		if userPref == "fast" {
+			modelOverride = t.config.ModelRouting.FastModel
+			log.Printf("[telegram] model routing: using fast model (user preference)")
+		} else if userPref == "deep" {
+			modelOverride = t.config.ModelRouting.DeepModel
+			log.Printf("[telegram] model routing: using deep model (user preference)")
+		} else if t.config.ModelRouting.UseGPT4oMini {
+			// Priority 2: AI triage with GPT-4o-mini
+			log.Printf("[telegram] model routing: running AI triage for complexity classification")
+			complexity, err := t.triageWithGPT4oMini(text)
+			if err != nil {
+				log.Printf("[telegram] AI triage error: %v, falling back to fast model", err)
+				modelOverride = t.config.ModelRouting.FastModel
+			} else if complexity == "deep" {
+				modelOverride = t.config.ModelRouting.DeepModel
+				log.Printf("[telegram] model routing: AI triage classified as deep")
+			} else {
+				modelOverride = t.config.ModelRouting.FastModel
+				log.Printf("[telegram] model routing: AI triage classified as fast")
+			}
+		}
+		// Priority 3: Static rules (future enhancement)
+		// else { /* static rules would go here */ }
+
+		// Apply model override to agent
+		if modelOverride != "" {
+			agent.SetModelOverride(modelOverride)
+		}
+	}
+
 	// 發送「處理中」提示
 	t.sendTyping(key)
 
@@ -536,11 +601,18 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 *支援 Forum Topics：*
 在群組開啟 Topics，每個 Topic 綁定一個專案，對話完全獨立。
 
-*指令：*
+*基本指令：*
 /project <路徑> — 切換專案目錄
 /reset — 清除對話歷史
 /status — 查看目前狀態
 /usage — 查看 token 用量
+
+*模型路由指令：*
+/fast — 切換至快速模式 ⚡ (Haiku)
+/deep — 切換至深度模式 🧠 (Opus)
+/auto — 自動路由模式 🤖
+
+*進階指令：*
 /dashboard — 查看系統監控面板
 /checkpoints — 查看檢查點狀態
 /abort — 中斷正在執行的任務
@@ -629,15 +701,27 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		if agent.SessionID() != "" {
 			sessionInfo = fmt.Sprintf("`%s`", agent.SessionID())
 		}
+
+		// Get current model mode
+		modelMode := t.getUserModelPreference(key)
+		var modelDisplay string
+		if modelMode == "fast" {
+			modelDisplay = fmt.Sprintf("`%s` (⚡ 快速模式)", t.config.ModelRouting.FastModel)
+		} else if modelMode == "deep" {
+			modelDisplay = fmt.Sprintf("`%s` (🧠 深度模式)", t.config.ModelRouting.DeepModel)
+		} else {
+			modelDisplay = fmt.Sprintf("`%s`", t.client.Model)
+		}
+
 		status := fmt.Sprintf(
 			"📊 *狀態*\n"+
 				"專案: `%s`\n"+
-				"模型: `%s`\n"+
+				"模型: %s\n"+
 				"Session: %s\n"+
 				"CLI 呼叫: %d 次\n"+
 				"累計: %dK in / %dK out",
 			agent.projectDir,
-			t.client.Model,
+			modelDisplay,
 			sessionInfo,
 			stats.APICallCount,
 			stats.TotalInputTokens/1000,
@@ -721,6 +805,30 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 
 	case "/tasks":
 		t.handleTasks(key)
+
+	case "/fast":
+		if !t.config.ModelRouting.EnableDynamicRouting {
+			t.send(key, "⚠️ 動態模型路由功能未啟用")
+			return
+		}
+		t.setUserModelPreference(key, "fast")
+		t.send(key, fmt.Sprintf("✅ 已切換至快速模式\n模型: `%s`", t.config.ModelRouting.FastModel))
+
+	case "/deep":
+		if !t.config.ModelRouting.EnableDynamicRouting {
+			t.send(key, "⚠️ 動態模型路由功能未啟用")
+			return
+		}
+		t.setUserModelPreference(key, "deep")
+		t.send(key, fmt.Sprintf("✅ 已切換至深度模式\n模型: `%s`", t.config.ModelRouting.DeepModel))
+
+	case "/auto":
+		if !t.config.ModelRouting.EnableDynamicRouting {
+			t.send(key, "⚠️ 動態模型路由功能未啟用")
+			return
+		}
+		t.setUserModelPreference(key, "")
+		t.send(key, "✅ 已切換至自動路由模式")
 
 	default:
 		t.send(key, "未知指令，輸入 /help 查看可用指令")
@@ -2655,6 +2763,98 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 	if response != "" {
 		t.send(key, response)
 	}
+}
+
+// triageWithGPT4oMini 使用 OpenAI GPT-4o-mini 判斷任務複雜度
+// 返回值: "fast" (簡單任務) 或 "deep" (複雜任務)
+func (t *TelegramBot) triageWithGPT4oMini(userMessage string) (string, error) {
+	// 如果未配置 OpenAI API key，返回 fast（保守選擇）
+	if t.config.Multimedia.OpenAIAPIKey == "" {
+		return "fast", fmt.Errorf("OpenAI API key not configured")
+	}
+
+	systemPrompt := `你是任務複雜度分類器。根據用戶的訊息，判斷該任務的複雜度。
+
+快速任務（fast）：
+- 翻譯或語言轉換
+- 簡單解釋或文字改寫
+- 格式轉換（JSON, CSV, XML）
+- 查看或理解現有程式碼
+- 簡單的文字編輯或查詢
+
+深度任務（deep）：
+- 系統設計或架構規劃
+- 跨多個檔案的重構或大規模修改
+- 複雜的 bug 修復或診斷
+- 演算法實現或邏輯設計
+- 性能最佳化分析
+
+只回覆一個詞：fast 或 deep，不要有其他文字。`
+
+	payload := map[string]interface{}{
+		"model": "gpt-4o-mini",
+		"messages": []map[string]string{
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": userMessage},
+		},
+		"max_tokens":   10,
+		"temperature": 0,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "fast", fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "fast", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+t.config.Multimedia.OpenAIAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "fast", fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "fast", fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "fast", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if len(result.Choices) == 0 {
+		return "fast", fmt.Errorf("empty choices in response")
+	}
+
+	// 提取並規範化回應
+	response := strings.ToLower(strings.TrimSpace(result.Choices[0].Message.Content))
+
+	// 驗證回應格式
+	if response == "fast" {
+		return "fast", nil
+	} else if response == "deep" {
+		return "deep", nil
+	}
+
+	// 如果回應不清楚，預設為 fast（保守選擇）
+	log.Printf("[telegram] AI router returned unclear response: %q, defaulting to fast", response)
+	return "fast", nil
 }
 
 // transcribeVoiceWithWhisper 使用 OpenAI Whisper API 轉錄語音

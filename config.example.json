@@ -23,6 +23,13 @@
 
   "enable_multi_agent": false,
 
+  "model_routing": {
+    "enable_dynamic_routing": false,
+    "fast_model": "claude-haiku-4-5-20251001",
+    "deep_model": "claude-opus-4-6",
+    "use_gpt4o_mini_for_triage": false
+  },
+
   "enable_performance_monitoring": true,
   "performance_metrics_retention": 24,
 
