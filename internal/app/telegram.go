@@ -302,7 +302,8 @@ func (t *TelegramBot) handleSavingsCommand(key chatKey) {
 
 	// 組建回應訊息
 	var msg strings.Builder
-	msg.WriteString("📊 *本週智慧路由統計*\n\n")
+	titleMsg := t.getLocalizedMessage(key.chatID, "task_savings_title", nil)
+	msg.WriteString(titleMsg)
 
 	// 按模型分類
 	for model, breakdown := range report.ByModel {
@@ -321,27 +322,47 @@ func (t *TelegramBot) handleSavingsCommand(key chatKey) {
 			savedSign = "⬆️"
 		}
 
-		msg.WriteString(fmt.Sprintf("%s *%s*: %d 次\n", modelIcon, model, breakdown.Calls))
-		msg.WriteString(fmt.Sprintf("  成本: $%.2f (假設 Sonnet: $%.2f) %s\n\n",
-			breakdown.ActualCost, breakdown.WouldHaveCost, savedSign))
+		breakdownMsg := t.getLocalizedMessage(key.chatID, "task_savings_model_breakdown", nil)
+		breakdownMsg = strings.ReplaceAll(breakdownMsg, "{icon}", modelIcon)
+		breakdownMsg = strings.ReplaceAll(breakdownMsg, "{model}", model)
+		breakdownMsg = strings.ReplaceAll(breakdownMsg, "{calls}", fmt.Sprintf("%d", breakdown.Calls))
+		breakdownMsg = strings.ReplaceAll(breakdownMsg, "{cost}", fmt.Sprintf("%.2f", breakdown.ActualCost))
+		breakdownMsg = strings.ReplaceAll(breakdownMsg, "{sonnet_cost}", fmt.Sprintf("%.2f", breakdown.WouldHaveCost))
+		breakdownMsg = strings.ReplaceAll(breakdownMsg, "{status}", savedSign)
+		msg.WriteString(breakdownMsg)
 	}
 
 	// 節省統計
-	msg.WriteString("💰 *節省金額統計*\n")
-	msg.WriteString(fmt.Sprintf("實際花費: $%.2f\n", report.ActualCost))
-	msg.WriteString(fmt.Sprintf("假設全用 Sonnet: $%.2f\n", report.DefaultModelCost))
-	msg.WriteString(fmt.Sprintf("節省金額: *$%.2f* (%.1f%%)\n\n",
-		report.SavingsCost, report.SavingsPercent))
+	costHeaderMsg := t.getLocalizedMessage(key.chatID, "task_savings_cost_header", nil)
+	msg.WriteString(costHeaderMsg)
+
+	actualMsg := t.getLocalizedMessage(key.chatID, "task_savings_actual_cost", nil)
+	actualMsg = strings.ReplaceAll(actualMsg, "{cost}", fmt.Sprintf("%.2f", report.ActualCost))
+	msg.WriteString(actualMsg)
+
+	assumedMsg := t.getLocalizedMessage(key.chatID, "task_savings_assumed_cost", nil)
+	assumedMsg = strings.ReplaceAll(assumedMsg, "{cost}", fmt.Sprintf("%.2f", report.DefaultModelCost))
+	msg.WriteString(assumedMsg)
+
+	amountMsg := t.getLocalizedMessage(key.chatID, "task_savings_amount", nil)
+	amountMsg = strings.ReplaceAll(amountMsg, "{savings}", fmt.Sprintf("%.2f", report.SavingsCost))
+	amountMsg = strings.ReplaceAll(amountMsg, "{percent}", fmt.Sprintf("%.1f", report.SavingsPercent))
+	msg.WriteString(amountMsg)
 
 	// 路由方式統計
 	if len(report.RoutingMethodStat) > 0 {
-		msg.WriteString("🎯 *路由方式分佈*\n")
+		methodHeaderMsg := t.getLocalizedMessage(key.chatID, "task_savings_method_header", nil)
+		msg.WriteString(methodHeaderMsg)
 		for method, count := range report.RoutingMethodStat {
 			percent := 0.0
 			if report.TotalRequests > 0 {
 				percent = float64(count) / float64(report.TotalRequests) * 100
 			}
-			msg.WriteString(fmt.Sprintf("• %s: %d 次 (%.1f%%)\n", method, count, percent))
+			methodItemMsg := t.getLocalizedMessage(key.chatID, "task_savings_method_item", nil)
+			methodItemMsg = strings.ReplaceAll(methodItemMsg, "{method}", method)
+			methodItemMsg = strings.ReplaceAll(methodItemMsg, "{count}", fmt.Sprintf("%d", count))
+			methodItemMsg = strings.ReplaceAll(methodItemMsg, "{percent}", fmt.Sprintf("%.1f", percent))
+			msg.WriteString(methodItemMsg)
 		}
 	}
 
@@ -1276,7 +1297,8 @@ func splitMessage(text string, maxLen int) []string {
 func (t *TelegramBot) handleMultiAgentStatus(key chatKey) {
 	stats := globalAgentCoordinator.GetAgentStats()
 
-	status := fmt.Sprintf("🤖 *多代理系統狀態*\n\n")
+	statusMsg := t.getLocalizedMessage(key.chatID, "multiagent_status_title", nil)
+	status := statusMsg
 
 	if globalAgentCoordinator.IsEnabled() {
 		status += "✅ *狀態*: 已啟用\n\n"
@@ -1285,12 +1307,16 @@ func (t *TelegramBot) handleMultiAgentStatus(key chatKey) {
 	}
 
 	totalAgents := stats["total_agents"].(int)
-	status += fmt.Sprintf("📊 *統計*:\n  總代理數: %d\n\n", totalAgents)
+	statsMsg := t.getLocalizedMessage(key.chatID, "multiagent_status_stats", nil)
+	statsMsg = strings.ReplaceAll(statsMsg, "{count}", fmt.Sprintf("%d", totalAgents))
+	status += statsMsg
 
 	if activeTask, hasTask := stats["active_task"]; hasTask && activeTask != nil {
 		taskInfo := activeTask.(map[string]interface{})
-		status += fmt.Sprintf("🔄 *執行中任務*:\n  ID: %s\n  狀態: %s\n\n",
-			taskInfo["id"].(string), taskInfo["status"].(string))
+		runningMsg := t.getLocalizedMessage(key.chatID, "multiagent_status_running", nil)
+		runningMsg = strings.ReplaceAll(runningMsg, "{id}", taskInfo["id"].(string))
+		runningMsg = strings.ReplaceAll(runningMsg, "{status}", taskInfo["status"].(string))
+		status += runningMsg
 	}
 
 	status += "*可用代理類型*:\n"
@@ -1308,7 +1334,8 @@ func (t *TelegramBot) handleMultiAgentStatus(key chatKey) {
 func (t *TelegramBot) handleMultiAgentStats(key chatKey) {
 	stats := globalAgentCoordinator.GetAgentStats()
 
-	response := fmt.Sprintf("📊 *多代理使用統計*\n\n")
+	titleMsg := t.getLocalizedMessage(key.chatID, "multiagent_usage_stats_title", nil)
+	response := titleMsg
 
 	if agents, hasAgents := stats["agents"]; hasAgents {
 		agentStats := agents.(map[string]interface{})
@@ -1321,10 +1348,17 @@ func (t *TelegramBot) handleMultiAgentStats(key chatKey) {
 				taskCount := info["task_count"].(int)
 				lastUsed := info["last_used"].(time.Time)
 
-				response += fmt.Sprintf("🤖 *%s*\n", agentType)
-				response += fmt.Sprintf("  任務數: %d\n", taskCount)
-				response += fmt.Sprintf("  最後使用: %s\n\n",
-					lastUsed.Format("2006-01-02 15:04:05"))
+				headerMsg := t.getLocalizedMessage(key.chatID, "multiagent_agent_header", nil)
+				headerMsg = strings.ReplaceAll(headerMsg, "{agent_type}", agentType)
+				response += headerMsg
+
+				taskCountMsg := t.getLocalizedMessage(key.chatID, "multiagent_agent_task_count", nil)
+				taskCountMsg = strings.ReplaceAll(taskCountMsg, "{count}", fmt.Sprintf("%d", taskCount))
+				response += taskCountMsg
+
+				lastUsedMsg := t.getLocalizedMessage(key.chatID, "multiagent_agent_last_used", nil)
+				lastUsedMsg = strings.ReplaceAll(lastUsedMsg, "{time}", lastUsed.Format("2006-01-02 15:04:05"))
+				response += lastUsedMsg
 			}
 		}
 	}
@@ -1431,9 +1465,13 @@ func (t *TelegramBot) handleCheckpointsList(key chatKey) {
 		return
 	}
 
-	response := "📸 *檢查點狀態*\n\n"
-	response += fmt.Sprintf("📂 專案: `%s`\n", projectDir)
-	response += fmt.Sprintf("📊 總數: %d 個檢查點\n\n", len(checkpoints))
+	titleMsg := t.getLocalizedMessage(key.chatID, "checkpoint_list_title", nil)
+	titleMsg = strings.ReplaceAll(titleMsg, "{path}", projectDir)
+	response := titleMsg
+
+	countMsg := t.getLocalizedMessage(key.chatID, "checkpoint_list_count", nil)
+	countMsg = strings.ReplaceAll(countMsg, "{count}", fmt.Sprintf("%d", len(checkpoints)))
+	response += countMsg
 
 	if len(checkpoints) == 0 {
 		response += "🔍 目前沒有檢查點\n\n"
@@ -1444,10 +1482,21 @@ func (t *TelegramBot) handleCheckpointsList(key chatKey) {
 			if i >= 5 { // 最多顯示 5 個
 				break
 			}
-			response += fmt.Sprintf("• `%s`\n", cp.ID[:12])
-			response += fmt.Sprintf("  📝 %s\n", cp.Description)
-			response += fmt.Sprintf("  📅 %s\n", cp.Timestamp.Format("01/02 15:04"))
-			response += fmt.Sprintf("  💾 %d bytes\n\n", cp.Size)
+			itemMsg := t.getLocalizedMessage(key.chatID, "checkpoint_list_item", nil)
+			itemMsg = strings.ReplaceAll(itemMsg, "{id}", cp.ID[:12])
+			response += itemMsg
+
+			descMsg := t.getLocalizedMessage(key.chatID, "checkpoint_list_description", nil)
+			descMsg = strings.ReplaceAll(descMsg, "{description}", cp.Description)
+			response += descMsg
+
+			timeMsg := t.getLocalizedMessage(key.chatID, "checkpoint_list_timestamp", nil)
+			timeMsg = strings.ReplaceAll(timeMsg, "{timestamp}", cp.Timestamp.Format("01/02 15:04"))
+			response += timeMsg
+
+			sizeMsg := t.getLocalizedMessage(key.chatID, "checkpoint_list_size", nil)
+			sizeMsg = strings.ReplaceAll(sizeMsg, "{size}", fmt.Sprintf("%d", cp.Size))
+			response += sizeMsg
 		}
 	}
 
@@ -1466,23 +1515,32 @@ func (t *TelegramBot) handleCheckpointsStats(key chatKey) {
 
 	stats, err := globalCheckpointManager.GetCheckpointStats(projectDir)
 	if err != nil {
-		t.send(key, fmt.Sprintf("❌ 獲取檢查點統計失敗: %v", err))
+		errMsg := t.getLocalizedMessage(key.chatID, "checkpoint_stats_error", nil)
+		errMsg = strings.ReplaceAll(errMsg, "{error}", err.Error())
+		t.send(key, errMsg)
 		return
 	}
 
-	response := "📈 *檢查點統計*\n\n"
-	response += fmt.Sprintf("📂 專案: `%s`\n\n", projectDir)
+	statsTitle := t.getLocalizedMessage(key.chatID, "checkpoint_stats_title", nil)
+	statsTitle = strings.ReplaceAll(statsTitle, "{path}", projectDir)
+	response := statsTitle
 
 	if totalCheckpoints, ok := stats["total_checkpoints"].(int64); ok {
-		response += fmt.Sprintf("📊 總檢查點: %d\n", totalCheckpoints)
+		totalMsg := t.getLocalizedMessage(key.chatID, "checkpoint_stats_total", nil)
+		totalMsg = strings.ReplaceAll(totalMsg, "{count}", fmt.Sprintf("%d", totalCheckpoints))
+		response += totalMsg
 	}
 
 	if totalSize, ok := stats["total_size"].(int64); ok {
-		response += fmt.Sprintf("💾 總大小: %d bytes\n", totalSize)
+		sizeMsg := t.getLocalizedMessage(key.chatID, "checkpoint_stats_size", nil)
+		sizeMsg = strings.ReplaceAll(sizeMsg, "{size}", fmt.Sprintf("%d", totalSize))
+		response += sizeMsg
 	}
 
 	if avgSize, ok := stats["average_size"].(float64); ok {
-		response += fmt.Sprintf("📏 平均大小: %.1f bytes\n", avgSize)
+		avgMsg := t.getLocalizedMessage(key.chatID, "checkpoint_stats_avg_size", nil)
+		avgMsg = strings.ReplaceAll(avgMsg, "{size}", fmt.Sprintf("%.1f", avgSize))
+		response += avgMsg
 	}
 
 	response += "\n🔄 *自動檢查點觸發*:\n"
