@@ -809,361 +809,361 @@
 |---|------|-------|--------|
 | P2.1 | **🚀 Feature: Complete Dashboard, Monitoring & Checkpoint System** | [#14](https://github.com/chimerakang/alice/pull/14) | ✅ |
 | P2.2 | **🖥️ Dashboard Enhancement: Timeline & Terminal** | [#12](https://github.com/chimerakang/alice/issues/12) | ✅ |
-| | — 時間軸正確顯示所有 AI 操作步驟 | | ☐ |
-| | — 可展開查看每步的詳細 Input/Output | | ☐ |
-| | — 終端機顯示 CLI 即時輸出 | | ☐ |
-| | — 支援多 agent 輸出切換 | | ☐ |
-| | — 保持 OLED 黑化風格一致性 | | ☐ |
+| | — 時間軸正確顯示所有 AI 操作步驟 | | ✅ |
+| | — 可展開查看每步的詳細 Input/Output | | ✅ |
+| | — 終端機顯示 CLI 即時輸出 | | ✅ |
+| | — 支援多 agent 輸出切換 | | ✅ |
+| | — 保持 OLED 黑化風格一致性 | | ✅ |
 | P2.3 | **🔐 Security & Privacy Enhancements** | [#5](https://github.com/chimerakang/alice/issues/5) | ✅ |
-| | — API key rotation and management | | ☐ |
-| | — Secure storage of sensitive configuration | | ☐ |
-| | — Rate limiting and abuse prevention | | ☐ |
-| | — Input validation and sanitization | | ☐ |
-| | — Audit logging for security events | | ☐ |
-| | — Data retention policies | | ☐ |
-| | — PII detection and filtering | | ☐ |
-| | — Conversation history encryption | | ☐ |
-| | — Configurable data sharing settings | | ☐ |
-| | — GDPR compliance features | | ☐ |
-| | — Security middleware for HTTP endpoints | | ☐ |
-| | — Encryption for sensitive data storage | | ☐ |
-| | — Access control for dashboard | | ☐ |
-| | — Security scanning integration | | ☐ |
-| | — Privacy policy and consent management | | ☐ |
+| | — API key rotation and management | | ✅ |
+| | — Secure storage of sensitive configuration | | ✅ |
+| | — Rate limiting and abuse prevention | | ✅ |
+| | — Input validation and sanitization | | ✅ |
+| | — Audit logging for security events | | ✅ |
+| | — Data retention policies | | ✅ |
+| | — PII detection and filtering | | ✅ |
+| | — Conversation history encryption | | ✅ |
+| | — Configurable data sharing settings | | ✅ |
+| | — GDPR compliance features | | ✅ |
+| | — Security middleware for HTTP endpoints | | ✅ |
+| | — Encryption for sensitive data storage | | ✅ |
+| | — Access control for dashboard | | ✅ |
+| | — Security scanning integration | | ✅ |
+| | — Privacy policy and consent management | | ✅ |
 | P2.4 | **📊 Performance Monitoring & Analytics** | [#4](https://github.com/chimerakang/alice/issues/4) | ✅ |
-| | — API call latency and success rates | | ☐ |
-| | — Tool execution performance | | ☐ |
-| | — Memory and CPU usage | | ☐ |
-| | — Token consumption and cost tracking | | ☐ |
-| | — Error rates and failure patterns | | ☐ |
-| | — Usage pattern analysis | | ☐ |
-| | — Performance trend visualization | | ☐ |
-| | — Cost optimization recommendations | | ☐ |
-| | — Bottleneck identification | | ☐ |
-| | — Success/failure correlation analysis | | ☐ |
-| | — Metrics collection in core components | | ☐ |
-| | — Time-series data storage | | ☐ |
-| | — Dashboard integration for visualization | | ☐ |
-| | — Alert system for performance issues | | ☐ |
-| | — Export capabilities for external analysis | | ☐ |
+| | — API call latency and success rates | | ✅ |
+| | — Tool execution performance | | ✅ |
+| | — Memory and CPU usage | | ✅ |
+| | — Token consumption and cost tracking | | ✅ |
+| | — Error rates and failure patterns | | ✅ |
+| | — Usage pattern analysis | | ✅ |
+| | — Performance trend visualization | | ✅ |
+| | — Cost optimization recommendations | | ✅ |
+| | — Bottleneck identification | | ✅ |
+| | — Success/failure correlation analysis | | ✅ |
+| | — Metrics collection in core components | | ✅ |
+| | — Time-series data storage | | ✅ |
+| | — Dashboard integration for visualization | | ✅ |
+| | — Alert system for performance issues | | ✅ |
+| | — Export capabilities for external analysis | | ✅ |
 | P2.5 | **🤖 Multi-Agent Coordination System** | [#3](https://github.com/chimerakang/alice/issues/3) | ✅ |
-| | — **CodeReview Agent**: Focuses on code quality, security, best practices | | ☐ |
-| | — **Testing Agent**: Specializes in writing and running tests | | ☐ |
-| | — **Documentation Agent**: Creates and maintains project documentation | | ☐ |
-| | — **Deployment Agent**: Handles CI/CD, Docker, deployment tasks | | ☐ |
-| | — **Debug Agent**: Specialized in troubleshooting and error resolution | | ☐ |
-| | — Intelligent task analysis and routing | | ☐ |
-| | — Agent capability matching | | ☐ |
-| | — Workload balancing across agents | | ☐ |
-| | — Inter-agent communication protocols | | ☐ |
-| | — Shared context and knowledge base | | ☐ |
-| | — Dynamic agent instantiation based on task requirements | | ☐ |
-| | — Agent lifecycle management (create, pause, terminate) | | ☐ |
-| | — Resource allocation and limits per agent | | ☐ |
-| | — Agent performance monitoring and optimization | | ☐ |
-| | — Shared memory/context between agents | | ☐ |
-| | — Message passing for agent coordination | | ☐ |
-| | — Event-driven agent notifications | | ☐ |
-| | — Conflict resolution for concurrent operations | | ☐ |
-| | — Automatic task breakdown and assignment | | ☐ |
-| | — Priority-based task scheduling | | ☐ |
-| | — Dependency management between sub-tasks | | ☐ |
-| | — Progress aggregation and reporting | | ☐ |
-| | — Multi-agent status in chat interface | | ☐ |
-| | — Agent-specific command routing | | ☐ |
-| | — Group chat collaboration with multiple agents | | ☐ |
-| | — Agent handoff notifications | | ☐ |
-| | — Agent enable/disable toggles per project | | ☐ |
-| | — Resource limits (memory, API calls, execution time) | | ☐ |
-| | — Specialization level settings (basic/advanced) | | ☐ |
-| | — Coordination strategy selection (parallel/sequential/hybrid) | | ☐ |
-| | — Extend existing \`Agent\` struct for specialization | | ☐ |
-| | — Add coordinator logic to \`agent.go\` | | ☐ |
-| | — Implement agent registry and discovery | | ☐ |
-| | — Create specialized prompting for each agent type | | ☐ |
-| | — Add multi-agent dashboard views | | ☐ |
+| | — **CodeReview Agent**: Focuses on code quality, security, best practices | | ✅ |
+| | — **Testing Agent**: Specializes in writing and running tests | | ✅ |
+| | — **Documentation Agent**: Creates and maintains project documentation | | ✅ |
+| | — **Deployment Agent**: Handles CI/CD, Docker, deployment tasks | | ✅ |
+| | — **Debug Agent**: Specialized in troubleshooting and error resolution | | ✅ |
+| | — Intelligent task analysis and routing | | ✅ |
+| | — Agent capability matching | | ✅ |
+| | — Workload balancing across agents | | ✅ |
+| | — Inter-agent communication protocols | | ✅ |
+| | — Shared context and knowledge base | | ✅ |
+| | — Dynamic agent instantiation based on task requirements | | ✅ |
+| | — Agent lifecycle management (create, pause, terminate) | | ✅ |
+| | — Resource allocation and limits per agent | | ✅ |
+| | — Agent performance monitoring and optimization | | ✅ |
+| | — Shared memory/context between agents | | ✅ |
+| | — Message passing for agent coordination | | ✅ |
+| | — Event-driven agent notifications | | ✅ |
+| | — Conflict resolution for concurrent operations | | ✅ |
+| | — Automatic task breakdown and assignment | | ✅ |
+| | — Priority-based task scheduling | | ✅ |
+| | — Dependency management between sub-tasks | | ✅ |
+| | — Progress aggregation and reporting | | ✅ |
+| | — Multi-agent status in chat interface | | ✅ |
+| | — Agent-specific command routing | | ✅ |
+| | — Group chat collaboration with multiple agents | | ✅ |
+| | — Agent handoff notifications | | ✅ |
+| | — Agent enable/disable toggles per project | | ✅ |
+| | — Resource limits (memory, API calls, execution time) | | ✅ |
+| | — Specialization level settings (basic/advanced) | | ✅ |
+| | — Coordination strategy selection (parallel/sequential/hybrid) | | ✅ |
+| | — Extend existing \`Agent\` struct for specialization | | ✅ |
+| | — Add coordinator logic to \`agent.go\` | | ✅ |
+| | — Implement agent registry and discovery | | ✅ |
+| | — Create specialized prompting for each agent type | | ✅ |
+| | — Add multi-agent dashboard views | | ✅ |
 | P2.6 | **🔍 AI Agent Transparency & Decision Logging** | [#2](https://github.com/chimerakang/alice/issues/2) | ✅ |
-| | — Record AI reasoning process for each tool execution | | ☐ |
-| | — Capture user prompts and agent responses with full context | | ☐ |
-| | — Log tool selection rationale and decision-making process | | ☐ |
-| | — Store conversation flow and agent state transitions | | ☐ |
-| | — Complete tool execution history with inputs/outputs | | ☐ |
-| | — Error tracking and debugging information | | ☐ |
-| | — Performance metrics (execution time, token usage) | | ☐ |
-| | — Project-specific decision patterns and learning | | ☐ |
-| | — Export decision logs to JSON/CSV for analysis | | ☐ |
-| | — Integration with external analysis tools | | ☐ |
-| | — Pattern recognition in agent behavior | | ☐ |
-| | — Performance trend analysis | | ☐ |
-| | — Configurable logging levels (off/basic/detailed) | | ☐ |
-| | — Sensitive data filtering (passwords, API keys) | | ☐ |
-| | — Local-only storage with optional cloud sync | | ☐ |
-| | — Data retention policies | | ☐ |
-| | — Add logging hooks to \`Agent.Run()\` method | | ☐ |
-| | — Capture tool execution context in \`ToolExecutor\` | | ☐ |
-| | — Enhance conversation history with decision context | | ☐ |
-| | — Add reasoning extraction from API responses | | ☐ |
-| | — JSON file-based persistence for decision logs | | ☐ |
-| | — Efficient indexing for large log volumes | | ☐ |
-| | — Compressed storage for long-term retention | | ☐ |
-| | — Backup and restore capabilities | | ☐ |
-| | — Dashboard endpoints for decision log visualization | | ☐ |
-| | — Real-time decision streaming via WebSocket | | ☐ |
-| | — Search and filter capabilities | | ☐ |
-| | — Export functionality | | ☐ |
-| | — \`ALICE_LOG_LEVEL\` environment variable | | ☐ |
-| | — \`--enable-transparency\` CLI flag | | ☐ |
-| | — \`transparency_config.json\` for detailed settings | | ☐ |
-| | — Dashboard toggle for real-time decision viewing | | ☐ |
+| | — Record AI reasoning process for each tool execution | | ✅ |
+| | — Capture user prompts and agent responses with full context | | ✅ |
+| | — Log tool selection rationale and decision-making process | | ✅ |
+| | — Store conversation flow and agent state transitions | | ✅ |
+| | — Complete tool execution history with inputs/outputs | | ✅ |
+| | — Error tracking and debugging information | | ✅ |
+| | — Performance metrics (execution time, token usage) | | ✅ |
+| | — Project-specific decision patterns and learning | | ✅ |
+| | — Export decision logs to JSON/CSV for analysis | | ✅ |
+| | — Integration with external analysis tools | | ✅ |
+| | — Pattern recognition in agent behavior | | ✅ |
+| | — Performance trend analysis | | ✅ |
+| | — Configurable logging levels (off/basic/detailed) | | ✅ |
+| | — Sensitive data filtering (passwords, API keys) | | ✅ |
+| | — Local-only storage with optional cloud sync | | ✅ |
+| | — Data retention policies | | ✅ |
+| | — Add logging hooks to \`Agent.Run()\` method | | ✅ |
+| | — Capture tool execution context in \`ToolExecutor\` | | ✅ |
+| | — Enhance conversation history with decision context | | ✅ |
+| | — Add reasoning extraction from API responses | | ✅ |
+| | — JSON file-based persistence for decision logs | | ✅ |
+| | — Efficient indexing for large log volumes | | ✅ |
+| | — Compressed storage for long-term retention | | ✅ |
+| | — Backup and restore capabilities | | ✅ |
+| | — Dashboard endpoints for decision log visualization | | ✅ |
+| | — Real-time decision streaming via WebSocket | | ✅ |
+| | — Search and filter capabilities | | ✅ |
+| | — Export functionality | | ✅ |
+| | — \`ALICE_LOG_LEVEL\` environment variable | | ✅ |
+| | — \`--enable-transparency\` CLI flag | | ✅ |
+| | — \`transparency_config.json\` for detailed settings | | ✅ |
+| | — Dashboard toggle for real-time decision viewing | | ✅ |
 | P2.7 | **🎛️ Web Dashboard Integration** | [#1](https://github.com/chimerakang/alice/issues/1) | ✅ |
-| | — HTTP server for serving dashboard at `/dashboard` | | ☐ |
-| | — WebSocket support for real-time tool execution updates | | ☐ |
-| | — REST API endpoints for statistics and monitoring data | | ☐ |
-| | — Tool execution logging system with structured data | | ☐ |
-| | — Agent status tracking across multiple projects | | ☐ |
-| | — Tool execution metrics collection (name, duration, success/failure) | | ☐ |
-| | — Conversation history persistence (local JSON storage) | | ☐ |
-| | — Project insights generation (most used tools, performance stats) | | ☐ |
-| | — Real-time performance monitoring | | ☐ |
-| | — \`GET /api/stats\` - Current statistics (active sessions, tools executed, success rate) | | ☐ |
-| | — \`GET /api/agents\` - Active agent list with project information | | ☐ |
-| | — \`GET /api/tools/recent\` - Recent tool executions with status | | ☐ |
-| | — \`GET /api/conversations\` - Conversation history by project | | ☐ |
-| | — \`WebSocket /ws\` - Real-time tool execution and status updates | | ☐ |
-| | — Add \`--dashboard-port\` CLI flag (default: 8080) | | ☐ |
-| | — Optional dashboard enable/disable setting | | ☐ |
-| | — Dashboard access control (optional authentication) | | ☐ |
+| | — HTTP server for serving dashboard at `/dashboard` | | ✅ |
+| | — WebSocket support for real-time tool execution updates | | ✅ |
+| | — REST API endpoints for statistics and monitoring data | | ✅ |
+| | — Tool execution logging system with structured data | | ✅ |
+| | — Agent status tracking across multiple projects | | ✅ |
+| | — Tool execution metrics collection (name, duration, success/failure) | | ✅ |
+| | — Conversation history persistence (local JSON storage) | | ✅ |
+| | — Project insights generation (most used tools, performance stats) | | ✅ |
+| | — Real-time performance monitoring | | ✅ |
+| | — \`GET /api/stats\` - Current statistics (active sessions, tools executed, success rate) | | ✅ |
+| | — \`GET /api/agents\` - Active agent list with project information | | ✅ |
+| | — \`GET /api/tools/recent\` - Recent tool executions with status | | ✅ |
+| | — \`GET /api/conversations\` - Conversation history by project | | ✅ |
+| | — \`WebSocket /ws\` - Real-time tool execution and status updates | | ✅ |
+| | — Add \`--dashboard-port\` CLI flag (default: 8080) | | ✅ |
+| | — Optional dashboard enable/disable setting | | ✅ |
+| | — Dashboard access control (optional authentication) | | ✅ |
 
 ## P3 - Data Layer (✅ 100%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
 | P3.1 | **📸 Checkpoint & State Snapshot System** | [#10](https://github.com/chimerakang/alice/issues/10) | ✅ |
-| | — 危險操作前自動建立 checkpoint | | ☐ |
-| | — 支援手動建立 checkpoint | | ☐ |
-| | — 支援回溯到指定 checkpoint | | ☐ |
-| | — Checkpoint 列表可在儀表板查看 | | ☐ |
-| | — 非 git 專案也有基本備份機制 | | ☐ |
+| | — 危險操作前自動建立 checkpoint | | ✅ |
+| | — 支援手動建立 checkpoint | | ✅ |
+| | — 支援回溯到指定 checkpoint | | ✅ |
+| | — Checkpoint 列表可在儀表板查看 | | ✅ |
+| | — 非 git 專案也有基本備份機制 | | ✅ |
 | P3.2 | **🔗 Git Integration & Commit Correlation** | [#9](https://github.com/chimerakang/alice/issues/9) | ✅ |
-| | — 每筆 tool execution 記錄包含 git commit hash | | ☐ |
-| | — 每筆 decision log 包含 git branch 和 commit | | ☐ |
-| | — Web API 支援按 git 資訊篩選 | | ☐ |
-| | — 當專案非 git repo 時不出錯（graceful fallback） | | ☐ |
+| | — 每筆 tool execution 記錄包含 git commit hash | | ✅ |
+| | — 每筆 decision log 包含 git branch 和 commit | | ✅ |
+| | — Web API 支援按 git 資訊篩選 | | ✅ |
+| | — 當專案非 git repo 時不出錯（graceful fallback） | | ✅ |
 | P3.3 | **🔌 WebSocket Real-time Dashboard Connection** | [#8](https://github.com/chimerakang/alice/issues/8) | ✅ |
-| | — Dashboard 顯示真實的即時 tool 執行資料 | | ☐ |
-| | — Agent 狀態即時更新 | | ☐ |
-| | — 效能指標即時刷新 | | ☐ |
-| | — 斷線自動重連 | | ☐ |
-| | — 移除所有 mock/simulated data | | ☐ |
+| | — Dashboard 顯示真實的即時 tool 執行資料 | | ✅ |
+| | — Agent 狀態即時更新 | | ✅ |
+| | — 效能指標即時刷新 | | ✅ |
+| | — 斷線自動重連 | | ✅ |
+| | — 移除所有 mock/simulated data | | ✅ |
 | P3.4 | **💾 Data Persistence Layer (SQLite)** | [#7](https://github.com/chimerakang/alice/issues/7) | ✅ |
-| | — 程式重啟後，歷史資料仍可查詢 | | ☐ |
-| | — Web API 支援時間範圍查詢 | | ☐ |
-| | — 資料保留政策自動執行 | | ☐ |
-| | — 不影響現有記憶體 buffer 的即時查詢效能 | | ☐ |
+| | — 程式重啟後，歷史資料仍可查詢 | | ✅ |
+| | — Web API 支援時間範圍查詢 | | ✅ |
+| | — 資料保留政策自動執行 | | ✅ |
+| | — 不影響現有記憶體 buffer 的即時查詢效能 | | ✅ |
 | P3.5 | **🚀 Deployment & DevOps Improvements** | [#6](https://github.com/chimerakang/alice/issues/6) | ✅ |
-| | — Multi-stage Docker builds for smaller images | | ☐ |
-| | — Docker Compose templates for common setups | | ☐ |
-| | — Health checks and graceful shutdowns | | ☐ |
-| | — Volume management for persistent data | | ☐ |
-| | — Environment-specific configurations | | ☐ |
-| | — GitHub Actions for automated testing | | ☐ |
-| | — Automated Docker image builds | | ☐ |
-| | — Release automation and changelog generation | | ☐ |
-| | — Security scanning in pipeline | | ☐ |
-| | — Performance regression testing | | ☐ |
-| | — Kubernetes manifests and Helm charts | | ☐ |
-| | — Cloud provider deployment guides | | ☐ |
-| | — Systemd service files for Linux | | ☐ |
-| | — Windows service wrapper | | ☐ |
-| | — Configuration management templates | | ☐ |
-| | — Prometheus metrics export | | ☐ |
-| | — Grafana dashboard templates | | ☐ |
-| | — Log aggregation setup guides | | ☐ |
-| | — Health check endpoints | | ☐ |
-| | — Application monitoring best practices | | ☐ |
+| | — Multi-stage Docker builds for smaller images | | ✅ |
+| | — Docker Compose templates for common setups | | ✅ |
+| | — Health checks and graceful shutdowns | | ✅ |
+| | — Volume management for persistent data | | ✅ |
+| | — Environment-specific configurations | | ✅ |
+| | — GitHub Actions for automated testing | | ✅ |
+| | — Automated Docker image builds | | ✅ |
+| | — Release automation and changelog generation | | ✅ |
+| | — Security scanning in pipeline | | ✅ |
+| | — Performance regression testing | | ✅ |
+| | — Kubernetes manifests and Helm charts | | ✅ |
+| | — Cloud provider deployment guides | | ✅ |
+| | — Systemd service files for Linux | | ✅ |
+| | — Windows service wrapper | | ✅ |
+| | — Configuration management templates | | ✅ |
+| | — Prometheus metrics export | | ✅ |
+| | — Grafana dashboard templates | | ✅ |
+| | — Log aggregation setup guides | | ✅ |
+| | — Health check endpoints | | ✅ |
+| | — Application monitoring best practices | | ✅ |
 
 ## P4 - Proto-First (✅ 100%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
 | P4.1 | **🏗️ Architecture: Proto-First API with Protocol Buffers** | [#13](https://github.com/chimerakang/alice/issues/13) | ✅ |
-| | — 建立 `proto/` 目錄結構 | | ☐ |
-| | — 定義核心訊息類型的 .proto 檔案 | | ☐ |
-| | — buf 工具鏈配置完成 | | ☐ |
-| | — Go 代碼成功生成且可編譯 | | ☐ |
-| | — 至少一個 API 端點改用 proto 生成的型別 | | ☐ |
-| | — TypeScript 類型成功生成 | | ☐ |
+| | — 建立 `proto/` 目錄結構 | | ✅ |
+| | — 定義核心訊息類型的 .proto 檔案 | | ✅ |
+| | — buf 工具鏈配置完成 | | ✅ |
+| | — Go 代碼成功生成且可編譯 | | ✅ |
+| | — 至少一個 API 端點改用 proto 生成的型別 | | ✅ |
+| | — TypeScript 類型成功生成 | | ✅ |
 
 ## P5 - Frontend Foundation (✅ 100%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
 | P5.1 | **📋 Git/Checkpoint/Performance/Security 子頁面** | [#20](https://github.com/chimerakang/alice/issues/20) | ✅ |
-| | — Performance 頁面顯示分析指標 + 趨勢圖 | | ☐ |
-| | — Security 頁面顯示事件表格 + 統計 | | ☐ |
-| | — Checkpoint 頁面可建立/回溯/列出 checkpoints | | ☐ |
-| | — 所有 API 端點正確整合 | | ☐ |
-| | — 錯誤處理 + loading states | | ☐ |
+| | — Performance 頁面顯示分析指標 + 趨勢圖 | | ✅ |
+| | — Security 頁面顯示事件表格 + 統計 | | ✅ |
+| | — Checkpoint 頁面可建立/回溯/列出 checkpoints | | ✅ |
+| | — 所有 API 端點正確整合 | | ✅ |
+| | — 錯誤處理 + loading states | | ✅ |
 | P5.2 | **⏳ Timeline + Terminal 頁面** | [#19](https://github.com/chimerakang/alice/issues/19) | ✅ |
-| | — 垂直時間軸正確顯示事件 | | ☐ |
-| | — 事件可展開/收合查看詳情 | | ☐ |
-| | — Filter 正常篩選事件 | | ☐ |
-| | — Terminal 即時顯示 CLI 風格輸出 | | ☐ |
-| | — Auto-scroll 正常運作 | | ☐ |
-| | — WebSocket 即時推送新事件 | | ☐ |
-| | — OLED 黑化主題一致 | | ☐ |
+| | — 垂直時間軸正確顯示事件 | | ✅ |
+| | — 事件可展開/收合查看詳情 | | ✅ |
+| | — Filter 正常篩選事件 | | ✅ |
+| | — Terminal 即時顯示 CLI 風格輸出 | | ✅ |
+| | — Auto-scroll 正常運作 | | ✅ |
+| | — WebSocket 即時推送新事件 | | ✅ |
+| | — OLED 黑化主題一致 | | ✅ |
 | P5.3 | **📊 Dashboard 主頁面 + 圖表元件** | [#18](https://github.com/chimerakang/alice/issues/18) | ✅ |
-| | — 4 個 MetricCard 顯示正確數值 + 動畫計數器 | | ☐ |
-| | — Git 狀態面板顯示 branch/commit/modified files | | ☐ |
-| | — Activity Chart 顯示 24h 趨勢 | | ☐ |
-| | — Tool Usage Chart 顯示 tool 分佈 | | ☐ |
-| | — Live feed 即時更新 (WebSocket) | | ☐ |
-| | — 30 秒自動刷新 fallback | | ☐ |
-| | — 響應式佈局 (desktop/tablet) | | ☐ |
+| | — 4 個 MetricCard 顯示正確數值 + 動畫計數器 | | ✅ |
+| | — Git 狀態面板顯示 branch/commit/modified files | | ✅ |
+| | — Activity Chart 顯示 24h 趨勢 | | ✅ |
+| | — Tool Usage Chart 顯示 tool 分佈 | | ✅ |
+| | — Live feed 即時更新 (WebSocket) | | ✅ |
+| | — 30 秒自動刷新 fallback | | ✅ |
+| | — 響應式佈局 (desktop/tablet) | | ✅ |
 | P5.4 | **🔌 WebSocket Hook + Zustand 狀態管理** | [#17](https://github.com/chimerakang/alice/issues/17) | ✅ |
-| | — WebSocket 自動連線 + 斷線重連 | | ☐ |
-| | — 所有 6 種事件正確分發到對應 store | | ☐ |
-| | — API client hook 整合 proto TypeScript 類型 | | ☐ |
-| | — 初始頁面載入時 fetch API 填充 stores | | ☐ |
-| | — WebSocket 狀態在 Header 顯示 (綠燈/紅燈) | | ☐ |
-| | — DevTools 可檢視 store 狀態 | | ☐ |
+| | — WebSocket 自動連線 + 斷線重連 | | ✅ |
+| | — 所有 6 種事件正確分發到對應 store | | ✅ |
+| | — API client hook 整合 proto TypeScript 類型 | | ✅ |
+| | — 初始頁面載入時 fetch API 填充 stores | | ✅ |
+| | — WebSocket 狀態在 Header 顯示 (綠燈/紅燈) | | ✅ |
+| | — DevTools 可檢視 store 狀態 | | ✅ |
 | P5.5 | **🧱 共用 UI 元件庫 (Layout, StatusBadge, MetricCard)** | [#16](https://github.com/chimerakang/alice/issues/16) | ✅ |
-| | — AppLayout 包含 Sidebar 導航 + Header + Content area | | ☐ |
-| | — MetricCard 支援動畫計數器 (數字從 0 漸增) | | ☐ |
-| | — StatusBadge 支援 5 種狀態 + 對應顏色 | | ☐ |
-| | — LoadingSkeleton 適用於卡片和列表 | | ☐ |
-| | — Toast 支援 auto-dismiss + 堆疊 | | ☐ |
-| | — 所有元件遵循 OLED 黑化主題 | | ☐ |
-| | — Storybook 或 demo page 可預覽所有元件 | | ☐ |
+| | — AppLayout 包含 Sidebar 導航 + Header + Content area | | ✅ |
+| | — MetricCard 支援動畫計數器 (數字從 0 漸增) | | ✅ |
+| | — StatusBadge 支援 5 種狀態 + 對應顏色 | | ✅ |
+| | — LoadingSkeleton 適用於卡片和列表 | | ✅ |
+| | — Toast 支援 auto-dismiss + 堆疊 | | ✅ |
+| | — 所有元件遵循 OLED 黑化主題 | | ✅ |
+| | — Storybook 或 demo page 可預覽所有元件 | | ✅ |
 | P5.6 | **⚛️ React + Vite + TypeScript 專案初始化** | [#15](https://github.com/chimerakang/alice/issues/15) | ✅ |
-| | — `npm run dev` 可啟動開發伺服器，proxy 到 Go backend | | ☐ |
-| | — `npm run build` 輸出到 `web/` 目錄 | | ☐ |
-| | — Tailwind CSS build-time 編譯，非 CDN | | ☐ |
-| | — Proto TypeScript 類型可正確 import | | ☐ |
-| | — React Router 路由正常運作 | | ☐ |
-| | — OLED 黑化主題色彩保留 | | ☐ |
-| | — Docker build 可正常包含前端產出物 | | ☐ |
+| | — `npm run dev` 可啟動開發伺服器，proxy 到 Go backend | | ✅ |
+| | — `npm run build` 輸出到 `web/` 目錄 | | ✅ |
+| | — Tailwind CSS build-time 編譯，非 CDN | | ✅ |
+| | — Proto TypeScript 類型可正確 import | | ✅ |
+| | — React Router 路由正常運作 | | ✅ |
+| | — OLED 黑化主題色彩保留 | | ✅ |
+| | — Docker build 可正常包含前端產出物 | | ✅ |
 
 ## P6 - AI Audit System (✅ 100%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
 | P6.1 | **擴充 CallStream 擷取完整 AI 思考與文字內容** | [#27](https://github.com/chimerakang/alice/issues/27) | ✅ |
-| | — 解析 `thinking` content blocks（AI 推理過程） | | ☐ |
-| | — 解析 `text` content blocks（AI 中間文字回應） | | ☐ |
-| | — 解析 `tool_result` 事件（工具執行結果） | | ☐ |
-| | — 擴充 `CLIResponse` struct 新增 `ThinkingBlocks []string` 和 `TextBlocks []string` | | ☐ |
-| | — 擴充 onToolUse callback 或新增 onContent callback | | ☐ |
-| | — `DecisionLog` struct 新增 `ThinkingContent` 欄位 | | ☐ |
-| | — `ToolExecution` struct 新增 `Output` 欄位（工具執行結果） | | ☐ |
-| | — `logDecision()` 儲存 thinking 和 text 內容 | | ☐ |
-| | — SQLite schema migration: decision_logs 加 `thinking_content` 欄位 | | ☐ |
-| | — 更新 INSERT/SELECT 查詢 | | ☐ |
-| | — TypeScript DecisionLog type 新增 `thinking_content` 欄位 | | ☐ |
-| | — Timeline 頁面新增可展開的 "AI Thinking" 面板 | | ☐ |
-| | — Checkpoint AIContextPanel 顯示 thinking 內容 | | ☐ |
+| | — 解析 `thinking` content blocks（AI 推理過程） | | ✅ |
+| | — 解析 `text` content blocks（AI 中間文字回應） | | ✅ |
+| | — 解析 `tool_result` 事件（工具執行結果） | | ✅ |
+| | — 擴充 `CLIResponse` struct 新增 `ThinkingBlocks []string` 和 `TextBlocks []string` | | ✅ |
+| | — 擴充 onToolUse callback 或新增 onContent callback | | ✅ |
+| | — `DecisionLog` struct 新增 `ThinkingContent` 欄位 | | ✅ |
+| | — `ToolExecution` struct 新增 `Output` 欄位（工具執行結果） | | ✅ |
+| | — `logDecision()` 儲存 thinking 和 text 內容 | | ✅ |
+| | — SQLite schema migration: decision_logs 加 `thinking_content` 欄位 | | ✅ |
+| | — 更新 INSERT/SELECT 查詢 | | ✅ |
+| | — TypeScript DecisionLog type 新增 `thinking_content` 欄位 | | ✅ |
+| | — Timeline 頁面新增可展開的 "AI Thinking" 面板 | | ✅ |
+| | — Checkpoint AIContextPanel 顯示 thinking 內容 | | ✅ |
 | P6.2 | **📸 Checkpoint Management UI** | [#23](https://github.com/chimerakang/alice/issues/23) | ✅ |
-| | — 以卡片或表格顯示所有 checkpoints | | ☐ |
-| | — 顯示: timestamp, description, trigger type, git branch, commit hash, size | | ☐ |
-| | — 標記 auto vs manual checkpoints | | ☐ |
-| | — 標記「危險操作」觸發的 checkpoints | | ☐ |
-| | — 🔄 Restore — 回滾到該 checkpoint (需確認 dialog) | | ☐ |
-| | — 📝 Create — 手動建立新 checkpoint | | ☐ |
-| | — 🗑️ Delete — 刪除不需要的 checkpoint | | ☐ |
-| | — 📊 Compare — 比較兩個 checkpoint 的差異 | | ☐ |
-| | — 顯示觸發此 checkpoint 的 decision | | ☐ |
-| | — 從 Decision Detail 跳轉到相關 checkpoint | | ☐ |
-| | — 時間軸上標記 checkpoint 位置 | | ☐ |
-| | — 當前 active checkpoint 高亮 | | ☐ |
-| | — Checkpoint 大小 (storage usage) | | ☐ |
-| | — Auto-checkpoint 設定狀態 | | ☐ |
+| | — 以卡片或表格顯示所有 checkpoints | | ✅ |
+| | — 顯示: timestamp, description, trigger type, git branch, commit hash, size | | ✅ |
+| | — 標記 auto vs manual checkpoints | | ✅ |
+| | — 標記「危險操作」觸發的 checkpoints | | ✅ |
+| | — 🔄 Restore — 回滾到該 checkpoint (需確認 dialog) | | ✅ |
+| | — 📝 Create — 手動建立新 checkpoint | | ✅ |
+| | — 🗑️ Delete — 刪除不需要的 checkpoint | | ✅ |
+| | — 📊 Compare — 比較兩個 checkpoint 的差異 | | ✅ |
+| | — 顯示觸發此 checkpoint 的 decision | | ✅ |
+| | — 從 Decision Detail 跳轉到相關 checkpoint | | ✅ |
+| | — 時間軸上標記 checkpoint 位置 | | ✅ |
+| | — 當前 active checkpoint 高亮 | | ✅ |
+| | — Checkpoint 大小 (storage usage) | | ✅ |
+| | — Auto-checkpoint 設定狀態 | | ✅ |
 | P6.3 | **📋 Decision Detail View + Git Diff Viewer** | [#22](https://github.com/chimerakang/alice/issues/22) | ✅ |
-| | — 完整 User Prompt 顯示 | | ☐ |
-| | — AI Response — Markdown 渲染 (支援 code blocks, tables, lists) | | ☐ |
-| | — 執行摘要 (duration, tokens in/out, cost, tool count) | | ☐ |
-| | — 每個 tool call 的時間軸 (Gantt-like bar) | | ☐ |
-| | — 展開每個 tool 查看 input 和 output | | ☐ |
-| | — 顏色標記: ✅ success / ❌ error / ⏳ running | | ☐ |
-| | — Error stack trace 顯示 | | ☐ |
-| | — 該次互動期間變更的檔案列表 | | ☐ |
-| | — Inline diff view (紅/綠色 diff) | | ☐ |
-| | — 檔案新增/刪除/修改 標記 | | ☐ |
-| | — 可折疊每個檔案的 diff | | ☐ |
-| | — Input/Output tokens 分拆 | | ☐ |
-| | — 估算成本顯示 | | ☐ |
-| | — 與歷史平均比較 | | ☐ |
-| | — ← → 上一筆/下一筆 Decision | | ☐ |
-| | — 回到 Timeline | | ☐ |
-| | — 連結到相關 Checkpoint | | ☐ |
+| | — 完整 User Prompt 顯示 | | ✅ |
+| | — AI Response — Markdown 渲染 (支援 code blocks, tables, lists) | | ✅ |
+| | — 執行摘要 (duration, tokens in/out, cost, tool count) | | ✅ |
+| | — 每個 tool call 的時間軸 (Gantt-like bar) | | ✅ |
+| | — 展開每個 tool 查看 input 和 output | | ✅ |
+| | — 顏色標記: ✅ success / ❌ error / ⏳ running | | ✅ |
+| | — Error stack trace 顯示 | | ✅ |
+| | — 該次互動期間變更的檔案列表 | | ✅ |
+| | — Inline diff view (紅/綠色 diff) | | ✅ |
+| | — 檔案新增/刪除/修改 標記 | | ✅ |
+| | — 可折疊每個檔案的 diff | | ✅ |
+| | — Input/Output tokens 分拆 | | ✅ |
+| | — 估算成本顯示 | | ✅ |
+| | — 與歷史平均比較 | | ✅ |
+| | — ← → 上一筆/下一筆 Decision | | ✅ |
+| | — 回到 Timeline | | ✅ |
+| | — 連結到相關 Checkpoint | | ✅ |
 | P6.4 | **🔍 AI Decision Timeline — 核心審計頁面** | [#21](https://github.com/chimerakang/alice/issues/21) | ✅ |
-| | — 日期範圍篩選 | | ☐ |
-| | — 專案目錄篩選 | | ☐ |
-| | — 狀態篩選 (success/error/all) | | ☐ |
-| | — 全文搜尋 (prompt + response) | | ☐ |
-| | — WebSocket 接收新 decision events | | ☐ |
-| | — 新 entry 自動插入頂部 (with animation) | | ☐ |
-| | — "Live" 指示燈 | | ☐ |
+| | — 日期範圍篩選 | | ✅ |
+| | — 專案目錄篩選 | | ✅ |
+| | — 狀態篩選 (success/error/all) | | ✅ |
+| | — 全文搜尋 (prompt + response) | | ✅ |
+| | — WebSocket 接收新 decision events | | ✅ |
+| | — 新 entry 自動插入頂部 (with animation) | | ✅ |
+| | — "Live" 指示燈 | | ✅ |
 
 ## P7 - Dashboard & Analytics (✅ 100%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
 | P7.1 | **Checkpoints 頁面重新定位：AI 決策歷程 + 安全快照** | [#30](https://github.com/chimerakang/alice/issues/30) | ✅ |
-| | — 重構頁面佈局：DecisionLog 為主體，Checkpoint 為附註標記 | | ☐ |
-| | — 加入 DateRangeFilter + server-side 分頁（復用 Timeline 模式） | | ☐ |
-| | — 重新設計卡片：user prompt → tool chain → outcome 為主，git/snapshot 為 collapsible 次要區塊 | | ☐ |
-| | — 加入 slide-over Detail Panel（完整 thinking/response/ToolCallGantt/GitDiff + checkpoint restore） | | ☐ |
-| | — 搜尋與篩選（搜尋 prompts/tools、filter by trigger type/project） | | ☐ |
-| | — 建置驗證 + Docker dashboard 重建 | | ☐ |
+| | — 重構頁面佈局：DecisionLog 為主體，Checkpoint 為附註標記 | | ✅ |
+| | — 加入 DateRangeFilter + server-side 分頁（復用 Timeline 模式） | | ✅ |
+| | — 重新設計卡片：user prompt → tool chain → outcome 為主，git/snapshot 為 collapsible 次要區塊 | | ✅ |
+| | — 加入 slide-over Detail Panel（完整 thinking/response/ToolCallGantt/GitDiff + checkpoint restore） | | ✅ |
+| | — 搜尋與篩選（搜尋 prompts/tools、filter by trigger type/project） | | ✅ |
+| | — 建置驗證 + Docker dashboard 重建 | | ✅ |
 | P7.2 | **Checkpoint ↔ DecisionLog 直接關聯** | [#26](https://github.com/chimerakang/alice/issues/26) | ✅ |
-| | — `Checkpoint` struct 新增 `DecisionLogID` 欄位 | | ☐ |
-| | — SQLite schema 新增 `decision_log_id` 欄位（ALTER TABLE + migration） | | ☐ |
-| | — `CreateCheckpoint()` 接受 `decisionLogID` 參數 | | ☐ |
-| | — `checkAndCreateCheckpoint()` 傳入當前 decision context | | ☐ |
-| | — API response 包含 `decision_log_id` | | ☐ |
-| | — TypeScript `Checkpoint` interface 新增 `decision_log_id` 欄位 | | ☐ |
-| | — `findLinkedDecision()` 優先使用 `decision_log_id` 直接查詢 | | ☐ |
-| | — 移除純時間戳配對的 fallback（或保留為 backward compatibility） | | ☐ |
-| | — AIContextPanel 可直接透過 ID 載入 decision 資料 | | ☐ |
+| | — `Checkpoint` struct 新增 `DecisionLogID` 欄位 | | ✅ |
+| | — SQLite schema 新增 `decision_log_id` 欄位（ALTER TABLE + migration） | | ✅ |
+| | — `CreateCheckpoint()` 接受 `decisionLogID` 參數 | | ✅ |
+| | — `checkAndCreateCheckpoint()` 傳入當前 decision context | | ✅ |
+| | — API response 包含 `decision_log_id` | | ✅ |
+| | — TypeScript `Checkpoint` interface 新增 `decision_log_id` 欄位 | | ✅ |
+| | — `findLinkedDecision()` 優先使用 `decision_log_id` 直接查詢 | | ✅ |
+| | — 移除純時間戳配對的 fallback（或保留為 backward compatibility） | | ✅ |
+| | — AIContextPanel 可直接透過 ID 載入 decision 資料 | | ✅ |
 | P7.3 | **📈 Performance & Security Analysis Pages** | [#25](https://github.com/chimerakang/alice/issues/25) | ✅ |
-| | — API 響應時間趨勢 (line chart) | | ☐ |
-| | — Tool 執行時間分佈 (histogram) | | ☐ |
-| | — Token 使用量 by model (stacked bar) | | ☐ |
-| | — 成本趨勢 (area chart) | | ☐ |
-| | — Memory 使用量 | | ☐ |
-| | — 效能優化建議列表 (`/api/performance/recommendations`) | | ☐ |
-| | — Security events 列表 (sortable table) | | ☐ |
-| | — Severity 分佈 (pie/donut chart) | | ☐ |
-| | — 事件趨勢 (stacked area by severity) | | ☐ |
-| | — Blocked attempts 統計 | | ☐ |
-| | — PII detection 記錄 | | ☐ |
-| | — Audit log export | | ☐ |
+| | — API 響應時間趨勢 (line chart) | | ✅ |
+| | — Tool 執行時間分佈 (histogram) | | ✅ |
+| | — Token 使用量 by model (stacked bar) | | ✅ |
+| | — 成本趨勢 (area chart) | | ✅ |
+| | — Memory 使用量 | | ✅ |
+| | — 效能優化建議列表 (`/api/performance/recommendations`) | | ✅ |
+| | — Security events 列表 (sortable table) | | ✅ |
+| | — Severity 分佈 (pie/donut chart) | | ✅ |
+| | — 事件趨勢 (stacked area by severity) | | ✅ |
+| | — Blocked attempts 統計 | | ✅ |
+| | — PII detection 記錄 | | ✅ |
+| | — Audit log export | | ✅ |
 | P7.4 | **📊 Dashboard Enhancement — AI Activity Overview** | [#24](https://github.com/chimerakang/alice/issues/24) | ✅ |
-| | — 當前 branch + commit hash | | ☐ |
-| | — Dirty/clean 狀態 | | ☐ |
-| | — Modified files 數量 | | ☐ |
-| | — Remote URL | | ☐ |
-| | — 最近 5 筆 decisions 的精簡卡片 (prompt 摘要 + 結果) | | ☐ |
-| | — 點擊可跳轉到 Timeline detail | | ☐ |
-| | — 「查看全部」連結到 Timeline 頁面 | | ☐ |
-| | — Tool execution 成功/失敗率趨勢 (折線圖) | | ☐ |
-| | — Token 使用量趨勢 (柱狀圖) | | ☐ |
-| | — 每日活動量 (area chart) | | ☐ |
-| | — 時間範圍選擇器 (24h / 7d / 30d) | | ☐ |
-| | — WebSocket 連線狀態 | | ☐ |
-| | — Bot 運行時間 (uptime) | | ☐ |
-| | — Storage 使用量 | | ☐ |
-| | — 最近的 error/warning 提醒 | | ☐ |
+| | — 當前 branch + commit hash | | ✅ |
+| | — Dirty/clean 狀態 | | ✅ |
+| | — Modified files 數量 | | ✅ |
+| | — Remote URL | | ✅ |
+| | — 最近 5 筆 decisions 的精簡卡片 (prompt 摘要 + 結果) | | ✅ |
+| | — 點擊可跳轉到 Timeline detail | | ✅ |
+| | — 「查看全部」連結到 Timeline 頁面 | | ✅ |
+| | — Tool execution 成功/失敗率趨勢 (折線圖) | | ✅ |
+| | — Token 使用量趨勢 (柱狀圖) | | ✅ |
+| | — 每日活動量 (area chart) | | ✅ |
+| | — 時間範圍選擇器 (24h / 7d / 30d) | | ✅ |
+| | — WebSocket 連線狀態 | | ✅ |
+| | — Bot 運行時間 (uptime) | | ✅ |
+| | — Storage 使用量 | | ✅ |
+| | — 最近的 error/warning 提醒 | | ✅ |
 
 ## P8 - Control API (✅ 100%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
 | P8.1 | **🎮 Remote Control API (Interrupt & Rollback)** | [#11](https://github.com/chimerakang/alice/issues/11) | ✅ |
-| | — 可從儀表板中斷正在執行的 agent | | ☐ |
-| | — 可從儀表板重置 agent 對話 | | ☐ |
-| | — 控制端點有認證保護 | | ☐ |
-| | — 操作結果透過 WebSocket 即時反饋 | | ☐ |
+| | — 可從儀表板中斷正在執行的 agent | | ✅ |
+| | — 可從儀表板重置 agent 對話 | | ✅ |
+| | — 控制端點有認證保護 | | ✅ |
+| | — 操作結果透過 WebSocket 即時反饋 | | ✅ |
 
 ## P8.5 - TG 指令增強 (✅ 100%)
 
@@ -1186,19 +1186,19 @@
 | # | Task | Issue | Status |
 |---|------|-------|--------|
 | P9.1 | **🎙️ Telegram 語音訊息轉文字 — 語音輸入支援** | [#29](https://github.com/chimerakang/alice/issues/29) | ✅ |
-| | — 可在 TG 傳送語音訊息，Claude 能回覆 | | ☐ |
-| | — 轉錄文字在回覆中顯示（讓用戶確認辨識結果） | | ☐ |
-| | — 支援中文和英文語音 | | ☐ |
-| | — 臨時檔案使用後清理 | | ☐ |
-| | — `enable_voice_support: false` 時回覆提示訊息 | | ☐ |
-| | — 無 OpenAI API Key 時顯示設定提示 | | ☐ |
-| | — 轉錄失敗時回覆錯誤訊息 | | ☐ |
+| | — 可在 TG 傳送語音訊息，Claude 能回覆 | | ✅ |
+| | — 轉錄文字在回覆中顯示（讓用戶確認辨識結果） | | ✅ |
+| | — 支援中文和英文語音 | | ✅ |
+| | — 臨時檔案使用後清理 | | ✅ |
+| | — `enable_voice_support: false` 時回覆提示訊息 | | ✅ |
+| | — 無 OpenAI API Key 時顯示設定提示 | | ✅ |
+| | — 轉錄失敗時回覆錯誤訊息 | | ✅ |
 | P9.2 | **📷 Telegram 圖片訊息支援 — 傳送圖片給 Claude 分析** | [#28](https://github.com/chimerakang/alice/issues/28) | ✅ |
-| | — 可在 TG 傳送圖片，Claude 能描述圖片內容 | | ☐ |
-| | — 圖片 + caption 文字一起傳送給 Claude | | ☐ |
-| | — 臨時檔案使用後清理 | | ☐ |
-| | — `enable_photo_support: false` 時回覆提示訊息 | | ☐ |
-| | — 超過大小限制時回覆錯誤訊息 | | ☐ |
+| | — 可在 TG 傳送圖片，Claude 能描述圖片內容 | | ✅ |
+| | — 圖片 + caption 文字一起傳送給 Claude | | ✅ |
+| | — 臨時檔案使用後清理 | | ✅ |
+| | — `enable_photo_support: false` 時回覆提示訊息 | | ✅ |
+| | — 超過大小限制時回覆錯誤訊息 | | ✅ |
 
 ## P9.5 - Multimedia Enhancement (✅ 100%)
 
