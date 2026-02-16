@@ -79,6 +79,7 @@ type TelegramBot struct {
 	client        *CLIClient
 	allowIDs      map[int64]bool // 白名單
 	config        *Config
+	i18n          *I18nManager   // 多國語系管理器
 
 	// 媒體批次處理
 	mediaBatches  map[string]*MediaBatch // mediaGroupID 或 chatKey 作為 key
@@ -94,6 +95,10 @@ type TelegramBot struct {
 	// Model routing preferences per chat/thread
 	modelPreferences map[chatKey]string // "fast", "deep", or ""
 	prefMu           sync.RWMutex       // Protect model preferences
+
+	// Language preferences per chat
+	langPreferences map[int64]string // chatID -> language code
+	langPrefMu      sync.RWMutex    // Protect language preferences
 }
 
 func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
@@ -121,6 +126,14 @@ func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
 
 	log.Printf("[telegram] bot authorized: @%s", me.Result.Username)
 
+	// Initialize i18n manager
+	i18nManager, err := NewI18nManager("locales", "zh-TW")
+	if err != nil {
+		log.Printf("[telegram] warning: i18n initialization failed: %v", err)
+		// Don't fail - we can still run without i18n
+		i18nManager = nil
+	}
+
 	// Initialize context for message queue
 	queueCtx, queueCancel := context.WithCancel(context.Background())
 
@@ -129,6 +142,7 @@ func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
 		client:       client,
 		allowIDs:     allowIDs,
 		config:       config,
+		i18n:         i18nManager,
 		mediaBatches: make(map[string]*MediaBatch),
 		batchTimeout: 5 * time.Second, // 5秒批次收集窗口
 
@@ -141,6 +155,7 @@ func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
 
 		// Model routing preferences
 		modelPreferences: make(map[chatKey]string),
+		langPreferences:  make(map[int64]string),
 	}
 
 	// Start message queue worker
@@ -148,6 +163,15 @@ func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
 
 	// 註冊 Telegram 指令選單
 	bot.registerCommands()
+
+	// Load persisted chat language preferences from database (background operation)
+	if globalStorage != nil {
+		go func() {
+			// This is a best-effort load - we don't fail the bot if this doesn't work
+			// Language preferences will be loaded on-demand if not cached
+			log.Printf("[telegram] loading persisted chat language preferences...")
+		}()
+	}
 
 	return bot, nil
 }
@@ -168,6 +192,7 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "multiagent", "description": "多代理協調管理"},
 		{"command": "agents", "description": "查看專門化代理清單"},
 		{"command": "tasks", "description": "查看待辦工作清單"},
+		{"command": "lang", "description": "切換 Bot 語言"},
 		{"command": "help", "description": "顯示說明"},
 	}
 
@@ -931,6 +956,9 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 
 	case "/savings":
 		t.handleSavingsCommand(key)
+
+	case "/lang":
+		t.handleLangCommand(key, text)
 
 	default:
 		t.send(key, "未知指令，輸入 /help 查看可用指令")
@@ -2957,6 +2985,100 @@ func (t *TelegramBot) detectProjectType(projectPath string) string {
 		return result[0]
 	}
 	return strings.Join(result[:min(2, len(result))], "/") // 最多顯示兩種類型
+}
+
+// handleLangCommand 處理 /lang 指令 - 切換 Bot 語言
+func (t *TelegramBot) handleLangCommand(key chatKey, text string) {
+	if t.i18n == nil {
+		t.send(key, "❌ i18n 系統未初始化")
+		return
+	}
+
+	// 解析指令參數
+	parts := strings.Fields(text)
+	if len(parts) == 1 {
+		// 沒有參數，顯示當前語言和可用語言
+		currentLang := t.getChatLanguage(key.chatID)
+		langName := t.i18n.GetLanguageName(currentLang)
+
+		msg := fmt.Sprintf("🌐 目前語言：%s (%s)\n\n", langName, currentLang)
+		msg += "支援語言：\n"
+
+		for code, name := range t.i18n.GetAvailableLanguages() {
+			icon := " "
+			if code == currentLang {
+				icon = "✓"
+			}
+			msg += fmt.Sprintf("[%s] %s (%s)\n", icon, name, code)
+		}
+
+		msg += "\n用法：/lang <語言代碼>\n"
+		msg += "例如：/lang en （切換為英文）"
+
+		t.sendMarkdown(key, msg)
+		return
+	}
+
+	// 有參數，嘗試切換語言
+	requestedLang := parts[1]
+
+	if !t.i18n.IsLanguageSupported(requestedLang) {
+		t.send(key, fmt.Sprintf("❌ 不支援的語言: %s\n\n支援的語言：%v",
+			requestedLang, t.i18n.GetAvailableLanguages()))
+		return
+	}
+
+	// 儲存語言偏好
+	t.setChatlanguage(key.chatID, requestedLang)
+
+	langName := t.i18n.GetLanguageName(requestedLang)
+	t.send(key, fmt.Sprintf("✅ 語言已切換為：%s (%s)", langName, requestedLang))
+
+	log.Printf("[telegram] chat %d switched language to %s", key.chatID, requestedLang)
+}
+
+// getChatLanguage 取得指定 chat 的語言偏好
+func (t *TelegramBot) getChatLanguage(chatID int64) string {
+	// First check in-memory cache
+	t.langPrefMu.RLock()
+	if lang, ok := t.langPreferences[chatID]; ok && lang != "" {
+		t.langPrefMu.RUnlock()
+		return lang
+	}
+	t.langPrefMu.RUnlock()
+
+	// If not cached, try loading from database
+	if globalStorage != nil {
+		if lang, err := globalStorage.GetChatLanguage(chatID); err == nil && lang != "" {
+			// Cache it for future use
+			t.langPrefMu.Lock()
+			t.langPreferences[chatID] = lang
+			t.langPrefMu.Unlock()
+			return lang
+		}
+	}
+
+	// Fall back to system default language
+	if t.i18n != nil {
+		return t.i18n.GetDefaultLanguage()
+	}
+
+	return "zh-TW"
+}
+
+// setChatlanguage 設定指定 chat 的語言偏好
+func (t *TelegramBot) setChatlanguage(chatID int64, lang string) {
+	t.langPrefMu.Lock()
+	defer t.langPrefMu.Unlock()
+
+	t.langPreferences[chatID] = lang
+
+	// 持久化到 SQLite
+	if globalStorage != nil {
+		if err := globalStorage.SaveChatLanguage(chatID, lang); err != nil {
+			log.Printf("[telegram] failed to save chat language preference: %v", err)
+		}
+	}
 }
 
 // abs 計算絕對值

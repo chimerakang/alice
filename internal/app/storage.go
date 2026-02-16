@@ -54,6 +54,10 @@ type Storage interface {
 	SaveTopicSetting(chatID int64, threadID int, projectDir string) error
 	GetTopicSetting(chatID int64, threadID int) (string, error)
 
+	// Chat Language Preferences
+	SaveChatLanguage(chatID int64, langCode string) error
+	GetChatLanguage(chatID int64) (string, error)
+
 	// Data Retention
 	CleanupOldData(retentionDays int) error
 
@@ -258,6 +262,16 @@ func (s *SQLiteStorage) initTables() error {
 	);
 	`
 
+	// Chat Language Preferences 表
+	chatLanguageSQL := `
+	CREATE TABLE IF NOT EXISTS chat_language (
+		chat_id INTEGER PRIMARY KEY,
+		lang_code TEXT NOT NULL,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_chat_language_updated_at ON chat_language(updated_at);
+	`
+
 	// 執行所有 SQL 語句
 	tables := []string{
 		toolExecutionsSQL,
@@ -265,6 +279,7 @@ func (s *SQLiteStorage) initTables() error {
 		performanceMetricsSQL,
 		securityEventsSQL,
 		topicSettingsSQL,
+		chatLanguageSQL,
 	}
 
 	for _, tableSQL := range tables {
@@ -1080,6 +1095,35 @@ func (s *SQLiteStorage) GetTopicSetting(chatID int64, threadID int) (string, err
 		return "", nil
 	}
 	return projectDir, err
+}
+
+// ==================== Chat Language Preferences ====================
+
+// SaveChatLanguage 儲存 chat 的語言偏好
+func (s *SQLiteStorage) SaveChatLanguage(chatID int64, langCode string) error {
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(`
+			INSERT INTO chat_language (chat_id, lang_code, updated_at)
+			VALUES (?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(chat_id) DO UPDATE SET
+				lang_code = excluded.lang_code,
+				updated_at = CURRENT_TIMESTAMP`,
+			chatID, langCode)
+		return err
+	})
+}
+
+// GetChatLanguage 讀取 chat 的語言偏好，找不到時回傳空字串
+func (s *SQLiteStorage) GetChatLanguage(chatID int64) (string, error) {
+	var langCode string
+	err := s.db.QueryRow(`
+		SELECT lang_code FROM chat_language
+		WHERE chat_id = ?`,
+		chatID).Scan(&langCode)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return langCode, err
 }
 
 // ==================== Count Queries (for pagination) ====================
