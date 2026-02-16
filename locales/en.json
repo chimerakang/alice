@@ -58,6 +58,16 @@
     "lang_usage": "Usage: /lang [language code]\n\nSupported languages:\n• zh-TW - Traditional Chinese\n• en - English",
     "lang_not_found": "❌ Unsupported language: {lang}",
     "tasks_command_title": "📋 Alice Task List",
-    "tasks_no_issues": "No tasks available"
+    "tasks_no_issues": "No tasks available",
+    "mode_switched_fast": "✅ Switched to fast mode\nModel: `{model}`",
+    "mode_switched_deep": "✅ Switched to deep mode\nModel: `{model}`",
+    "mode_switched_auto": "✅ Switched to auto routing mode",
+    "routing_disabled": "⚠️ Dynamic model routing is not enabled",
+    "task_aborted": "🛑 Task execution stopped",
+    "task_finished": "⚠️ Task has finished, no need to abort",
+    "no_running_task": "ℹ️ No tasks are currently running",
+    "checkpoint_disabled": "❌ Checkpoint system is not enabled",
+    "checkpoint_list_failed": "❌ Failed to get checkpoint list: {error}",
+    "unknown_command": "Unknown command. Type /help for available commands"
   }
 }

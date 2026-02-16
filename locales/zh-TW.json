@@ -58,6 +58,16 @@
     "lang_usage": "用法: /lang [語言代碼]\n\n支援語言：\n• zh-TW - 繁體中文\n• en - English",
     "lang_not_found": "❌ 不支援的語言: {lang}",
     "tasks_command_title": "📋 Alice 待辦工作清單",
-    "tasks_no_issues": "目前沒有待辦工作"
+    "tasks_no_issues": "目前沒有待辦工作",
+    "mode_switched_fast": "✅ 已切換至快速模式\n模型: `{model}`",
+    "mode_switched_deep": "✅ 已切換至深度模式\n模型: `{model}`",
+    "mode_switched_auto": "✅ 已切換至自動路由模式",
+    "routing_disabled": "⚠️ 動態模型路由功能未啟用",
+    "task_aborted": "🛑 已中斷正在執行的任務",
+    "task_finished": "⚠️ 任務已結束，無需中斷",
+    "no_running_task": "ℹ️ 目前沒有正在執行的任務",
+    "checkpoint_disabled": "❌ 檢查點系統未啟用",
+    "checkpoint_list_failed": "❌ 獲取檢查點列表失敗: {error}",
+    "unknown_command": "未知指令，輸入 /help 查看可用指令"
   }
 }

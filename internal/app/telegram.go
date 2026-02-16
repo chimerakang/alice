@@ -282,7 +282,7 @@ func (t *TelegramBot) setUserModelPreference(key chatKey, mode string) {
 // handleSavingsCommand 處理 /savings 指令 - 顯示本週路由統計和節省金額
 func (t *TelegramBot) handleSavingsCommand(key chatKey) {
 	if globalStorage == nil {
-		t.send(key, "❌ 儲存系統不可用")
+		t.send(key, t.getLocalizedMessage(key.chatID, "no_storage", nil))
 		return
 	}
 
@@ -290,12 +290,13 @@ func (t *TelegramBot) handleSavingsCommand(key chatKey) {
 	report, err := globalStorage.GetCostSavings(168)
 	if err != nil {
 		log.Printf("[telegram] failed to get cost savings: %v", err)
-		t.send(key, fmt.Sprintf("❌ 無法取得成本數據: %v", err))
+		msg := t.getLocalizedMessage(key.chatID, "error_get_cost", map[string]string{"error": err.Error()})
+		t.send(key, msg)
 		return
 	}
 
 	if report.TotalRequests == 0 {
-		t.send(key, "📊 本週路由統計\n\n還沒有任何路由數據")
+		t.send(key, t.getLocalizedMessage(key.chatID, "no_routing_data", nil))
 		return
 	}
 
@@ -451,7 +452,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	// 權限檢查
 	if !t.isAllowed(userID) {
 		log.Printf("[telegram] user %d not allowed", userID)
-		t.send(key, "⛔ 你沒有使用權限。")
+		t.send(key, t.getLocalizedMessage(key.chatID, "permission_denied", nil))
 		return
 	}
 
@@ -514,7 +515,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			})
 
 			// 警告用戶並使用過濾後的文字
-			t.send(key, "⚠️ 偵測到敏感資訊已自動過濾，請注意保護隱私資料。")
+			t.send(key, t.getLocalizedMessage(key.chatID, "pii_detected", nil))
 			text = filteredText
 		}
 	}
@@ -719,7 +720,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 
 	case "/project":
 		if len(parts) < 2 {
-			t.send(key, "用法: /project <路徑或專案名稱>")
+			t.send(key, t.getLocalizedMessage(key.chatID, "project_usage", nil))
 			return
 		}
 		dir := parts[1]
@@ -785,7 +786,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			t.send(key, fmt.Sprintf("🔄 對話已清除\n本次用量: %dK in / %dK out (%d 次呼叫)",
 				stats.TotalInputTokens/1000, stats.TotalOutputTokens/1000, stats.APICallCount))
 		} else {
-			t.send(key, "🔄 對話歷史已清除")
+			t.send(key, t.getLocalizedMessage(key.chatID, "conversation_history_cleared", nil))
 		}
 		agent.Reset()
 
@@ -886,7 +887,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			case "stats":
 				t.handleCheckpointsStats(key)
 			default:
-				t.send(key, "用法: /checkpoints [list|stats]")
+				t.send(key, t.getLocalizedMessage(key.chatID, "checkpoints_usage", nil))
 			}
 		}
 
@@ -899,16 +900,16 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			switch action {
 			case "enable":
 				globalAgentCoordinator.SetEnabled(true)
-				t.send(key, "✅ 多代理協調已啟用")
+				t.send(key, t.getLocalizedMessage(key.chatID, "multiagent_enabled", nil))
 			case "disable":
 				globalAgentCoordinator.SetEnabled(false)
-				t.send(key, "❌ 多代理協調已停用")
+				t.send(key, t.getLocalizedMessage(key.chatID, "multiagent_disabled", nil))
 			case "status":
 				t.handleMultiAgentStatus(key)
 			case "stats":
 				t.handleMultiAgentStats(key)
 			default:
-				t.send(key, "用法: /multiagent [enable|disable|status|stats]")
+				t.send(key, t.getLocalizedMessage(key.chatID, "multiagent_usage", nil))
 			}
 		}
 
@@ -916,12 +917,12 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		agent := t.getAgent(key)
 		if agent.IsProcessing() {
 			if agent.Abort() {
-				t.send(key, "🛑 已中斷正在執行的任務")
+				t.send(key, t.getLocalizedMessage(key.chatID, "task_aborted", nil))
 			} else {
-				t.send(key, "⚠️ 任務已結束，無需中斷")
+				t.send(key, t.getLocalizedMessage(key.chatID, "task_finished", nil))
 			}
 		} else {
-			t.send(key, "ℹ️ 目前沒有正在執行的任務")
+			t.send(key, t.getLocalizedMessage(key.chatID, "no_running_task", nil))
 		}
 
 	case "/agents":
@@ -932,27 +933,29 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 
 	case "/fast":
 		if !t.config.ModelRouting.EnableDynamicRouting {
-			t.send(key, "⚠️ 動態模型路由功能未啟用")
+			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
 		}
 		t.setUserModelPreference(key, "fast")
-		t.send(key, fmt.Sprintf("✅ 已切換至快速模式\n模型: `%s`", t.config.ModelRouting.FastModel))
+		msg := t.getLocalizedMessage(key.chatID, "mode_switched_fast", map[string]string{"model": t.config.ModelRouting.FastModel})
+		t.send(key, msg)
 
 	case "/deep":
 		if !t.config.ModelRouting.EnableDynamicRouting {
-			t.send(key, "⚠️ 動態模型路由功能未啟用")
+			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
 		}
 		t.setUserModelPreference(key, "deep")
-		t.send(key, fmt.Sprintf("✅ 已切換至深度模式\n模型: `%s`", t.config.ModelRouting.DeepModel))
+		msg := t.getLocalizedMessage(key.chatID, "mode_switched_deep", map[string]string{"model": t.config.ModelRouting.DeepModel})
+		t.send(key, msg)
 
 	case "/auto":
 		if !t.config.ModelRouting.EnableDynamicRouting {
-			t.send(key, "⚠️ 動態模型路由功能未啟用")
+			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
 		}
 		t.setUserModelPreference(key, "")
-		t.send(key, "✅ 已切換至自動路由模式")
+		t.send(key, t.getLocalizedMessage(key.chatID, "mode_switched_auto", nil))
 
 	case "/savings":
 		t.handleSavingsCommand(key)
@@ -961,7 +964,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		t.handleLangCommand(key, text)
 
 	default:
-		t.send(key, "未知指令，輸入 /help 查看可用指令")
+		t.send(key, t.getLocalizedMessage(key.chatID, "unknown_command", nil))
 	}
 }
 
@@ -1412,7 +1415,7 @@ func (t *TelegramBot) handleDashboard(key chatKey) {
 // handleCheckpointsList shows checkpoint information
 func (t *TelegramBot) handleCheckpointsList(key chatKey) {
 	if globalCheckpointManager == nil {
-		t.send(key, "❌ 檢查點系統未啟用")
+		t.send(key, t.getLocalizedMessage(key.chatID, "checkpoint_disabled", nil))
 		return
 	}
 
@@ -1421,7 +1424,8 @@ func (t *TelegramBot) handleCheckpointsList(key chatKey) {
 
 	checkpoints, err := globalCheckpointManager.ListCheckpoints(projectDir, 10)
 	if err != nil {
-		t.send(key, fmt.Sprintf("❌ 獲取檢查點列表失敗: %v", err))
+		msg := t.getLocalizedMessage(key.chatID, "checkpoint_list_failed", map[string]string{"error": err.Error()})
+		t.send(key, msg)
 		return
 	}
 
@@ -1451,7 +1455,7 @@ func (t *TelegramBot) handleCheckpointsList(key chatKey) {
 // handleCheckpointsStats shows checkpoint statistics
 func (t *TelegramBot) handleCheckpointsStats(key chatKey) {
 	if globalCheckpointManager == nil {
-		t.send(key, "❌ 檢查點系統未啟用")
+		t.send(key, t.getLocalizedMessage(key.chatID, "checkpoint_disabled", nil))
 		return
 	}
 
@@ -3035,6 +3039,15 @@ func (t *TelegramBot) handleLangCommand(key chatKey, text string) {
 	t.send(key, fmt.Sprintf("✅ 語言已切換為：%s (%s)", langName, requestedLang))
 
 	log.Printf("[telegram] chat %d switched language to %s", key.chatID, requestedLang)
+}
+
+// getLocalizedMessage 根據 chat 的語言偏好取得本地化消息
+func (t *TelegramBot) getLocalizedMessage(chatID int64, messageKey string, vars map[string]string) string {
+	if t.i18n == nil {
+		return messageKey // Fallback to key if i18n not initialized
+	}
+	lang := t.getChatLanguage(chatID)
+	return t.i18n.GetMessage(lang, messageKey, vars)
 }
 
 // getChatLanguage 取得指定 chat 的語言偏好
