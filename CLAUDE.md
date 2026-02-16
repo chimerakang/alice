@@ -244,6 +244,47 @@ Sets the model routing preference for a specific chat.
 - Simple tasks routed to Haiku (7-10x cheaper than Opus)
 - Complex tasks routed to Opus for quality
 
+## Task & Issue Management
+
+### MASTER_TASKS.md Generation (`/task-sync`)
+
+The `/task-sync` skill regenerates `docs/MASTER_TASKS.md` from GitHub Issues and Milestones automatically.
+
+**Usage:**
+```bash
+/task-sync              # Regenerate and write to file
+/task-sync --dry-run    # Preview without writing
+```
+
+**Mechanics:**
+- Milestones represent Phases (P1, P2, ..., P14)
+- Each milestone can have multiple issues
+- Issues are organized by phase with completion status
+- Supports sub-tasks parsed from issue body (`- [x]` / `- [ ]`)
+
+### Issue Checklist Rules
+
+**Principle: Sub-tasks are tracked independently**
+
+- **Issue Status**: Determined by GitHub issue state (open/closed)
+- **Sub-task Status**: Determined by checklist in issue body (`- [x]` / `- [ ]`)
+- **Independence**: A closed issue can have incomplete sub-tasks, and vice versa
+  - Example: `Issue #1` is ✅ closed, but body has `☐ documentation pending`
+  - This means the core work is done, but cleanup tasks remain
+- **Responsibility**: When closing an issue, update its body checklist if needed
+  - But it's optional — unfinished sub-tasks are acceptable if issue is complete
+
+**Checklist Format in Issue Body:**
+```markdown
+- [x] Completed task
+- [ ] Pending task
+- [x] Another done task
+```
+
+### Applicable to All Projects
+
+These rules apply universally to any GitHub repository with milestones, enabling consistent task tracking across projects.
+
 ## Adding New Tools
 
 1. Add a `ToolDef` entry in `BuildTools()` in `internal/app/tools.go`
