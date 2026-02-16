@@ -604,7 +604,9 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		agentType := globalAgentCoordinator.RouteTask(text)
 		if agentType != GeneralAgent {
 			specializedAgent := globalAgentCoordinator.GetOrCreateAgent(agentType, agent)
-			t.send(key, fmt.Sprintf("🤖 使用 %s 代理處理此任務", agentType.String()))
+			msg := t.getLocalizedMessage(key.chatID, "using_agent", nil)
+			msg = strings.ReplaceAll(msg, "{agent}", agentType.String())
+			t.send(key, msg)
 
 			response, err = specializedAgent.ExecuteSubTask(SubTask{
 				ID:          fmt.Sprintf("single_%d", time.Now().Unix()),
@@ -1681,7 +1683,7 @@ func (t *TelegramBot) handleTasks(key chatKey) {
 func (t *TelegramBot) handlePhotoMessageBatch(key chatKey, userID int64, photo []PhotoSize, caption string, mediaGroupID string) {
 	// 檢查多媒體支援是否開啟
 	if !t.config.Multimedia.EnablePhotoSupport {
-		t.send(key, "📷 圖片分析功能目前未啟用。請聯繫管理員開啟 `enable_photo_support` 設定。")
+		t.send(key, t.getLocalizedMessage(key.chatID, "photo_disabled", nil))
 		return
 	}
 
@@ -2052,7 +2054,7 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []PhotoSize, caption string) {
 	// 檢查多媒體支援是否開啟
 	if !t.config.Multimedia.EnablePhotoSupport {
-		t.send(key, "📷 圖片分析功能目前未啟用。請聯繫管理員開啟 `enable_photo_support` 設定。")
+		t.send(key, t.getLocalizedMessage(key.chatID, "photo_disabled", nil))
 		return
 	}
 
