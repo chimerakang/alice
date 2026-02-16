@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -329,6 +330,35 @@ func (a *Agent) SetModelOverride(model string) {
 	a.currentModelOverride = model
 }
 
+// selectModel 根據使用者訊息和靜態規則選擇最合適的模型
+// 返回選擇的模型名稱和路由原因
+func (a *Agent) selectModel(userMessage string) (model string, routingReason string) {
+	routes := GetDefaultModelRoutes()
+	var bestMatch *ModelRoute
+
+	// 遍歷所有規則，找到最優先（最低優先級數字）的匹配
+	for i := range routes {
+		route := &routes[i]
+		// 嘗試編譯和匹配正則表達式
+		if re, err := regexp.Compile(route.Pattern); err == nil {
+			if re.MatchString(userMessage) {
+				// 如果尚未有匹配或此規則優先級更高
+				if bestMatch == nil || route.Priority < bestMatch.Priority {
+					bestMatch = route
+				}
+			}
+		}
+	}
+
+	// 如果找到匹配規則，使用該規則
+	if bestMatch != nil {
+		return bestMatch.Model, "static_rule"
+	}
+
+	// 預設為 sonnet
+	return "sonnet", "default"
+}
+
 // current 取得目前專案的狀態，不存在則建立
 func (a *Agent) current() *projectState {
 	if ps, ok := a.projects[a.projectDir]; ok {
@@ -368,17 +398,39 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 
 	ps := a.current()
 
-	// Handle model override for dynamic routing
-	// If model changed, clear session to start fresh
-	if a.currentModelOverride != "" && a.currentModelOverride != a.lastUsedModel {
-		ps.sessionID = ""  // Force new session when model changes
-	}
-	a.lastUsedModel = a.currentModelOverride
-	if a.lastUsedModel == "" {
-		a.lastUsedModel = a.client.Model  // Use default if no override
+	// Handle model selection with three-tier routing priority
+	var routingReason string
+	var routingLatency int
+	selectedModel := ""
+
+	// Priority 1: User command override
+	if a.currentModelOverride != "" {
+		selectedModel = a.currentModelOverride
+		routingReason = "user_command"
+		routingLatency = 0
+	} else {
+		// Priority 2: Static rules-based routing
+		startRouting := time.Now()
+		selectedModel, routingReason = a.selectModel(userMessage)
+		routingLatency = int(time.Since(startRouting).Milliseconds())
+		msgPreview := userMessage
+		if len(msgPreview) > 50 {
+			msgPreview = msgPreview[:50]
+		}
+		log.Printf("[telegram] model routing: message=%q selected=%s reason=%s latency=%dms", msgPreview, selectedModel, routingReason, routingLatency)
 	}
 
-	log.Printf("[agent] calling CLI (stream), session=%s, project=%s, model=%s", ps.sessionID, a.projectDir, a.lastUsedModel)
+	// If model changed, clear session to start fresh
+	if selectedModel != "" && selectedModel != a.lastUsedModel {
+		ps.sessionID = ""  // Force new session when model changes
+	}
+	a.lastUsedModel = selectedModel
+	if a.lastUsedModel == "" {
+		a.lastUsedModel = a.client.Model  // Use default if no model selected
+		routingReason = "default"
+	}
+
+	log.Printf("[agent] calling CLI (stream), session=%s, project=%s, model=%s routing_reason=%s", ps.sessionID, a.projectDir, a.lastUsedModel, routingReason)
 
 	// Pre-generate decision ID so checkpoints created during streaming
 	// can reference the decision that will be created after streaming completes.
@@ -447,7 +499,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 			ps.stats.TotalCostUSD += resp.TotalCostUSD
 			ps.lastActivity = time.Now()
 		}
-		a.logDecision(userMessage, partialText, toolCallsForDecision, startTime, resp, err)
+		a.logDecision(userMessage, partialText, toolCallsForDecision, startTime, resp, err, routingReason, routingLatency)
 		return partialText, fmt.Errorf("CLI call failed: %w", err)
 	}
 
@@ -466,7 +518,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		resp.TotalCostUSD, resp.SessionID)
 
 	// Log decision for transparency (success case)
-	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil)
+	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil, routingReason, routingLatency)
 
 	return resp.Result, nil
 }
@@ -557,7 +609,7 @@ func (a *Agent) ProjectCount() int {
 }
 
 // logDecision records a complete AI decision with full context
-func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolExecution, startTime time.Time, resp *CLIResponse, err error) {
+func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolExecution, startTime time.Time, resp *CLIResponse, err error, routingReason string, routingLatency int) {
 	if !globalDecisionLogger.IsEnabled() {
 		return
 	}
@@ -634,9 +686,9 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 		DurationMs:      int(duration.Milliseconds()),
 		TokensUsed:      tokenStats,
 		Source:          "telegram",
-		Model:           ExtractModelShortName(a.client.Model), // NEW: 使用的模型
-		RoutingReason:   "static_rule",                         // NEW: 路由原因（預設為靜態規則）
-		RoutingLatency:  0,                                     // NEW: 路由延遲（未實現路由時設為 0）
+		Model:           ExtractModelShortName(a.client.Model), // 使用的模型
+		RoutingReason:   routingReason,                         // 路由原因
+		RoutingLatency:  routingLatency,                         // 路由延遲 (ms)
 	}
 
 	// Log the decision

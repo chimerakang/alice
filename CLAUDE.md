@@ -183,6 +183,61 @@ Alice supports dynamic model routing to optimize token costs by intelligently ro
 - **Last Used Model Tracking**: Agent remembers which model was last used to detect changes
 - **Logging**: Model selection decisions are logged with tag `[telegram] model routing:`
 
+### Web API Endpoints
+
+#### GET `/api/model-routing/status`
+Returns current model routing configuration and preferences for all active chats.
+
+**Response**:
+```json
+{
+  "enabled": true,
+  "fast_model": "claude-haiku-4-5-20251001",
+  "deep_model": "claude-opus-4-6",
+  "default_model": "claude-sonnet-4-5-20250929",
+  "use_gpt4o_mini_for_triage": true,
+  "total_chats": 3,
+  "preferences": {
+    "chat_123456789_thread_1": {
+      "mode": "fast",
+      "model": "claude-haiku-4-5-20251001"
+    },
+    "chat_987654321_thread_0": {
+      "mode": "auto",
+      "model": "claude-sonnet-4-5-20250929"
+    }
+  },
+  "timestamp": "2026-02-16T12:34:56Z"
+}
+```
+
+#### POST `/api/model-routing/set`
+Sets the model routing preference for a specific chat.
+
+**Request**:
+```json
+{
+  "chat_id": 123456789,
+  "thread_id": 1,
+  "mode": "fast"  // or "deep" or "auto"
+}
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "chat_id": 123456789,
+  "thread_id": 1,
+  "mode": "fast",
+  "model": "claude-haiku-4-5-20251001",
+  "message": "Model routing mode set to fast (claude-haiku-4-5-20251001)",
+  "timestamp": "2026-02-16T12:34:56Z"
+}
+```
+
+**Authentication**: If `web_api_token` is configured, requires `Authorization: Bearer <token>` header.
+
 ### Expected Cost Savings
 
 - ~40-50% reduction in token costs

@@ -112,6 +112,10 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/performance/tool-distribution", wi.handleToolDistributionProto)
 	mux.HandleFunc("/api/performance/export", wi.handlePerformanceExportProto)
 
+	// Model Routing APIs (Issue #72)
+	mux.HandleFunc("/api/model-routing/status", wi.handleModelRoutingStatus)
+	mux.HandleFunc("/api/model-routing/set", wi.handleModelRoutingSet)
+
 	// Cost Tracking APIs (Issue #73)
 	mux.HandleFunc("/api/costs/by-model", wi.handleCostsByModel)
 	mux.HandleFunc("/api/costs/summary", wi.handleCostsSummary)
@@ -1841,6 +1845,127 @@ func (wi *WebInterface) handleAgentSetProject(w http.ResponseWriter, r *http.Req
 			"new_project_dir":      req.ProjectDir,
 			"message":              fmt.Sprintf("Agent project directory changed from %s to %s", previousProjectDir, req.ProjectDir),
 			"timestamp":            time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// handleModelRoutingStatus returns the current model routing configuration and preferences
+func (wi *WebInterface) handleModelRoutingStatus(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Get all agents and their model preferences
+		agents := wi.bot.GetAgentsSafely()
+		preferences := make(map[string]interface{})
+
+		for key := range agents {
+			chatKey := fmt.Sprintf("chat_%d_thread_%d", key.chatID, key.threadID)
+			pref := wi.bot.getUserModelPreference(key)
+
+			// Determine display mode
+			var mode string
+			var modelName string
+			switch pref {
+			case "fast":
+				mode = "fast"
+				modelName = wi.bot.config.ModelRouting.FastModel
+			case "deep":
+				mode = "deep"
+				modelName = wi.bot.config.ModelRouting.DeepModel
+			default:
+				mode = "auto"
+				modelName = wi.bot.config.Model // Default model
+			}
+
+			preferences[chatKey] = map[string]interface{}{
+				"mode":  mode,
+				"model": modelName,
+			}
+		}
+
+		status := map[string]interface{}{
+			"enabled":                   wi.bot.config.ModelRouting.EnableDynamicRouting,
+			"fast_model":                wi.bot.config.ModelRouting.FastModel,
+			"deep_model":                wi.bot.config.ModelRouting.DeepModel,
+			"default_model":             wi.bot.config.Model,
+			"use_gpt4o_mini_for_triage": wi.bot.config.ModelRouting.UseGPT4oMini,
+			"total_chats":               len(agents),
+			"preferences":               preferences,
+			"timestamp":                 time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(status)
+	})(w, r)
+}
+
+// handleModelRoutingSet sets the model routing preference for a specific chat
+func (wi *WebInterface) handleModelRoutingSet(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		// Check authentication token if configured
+		if wi.apiToken != "" && r.Header.Get("Authorization") != "Bearer "+wi.apiToken {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		var req struct {
+			ChatID   int64  `json:"chat_id"`
+			ThreadID int    `json:"thread_id"`
+			Mode     string `json:"mode"` // "fast", "deep", or "auto"
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		// Validate mode
+		if req.Mode != "fast" && req.Mode != "deep" && req.Mode != "auto" {
+			http.Error(w, "Invalid mode. Must be 'fast', 'deep', or 'auto'", http.StatusBadRequest)
+			return
+		}
+
+		// Check if dynamic routing is enabled
+		if !wi.bot.config.ModelRouting.EnableDynamicRouting {
+			http.Error(w, "Dynamic model routing is not enabled", http.StatusBadRequest)
+			return
+		}
+
+		key := chatKey{chatID: req.ChatID, threadID: req.ThreadID}
+
+		// Determine what to set
+		var modeValue string
+		var modelName string
+		switch req.Mode {
+		case "fast":
+			modeValue = "fast"
+			modelName = wi.bot.config.ModelRouting.FastModel
+		case "deep":
+			modeValue = "deep"
+			modelName = wi.bot.config.ModelRouting.DeepModel
+		case "auto":
+			modeValue = "" // Empty string means auto mode
+			modelName = wi.bot.config.Model
+		}
+
+		wi.bot.setUserModelPreference(key, modeValue)
+
+		response := map[string]interface{}{
+			"success":   true,
+			"chat_id":   req.ChatID,
+			"thread_id": req.ThreadID,
+			"mode":      req.Mode,
+			"model":     modelName,
+			"message":   fmt.Sprintf("Model routing mode set to %s (%s)", req.Mode, modelName),
+			"timestamp": time.Now(),
 		}
 
 		json.NewEncoder(w).Encode(response)

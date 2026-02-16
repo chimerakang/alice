@@ -52,6 +52,35 @@ type ModelRoutingConfig struct {
 	UseGPT4oMini         bool   `json:"use_gpt4o_mini_for_triage"`
 }
 
+// ModelRoute 單一路由規則
+type ModelRoute struct {
+	Pattern  string // 關鍵字或正則表達式
+	Model    string // 目標模型: "haiku", "sonnet", "opus"
+	Priority int    // 優先順序（越低越優先）
+}
+
+// GetDefaultModelRoutes 返回預設的模型路由規則
+func GetDefaultModelRoutes() []ModelRoute {
+	return []ModelRoute{
+		// Haiku - 簡單任務（優先級 1-10）
+		{Pattern: `(?i)(翻譯|translat)`, Model: "haiku", Priority: 1},
+		{Pattern: `(?i)(總結|summariz|摘要)`, Model: "haiku", Priority: 1},
+		{Pattern: `(?i)(解釋|explain)`, Model: "haiku", Priority: 1},
+		{Pattern: `(?i)(轉換格式|format|json|csv|xml)`, Model: "haiku", Priority: 2},
+		{Pattern: `(?i)(讀取|查看|view|show|read|list|ls)`, Model: "haiku", Priority: 2},
+		{Pattern: `(?i)(狀態|status)`, Model: "haiku", Priority: 2},
+		{Pattern: `(?i)(改寫|改進|polish)`, Model: "haiku", Priority: 3},
+
+		// Opus - 複雜任務（優先級 20-30）
+		{Pattern: `(?i)(重構|refactor|架構|architecture)`, Model: "opus", Priority: 20},
+		{Pattern: `(?i)(系統設計|design system)`, Model: "opus", Priority: 20},
+		{Pattern: `(?i)(跨檔案|multiple files)`, Model: "opus", Priority: 21},
+		{Pattern: `(?i)(bug修復|debug|診斷|troubleshoot)`, Model: "opus", Priority: 22},
+		{Pattern: `(?i)(演算法|algorithm|邏輯設計)`, Model: "opus", Priority: 23},
+		{Pattern: `(?i)(性能最佳化|optimiz|performance)`, Model: "opus", Priority: 24},
+	}
+}
+
 // SecurityEvent 安全事件記錄
 type SecurityEvent struct {
 	ID          string                 `json:"id"`
