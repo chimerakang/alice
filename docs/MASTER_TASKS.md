@@ -2,7 +2,7 @@
 
 > Alice 是一個 Go-based Telegram bot，通過 Claude Code CLI 進行代碼輔助，搭配 React 儀表板監控 AI 決策、工具執行和專案活動。
 >
-> **Last updated:** 2026-02-16
+> **Last updated:** 2026-02-17
 >
 > **Auto-generated from GitHub Issues** — Run `/task-sync` to regenerate.
 
@@ -24,6 +24,11 @@
 | Phase | Description | Progress | Status |
 |-------|-------------|----------|--------|
 | P1 - Core Backend | Telegram Bot + Claude CLI 整合 | 0% (0/0) | 📋 |
+| P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 100% (1/1) | ✅ |
+| P11 - User Experience | 指令健全性和用戶體驗改善 | 100% (1/1) | ✅ |
+| P12 - Dashboard Analytics | Claude Code Hooks UI 增強：統計圖表 + 用戶指南 | 100% (1/1) | ✅ |
+| P13 - Future Enhancements | 未來功能增強與優化 | 38% (8/21) | 🔄 |
+| P14 - Commercialization Strategy | Alice AI Agent 商業化發展策略與產品定位 | 0% (0/6) | 🔄 |
 | P2 - Monitoring | Web Dashboard + API + 監控系統 | 100% (7/7) | ✅ |
 | P3 - Data Layer | 持久化 + Git 整合 + Checkpoint | 100% (5/5) | ✅ |
 | P4 - Proto-First | Protocol Buffers 架構遷移 | 100% (1/1) | ✅ |
@@ -34,11 +39,6 @@
 | P8.5 - TG 指令增強 | /tasks 待辦清單 + Topic 設定持久化 | 100% (2/2) | ✅ |
 | P9 - Multimedia Input | 圖片分析 + 語音轉文字 | 100% (2/2) | ✅ |
 | P9.5 - Multimedia Enhancement | 多張圖片批次處理 + 媒體群組支援 | 100% (2/2) | ✅ |
-| P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 100% (1/1) | ✅ |
-| P11 - User Experience | 指令健全性和用戶體驗改善 | 100% (1/1) | ✅ |
-| P12 - Dashboard Analytics | Claude Code Hooks UI 增強：統計圖表 + 用戶指南 | 100% (1/1) | ✅ |
-| P13 - Future Enhancements | 未來功能增強與優化 | 38% (8/21) | 🔄 |
-| P14 - Commercialization Strategy | Alice AI Agent 商業化發展策略與產品定位 | 0% (0/6) | 🔄 |
 
 ---
 
@@ -47,1182 +47,3925 @@
 | # | Task | Issue | Status |
 |---|------|-------|--------|
 
-## P2 - Monitoring (✅ 100%)
-
-| # | Task | Issue | Status |
-|---|------|-------|--------|
-| P2.1 | **🎛️ Web Dashboard Integration** | [#1](https://github.com/chimerakang/alice/issues/1) | ✅ |
-| | — HTTP server for serving dashboard at `/dashboard` | | ☐ |
-| | — WebSocket support for real-time tool execution updates | | ☐ |
-| | — REST API endpoints for statistics and monitoring data | | ☐ |
-| | — Tool execution logging system with structured data | | ☐ |
-| | — Agent status tracking across multiple projects | | ☐ |
-| | — Tool execution metrics collection (name, duration, success/failure) | | ☐ |
-| | — Conversation history persistence (local JSON storage) | | ☐ |
-| | — Project insights generation (most used tools, performance stats) | | ☐ |
-| | — Real-time performance monitoring | | ☐ |
-| | — \`GET /api/stats\` - Current statistics (active sessions, tools executed, success rate) | | ☐ |
-| | — \`GET /api/agents\` - Active agent list with project information | | ☐ |
-| | — \`GET /api/tools/recent\` - Recent tool executions with status | | ☐ |
-| | — \`GET /api/conversations\` - Conversation history by project | | ☐ |
-| | — \`WebSocket /ws\` - Real-time tool execution and status updates | | ☐ |
-| | — Add \`--dashboard-port\` CLI flag (default: 8080) | | ☐ |
-| | — Optional dashboard enable/disable setting | | ☐ |
-| | — Dashboard access control (optional authentication) | | ☐ |
-| P2.2 | **🔍 AI Agent Transparency & Decision Logging** | [#2](https://github.com/chimerakang/alice/issues/2) | ✅ |
-| | — Record AI reasoning process for each tool execution | | ☐ |
-| | — Capture user prompts and agent responses with full context | | ☐ |
-| | — Log tool selection rationale and decision-making process | | ☐ |
-| | — Store conversation flow and agent state transitions | | ☐ |
-| | — Complete tool execution history with inputs/outputs | | ☐ |
-| | — Error tracking and debugging information | | ☐ |
-| | — Performance metrics (execution time, token usage) | | ☐ |
-| | — Project-specific decision patterns and learning | | ☐ |
-| | — Export decision logs to JSON/CSV for analysis | | ☐ |
-| | — Integration with external analysis tools | | ☐ |
-| | — Pattern recognition in agent behavior | | ☐ |
-| | — Performance trend analysis | | ☐ |
-| | — Configurable logging levels (off/basic/detailed) | | ☐ |
-| | — Sensitive data filtering (passwords, API keys) | | ☐ |
-| | — Local-only storage with optional cloud sync | | ☐ |
-| | — Data retention policies | | ☐ |
-| | — Add logging hooks to \`Agent.Run()\` method | | ☐ |
-| | — Capture tool execution context in \`ToolExecutor\` | | ☐ |
-| | — Enhance conversation history with decision context | | ☐ |
-| | — Add reasoning extraction from API responses | | ☐ |
-| | — JSON file-based persistence for decision logs | | ☐ |
-| | — Efficient indexing for large log volumes | | ☐ |
-| | — Compressed storage for long-term retention | | ☐ |
-| | — Backup and restore capabilities | | ☐ |
-| | — Dashboard endpoints for decision log visualization | | ☐ |
-| | — Real-time decision streaming via WebSocket | | ☐ |
-| | — Search and filter capabilities | | ☐ |
-| | — Export functionality | | ☐ |
-| | — \`ALICE_LOG_LEVEL\` environment variable | | ☐ |
-| | — \`--enable-transparency\` CLI flag | | ☐ |
-| | — \`transparency_config.json\` for detailed settings | | ☐ |
-| | — Dashboard toggle for real-time decision viewing | | ☐ |
-| P2.3 | **🤖 Multi-Agent Coordination System** | [#3](https://github.com/chimerakang/alice/issues/3) | ✅ |
-| | — **CodeReview Agent**: Focuses on code quality, security, best practices | | ☐ |
-| | — **Testing Agent**: Specializes in writing and running tests | | ☐ |
-| | — **Documentation Agent**: Creates and maintains project documentation | | ☐ |
-| | — **Deployment Agent**: Handles CI/CD, Docker, deployment tasks | | ☐ |
-| | — **Debug Agent**: Specialized in troubleshooting and error resolution | | ☐ |
-| | — Intelligent task analysis and routing | | ☐ |
-| | — Agent capability matching | | ☐ |
-| | — Workload balancing across agents | | ☐ |
-| | — Inter-agent communication protocols | | ☐ |
-| | — Shared context and knowledge base | | ☐ |
-| | — Dynamic agent instantiation based on task requirements | | ☐ |
-| | — Agent lifecycle management (create, pause, terminate) | | ☐ |
-| | — Resource allocation and limits per agent | | ☐ |
-| | — Agent performance monitoring and optimization | | ☐ |
-| | — Shared memory/context between agents | | ☐ |
-| | — Message passing for agent coordination | | ☐ |
-| | — Event-driven agent notifications | | ☐ |
-| | — Conflict resolution for concurrent operations | | ☐ |
-| | — Automatic task breakdown and assignment | | ☐ |
-| | — Priority-based task scheduling | | ☐ |
-| | — Dependency management between sub-tasks | | ☐ |
-| | — Progress aggregation and reporting | | ☐ |
-| | — Multi-agent status in chat interface | | ☐ |
-| | — Agent-specific command routing | | ☐ |
-| | — Group chat collaboration with multiple agents | | ☐ |
-| | — Agent handoff notifications | | ☐ |
-| | — Agent enable/disable toggles per project | | ☐ |
-| | — Resource limits (memory, API calls, execution time) | | ☐ |
-| | — Specialization level settings (basic/advanced) | | ☐ |
-| | — Coordination strategy selection (parallel/sequential/hybrid) | | ☐ |
-| | — Extend existing \`Agent\` struct for specialization | | ☐ |
-| | — Add coordinator logic to \`agent.go\` | | ☐ |
-| | — Implement agent registry and discovery | | ☐ |
-| | — Create specialized prompting for each agent type | | ☐ |
-| | — Add multi-agent dashboard views | | ☐ |
-| P2.4 | **📊 Performance Monitoring & Analytics** | [#4](https://github.com/chimerakang/alice/issues/4) | ✅ |
-| | — API call latency and success rates | | ☐ |
-| | — Tool execution performance | | ☐ |
-| | — Memory and CPU usage | | ☐ |
-| | — Token consumption and cost tracking | | ☐ |
-| | — Error rates and failure patterns | | ☐ |
-| | — Usage pattern analysis | | ☐ |
-| | — Performance trend visualization | | ☐ |
-| | — Cost optimization recommendations | | ☐ |
-| | — Bottleneck identification | | ☐ |
-| | — Success/failure correlation analysis | | ☐ |
-| | — Metrics collection in core components | | ☐ |
-| | — Time-series data storage | | ☐ |
-| | — Dashboard integration for visualization | | ☐ |
-| | — Alert system for performance issues | | ☐ |
-| | — Export capabilities for external analysis | | ☐ |
-| P2.5 | **🔐 Security & Privacy Enhancements** | [#5](https://github.com/chimerakang/alice/issues/5) | ✅ |
-| | — API key rotation and management | | ☐ |
-| | — Secure storage of sensitive configuration | | ☐ |
-| | — Rate limiting and abuse prevention | | ☐ |
-| | — Input validation and sanitization | | ☐ |
-| | — Audit logging for security events | | ☐ |
-| | — Data retention policies | | ☐ |
-| | — PII detection and filtering | | ☐ |
-| | — Conversation history encryption | | ☐ |
-| | — Configurable data sharing settings | | ☐ |
-| | — GDPR compliance features | | ☐ |
-| | — Security middleware for HTTP endpoints | | ☐ |
-| | — Encryption for sensitive data storage | | ☐ |
-| | — Access control for dashboard | | ☐ |
-| | — Security scanning integration | | ☐ |
-| | — Privacy policy and consent management | | ☐ |
-| P2.6 | **🖥️ Dashboard Enhancement: Timeline & Terminal** | [#12](https://github.com/chimerakang/alice/issues/12) | ✅ |
-| | — 時間軸正確顯示所有 AI 操作步驟 | | ☐ |
-| | — 可展開查看每步的詳細 Input/Output | | ☐ |
-| | — 終端機顯示 CLI 即時輸出 | | ☐ |
-| | — 支援多 agent 輸出切換 | | ☐ |
-| | — 保持 OLED 黑化風格一致性 | | ☐ |
-| P2.7 | **🚀 Feature: Complete Dashboard, Monitoring & Checkpoint System** | [#14](https://github.com/chimerakang/alice/pull/14) | ✅ |
-
-## P3 - Data Layer (✅ 100%)
-
-| # | Task | Issue | Status |
-|---|------|-------|--------|
-| P3.1 | **🚀 Deployment & DevOps Improvements** | [#6](https://github.com/chimerakang/alice/issues/6) | ✅ |
-| | — Multi-stage Docker builds for smaller images | | ☐ |
-| | — Docker Compose templates for common setups | | ☐ |
-| | — Health checks and graceful shutdowns | | ☐ |
-| | — Volume management for persistent data | | ☐ |
-| | — Environment-specific configurations | | ☐ |
-| | — GitHub Actions for automated testing | | ☐ |
-| | — Automated Docker image builds | | ☐ |
-| | — Release automation and changelog generation | | ☐ |
-| | — Security scanning in pipeline | | ☐ |
-| | — Performance regression testing | | ☐ |
-| | — Kubernetes manifests and Helm charts | | ☐ |
-| | — Cloud provider deployment guides | | ☐ |
-| | — Systemd service files for Linux | | ☐ |
-| | — Windows service wrapper | | ☐ |
-| | — Configuration management templates | | ☐ |
-| | — Prometheus metrics export | | ☐ |
-| | — Grafana dashboard templates | | ☐ |
-| | — Log aggregation setup guides | | ☐ |
-| | — Health check endpoints | | ☐ |
-| | — Application monitoring best practices | | ☐ |
-| P3.2 | **💾 Data Persistence Layer (SQLite)** | [#7](https://github.com/chimerakang/alice/issues/7) | ✅ |
-| | — 程式重啟後，歷史資料仍可查詢 | | ☐ |
-| | — Web API 支援時間範圍查詢 | | ☐ |
-| | — 資料保留政策自動執行 | | ☐ |
-| | — 不影響現有記憶體 buffer 的即時查詢效能 | | ☐ |
-| P3.3 | **🔌 WebSocket Real-time Dashboard Connection** | [#8](https://github.com/chimerakang/alice/issues/8) | ✅ |
-| | — Dashboard 顯示真實的即時 tool 執行資料 | | ☐ |
-| | — Agent 狀態即時更新 | | ☐ |
-| | — 效能指標即時刷新 | | ☐ |
-| | — 斷線自動重連 | | ☐ |
-| | — 移除所有 mock/simulated data | | ☐ |
-| P3.4 | **🔗 Git Integration & Commit Correlation** | [#9](https://github.com/chimerakang/alice/issues/9) | ✅ |
-| | — 每筆 tool execution 記錄包含 git commit hash | | ☐ |
-| | — 每筆 decision log 包含 git branch 和 commit | | ☐ |
-| | — Web API 支援按 git 資訊篩選 | | ☐ |
-| | — 當專案非 git repo 時不出錯（graceful fallback） | | ☐ |
-| P3.5 | **📸 Checkpoint & State Snapshot System** | [#10](https://github.com/chimerakang/alice/issues/10) | ✅ |
-| | — 危險操作前自動建立 checkpoint | | ☐ |
-| | — 支援手動建立 checkpoint | | ☐ |
-| | — 支援回溯到指定 checkpoint | | ☐ |
-| | — Checkpoint 列表可在儀表板查看 | | ☐ |
-| | — 非 git 專案也有基本備份機制 | | ☐ |
-
-## P4 - Proto-First (✅ 100%)
-
-| # | Task | Issue | Status |
-|---|------|-------|--------|
-| P4.1 | **🏗️ Architecture: Proto-First API with Protocol Buffers** | [#13](https://github.com/chimerakang/alice/issues/13) | ✅ |
-| | — 建立 `proto/` 目錄結構 | | ☐ |
-| | — 定義核心訊息類型的 .proto 檔案 | | ☐ |
-| | — buf 工具鏈配置完成 | | ☐ |
-| | — Go 代碼成功生成且可編譯 | | ☐ |
-| | — 至少一個 API 端點改用 proto 生成的型別 | | ☐ |
-| | — TypeScript 類型成功生成 | | ☐ |
-
-## P5 - Frontend Foundation (✅ 100%)
-
-| # | Task | Issue | Status |
-|---|------|-------|--------|
-| P5.1 | **⚛️ React + Vite + TypeScript 專案初始化** | [#15](https://github.com/chimerakang/alice/issues/15) | ✅ |
-| | — `npm run dev` 可啟動開發伺服器，proxy 到 Go backend | | ☐ |
-| | — `npm run build` 輸出到 `web/` 目錄 | | ☐ |
-| | — Tailwind CSS build-time 編譯，非 CDN | | ☐ |
-| | — Proto TypeScript 類型可正確 import | | ☐ |
-| | — React Router 路由正常運作 | | ☐ |
-| | — OLED 黑化主題色彩保留 | | ☐ |
-| | — Docker build 可正常包含前端產出物 | | ☐ |
-| P5.2 | **🧱 共用 UI 元件庫 (Layout, StatusBadge, MetricCard)** | [#16](https://github.com/chimerakang/alice/issues/16) | ✅ |
-| | — AppLayout 包含 Sidebar 導航 + Header + Content area | | ☐ |
-| | — MetricCard 支援動畫計數器 (數字從 0 漸增) | | ☐ |
-| | — StatusBadge 支援 5 種狀態 + 對應顏色 | | ☐ |
-| | — LoadingSkeleton 適用於卡片和列表 | | ☐ |
-| | — Toast 支援 auto-dismiss + 堆疊 | | ☐ |
-| | — 所有元件遵循 OLED 黑化主題 | | ☐ |
-| | — Storybook 或 demo page 可預覽所有元件 | | ☐ |
-| P5.3 | **🔌 WebSocket Hook + Zustand 狀態管理** | [#17](https://github.com/chimerakang/alice/issues/17) | ✅ |
-| | — WebSocket 自動連線 + 斷線重連 | | ☐ |
-| | — 所有 6 種事件正確分發到對應 store | | ☐ |
-| | — API client hook 整合 proto TypeScript 類型 | | ☐ |
-| | — 初始頁面載入時 fetch API 填充 stores | | ☐ |
-| | — WebSocket 狀態在 Header 顯示 (綠燈/紅燈) | | ☐ |
-| | — DevTools 可檢視 store 狀態 | | ☐ |
-| P5.4 | **📊 Dashboard 主頁面 + 圖表元件** | [#18](https://github.com/chimerakang/alice/issues/18) | ✅ |
-| | — 4 個 MetricCard 顯示正確數值 + 動畫計數器 | | ☐ |
-| | — Git 狀態面板顯示 branch/commit/modified files | | ☐ |
-| | — Activity Chart 顯示 24h 趨勢 | | ☐ |
-| | — Tool Usage Chart 顯示 tool 分佈 | | ☐ |
-| | — Live feed 即時更新 (WebSocket) | | ☐ |
-| | — 30 秒自動刷新 fallback | | ☐ |
-| | — 響應式佈局 (desktop/tablet) | | ☐ |
-| P5.5 | **⏳ Timeline + Terminal 頁面** | [#19](https://github.com/chimerakang/alice/issues/19) | ✅ |
-| | — 垂直時間軸正確顯示事件 | | ☐ |
-| | — 事件可展開/收合查看詳情 | | ☐ |
-| | — Filter 正常篩選事件 | | ☐ |
-| | — Terminal 即時顯示 CLI 風格輸出 | | ☐ |
-| | — Auto-scroll 正常運作 | | ☐ |
-| | — WebSocket 即時推送新事件 | | ☐ |
-| | — OLED 黑化主題一致 | | ☐ |
-| P5.6 | **📋 Git/Checkpoint/Performance/Security 子頁面** | [#20](https://github.com/chimerakang/alice/issues/20) | ✅ |
-| | — Performance 頁面顯示分析指標 + 趨勢圖 | | ☐ |
-| | — Security 頁面顯示事件表格 + 統計 | | ☐ |
-| | — Checkpoint 頁面可建立/回溯/列出 checkpoints | | ☐ |
-| | — 所有 API 端點正確整合 | | ☐ |
-| | — 錯誤處理 + loading states | | ☐ |
-
-## P6 - AI Audit System (✅ 100%)
-
-| # | Task | Issue | Status |
-|---|------|-------|--------|
-| P6.1 | **🔍 AI Decision Timeline — 核心審計頁面** | [#21](https://github.com/chimerakang/alice/issues/21) | ✅ |
-| | — 日期範圍篩選 | | ☐ |
-| | — 專案目錄篩選 | | ☐ |
-| | — 狀態篩選 (success/error/all) | | ☐ |
-| | — 全文搜尋 (prompt + response) | | ☐ |
-| | — WebSocket 接收新 decision events | | ☐ |
-| | — 新 entry 自動插入頂部 (with animation) | | ☐ |
-| | — "Live" 指示燈 | | ☐ |
-| P6.2 | **📋 Decision Detail View + Git Diff Viewer** | [#22](https://github.com/chimerakang/alice/issues/22) | ✅ |
-| | — 完整 User Prompt 顯示 | | ☐ |
-| | — AI Response — Markdown 渲染 (支援 code blocks, tables, lists) | | ☐ |
-| | — 執行摘要 (duration, tokens in/out, cost, tool count) | | ☐ |
-| | — 每個 tool call 的時間軸 (Gantt-like bar) | | ☐ |
-| | — 展開每個 tool 查看 input 和 output | | ☐ |
-| | — 顏色標記: ✅ success / ❌ error / ⏳ running | | ☐ |
-| | — Error stack trace 顯示 | | ☐ |
-| | — 該次互動期間變更的檔案列表 | | ☐ |
-| | — Inline diff view (紅/綠色 diff) | | ☐ |
-| | — 檔案新增/刪除/修改 標記 | | ☐ |
-| | — 可折疊每個檔案的 diff | | ☐ |
-| | — Input/Output tokens 分拆 | | ☐ |
-| | — 估算成本顯示 | | ☐ |
-| | — 與歷史平均比較 | | ☐ |
-| | — ← → 上一筆/下一筆 Decision | | ☐ |
-| | — 回到 Timeline | | ☐ |
-| | — 連結到相關 Checkpoint | | ☐ |
-| P6.3 | **📸 Checkpoint Management UI** | [#23](https://github.com/chimerakang/alice/issues/23) | ✅ |
-| | — 以卡片或表格顯示所有 checkpoints | | ☐ |
-| | — 顯示: timestamp, description, trigger type, git branch, commit hash, size | | ☐ |
-| | — 標記 auto vs manual checkpoints | | ☐ |
-| | — 標記「危險操作」觸發的 checkpoints | | ☐ |
-| | — 🔄 Restore — 回滾到該 checkpoint (需確認 dialog) | | ☐ |
-| | — 📝 Create — 手動建立新 checkpoint | | ☐ |
-| | — 🗑️ Delete — 刪除不需要的 checkpoint | | ☐ |
-| | — 📊 Compare — 比較兩個 checkpoint 的差異 | | ☐ |
-| | — 顯示觸發此 checkpoint 的 decision | | ☐ |
-| | — 從 Decision Detail 跳轉到相關 checkpoint | | ☐ |
-| | — 時間軸上標記 checkpoint 位置 | | ☐ |
-| | — 當前 active checkpoint 高亮 | | ☐ |
-| | — Checkpoint 大小 (storage usage) | | ☐ |
-| | — Auto-checkpoint 設定狀態 | | ☐ |
-| P6.4 | **擴充 CallStream 擷取完整 AI 思考與文字內容** | [#27](https://github.com/chimerakang/alice/issues/27) | ✅ |
-| | — 解析 `thinking` content blocks（AI 推理過程） | | ☐ |
-| | — 解析 `text` content blocks（AI 中間文字回應） | | ☐ |
-| | — 解析 `tool_result` 事件（工具執行結果） | | ☐ |
-| | — 擴充 `CLIResponse` struct 新增 `ThinkingBlocks []string` 和 `TextBlocks []string` | | ☐ |
-| | — 擴充 onToolUse callback 或新增 onContent callback | | ☐ |
-| | — `DecisionLog` struct 新增 `ThinkingContent` 欄位 | | ☐ |
-| | — `ToolExecution` struct 新增 `Output` 欄位（工具執行結果） | | ☐ |
-| | — `logDecision()` 儲存 thinking 和 text 內容 | | ☐ |
-| | — SQLite schema migration: decision_logs 加 `thinking_content` 欄位 | | ☐ |
-| | — 更新 INSERT/SELECT 查詢 | | ☐ |
-| | — TypeScript DecisionLog type 新增 `thinking_content` 欄位 | | ☐ |
-| | — Timeline 頁面新增可展開的 "AI Thinking" 面板 | | ☐ |
-| | — Checkpoint AIContextPanel 顯示 thinking 內容 | | ☐ |
-
-## P7 - Dashboard & Analytics (✅ 100%)
-
-| # | Task | Issue | Status |
-|---|------|-------|--------|
-| P7.1 | **📊 Dashboard Enhancement — AI Activity Overview** | [#24](https://github.com/chimerakang/alice/issues/24) | ✅ |
-| | — 當前 branch + commit hash | | ☐ |
-| | — Dirty/clean 狀態 | | ☐ |
-| | — Modified files 數量 | | ☐ |
-| | — Remote URL | | ☐ |
-| | — 最近 5 筆 decisions 的精簡卡片 (prompt 摘要 + 結果) | | ☐ |
-| | — 點擊可跳轉到 Timeline detail | | ☐ |
-| | — 「查看全部」連結到 Timeline 頁面 | | ☐ |
-| | — Tool execution 成功/失敗率趨勢 (折線圖) | | ☐ |
-| | — Token 使用量趨勢 (柱狀圖) | | ☐ |
-| | — 每日活動量 (area chart) | | ☐ |
-| | — 時間範圍選擇器 (24h / 7d / 30d) | | ☐ |
-| | — WebSocket 連線狀態 | | ☐ |
-| | — Bot 運行時間 (uptime) | | ☐ |
-| | — Storage 使用量 | | ☐ |
-| | — 最近的 error/warning 提醒 | | ☐ |
-| P7.2 | **📈 Performance & Security Analysis Pages** | [#25](https://github.com/chimerakang/alice/issues/25) | ✅ |
-| | — API 響應時間趨勢 (line chart) | | ☐ |
-| | — Tool 執行時間分佈 (histogram) | | ☐ |
-| | — Token 使用量 by model (stacked bar) | | ☐ |
-| | — 成本趨勢 (area chart) | | ☐ |
-| | — Memory 使用量 | | ☐ |
-| | — 效能優化建議列表 (`/api/performance/recommendations`) | | ☐ |
-| | — Security events 列表 (sortable table) | | ☐ |
-| | — Severity 分佈 (pie/donut chart) | | ☐ |
-| | — 事件趨勢 (stacked area by severity) | | ☐ |
-| | — Blocked attempts 統計 | | ☐ |
-| | — PII detection 記錄 | | ☐ |
-| | — Audit log export | | ☐ |
-| P7.3 | **Checkpoint ↔ DecisionLog 直接關聯** | [#26](https://github.com/chimerakang/alice/issues/26) | ✅ |
-| | — `Checkpoint` struct 新增 `DecisionLogID` 欄位 | | ☐ |
-| | — SQLite schema 新增 `decision_log_id` 欄位（ALTER TABLE + migration） | | ☐ |
-| | — `CreateCheckpoint()` 接受 `decisionLogID` 參數 | | ☐ |
-| | — `checkAndCreateCheckpoint()` 傳入當前 decision context | | ☐ |
-| | — API response 包含 `decision_log_id` | | ☐ |
-| | — TypeScript `Checkpoint` interface 新增 `decision_log_id` 欄位 | | ☐ |
-| | — `findLinkedDecision()` 優先使用 `decision_log_id` 直接查詢 | | ☐ |
-| | — 移除純時間戳配對的 fallback（或保留為 backward compatibility） | | ☐ |
-| | — AIContextPanel 可直接透過 ID 載入 decision 資料 | | ☐ |
-| P7.4 | **Checkpoints 頁面重新定位：AI 決策歷程 + 安全快照** | [#30](https://github.com/chimerakang/alice/issues/30) | ✅ |
-| | — 重構頁面佈局：DecisionLog 為主體，Checkpoint 為附註標記 | | ☐ |
-| | — 加入 DateRangeFilter + server-side 分頁（復用 Timeline 模式） | | ☐ |
-| | — 重新設計卡片：user prompt → tool chain → outcome 為主，git/snapshot 為 collapsible 次要區塊 | | ☐ |
-| | — 加入 slide-over Detail Panel（完整 thinking/response/ToolCallGantt/GitDiff + checkpoint restore） | | ☐ |
-| | — 搜尋與篩選（搜尋 prompts/tools、filter by trigger type/project） | | ☐ |
-| | — 建置驗證 + Docker dashboard 重建 | | ☐ |
-
-## P8 - Control API (✅ 100%)
-
-| # | Task | Issue | Status |
-|---|------|-------|--------|
-| P8.1 | **🎮 Remote Control API (Interrupt & Rollback)** | [#11](https://github.com/chimerakang/alice/issues/11) | ✅ |
-| | — 可從儀表板中斷正在執行的 agent | | ☐ |
-| | — 可從儀表板重置 agent 對話 | | ☐ |
-| | — 控制端點有認證保護 | | ☐ |
-| | — 操作結果透過 WebSocket 即時反饋 | | ☐ |
-
-## P8.5 - TG 指令增強 (✅ 100%)
-
-| # | Task | Issue | Status |
-|---|------|-------|--------|
-| P8.5.1 | **📋 /tasks 指令 — Telegram 查看待辦工作清單** | [#31](https://github.com/chimerakang/alice/issues/31) | ✅ |
-| | — `/tasks` 指令能正確列出所有未完成的工作項目 | | ☐ |
-| | — 顯示 Phase 名稱、進度百分比、狀態 emoji | | ☐ |
-| | — 顯示任務編號、名稱、Issue 編號 | | ☐ |
-| | — 無待辦項目時顯示全部完成訊息 | | ☐ |
-| | — `/help` 指令包含 `/tasks` 說明 | | ☐ |
-| | — MASTER_TASKS.md 不存在時顯示友善錯誤訊息 | | ☐ |
-| P8.5.2 | **🔄 Topic-Project 對應持久化 — 重啟後保留設定** | [#33](https://github.com/chimerakang/alice/issues/33) | ✅ |
-| | — `/project` 設定後重啟 bot，topic 仍記得之前的 project 路徑 | | ☐ |
-| | — 新 topic（從未設定過）仍使用預設路徑 | | ☐ |
-| | — 多個 topic 各自獨立持久化 | | ☐ |
-
-## P9 - Multimedia Input (✅ 100%)
-
-| # | Task | Issue | Status |
-|---|------|-------|--------|
-| P9.1 | **📷 Telegram 圖片訊息支援 — 傳送圖片給 Claude 分析** | [#28](https://github.com/chimerakang/alice/issues/28) | ✅ |
-| | — 可在 TG 傳送圖片，Claude 能描述圖片內容 | | ☐ |
-| | — 圖片 + caption 文字一起傳送給 Claude | | ☐ |
-| | — 臨時檔案使用後清理 | | ☐ |
-| | — `enable_photo_support: false` 時回覆提示訊息 | | ☐ |
-| | — 超過大小限制時回覆錯誤訊息 | | ☐ |
-| P9.2 | **🎙️ Telegram 語音訊息轉文字 — 語音輸入支援** | [#29](https://github.com/chimerakang/alice/issues/29) | ✅ |
-| | — 可在 TG 傳送語音訊息，Claude 能回覆 | | ☐ |
-| | — 轉錄文字在回覆中顯示（讓用戶確認辨識結果） | | ☐ |
-| | — 支援中文和英文語音 | | ☐ |
-| | — 臨時檔案使用後清理 | | ☐ |
-| | — `enable_voice_support: false` 時回覆提示訊息 | | ☐ |
-| | — 無 OpenAI API Key 時顯示設定提示 | | ☐ |
-| | — 轉錄失敗時回覆錯誤訊息 | | ☐ |
-
-## P9.5 - Multimedia Enhancement (✅ 100%)
-
-| # | Task | Issue | Status |
-|---|------|-------|--------|
-| P9.5.1 | **🖼️ 多張圖片批次處理支援 — Telegram 媒體群組分析** | [#34](https://github.com/chimerakang/alice/issues/34) | ✅ |
-| | — **時間窗口批次機制** - 3-5秒內收到的圖片自動歸為同一批次 | | ☐ |
-| | — **暫存多張圖片** - 等待組合後一起分析 | | ☐ |
-| | — **Telegram media_group_id 支援** - 利用官方媒體群組機制 | | ☐ |
-| | — **組合 Claude 分析** - 將多張圖片一起傳給 Claude 做綜合比較 | | ☐ |
-| | — **避免重複回應** - 單張圖片不觸發多次分析 | | ☐ |
-| | — **混合媒體處理** - 優雅處理圖片+文字+語音混合訊息 | | ☐ |
-| | — **記憶體管理** - 大量圖片的儲存與清理機制 | | ☐ |
-| | — **用戶反饋** - 顯示處理進度「正在分析第 X/Y 張圖片...」 | | ☐ |
-| | — 用戶一次傳送多張圖片，Alice 等待完整批次後進行綜合分析 | | ☐ |
-| | — 回應中包含多張圖片的比較和關聯分析 | | ☐ |
-| | — 單張圖片仍正常處理，不受影響 | | ☐ |
-| | — 大量圖片時記憶體使用合理 | | ☐ |
-| | — 用戶能看到處理進度提示 | | ☐ |
-| P9.5.2 | **🔧 修復跨專案圖片存取問題 — 圖片路徑權限修復** | [#35](https://github.com/chimerakang/alice/issues/35) | ✅ |
-| | — **圖片複製機制** - 將圖片從 Alice 臨時目錄複製到目標專案 | | ☐ |
-| | — **相對路徑使用** - 使用 `temp/photo.jpg` 而非絕對路徑 | | ☐ |
-| | — **專案級清理** - Agent 結束時清理專案臨時檔案 | | ☐ |
-| | — **目錄確保存在** - 自動建立 `{projectDir}/temp/` 目錄 | | ☐ |
-| | — **錯誤處理** - 複製失敗時的適當錯誤訊息 | | ☐ |
-
 ## P10 - Claude Code Hooks (✅ 100%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
 | P10.1 | **Claude Code Hooks 整合：攔截所有 AI Agent 互動** | [#32](https://github.com/chimerakang/alice/issues/32) | ✅ |
-| | — 建立 `alice-hook` shell script（讀 stdin JSON → POST 到 Alice API） | | ☐ |
-| | — 後端新增 `POST /api/hooks/claude-code` endpoint | | ☐ |
-| | — 解析 hook event data（session_id、hook_event_name、transcript_path 等） | | ☐ |
-| | — 實作 transcript JSONL 解析器（提取 prompts、responses、tool calls、token usage） | | ☐ |
-| | — 將 hook 資料轉換為 DecisionLog 格式存入 SQLite | | ☐ |
-| | — 區分資料來源（hook vs telegram）以避免重複 | | ☐ |
-| | — WebSocket 即時推送 hook 事件到 Dashboard | | ☐ |
-| | — 處理 transcript flush race condition（Stop hook 觸發時 transcript 可能未完全寫入） | | ☐ |
-| | — 實作 `alice hooks install` CLI 指令（寫入 .claude/settings.json） | | ☐ |
-| | — 支援 global 安裝（~/.claude/settings.json）和 per-project 安裝 | | ☐ |
-| | — 安裝時保留現有 settings 不覆蓋 | | ☐ |
-| | — 實作 `alice hooks uninstall` 反安裝 | | ☐ |
-| | — Dashboard 顯示 hook 來源的互動（標記來源：Terminal / VSCode / Telegram） | | ☐ |
-| | — Session 檢視功能（同一 session 的所有互動聚合顯示） | | ☐ |
-| | — Token 用量統計包含所有來源 | | ☐ |
+| P10.2 | **** | [#目前 Alice 只能攔截經由 Telegram → Alice Bot → Claude Code CLI 這條路線的 AI 互動。當開發者直接在 Terminal 或 VSCode 使用 Claude Code 時，Alice 完全看不到這些操作。]() | 🔄 |
+| P10.3 | **** | [#經研究 Entire CLI 的實作方式，發現 Claude Code 官方提供了完整的 Hooks 系統，可以在 `.claude/settings.json` 中註冊 hook，攔截所有 Claude Code session 的生命週期事件。]() | 🔄 |
+| P10.4 | **** | [### 目標]() | 🔄 |
+| P10.5 | **** | [#讓 Alice 能夠攔截**所有** Claude Code 互動（Terminal / VSCode / Telegram），不再侷限於 Telegram 路線。]() | 🔄 |
+| P10.6 | **** | [### 架構]() | 🔄 |
+| P10.7 | **** | [#```]() | 🔄 |
+| P10.8 | **** | [#所有 Claude Code 互動（Terminal / VSCode / Telegram）]() | 🔄 |
+| P10.9 | **** | [#    ↓]() | 🔄 |
+| P10.10 | **** | [#Claude Code Hooks（.claude/settings.json 或 ~/.claude/settings.json）]() | 🔄 |
+| P10.11 | **** | [#    ↓]() | 🔄 |
+| P10.12 | **** | [#alice-hook script → HTTP POST 到 Alice API (:8082/api/hooks/claude-code)]() | 🔄 |
+| P10.13 | **** | [#    ↓]() | 🔄 |
+| P10.14 | **** | [#Alice 後端接收 → 解析 transcript → 寫入 SQLite DecisionLog]() | 🔄 |
+| P10.15 | **** | [#    → WebSocket 推送 → Dashboard 即時顯示]() | 🔄 |
+| P10.16 | **** | [#```]() | 🔄 |
+| P10.17 | **** | [### 可用的 Hook Events]() | 🔄 |
+| P10.18 | **** | [#**關鍵發現**：每個 hook 都收到 `transcript_path`，指向完整的 JSONL 對話記錄檔。Entire 也是靠讀取 transcript 取得完整對話內容，不是從 hook stdin。]() | 🔄 |
+| P10.19 | **** | [### 子任務]() | 🔄 |
+| P10.20 | **** | [#### Phase 1: Hook 腳本 + 後端 API]() | 🔄 |
+| P10.21 | **** | [#- [ ] 建立 `alice-hook` shell script（讀 stdin JSON → POST 到 Alice API）]() | 🔄 |
+| P10.22 | **** | [#- [ ] 後端新增 `POST /api/hooks/claude-code` endpoint]() | 🔄 |
+| P10.23 | **** | [#- [ ] 解析 hook event data（session_id、hook_event_name、transcript_path 等）]() | 🔄 |
+| P10.24 | **** | [#- [ ] 實作 transcript JSONL 解析器（提取 prompts、responses、tool calls、token usage）]() | 🔄 |
+| P10.25 | **** | [#### Phase 2: 資料整合]() | 🔄 |
+| P10.26 | **** | [#- [ ] 將 hook 資料轉換為 DecisionLog 格式存入 SQLite]() | 🔄 |
+| P10.27 | **** | [#- [ ] 區分資料來源（hook vs telegram）以避免重複]() | 🔄 |
+| P10.28 | **** | [#- [ ] WebSocket 即時推送 hook 事件到 Dashboard]() | 🔄 |
+| P10.29 | **** | [#- [ ] 處理 transcript flush race condition（Stop hook 觸發時 transcript 可能未完全寫入）]() | 🔄 |
+| P10.30 | **** | [#### Phase 3: 安裝工具]() | 🔄 |
+| P10.31 | **** | [#- [ ] 實作 `alice hooks install` CLI 指令（寫入 .claude/settings.json）]() | 🔄 |
+| P10.32 | **** | [#- [ ] 支援 global 安裝（~/.claude/settings.json）和 per-project 安裝]() | 🔄 |
+| P10.33 | **** | [#- [ ] 安裝時保留現有 settings 不覆蓋]() | 🔄 |
+| P10.34 | **** | [#- [ ] 實作 `alice hooks uninstall` 反安裝]() | 🔄 |
+| P10.35 | **** | [#### Phase 4: Dashboard 整合]() | 🔄 |
+| P10.36 | **** | [#- [ ] Dashboard 顯示 hook 來源的互動（標記來源：Terminal / VSCode / Telegram）]() | 🔄 |
+| P10.37 | **** | [#- [ ] Session 檢視功能（同一 session 的所有互動聚合顯示）]() | 🔄 |
+| P10.38 | **** | [#- [ ] Token 用量統計包含所有來源]() | 🔄 |
+| P10.39 | **** | [### 技術參考]() | 🔄 |
+| P10.40 | **** | [#- Claude Code Hooks 文件：https://code.claude.com/docs/en/hooks]() | 🔄 |
+| P10.41 | **** | [#- Entire CLI 實作：https://github.com/entireio/cli]() | 🔄 |
+| P10.42 | **** | [#- Entire 使用 7 個 hooks（SessionStart/End、UserPromptSubmit、Stop、PreToolUse[Task]、PostToolUse[Task/TodoWrite]）]() | 🔄 |
+| P10.43 | **"assistant", "message": {...}}`** | [#- transcript_path 格式：JSONL，每行 `{"type": "user"]() | 🔄 |
+| P10.44 | **** | [### 相關]() | 🔄 |
+| P10.45 | **** | [#- 此功能使 Alice 從「Telegram bot 監控工具」升級為「通用 AI Agent 審計平台」]() | 🔄 |
+| P10.46 | **** | [#- 與 #30 (Checkpoints 重新定位) 互補：hook 提供更完整的資料來源，Checkpoints 頁面展示 AI 推理歷程]() | 🔄 |
 
 ## P11 - User Experience (✅ 100%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
 | P11.1 | **🔍 /project 指令需要路徑驗證：防止設定不存在的專案目錄** | [#37](https://github.com/chimerakang/alice/issues/37) | ✅ |
+| P11.2 | **** | [#目前遇到的問題：用戶在設定專案時輸入了錯誤的路徑（如 workforce_saas 而非 workforce-saas），導致後續的功能無法找到檔案。]() | 🔄 |
+| P11.3 | **** | [#當前問題：]() | 🔄 |
+| P11.4 | **** | [#- ❌ 不檢查目標目錄是否存在]() | 🔄 |
+| P11.5 | **** | [#- ❌ 不驗證是否為有效的專案目錄  ]() | 🔄 |
+| P11.6 | **** | [#- ❌ 隨便輸入都能設定成功]() | 🔄 |
+| P11.7 | **** | [#- ❌ 用戶直到使用其他功能時才發現路徑錯誤]() | 🔄 |
+| P11.8 | **** | [### 需求]() | 🔄 |
+| P11.9 | **** | [#### 1. 路徑存在性檢查]() | 🔄 |
+| P11.10 | **** | [#- 驗證目標路徑確實存在]() | 🔄 |
+| P11.11 | **** | [#- 提供友善的錯誤訊息]() | 🔄 |
+| P11.12 | **** | [#- 建議相似的路徑]() | 🔄 |
+| P11.13 | **** | [#### 2. 智慧建議功能  ]() | 🔄 |
+| P11.14 | **** | [#- 模糊搜尋相似目錄名稱]() | 🔄 |
+| P11.15 | **** | [#- 例如：輸入 workforce_saas 時建議 workforce-saas]() | 🔄 |
+| P11.16 | **** | [#### 3. 設定成功確認]() | 🔄 |
+| P11.17 | **** | [#- 顯示設定成功的確認訊息]() | 🔄 |
+| P11.18 | **** | [#- 提示可用的相關指令]() | 🔄 |
+| P11.19 | **** | [### 驗收標準]() | 🔄 |
+| P11.20 | **** | [#- 不存在的路徑無法設定成功]() | 🔄 |
+| P11.21 | **** | [#- 提供清楚的錯誤訊息和建議  ]() | 🔄 |
+| P11.22 | **** | [#- 成功設定時有確認訊息]() | 🔄 |
+| P11.23 | **** | [#- 不破壞現有的正常使用流程]() | 🔄 |
 
 ## P12 - Dashboard Analytics (✅ 100%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
 | P12.1 | **📊 Claude Code Hooks UI 增強：Dashboard 統計圖表 + 用戶指南** | [#36](https://github.com/chimerakang/alice/issues/36) | ✅ |
-| | — **來源分布餅圖**：顯示 Terminal/VSCode/Telegram 的使用占比 | | ☐ |
-| | — **來源效能對比**：各來源的平均執行時間、成功率對比圖表 | | ☐ |
-| | — **來源使用趨勢**：過去 7 天各來源的使用變化線圖 | | ☐ |
-| | — 建立 `docs/CLAUDE_CODE_HOOKS.md` 設置指南 | | ☐ |
-| | — 提供 `.claude/settings.json` 設定範例 | | ☐ |
-| | — 包含完整的 Hook Script 範例 | | ☐ |
-| | — `GET /api/decisions/sources/stats` 來源統計端點 | | ☐ |
-| | — `GET /api/decisions/sources/performance` 效能對比端點 | | ☐ |
-| | — Dashboard 可視覺化顯示各來源的分布和效能 | | ☐ |
-| | — 用戶可依照文件快速設置 Claude Code Hooks | | ☐ |
-| | — 設置指南包含完整的故障排除說明 | | ☐ |
+| P12.2 | **** | [#Issue #32 已完成 Claude Code Hooks 的核心功能（95%），但還缺少一些 UI 增強和用戶體驗改善。]() | 🔄 |
+| P12.3 | **** | [### 目標]() | 🔄 |
+| P12.4 | **** | [#完成剩餘的 5% 增強功能，提升 Hook 功能的可用性和視覺化體驗。]() | 🔄 |
+| P12.5 | **** | [### 待完成功能]() | 🔄 |
+| P12.6 | **** | [#### 1. Dashboard 統計圖表]() | 🔄 |
+| P12.7 | **** | [#- [ ] **來源分布餅圖**：顯示 Terminal/VSCode/Telegram 的使用占比]() | 🔄 |
+| P12.8 | **** | [#- [ ] **來源效能對比**：各來源的平均執行時間、成功率對比圖表]() | 🔄 |
+| P12.9 | **** | [#- [ ] **來源使用趨勢**：過去 7 天各來源的使用變化線圖]() | 🔄 |
+| P12.10 | **** | [#### 2. 用戶設置指南]() | 🔄 |
+| P12.11 | **** | [#- [ ] 建立 `docs/CLAUDE_CODE_HOOKS.md` 設置指南]() | 🔄 |
+| P12.12 | **** | [#- [ ] 提供 `.claude/settings.json` 設定範例]() | 🔄 |
+| P12.13 | **** | [#- [ ] 包含完整的 Hook Script 範例]() | 🔄 |
+| P12.14 | **** | [#### 3. API 增強（可選）]() | 🔄 |
+| P12.15 | **** | [#- [ ] `GET /api/decisions/sources/stats` 來源統計端點]() | 🔄 |
+| P12.16 | **** | [#- [ ] `GET /api/decisions/sources/performance` 效能對比端點]() | 🔄 |
+| P12.17 | **** | [### 技術細節]() | 🔄 |
+| P12.18 | **** | [#### Dashboard 元件設計]() | 🔄 |
+| P12.19 | **** | [#- 新增 `SourceDistributionChart` 元件]() | 🔄 |
+| P12.20 | **** | [#- 新增 `SourcePerformanceChart` 元件  ]() | 🔄 |
+| P12.21 | **** | [#- 整合到現有 Dashboard 頁面]() | 🔄 |
+| P12.22 | **** | [#### 文件結構]() | 🔄 |
+| P12.23 | **** | [#```]() | 🔄 |
+| P12.24 | **** | [#docs/]() | 🔄 |
+| P12.25 | **** | [#  CLAUDE_CODE_HOOKS.md          # 主要設置指南]() | 🔄 |
+| P12.26 | **** | [#  examples/]() | 🔄 |
+| P12.27 | **** | [#    claude-settings.json         # 設定範例]() | 🔄 |
+| P12.28 | **** | [#    alice-hook.sh               # Hook Script 範例]() | 🔄 |
+| P12.29 | **** | [#```]() | 🔄 |
+| P12.30 | **** | [### 驗收標準]() | 🔄 |
+| P12.31 | **** | [#- [ ] Dashboard 可視覺化顯示各來源的分布和效能]() | 🔄 |
+| P12.32 | **** | [#- [ ] 用戶可依照文件快速設置 Claude Code Hooks]() | 🔄 |
+| P12.33 | **** | [#- [ ] 設置指南包含完整的故障排除說明]() | 🔄 |
+| P12.34 | **** | [### 相關]() | 🔄 |
+| P12.35 | **** | [#- 延續 #32 (Claude Code Hooks 整合)  ]() | 🔄 |
+| P12.36 | **** | [#- 補完 P10 階段的最後 5%]() | 🔄 |
+| P12.37 | **** | [#- 提升整體用戶體驗]() | 🔄 |
 
 ## P13 - Future Enhancements (🔄 38%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
 | P13.1 | **🐛 Telegram 429 Rate Limiting: 多 Agent 同時發送導致訊息遺失** | [#38](https://github.com/chimerakang/alice/issues/38) | ✅ |
-| P13.2 | **🐛 Telegram 訊息 UTF-8 編碼錯誤導致發送失敗** | [#39](https://github.com/chimerakang/alice/issues/39) | ✅ |
-| P13.3 | **【MVP】AI 開發審計系統 - 企業安全合規功能** | [#48](https://github.com/chimerakang/alice/issues/48) | 🔄 |
-| | — **完整決策記錄追蹤** | | ☐ |
-| | — 記錄每個 AI 決策的完整上下文 | | ☐ |
-| | — 儲存使用者請求、AI 回應、工具執行結果 | | ☐ |
-| | — 建立決策樹狀結構，支援溯源查詢 | | ☐ |
-| | — **程式碼來源標註系統** | | ☐ |
-| | — 自動標記 AI 生成的程式碼片段 | | ☐ |
-| | — 記錄程式碼生成的資料來源與參考 | | ☐ |
-| | — 支援版本控制整合，Git commit 包含來源資訊 | | ☐ |
-| | — **智慧風險評估** | | ☐ |
-| | — 即時檢測潛在的智慧財產權風險 | | ☐ |
-| | — 安全漏洞自動掃描與警告 | | ☐ |
-| | — 敏感資訊洩漏檢測（API keys, 密碼等） | | ☐ |
-| | — **合規報告生成器** | | ☐ |
-| | — 一鍵匯出法務/稽核專用報告 | | ☐ |
-| | — 支援多種合規標準（GDPR, SOX, HIPAA） | | ☐ |
-| | — 可自訂報告範本與格式 | | ☐ |
-| | — **團隊生產力分析** | | ☐ |
-| | — ROI 計算與視覺化儀表板 | | ☐ |
-| | — 開發時間節省統計 | | ☐ |
-| | — 程式碼品質改善指標 | | ☐ |
-| | — 團隊使用分析與建議 | | ☐ |
-| | — 完成功能 MVP 開發 | | ☐ |
-| | — 獲得至少 3 家企業的興趣表達 | | ☐ |
-| | — 驗證技術架構可擴展性 | | ☐ |
-| | — 確認商業模式可行性 | | ☐ |
-| P13.4 | **【商業功能】單機版主管報告系統 - AI 使用效益監控** | [#50](https://github.com/chimerakang/alice/issues/50) | 🔄 |
-| | — **團隊 AI 使用健康度指標** | | ☐ |
-| | — 個人效益排行榜（誰用AI效果好/差） | | ☐ |
-| | — Bug率變化趨勢（AI輔助前後對比） | | ☐ |
-| | — 開發效率提升統計 | | ☐ |
-| | — 異常使用模式檢測（重複修改同一功能） | | ☐ |
-| | — **成本效益分析** | | ☐ |
-| | — 每週/每月AI總花費統計 | | ☐ |
-| | — 節省工時計算（基於完成任務時間） | | ☐ |
-| | — ROI計算和視覺化 | | ☐ |
-| | — 成本趨勢預警（使用量異常增長） | | ☐ |
-| | — **風險預警系統** | | ☐ |
-| | — 檢測「玩AI」vs「工作」的使用模式 | | ☐ |
-| | — Token消耗異常警告 | | ☐ |
-| | — 連續失敗操作檢測 | | ☐ |
-| | — 技術方向偏離提醒 | | ☐ |
-| | — **週報自動生成** | | ☐ |
-| | — 團隊AI使用摘要 | | ☐ |
-| | — 成本效益報告 | | ☐ |
-| | — 個人表現排行 | | ☐ |
-| | — 異常事件提醒 | | ☐ |
-| | — **郵件/通知系統** | | ☐ |
-| | — 週報自動發送給主管 | | ☐ |
-| | — 異常情況即時通知 | | ☐ |
-| | — 可自定義報告頻率和內容 | | ☐ |
-| | — **使用行為分析** | | ☐ |
-| | — 工具使用模式分析 | | ☐ |
-| | — 任務完成時間統計 | | ☐ |
-| | — 成功率vs重試率分析 | | ☐ |
-| | — 專案上下文關聯分析 | | ☐ |
-| | — **效益計算算法** | | ☐ |
-| | — 開發時間節省估算 | | ☐ |
-| | — 程式碼品質改善度量 | | ☐ |
-| | — 學習曲線加速計算 | | ☐ |
-| | — 投資回報率計算模型 | | ☐ |
-| | — Manager View 頁面載入時間 < 2秒 | | ☐ |
-| | — 報告生成時間 < 5秒 | | ☐ |
-| | — 異常檢測準確率 > 85% | | ☐ |
-| | — 至少3個小團隊願意試用 | | ☐ |
-| | — 週報開信率 > 60% | | ☐ |
-| | — 功能使用率 > 70% | | ☐ |
-| P13.5 | **🔧 擴展 PerformanceMetrics - 增加管理層洞察數據收集** | [#52](https://github.com/chimerakang/alice/issues/52) | 🔄 |
-| | — 在 `internal/app/performance.go` 中新增 `ManagerInsights` 結構 | | ☐ |
-| | — 擴展 `PerformanceMetrics` 包含用戶識別和任務上下文 | | ☐ |
-| | — 添加任務成功率和重試次數追蹤 | | ☐ |
-| | — 新增 `manager_insights` 資料表 | | ☐ |
-| | — 新增 `task_sessions` 資料表（追蹤任務從開始到完成） | | ☐ |
-| | — 更新 SQLite storage 介面支援新數據類型 | | ☐ |
-| | — 在 Agent 執行工具時自動記錄任務上下文 | | ☐ |
-| | — 檢測任務開始/結束時間點 | | ☐ |
-| | — 實現任務成功/失敗的智能判斷邏輯 | | ☐ |
-| | — 統計工具使用序列和重試模式 | | ☐ |
-| | — 新增 `/api/insights/usage-patterns` 端點 | | ☐ |
-| | — 新增 `/api/insights/task-efficiency` 端點 | | ☐ |
-| | — 擴展現有效能 API 包含管理層數據 | | ☐ |
-| | — 新數據結構能正確記錄任務會話 | | ☐ |
-| | — 數據庫遷移正常執行，不影響現有功能 | | ☐ |
-| | — API 能返回團隊使用模式分析數據 | | ☐ |
-| | — 任務成功率判斷準確率 > 80% | | ☐ |
-| P13.6 | **🎨 Manager Dashboard 前端介面 - 主管視角的 AI 使用分析頁面** | [#55](https://github.com/chimerakang/alice/issues/55) | 🔄 |
-| | — 建立 `src/pages/ManagerDashboard.tsx` | | ☐ |
-| | — 在路由中添加 `/manager` 路由 | | ☐ |
-| | — 在導航選單中新增 Manager 入口 | | ☐ |
-| | — `src/components/manager/TeamEfficiencyChart.tsx` - 團隊效率趨勢圖 | | ☐ |
-| | — `src/components/manager/CostAnalysisCard.tsx` - 成本分析卡片 | | ☐ |
-| | — `src/components/manager/UserRankingTable.tsx` - 個人效益排行榜 | | ☐ |
-| | — `src/components/manager/AlertsPanel.tsx` - 異常警告面板 | | ☐ |
-| | — ROI 趨勢線圖 (Chart.js 或 Recharts) | | ☐ |
-| | — 成本 vs 節省工時對比圓餅圖 | | ☐ |
-| | — 個人效率雷達圖 | | ☐ |
-| | — 工具使用分布橫條圖 | | ☐ |
-| | — 整合 WebSocket 接收即時數據更新 | | ☐ |
-| | — 實現數據自動刷新機制 | | ☐ |
-| | — 添加手動重新整理按鈕 | | ☐ |
-| | — 支援桌面和平板顯示 | | ☐ |
-| | — 確保圖表在不同螢幕尺寸下正常顯示 | | ☐ |
-| | — 優化載入狀態和錯誤處理 | | ☐ |
-| | — 點擊個人排行可查看詳細分析 | | ☐ |
-| | — hover 顯示具體數值和說明 | | ☐ |
-| | — 支援時間範圍選擇 (7天/30天/90天) | | ☐ |
-| | — 匯出報告功能 (PDF/CSV) | | ☐ |
-| | — 頁面能正確載入並顯示數據 | | ☐ |
-| | — 圖表互動功能正常 | | ☐ |
-| | — 實時數據更新正常 | | ☐ |
-| | — 響應式佈局在不同裝置上正常 | | ☐ |
-| | — 首屏載入時間 < 2秒 | | ☐ |
-| | — 圖表渲染流暢，無卡頓 | | ☐ |
-| | — WebSocket 連線穩定 | | ☐ |
-| | — 主管能在 5秒內找到關鍵資訊 | | ☐ |
-| | — 數據呈現清晰易懂 | | ☐ |
-| | — 警告和異常能快速識別 | | ☐ |
-| P13.7 | **📊 自動週報生成系統 - 團隊 AI 使用效益報告** | [#57](https://github.com/chimerakang/alice/issues/57) | 🔄 |
-| | — 建立 `internal/app/reports.go` 報告生成模組 | | ☐ |
-| | — 實現週報數據收集和分析算法 | | ☐ |
-| | — 設計報告模板和格式化邏輯 | | ☐ |
-| | — 添加報告歷史存儲功能 | | ☐ |
-| | — **執行摘要** | | ☐ |
-| | — 團隊總體 AI 使用概況 | | ☐ |
-| | — 成本效益快速摘要 | | ☐ |
-| | — 重要警告和建議 | | ☐ |
-| | — **詳細分析** | | ☐ |
-| | — 個人效益排行榜 | | ☐ |
-| | — 工具使用統計分析 | | ☐ |
-| | — 任務完成效率趨勢 | | ☐ |
-| | — 異常使用模式檢測 | | ☐ |
-| | — **行動建議** | | ☐ |
-| | — 識別需要 AI 使用培訓的成員 | | ☐ |
-| | — 成本優化建議 | | ☐ |
-| | — 效率提升建議 | | ☐ |
-| | — **HTML 格式** (網頁檢視) | | ☐ |
-| | — 響應式設計，支援手機閱讀 | | ☐ |
-| | — 包含互動式圖表 | | ☐ |
-| | — 支援列印友好格式 | | ☐ |
-| | — **PDF 格式** (正式報告) | | ☐ |
-| | — 專業排版和格式 | | ☐ |
-| | — 包含圖表和統計數據 | | ☐ |
-| | — 適合存檔和分享 | | ☐ |
-| | — **JSON/CSV 格式** (數據匯出) | | ☐ |
-| | — 原始數據匯出 | | ☐ |
-| | — 便於進一步分析 | | ☐ |
-| | — 實現週報自動生成排程 | | ☐ |
-| | — 支援自訂報告頻率 (週報/雙週/月報) | | ☐ |
-| | — 添加手動觸發報告生成功能 | | ☐ |
-| | — 實現報告生成失敗重試機制 | | ☐ |
-| | — **郵件發送功能** | | ☐ |
-| | — SMTP 設定和郵件範本 | | ☐ |
-| | — 支援多個收件人 | | ☐ |
-| | — HTML 和純文字雙格式 | | ☐ |
-| | — **Telegram 通知** | | ☐ |
-| | — 報告生成完成通知 | | ☐ |
-| | — 重要異常即時通知 | | ☐ |
-| | — 簡化版報告摘要 | | ☐ |
-| | — **Web Dashboard 整合** | | ☐ |
-| | — 報告歷史瀏覽頁面 | | ☐ |
-| | — 線上報告檢視器 | | ☐ |
-| | — 能自動生成包含所有必要資訊的週報 | | ☐ |
-| | — 排程系統準時觸發報告生成 | | ☐ |
-| | — 多格式輸出正常 (HTML/PDF/JSON) | | ☐ |
-| | — 郵件發送成功率 > 95% | | ☐ |
-| | — 報告數據準確性 > 95% | | ☐ |
-| | — PDF 格式專業美觀 | | ☐ |
-| | — HTML 版本響應式正常 | | ☐ |
-| | — 報告生成時間 < 10秒 | | ☐ |
-| | — 管理者能快速 (< 2分鐘) 掌握團隊狀況 | | ☐ |
-| | — 警告和建議具體可行 | | ☐ |
-| | — 報告易於理解和分享 | | ☐ |
-| P13.8 | **🚨 智能異常檢測系統 - AI 使用模式風險預警** | [#59](https://github.com/chimerakang/alice/issues/59) | 🔄 |
-| | — **成本異常** | | ☐ |
-| | — Token 消耗量突然激增 (> 平常 200%) | | ☐ |
-| | — 單次對話成本過高 (> $5) | | ☐ |
-| | — 連續高成本操作檢測 | | ☐ |
-| | — **效率異常** | | ☐ |
-| | — 同一任務重複執行 > 5 次 | | ☐ |
-| | — 任務完成時間異常延長 | | ☐ |
-| | — 工具使用序列不合理 (如反覆 read/write 同一檔案) | | ☐ |
-| | — **行為異常** | | ☐ |
-| | — 非工作時間大量 AI 使用 | | ☐ |
-| | — 與專案無關的操作過多 | | ☐ |
-| | — 長時間無進展的工作會話 | | ☐ |
-| | — 建立 `internal/app/anomaly_detector.go` | | ☐ |
-| | — 實現基線建立算法 (正常使用模式學習) | | ☐ |
-| | — 開發即時異常評分系統 | | ☐ |
-| | — 實現異常嚴重性分級 (低/中/高/緊急) | | ☐ |
-| | — **即時監控** | | ☐ |
-| | — 每次 AI 操作後進行異常評估 | | ☐ |
-| | — 累積異常評分超過閾值時觸發警告 | | ☐ |
-| | — 支援不同類型異常的獨立閾值設定 | | ☐ |
-| | — **批次分析** | | ☐ |
-| | — 每小時進行一次深度分析 | | ☐ |
-| | — 檢測較長週期的異常模式 | | ☐ |
-| | — 生成趨勢異常報告 | | ☐ |
-| | — **多通道通知** | | ☐ |
-| | — Telegram 即時通知 | | ☐ |
-| | — 郵件警告 (嚴重異常) | | ☐ |
-| | — Dashboard 警告面板 | | ☐ |
-| | — WebSocket 推送到前端 | | ☐ |
-| | — **分級通知策略** | | ☐ |
-| | — 警告確認和關閉機制 | | ☐ |
-| | — 誤報標記和學習功能 | | ☐ |
-| | — 警告歷史查詢和統計 | | ☐ |
-| | — 自動警告降級 (問題解決後) | | ☐ |
-| | — 使用 Isolation Forest 檢測異常點 | | ☐ |
-| | — K-means 聚類分析用戶行為模式 | | ☐ |
-| | — 自動調整異常檢測閾值 | | ☐ |
-| | — 季節性趨勢分析 | | ☐ |
-| | — 異常點檢測和預測 | | ☐ |
-| | — 自適應基線調整 | | ☐ |
-| | — 真正異常檢測率 > 80% | | ☐ |
-| | — 誤報率 < 15% | | ☐ |
-| | — 檢測延遲 < 5 分鐘 | | ☐ |
-| | — 即時檢測不影響正常功能效能 | | ☐ |
-| | — 批次分析在 1 分鐘內完成 | | ☐ |
-| | — 警告通知 99% 成功送達 | | ☐ |
-| | — 警告描述清晰易懂 | | ☐ |
-| | — 提供具體的處理建議 | | ☐ |
-| | — 支援快速確認和關閉 | | ☐ |
-| P13.9 | **💰【商業功能】Alice SecureGuard - AI 開發防洩密系統** | [#60](https://github.com/chimerakang/alice/issues/60) | 🔄 |
-| | — **Token 模式識別引擎** | | ☐ |
-| | — AWS/Azure/GCP access keys | | ☐ |
-| | — Database connection strings | | ☐ |
-| | — API keys (Stripe, Slack, etc.) | | ☐ |
-| | — SSH private keys | | ☐ |
-| | — JWT secrets 和加密金鑰 | | ☐ |
-| | — **自動檢查點 + 修復** | | ☐ |
-| | — 檢測到敏感資訊立即建立 checkpoint | | ☐ |
-| | — 自動替換為環境變數引用 | | ☐ |
-| | — 更新 .env.example 範本 | | ☐ |
-| | — 確保 .env 在 .gitignore 中 | | ☐ |
-| | — **提交前安全掃描** | | ☐ |
-| | — 全檔案樹敏感資訊掃描 | | ☐ |
-| | — .env 檔案洩漏檢測 | | ☐ |
-| | — 硬編碼密碼檢測 | | ☐ |
-| | — 第三方套件安全漏洞檢查 | | ☐ |
-| | — **智能修復建議** | | ☐ |
-| | — 一鍵修復所有安全問題 | | ☐ |
-| | — 生成安全修復報告 | | ☐ |
-| | — 可選擇個別修復或全部修復 | | ☐ |
-| | — **可配置安全政策** | | ☐ |
-| | — 自定義敏感資訊規則 | | ☐ |
-| | — 部門別安全等級設定 | | ☐ |
-| | — 專案別風險閾值 | | ☐ |
-| | — 合規標準模板 (GDPR/SOX/ISO27001) | | ☐ |
-| | — **中央化監控** | | ☐ |
-| | — 全公司安全事件儀表板 | | ☐ |
-| | — 風險熱點分析 | | ☐ |
-| | — 開發者安全分數排行 | | ☐ |
-| | — 自動生成合規報告 | | ☐ |
-| | — **政策管理** | | ☐ |
-| | — 安全規則編輯器 | | ☐ |
-| | — 例外情況審批流程 | | ☐ |
-| | — 緊急情況處理程序 | | ☐ |
-| | — 安全培訓追蹤 | | ☐ |
-| | — **監控儀表板** | | ☐ |
-| | — 即時安全事件流 | | ☐ |
-| | — 風險趨勢分析 | | ☐ |
-| | — 團隊安全評分 | | ☐ |
-| | — 合規狀態總覽 | | ☐ |
-| | — **完整審計追蹤** | | ☐ |
-| | — 每個 AI 操作的完整記錄 | | ☐ |
-| | — 敏感資訊處理日誌 | | ☐ |
-| | — 安全事件時間軸 | | ☐ |
-| | — 用戶行為分析 | | ☐ |
-| | — **自動報告生成** | | ☐ |
-| | — 週/月安全報告 | | ☐ |
-| | — 合規證明文件 | | ☐ |
-| | — 風險評估報告 | | ☐ |
-| | — 董事會級別摘要 | | ☐ |
-| | — **背景運作** | | ☐ |
-| | — 不干擾正常開發流程 | | ☐ |
-| | — 智能學習常用模式 | | ☐ |
-| | — 減少誤報率 | | ☐ |
-| | — 快速操作響應 (<0.5秒) | | ☐ |
-| | — **智能建議** | | ☐ |
-| | — 安全最佳實踐提示 | | ☐ |
-| | — 個人化安全培訓 | | ☐ |
-| | — 程式碼安全評分 | | ☐ |
-| | — 同儕比較和激勵 | | ☐ |
-| | — 檢測準確率 > 95% | | ☐ |
-| | — 誤報率 < 5% | | ☐ |
-| | — 響應時間 < 0.5 秒 | | ☐ |
-| | — 系統可用性 > 99.9% | | ☐ |
-| | — 第一年獲得 100 個付費企業客戶 | | ☐ |
-| | — 客戶留存率 > 90% | | ☐ |
-| | — 年度經常性收入 > $500 萬 | | ☐ |
-| | — 淨推薦分數 (NPS) > 50 | | ☐ |
-| | — 在 AI 開發安全領域建立領導地位 | | ☐ |
-| | — 獲得主要安全認證 (SOC2, ISO27001) | | ☐ |
-| | — 成為行業標準解決方案 | | ☐ |
-| | — 被主要分析師機構 (Gartner) 認可 | | ☐ |
-| P13.10 | **🔍 智能 Token 檢測引擎 - SecureGuard 核心功能** | [#61](https://github.com/chimerakang/alice/issues/61) | 🔄 |
-| | — **常見 Token 模式庫** | | ☐ |
-| | — AWS Access/Secret Keys (AKIA*, ASIA*) | | ☐ |
-| | — Google API Keys (AIza*) | | ☐ |
-| | — Azure Keys 和 Connection Strings | | ☐ |
-| | — GitHub Personal Access Tokens (ghp_*, gho_*) | | ☐ |
-| | — Stripe API Keys (sk_live_*, pk_live_*) | | ☐ |
-| | — Database URLs (postgres://, mysql://, mongodb://) | | ☐ |
-| | — JWT Tokens 和 Secrets | | ☐ |
-| | — SSH Private Keys (-----BEGIN RSA PRIVATE KEY-----) | | ☐ |
-| | — API Endpoints 含認證參數 | | ☐ |
-| | — **動態模式學習** | | ☐ |
-| | — 企業自定義 Token 格式學習 | | ☐ |
-| | — 上下文相關的敏感度評估 | | ☐ |
-| | — 誤報模式識別和排除 | | ☐ |
-| | — 持續學習用戶標記結果 | | ☐ |
-| | — **多層檢測策略** | | ☐ |
-| | — **實時檢測引擎** | | ☐ |
-| | — 檔案變更監聽 | | ☐ |
-| | — 增量檢測 (只檢查變更部分) | | ☐ |
-| | — 異步處理避免阻塞 | | ☐ |
-| | — 檢測結果快取優化 | | ☐ |
-| | — **智能替換策略** | | ☐ |
-| | — **環境變數管理** | | ☐ |
-| | — 自動生成 .env.example | | ☐ |
-| | — 確保 .env 在 .gitignore | | ☐ |
-| | — 生成安全的隨機 secrets | | ☐ |
-| | — Docker/K8s secrets 整合 | | ☐ |
-| | — **觸發機制增強** | | ☐ |
-| | — **安全檢查點類型** | | ☐ |
-| | — `TriggerSecurityBreach` - 檢測到高風險 token | | ☐ |
-| | — `TriggerPreCommit` - Git 提交前安全檢查 | | ☐ |
-| | — `TriggerPolicyViolation` - 違反企業安全政策 | | ☐ |
-| | — `TriggerAutofix` - 自動修復前的備份 | | ☐ |
-| | — **可配置規則系統** | | ☐ |
-| | — **部門層級政策** | | ☐ |
-| | — 不同團隊不同安全等級 | | ☐ |
-| | — 專案別風險閾值設定 | | ☐ |
-| | — 角色別權限控制 | | ☐ |
-| | — 例外申請審批流程 | | ☐ |
-| | — 單檔案檢測 < 100ms | | ☐ |
-| | — 全專案掃描 < 5s (1000 檔案) | | ☐ |
-| | — 即時檢測延遲 < 50ms | | ☐ |
-| | — Checkpoint 建立 < 2s | | ☐ |
-| | — Token 檢測準確率 > 95% | | ☐ |
-| | — 誤報率 < 5% | | ☐ |
-| | — 漏報率 < 1% (高風險 token) | | ☐ |
-| | — 自動修復成功率 > 90% | | ☐ |
-| | — 檢測過程中不記錄實際 token 內容 | | ☐ |
-| | — 僅記錄 token 類型和位置資訊 | | ☐ |
-| | — 本地處理，不上傳到雲端 | | ☐ |
-| | — 檢測結果加密存儲 | | ☐ |
-| | — 遵守企業資料保護政策 | | ☐ |
-| | — 支援資料本地化要求 | | ☐ |
-| | — 提供資料清除功能 | | ☐ |
-| | — 審計日誌訪問控制 | | ☐ |
-| | — 各種 token 模式檢測測試 | | ☐ |
-| | — 誤報和漏報測試用例 | | ☐ |
-| | — 效能壓力測試 | | ☐ |
-| | — 邊界條件測試 | | ☐ |
-| | — 與 Checkpoint 系統整合測試 | | ☐ |
-| | — Git hook 整合測試 | | ☐ |
-| | — 企業政策引擎測試 | | ☐ |
-| | — 多用戶權限測試 | | ☐ |
-| | — 繞過檢測嘗試測試 | | ☐ |
-| | — 資料洩漏風險評估 | | ☐ |
-| | — 權限提升漏洞測試 | | ☐ |
-| | — 拒絕服務攻擊測試 | | ☐ |
-| | — 支援 Docker 容器化部署 | | ☐ |
-| | — 企業防火牆內網部署 | | ☐ |
-| | — 多實例負載均衡 | | ☐ |
-| | — 零停機更新機制 | | ☐ |
-| | — 檢測引擎效能監控 | | ☐ |
-| | — 安全事件統計 | | ☐ |
-| | — 用戶行為分析 | | ☐ |
-| | — 系統健康度監控 | | ☐ |
-| P13.11 | **Security 頁面：PII Detection Records 缺乏上下文資訊，無法判斷問題內容** | [#69](https://github.com/chimerakang/alice/issues/69) | 🔄 |
-| P13.12 | **Security 頁面：Events Trend 圖表未跟隨時間篩選器 + 標題硬編碼** | [#70](https://github.com/chimerakang/alice/issues/70) | 🔄 |
-| P13.13 | **🐛 Telegram /tasks 無法顯示 GitHub Issues（private repo 認證失敗）** | [#71](https://github.com/chimerakang/alice/issues/71) | ✅ |
-| P13.14 | **P13: Dynamic Model Routing - 智慧模型路由降低 Token 成本** | [#72](https://github.com/chimerakang/alice/issues/72) | ✅ |
-| | — 1.1: CLIClient model override 參數 | | ✅ |
-| | — 1.2: Agent.selectModel() 方法 | | ✅ |
-| | — 1.3: 路由規則引擎 + 預設規則 | | ✅ |
-| | — 1.4: Session 隔離策略（Haiku one-shot） | | ✅ |
-| | — 1.5: Config model_routing 設定區塊 | | ✅ |
-| | — 1.6: Decision Log 記錄 routing 資訊 | | ✅ |
-| | — 1.7: `/fast` `/deep` Telegram 指令 | | ✅ |
-| | — 2.1: classifyTaskComplexity() 函數（複用 OpenAI API Key） | | ✅ |
-| | — 2.2: 三層 Fallback 策略整合 | | ✅ |
-| | — 2.3: 路由延遲與成本監控 | | ✅ |
-| | — 3.1: 模型使用比例圓餅圖 | | ✅ |
-| | — 3.2: 節省金額計算與顯示 | | ✅ |
-| | — 3.3: 路由決策歷史頁面 | | ✅ |
-| | — 4.1: /api/prompt endpoint 支援路由 | | ✅ |
-| | — 4.2: Extension 透過 API 提交帶路由的請求 | | ✅ |
-| P13.15 | **P13: Per-Model Cost Tracking - 按模型記錄 Token 成本與用量** | [#73](https://github.com/chimerakang/alice/issues/73) | ✅ |
-| | — Database migration（decision_logs + performance_metrics 加 model 欄位） | | ☐ |
-| | — TokenStats struct 加 Model 欄位 | | ☐ |
-| | — DecisionLog struct 加 Model / RoutingReason / RoutingLatency | | ☐ |
-| | — RecordAPICall() 加 model 參數 | | ☐ |
-| | — logDecision() 使用獨立 model 欄位 | | ☐ |
-| | — SaveDecisionLog() INSERT 新欄位 | | ☐ |
-| | — GetDecisionLogs() / query 函數 SELECT 新欄位 | | ☐ |
-| | — 模型費率表 ModelPricing | | ☐ |
-| | — GET /api/costs/by-model endpoint | | ☐ |
-| | — GET /api/costs/summary endpoint | | ☐ |
-| | — 向後相容：舊紀錄 model 預設為 config 中的模型 | | ☐ |
-| P13.16 | **P13: Savings Calculator - 智慧路由省錢可視化（商業賣點）** | [#74](https://github.com/chimerakang/alice/issues/74) | 🔄 |
-| | — `GetCostSavings()` SQL 查詢（計算實際 vs 假設成本） | | ☐ |
-| | — `GET /api/costs/savings` endpoint | | ☐ |
-| | — 模型費率表 `ModelPricing`（用於假設成本計算） | | ☐ |
-| | — `/savings` Telegram 指令 | | ☐ |
-| | — SavingsBanner 元件（節省金額 + 百分比 + 進度條） | | ☐ |
-| | — ModelDistributionChart 圓餅圖（Haiku/Sonnet/Opus 比例） | | ☐ |
-| | — CostTrendChart 雙線圖（實際 vs 假設，shaded area = savings） | | ☐ |
-| | — Decision Timeline 增強（每個 decision 標記模型 + 節省金額） | | ☐ |
-| | — Dashboard 頁面整合 | | ☐ |
-| | — Performance 頁面整合 | | ☐ |
-| P13.17 | **回填歷史資料缺失的 model 與費用欄位** | [#75](https://github.com/chimerakang/alice/issues/75) | ✅ |
-| | — 為 `decision_logs` 表中 model 為空的紀錄回填 model 為 `claude-sonnet-4-5-20250929` | | ☐ |
-| | — 根據 tokens_input/tokens_output 計算並回填 `cost_usd`（使用 Sonnet 定價） | | ☐ |
-| | — 為 `performance_metrics` 表中 model 為空的紀錄回填 model 為 `claude-sonnet-4-5-20250929` | | ☐ |
-| | — 根據 tokens_used 計算並回填 `estimated_cost` | | ☐ |
-| | — 確保修復腳本具有冪等性（重複執行不會造成問題） | | ☐ |
-| | — 修復後驗證 /api/costs/savings 端點數據正確性 | | ☐ |
-| P13.18 | **Bot 多國語系支援 — 可切換顯示語言** | [#76](https://github.com/chimerakang/alice/issues/76) | 🔄 |
-| | — 設計 i18n 架構（語系檔格式、載入機制） | | ☐ |
-| | — 建立語系檔目錄結構（如 `locales/zh-TW.json`, `locales/en.json`） | | ☐ |
-| | — 抽取現有硬編碼文字到語系檔 | | ☐ |
-| | — 實作 Telegram Bot `/lang` 指令切換語言 | | ☐ |
-| | — 每個 chat 獨立儲存語系偏好（持久化到 SQLite） | | ☐ |
-| | — 前端 Dashboard 語系切換功能 | | ☐ |
-| | — 初始支援語系：繁體中文（zh-TW）、英文（en） | | ☐ |
-| | — 撰寫新增語系的開發指南文件 | | ☐ |
-| P13.19 | **/usage 指令增加按模型分類的 token 用量與費用顯示** | [#77](https://github.com/chimerakang/alice/issues/77) | ✅ |
-| | — 修改 `/usage` handler，增加從 storage 查詢 per-model token 用量 | | ☐ |
-| | — 顯示每個模型的呼叫次數、input/output tokens、費用 | | ☐ |
-| | — 無 storage 或無數據時 graceful fallback（僅顯示現有整體統計） | | ☐ |
-| P13.20 | **Add project_path field to performance_metrics table for per-project token cost tracking** | [#78](https://github.com/chimerakang/alice/issues/78) | 🔄 |
-| | — Add `project_path` VARCHAR column to `performance_metrics` table migration | | ☐ |
-| | — Update `PerformanceMetrics` struct in performance.go to include ProjectPath field | | ☐ |
-| | — Modify `InsertPerformanceMetric` function to persist project_path | | ☐ |
-| | — Add optional `projectPath` parameter to `GetCostSavings()" for project filtering | | ☐ |
-| | — Update Telegram `/usage" and `/savings" commands to support per-project queries | | ☐ |
-| | — Update Web API endpoints to accept optional project_dir parameter | | ☐ |
-| | — Test per-project cost tracking end-to-end | | ☐ |
-| P13.21 | **🐛 Smart Routing 導致對話上下文丟失：Model 切換時強制清空 Session** | [#79](https://github.com/chimerakang/alice/issues/79) | ✅ |
-| | — 移除強制清空 sessionID 邏輯 | | ☐ |
-| | — 改進決策日誌以記錄同一 session 內的 model 切換 | | ☐ |
-| | — 改進成本計算，分別追蹤每個 model 的 token 使用 | | ☐ |
-| | — 測試跨 model session 的對話連貫性 | | ☐ |
-| | — 驗證成本計算的準確性 | | ☐ |
+| P13.2 | **** | [#當多個 Agent 同時處理不同 thread 的請求時（如 asgard、project_mimir、workforce-saas 同時運作），大量訊息同時發送會觸發 Telegram Bot API 的 429 Rate Limiting，導致回覆訊息無法送達使用者。]() | 🔄 |
+| P13.3 | **** | [### 重現步驟]() | 🔄 |
+| P13.4 | **** | [#1. 同時在 3 個以上的 Telegram thread 發送請求]() | 🔄 |
+| P13.5 | **** | [#2. 各 Agent 同時產出回應並嘗試發送]() | 🔄 |
+| P13.6 | **** | [#3. Telegram API 回傳 429 Too Many Requests]() | 🔄 |
+| P13.7 | **** | [### 錯誤日誌]() | 🔄 |
+| P13.8 | **** | [#```]() | 🔄 |
+| P13.9 | **** | [#telegram.go:685: [telegram] sendMessage failed (status 429): {"ok":false,"error_code":429,"description":"Too Many Requests: retry after 37","parameters":{"retry_after":37}}]() | 🔄 |
+| P13.10 | **** | [#```]() | 🔄 |
+| P13.11 | **** | [#觀察到 `retry_after` 值最高達 37 秒，期間所有訊息發送嘗試均失敗。]() | 🔄 |
+| P13.12 | **** | [### 影響]() | 🔄 |
+| P13.13 | **** | [#- 使用者看不到 Agent 的回覆，誤以為 bot 卡住]() | 🔄 |
+| P13.14 | **** | [#- Agent 實際已完成工作但結果無法傳達]() | 🔄 |
+| P13.15 | **** | [#- 多 Agent 並行場景下問題尤為嚴重]() | 🔄 |
+| P13.16 | **** | [### 建議解決方案]() | 🔄 |
+| P13.17 | **** | [#1. **全域訊息佇列**：所有 thread 共用一個發送佇列，控制整體發送速率]() | 🔄 |
+| P13.18 | **** | [#2. **429 重試邏輯**：收到 429 時根據 `retry_after` 值等待後重試（指數退避）]() | 🔄 |
+| P13.19 | **** | [#3. **訊息合併**：將短時間內的多條更新訊息合併為一條，減少 API 呼叫次數]() | 🔄 |
+| P13.20 | **** | [#4. **每秒速率限制**：Telegram Bot API 限制約 30 msg/sec（群組更嚴格），主動限流]() | 🔄 |
+| P13.21 | **** | [### 相關檔案]() | 🔄 |
+| P13.22 | **** | [#- `internal/app/telegram.go` — `sendMessage` 函數]() | 🔄 |
+| P13.23 | **** | [#- `internal/app/agent.go` — Agent 回呼處理]() | 🔄 |
+| P13.24 | **** | [### 發生時間]() | 🔄 |
+| P13.25 | **** | [#2026-02-14 16:25~16:34，三個 Agent 同時運作期間]() | 🔄 |
+| P13.26 | **🐛 Telegram 訊息 UTF-8 編碼錯誤導致發送失敗** | [#39](https://github.com/chimerakang/alice/issues/39) | ✅ |
+| P13.27 | **** | [#Claude CLI 回傳的內容中偶爾包含非法 UTF-8 字元，導致 Telegram Bot API 拒絕發送訊息（回傳 400 Bad Request）。使用者看不到 Agent 的回覆。]() | 🔄 |
+| P13.28 | **** | [### 錯誤日誌]() | 🔄 |
+| P13.29 | **** | [#```]() | 🔄 |
+| P13.30 | **** | [#telegram.go:685: [telegram] sendMessage failed (status 400): {"ok":false,"error_code":400,"description":"Bad Request: strings must be encoded in UTF-8"}]() | 🔄 |
+| P13.31 | **** | [#```]() | 🔄 |
+| P13.32 | **** | [### 影響]() | 🔄 |
+| P13.33 | **** | [#- Agent 回覆無法傳達給使用者]() | 🔄 |
+| P13.34 | **** | [#- 使用者誤以為 bot 卡住或無回應]() | 🔄 |
+| P13.35 | **** | [#- 與 429 Rate Limiting 同時發生時問題更嚴重]() | 🔄 |
+| P13.36 | **** | [### 建議解決方案]() | 🔄 |
+| P13.37 | **** | [#1. **發送前 UTF-8 清理**：在 `sendMessage` 前對文字內容進行 UTF-8 驗證和清理]() | 🔄 |
+| P13.38 | **** | [#2. **Go 標準庫方案**：使用 `strings.ToValidUTF8(text, "")` 或 `utf8.Valid()` 檢查]() | 🔄 |
+| P13.39 | **** | [#3. **替換策略**：將無效位元組替換為 `\uFFFD`（Unicode replacement character）或直接移除]() | 🔄 |
+| P13.40 | **** | [#4. **記錄原始內容**：將清理前的原始內容記錄到 log，方便除錯]() | 🔄 |
+| P13.41 | **** | [### 範例修復]() | 🔄 |
+| P13.42 | **** | [#```go]() | 🔄 |
+| P13.43 | **** | [#import "strings"]() | 🔄 |
+| P13.44 | **** | [#// 在發送前清理]() | 🔄 |
+| P13.45 | **** | [#cleanText := strings.ToValidUTF8(text, "")]() | 🔄 |
+| P13.46 | **** | [#```]() | 🔄 |
+| P13.47 | **** | [### 相關檔案]() | 🔄 |
+| P13.48 | **** | [#- `internal/app/telegram.go` — `sendMessage` / 訊息發送相關函數]() | 🔄 |
+| P13.49 | **** | [#- `internal/app/agent.go` — CLI 輸出處理]() | 🔄 |
+| P13.50 | **** | [### 發生時間]() | 🔄 |
+| P13.51 | **** | [#2026-02-14 16:33~16:34，workforce-saas Agent 回覆期間]() | 🔄 |
+| P13.52 | **【MVP】AI 開發審計系統 - 企業安全合規功能** | [#48](https://github.com/chimerakang/alice/issues/48) | 🔄 |
+| P13.53 | **** | [#建立企業級 AI 開發審計系統，解決企業使用 AI 開發工具時的核心痛點：合規性、安全性、可追蹤性。]() | 🔄 |
+| P13.54 | **** | [### 商業價值]() | 🔄 |
+| P13.55 | **** | [#**目標市場**：願意為「零風險 AI 開發」付費的企業]() | 🔄 |
+| P13.56 | **** | [#**定價策略**：$199/月/專案，不限人數]() | 🔄 |
+| P13.57 | **** | [#**核心價值主張**：讓企業安心使用 AI 開發工具，完全合規]() | 🔄 |
+| P13.58 | **** | [### 核心功能]() | 🔄 |
+| P13.59 | **** | [#- [ ] **完整決策記錄追蹤**]() | 🔄 |
+| P13.60 | **** | [#  - [ ] 記錄每個 AI 決策的完整上下文]() | 🔄 |
+| P13.61 | **** | [#  - [ ] 儲存使用者請求、AI 回應、工具執行結果]() | 🔄 |
+| P13.62 | **** | [#  - [ ] 建立決策樹狀結構，支援溯源查詢]() | 🔄 |
+| P13.63 | **** | [#- [ ] **程式碼來源標註系統**]() | 🔄 |
+| P13.64 | **** | [#  - [ ] 自動標記 AI 生成的程式碼片段]() | 🔄 |
+| P13.65 | **** | [#  - [ ] 記錄程式碼生成的資料來源與參考]() | 🔄 |
+| P13.66 | **** | [#  - [ ] 支援版本控制整合，Git commit 包含來源資訊]() | 🔄 |
+| P13.67 | **** | [#- [ ] **智慧風險評估**]() | 🔄 |
+| P13.68 | **** | [#  - [ ] 即時檢測潛在的智慧財產權風險]() | 🔄 |
+| P13.69 | **** | [#  - [ ] 安全漏洞自動掃描與警告]() | 🔄 |
+| P13.70 | **** | [#  - [ ] 敏感資訊洩漏檢測（API keys, 密碼等）]() | 🔄 |
+| P13.71 | **** | [#- [ ] **合規報告生成器**]() | 🔄 |
+| P13.72 | **** | [#  - [ ] 一鍵匯出法務/稽核專用報告]() | 🔄 |
+| P13.73 | **** | [#  - [ ] 支援多種合規標準（GDPR, SOX, HIPAA）]() | 🔄 |
+| P13.74 | **** | [#  - [ ] 可自訂報告範本與格式]() | 🔄 |
+| P13.75 | **** | [#- [ ] **團隊生產力分析**]() | 🔄 |
+| P13.76 | **** | [#  - [ ] ROI 計算與視覺化儀表板]() | 🔄 |
+| P13.77 | **** | [#  - [ ] 開發時間節省統計]() | 🔄 |
+| P13.78 | **** | [#  - [ ] 程式碼品質改善指標]() | 🔄 |
+| P13.79 | **** | [#  - [ ] 團隊使用分析與建議]() | 🔄 |
+| P13.80 | **** | [### 技術實現]() | 🔄 |
+| P13.81 | **** | [#**資料庫擴展**：]() | 🔄 |
+| P13.82 | **** | [#- 新增 `audit_trails` 表格儲存完整審計記錄]() | 🔄 |
+| P13.83 | **** | [#- 新增 `code_sources` 表格追蹤程式碼來源]() | 🔄 |
+| P13.84 | **** | [#- 新增 `risk_assessments` 表格儲存風險評估結果]() | 🔄 |
+| P13.85 | **** | [#**API 擴展**：]() | 🔄 |
+| P13.86 | **** | [#- `/api/audit/export` - 合規報告匯出]() | 🔄 |
+| P13.87 | **** | [#- `/api/audit/search` - 審計記錄搜尋]() | 🔄 |
+| P13.88 | **** | [#- `/api/analytics/roi` - ROI 分析資料]() | 🔄 |
+| P13.89 | **** | [#**前端介面**：]() | 🔄 |
+| P13.90 | **** | [#- 審計記錄瀏覽器]() | 🔄 |
+| P13.91 | **** | [#- 風險評估儀表板]() | 🔄 |
+| P13.92 | **** | [#- 合規報告產生器]() | 🔄 |
+| P13.93 | **** | [#- 團隊分析圖表]() | 🔄 |
+| P13.94 | **** | [### MVP 驗證方向]() | 🔄 |
+| P13.95 | **** | [#1. **技術可行性**：在現有 Alice 架構上快速原型]() | 🔄 |
+| P13.96 | **** | [#2. **市場需求**：向目標企業展示 demo，收集反饋]() | 🔄 |
+| P13.97 | **** | [#3. **競爭分析**：研究現有企業 AI 工具的合規功能]() | 🔄 |
+| P13.98 | **** | [#4. **定價測試**：驗證 $199/月的價格接受度]() | 🔄 |
+| P13.99 | **** | [### 成功指標]() | 🔄 |
+| P13.100 | **** | [#- [ ] 完成功能 MVP 開發]() | 🔄 |
+| P13.101 | **** | [#- [ ] 獲得至少 3 家企業的興趣表達]() | 🔄 |
+| P13.102 | **** | [#- [ ] 驗證技術架構可擴展性]() | 🔄 |
+| P13.103 | **** | [#- [ ] 確認商業模式可行性]() | 🔄 |
+| P13.104 | **** | [### 風險與挑戰]() | 🔄 |
+| P13.105 | **** | [#- **技術挑戰**：大量審計資料的儲存與查詢效能]() | 🔄 |
+| P13.106 | **** | [#- **市場挑戰**：企業決策週期較長，需要長期耕耘]() | 🔄 |
+| P13.107 | **** | [#- **競爭風險**：大廠可能快速跟進類似功能]() | 🔄 |
+| P13.108 | **【商業功能】單機版主管報告系統 - AI 使用效益監控** | [#50](https://github.com/chimerakang/alice/issues/50) | 🔄 |
+| P13.109 | **** | [#**目標市場**：3-10人小團隊的技術主管]() | 🔄 |
+| P13.110 | **** | [#**價值主張**：讓主管知道團隊AI使用是否「走對方向」，避免燒錢]() | 🔄 |
+| P13.111 | **** | [#**收費策略**：團隊版 $49/月]() | 🔄 |
+| P13.112 | **** | [### 核心功能需求]() | 🔄 |
+| P13.113 | **** | [#### 1. 主管儀表板 (Manager View)]() | 🔄 |
+| P13.114 | **** | [#- [ ] **團隊 AI 使用健康度指標**]() | 🔄 |
+| P13.115 | **** | [#  - [ ] 個人效益排行榜（誰用AI效果好/差）]() | 🔄 |
+| P13.116 | **** | [#  - [ ] Bug率變化趨勢（AI輔助前後對比）]() | 🔄 |
+| P13.117 | **** | [#  - [ ] 開發效率提升統計]() | 🔄 |
+| P13.118 | **** | [#  - [ ] 異常使用模式檢測（重複修改同一功能）]() | 🔄 |
+| P13.119 | **** | [#- [ ] **成本效益分析**]() | 🔄 |
+| P13.120 | **** | [#  - [ ] 每週/每月AI總花費統計]() | 🔄 |
+| P13.121 | **** | [#  - [ ] 節省工時計算（基於完成任務時間）]() | 🔄 |
+| P13.122 | **** | [#  - [ ] ROI計算和視覺化]() | 🔄 |
+| P13.123 | **** | [#  - [ ] 成本趨勢預警（使用量異常增長）]() | 🔄 |
+| P13.124 | **** | [#- [ ] **風險預警系統**]() | 🔄 |
+| P13.125 | **** | [#  - [ ] 檢測「玩AI」vs「工作」的使用模式]() | 🔄 |
+| P13.126 | **** | [#  - [ ] Token消耗異常警告]() | 🔄 |
+| P13.127 | **** | [#  - [ ] 連續失敗操作檢測]() | 🔄 |
+| P13.128 | **** | [#  - [ ] 技術方向偏離提醒]() | 🔄 |
+| P13.129 | **** | [#### 2. 自動報告生成]() | 🔄 |
+| P13.130 | **** | [#- [ ] **週報自動生成**]() | 🔄 |
+| P13.131 | **** | [#  - [ ] 團隊AI使用摘要]() | 🔄 |
+| P13.132 | **** | [#  - [ ] 成本效益報告]() | 🔄 |
+| P13.133 | **** | [#  - [ ] 個人表現排行]() | 🔄 |
+| P13.134 | **** | [#  - [ ] 異常事件提醒]() | 🔄 |
+| P13.135 | **** | [#- [ ] **郵件/通知系統**]() | 🔄 |
+| P13.136 | **** | [#  - [ ] 週報自動發送給主管]() | 🔄 |
+| P13.137 | **** | [#  - [ ] 異常情況即時通知]() | 🔄 |
+| P13.138 | **** | [#  - [ ] 可自定義報告頻率和內容]() | 🔄 |
+| P13.139 | **** | [#### 3. 數據分析後端]() | 🔄 |
+| P13.140 | **** | [#- [ ] **使用行為分析**]() | 🔄 |
+| P13.141 | **** | [#  - [ ] 工具使用模式分析]() | 🔄 |
+| P13.142 | **** | [#  - [ ] 任務完成時間統計]() | 🔄 |
+| P13.143 | **** | [#  - [ ] 成功率vs重試率分析]() | 🔄 |
+| P13.144 | **** | [#  - [ ] 專案上下文關聯分析]() | 🔄 |
+| P13.145 | **** | [#- [ ] **效益計算算法**]() | 🔄 |
+| P13.146 | **** | [#  - [ ] 開發時間節省估算]() | 🔄 |
+| P13.147 | **** | [#  - [ ] 程式碼品質改善度量]() | 🔄 |
+| P13.148 | **** | [#  - [ ] 學習曲線加速計算]() | 🔄 |
+| P13.149 | **** | [#  - [ ] 投資回報率計算模型]() | 🔄 |
+| P13.150 | **** | [### 技術實現計劃]() | 🔄 |
+| P13.151 | **** | [#### Phase 1: 基礎數據收集增強]() | 🔄 |
+| P13.152 | **** | [#**基於現有 PerformanceMetrics 擴展**]() | 🔄 |
+| P13.153 | **** | [#### Phase 2: 前端 Manager View  ]() | 🔄 |
+| P13.154 | **** | [#**在現有 React Dashboard 中新增頁面**]() | 🔄 |
+| P13.155 | **** | [#### Phase 3: 報告生成系統]() | 🔄 |
+| P13.156 | **** | [#**新增後端服務**]() | 🔄 |
+| P13.157 | **** | [### 成功指標]() | 🔄 |
+| P13.158 | **** | [#### 技術指標]() | 🔄 |
+| P13.159 | **** | [#- [ ] Manager View 頁面載入時間 < 2秒]() | 🔄 |
+| P13.160 | **** | [#- [ ] 報告生成時間 < 5秒]() | 🔄 |
+| P13.161 | **** | [#- [ ] 異常檢測準確率 > 85%]() | 🔄 |
+| P13.162 | **** | [#### 商業指標  ]() | 🔄 |
+| P13.163 | **** | [#- [ ] 至少3個小團隊願意試用]() | 🔄 |
+| P13.164 | **** | [#- [ ] 週報開信率 > 60%]() | 🔄 |
+| P13.165 | **** | [#- [ ] 功能使用率 > 70%]() | 🔄 |
+| P13.166 | **** | [### 風險評估]() | 🔄 |
+| P13.167 | **** | [#### 技術風險]() | 🔄 |
+| P13.168 | **** | [#- 資料準確性：如何準確判斷任務成功vs失敗]() | 🔄 |
+| P13.169 | **** | [#- 效能影響：大量數據分析對主功能的影響]() | 🔄 |
+| P13.170 | **** | [#- 隱私考量：工作監控的接受度]() | 🔄 |
+| P13.171 | **** | [#### 商業風險]() | 🔄 |
+| P13.172 | **** | [#- 市場需求驗證]() | 🔄 |
+| P13.173 | **** | [#- 競爭威脅]() | 🔄 |
+| P13.174 | **** | [#- 定價策略]() | 🔄 |
+| P13.175 | **** | [### 下一步行動]() | 🔄 |
+| P13.176 | **** | [#1. MVP 優先序：先實作基礎 Manager View]() | 🔄 |
+| P13.177 | **** | [#2. 用戶訪談：驗證需求]() | 🔄 |
+| P13.178 | **** | [#3. 技術驗證：確認可行性  ]() | 🔄 |
+| P13.179 | **** | [#4. 市場測試：收集反饋]() | 🔄 |
+| P13.180 | **🔧 擴展 PerformanceMetrics - 增加管理層洞察數據收集** | [#52](https://github.com/chimerakang/alice/issues/52) | 🔄 |
+| P13.181 | **** | [#擴展現有的 `PerformanceMetrics` 結構，增加管理層關心的數據收集，為主管報告功能提供基礎數據。]() | 🔄 |
+| P13.182 | **** | [### 具體任務]() | 🔄 |
+| P13.183 | **** | [#### 1. 數據結構擴展]() | 🔄 |
+| P13.184 | **** | [#- [ ] 在 `internal/app/performance.go` 中新增 `ManagerInsights` 結構]() | 🔄 |
+| P13.185 | **** | [#- [ ] 擴展 `PerformanceMetrics` 包含用戶識別和任務上下文]() | 🔄 |
+| P13.186 | **** | [#- [ ] 添加任務成功率和重試次數追蹤]() | 🔄 |
+| P13.187 | **** | [#### 2. 數據庫架構更新]() | 🔄 |
+| P13.188 | **** | [#- [ ] 新增 `manager_insights` 資料表]() | 🔄 |
+| P13.189 | **** | [#- [ ] 新增 `task_sessions` 資料表（追蹤任務從開始到完成）]() | 🔄 |
+| P13.190 | **** | [#- [ ] 更新 SQLite storage 介面支援新數據類型]() | 🔄 |
+| P13.191 | **** | [#### 3. 數據收集邏輯]() | 🔄 |
+| P13.192 | **** | [#- [ ] 在 Agent 執行工具時自動記錄任務上下文]() | 🔄 |
+| P13.193 | **** | [#- [ ] 檢測任務開始/結束時間點]() | 🔄 |
+| P13.194 | **** | [#- [ ] 實現任務成功/失敗的智能判斷邏輯]() | 🔄 |
+| P13.195 | **** | [#- [ ] 統計工具使用序列和重試模式]() | 🔄 |
+| P13.196 | **** | [#### 4. API 增強]() | 🔄 |
+| P13.197 | **** | [#- [ ] 新增 `/api/insights/usage-patterns` 端點]() | 🔄 |
+| P13.198 | **** | [#- [ ] 新增 `/api/insights/task-efficiency` 端點]() | 🔄 |
+| P13.199 | **** | [#- [ ] 擴展現有效能 API 包含管理層數據]() | 🔄 |
+| P13.200 | **** | [### 技術細節]() | 🔄 |
+| P13.201 | **** | [#### 新增數據結構設計]() | 🔄 |
+| P13.202 | **** | [#```go]() | 🔄 |
+| P13.203 | **** | [#type TaskSession struct {]() | 🔄 |
+| P13.204 | **** | [#    ID           string        `json:"id"`]() | 🔄 |
+| P13.205 | **** | [#    ChatID       int64         `json:"chat_id"`]() | 🔄 |
+| P13.206 | **** | [#    StartTime    time.Time     `json:"start_time"`]() | 🔄 |
+| P13.207 | **** | [#    EndTime      *time.Time    `json:"end_time,omitempty"`]() | 🔄 |
+| P13.208 | **** | [#    TaskType     string        `json:"task_type"`]() | 🔄 |
+| P13.209 | **** | [#    ProjectPath  string        `json:"project_path"`]() | 🔄 |
+| P13.210 | **** | [#    Success      *bool         `json:"success,omitempty"`]() | 🔄 |
+| P13.211 | **** | [#    ToolsUsed    []string      `json:"tools_used"`]() | 🔄 |
+| P13.212 | **** | [#    RetryCount   int           `json:"retry_count"`]() | 🔄 |
+| P13.213 | **** | [#    LinesChanged int           `json:"lines_changed"`]() | 🔄 |
+| P13.214 | **** | [#}]() | 🔄 |
+| P13.215 | **** | [#```]() | 🔄 |
+| P13.216 | **** | [#### 任務成功判斷邏輯]() | 🔄 |
+| P13.217 | **** | [#- 如果工具執行成功且無後續重試 → 成功]() | 🔄 |
+| P13.218 | **** | [#- 如果連續相同工具執行 > 3 次 → 可能遇到問題]() | 🔄 |
+| P13.219 | **** | [#- 如果長時間（>30分鐘）無操作 → 任務中斷]() | 🔄 |
+| P13.220 | **** | [#- 如果最後工具是測試/編譯且成功 → 高概率成功]() | 🔄 |
+| P13.221 | **** | [### 驗收標準]() | 🔄 |
+| P13.222 | **** | [#- [ ] 新數據結構能正確記錄任務會話]() | 🔄 |
+| P13.223 | **** | [#- [ ] 數據庫遷移正常執行，不影響現有功能]() | 🔄 |
+| P13.224 | **** | [#- [ ] API 能返回團隊使用模式分析數據]() | 🔄 |
+| P13.225 | **** | [#- [ ] 任務成功率判斷準確率 > 80%]() | 🔄 |
+| P13.226 | **** | [### 依賴關係]() | 🔄 |
+| P13.227 | **** | [#- 需要先了解現有 `PerformanceMetrics` 實現]() | 🔄 |
+| P13.228 | **** | [#- 依賴 SQLite storage 擴展]() | 🔄 |
+| P13.229 | **** | [#- 為後續 Manager View 功能提供數據基礎]() | 🔄 |
+| P13.230 | **🎨 Manager Dashboard 前端介面 - 主管視角的 AI 使用分析頁面** | [#55](https://github.com/chimerakang/alice/issues/55) | 🔄 |
+| P13.231 | **** | [#在現有的 React Dashboard 中新增主管專用的分析頁面，提供團隊 AI 使用效益的視覺化分析。]() | 🔄 |
+| P13.232 | **** | [### 具體任務]() | 🔄 |
+| P13.233 | **** | [#### 1. 新增頁面和路由]() | 🔄 |
+| P13.234 | **** | [#- [ ] 建立 `src/pages/ManagerDashboard.tsx`]() | 🔄 |
+| P13.235 | **** | [#- [ ] 在路由中添加 `/manager` 路由]() | 🔄 |
+| P13.236 | **** | [#- [ ] 在導航選單中新增 Manager 入口]() | 🔄 |
+| P13.237 | **** | [#### 2. 核心元件開發]() | 🔄 |
+| P13.238 | **** | [#- [ ] `src/components/manager/TeamEfficiencyChart.tsx` - 團隊效率趨勢圖]() | 🔄 |
+| P13.239 | **** | [#- [ ] `src/components/manager/CostAnalysisCard.tsx` - 成本分析卡片]() | 🔄 |
+| P13.240 | **** | [#- [ ] `src/components/manager/UserRankingTable.tsx` - 個人效益排行榜]() | 🔄 |
+| P13.241 | **** | [#- [ ] `src/components/manager/AlertsPanel.tsx` - 異常警告面板]() | 🔄 |
+| P13.242 | **** | [#### 3. 數據視覺化圖表]() | 🔄 |
+| P13.243 | **** | [#- [ ] ROI 趨勢線圖 (Chart.js 或 Recharts)]() | 🔄 |
+| P13.244 | **** | [#- [ ] 成本 vs 節省工時對比圓餅圖]() | 🔄 |
+| P13.245 | **** | [#- [ ] 個人效率雷達圖]() | 🔄 |
+| P13.246 | **** | [#- [ ] 工具使用分布橫條圖]() | 🔄 |
+| P13.247 | **** | [#### 4. 實時數據更新]() | 🔄 |
+| P13.248 | **** | [#- [ ] 整合 WebSocket 接收即時數據更新]() | 🔄 |
+| P13.249 | **** | [#- [ ] 實現數據自動刷新機制]() | 🔄 |
+| P13.250 | **** | [#- [ ] 添加手動重新整理按鈕]() | 🔄 |
+| P13.251 | **** | [#### 5. 響應式設計]() | 🔄 |
+| P13.252 | **** | [#- [ ] 支援桌面和平板顯示]() | 🔄 |
+| P13.253 | **** | [#- [ ] 確保圖表在不同螢幕尺寸下正常顯示]() | 🔄 |
+| P13.254 | **** | [#- [ ] 優化載入狀態和錯誤處理]() | 🔄 |
+| P13.255 | **** | [### UI/UX 設計要求]() | 🔄 |
+| P13.256 | **** | [#### 設計風格]() | 🔄 |
+| P13.257 | **** | [#- 延續現有 Dashboard 的設計語言]() | 🔄 |
+| P13.258 | **** | [#- 使用專業的色彩搭配 (深藍、綠色表示正向指標)]() | 🔄 |
+| P13.259 | **** | [#- 重要指標使用卡片佈局突出顯示]() | 🔄 |
+| P13.260 | **** | [#### 關鍵指標展示]() | 🔄 |
+| P13.261 | **** | [#```]() | 🔄 |
+| P13.262 | **** | [#📊 核心 KPI 區域（頁面頂部）]() | 🔄 |
+| P13.263 | **** | [#┌─────────────────────────────────────────────┐]() | 🔄 |
+| P13.264 | **** | [#│ 本月總花費  │  節省工時   │   ROI    │  警告數 │]() | 🔄 |
+| P13.265 | **** | [#│   $1,234   │   120 hr   │  +340%   │    2    │]() | 🔄 |
+| P13.266 | **** | [#└─────────────────────────────────────────────┘]() | 🔄 |
+| P13.267 | **** | [#📈 趨勢分析區域（中間）]() | 🔄 |
+| P13.268 | **** | [#┌─── 成本趨勢 ───┐ ┌─── 效率趨勢 ───┐]() | 🔄 |
+| P13.269 | **** | [#│      圖表     │ │      圖表     │]() | 🔄 |
+| P13.270 | **** | [#└───────────────┘ └───────────────┘]() | 🔄 |
+| P13.271 | **** | [#👥 團隊分析區域（底部）]() | 🔄 |
+| P13.272 | **** | [#┌─── 個人排行 ───┐ ┌─── 異常警告 ───┐  ]() | 🔄 |
+| P13.273 | **** | [#│     表格      │ │     列表      │]() | 🔄 |
+| P13.274 | **** | [#└───────────────┘ └───────────────┘]() | 🔄 |
+| P13.275 | **** | [#```]() | 🔄 |
+| P13.276 | **** | [#### 互動功能]() | 🔄 |
+| P13.277 | **** | [#- [ ] 點擊個人排行可查看詳細分析]() | 🔄 |
+| P13.278 | **** | [#- [ ] hover 顯示具體數值和說明]() | 🔄 |
+| P13.279 | **** | [#- [ ] 支援時間範圍選擇 (7天/30天/90天)]() | 🔄 |
+| P13.280 | **** | [#- [ ] 匯出報告功能 (PDF/CSV)]() | 🔄 |
+| P13.281 | **** | [### 技術實現]() | 🔄 |
+| P13.282 | **** | [#### 狀態管理]() | 🔄 |
+| P13.283 | **** | [#```typescript]() | 🔄 |
+| P13.284 | **** | [#interface ManagerDashboardState {]() | 🔄 |
+| P13.285 | **** | [#  teamStats: TeamStatsData;]() | 🔄 |
+| P13.286 | **** | [#  costAnalysis: CostAnalysisData;]() | 🔄 |
+| P13.287 | **** | [#  userRankings: UserRanking[];]() | 🔄 |
+| P13.288 | **** | [#  alerts: Alert[];]() | 🔄 |
+| P13.289 | **** | [#  timeRange: TimeRange;]() | 🔄 |
+| P13.290 | **** | [#  loading: boolean;]() | 🔄 |
+| P13.291 | ** null;** | [#  error: string ]() | 🔄 |
+| P13.292 | **** | [#}]() | 🔄 |
+| P13.293 | **** | [#```]() | 🔄 |
+| P13.294 | **** | [#### API 整合]() | 🔄 |
+| P13.295 | **** | [#- 串接 `/api/manager/dashboard` 獲取綜合數據]() | 🔄 |
+| P13.296 | **** | [#- 串接 `/api/manager/team-efficiency` 獲取效率分析]() | 🔄 |
+| P13.297 | **** | [#- 串接 `/api/manager/alerts` 獲取警告列表]() | 🔄 |
+| P13.298 | **** | [### 驗收標準]() | 🔄 |
+| P13.299 | **** | [#### 功能測試]() | 🔄 |
+| P13.300 | **** | [#- [ ] 頁面能正確載入並顯示數據]() | 🔄 |
+| P13.301 | **** | [#- [ ] 圖表互動功能正常]() | 🔄 |
+| P13.302 | **** | [#- [ ] 實時數據更新正常]() | 🔄 |
+| P13.303 | **** | [#- [ ] 響應式佈局在不同裝置上正常]() | 🔄 |
+| P13.304 | **** | [#### 效能測試  ]() | 🔄 |
+| P13.305 | **** | [#- [ ] 首屏載入時間 < 2秒]() | 🔄 |
+| P13.306 | **** | [#- [ ] 圖表渲染流暢，無卡頓]() | 🔄 |
+| P13.307 | **** | [#- [ ] WebSocket 連線穩定]() | 🔄 |
+| P13.308 | **** | [#### 使用體驗]() | 🔄 |
+| P13.309 | **** | [#- [ ] 主管能在 5秒內找到關鍵資訊]() | 🔄 |
+| P13.310 | **** | [#- [ ] 數據呈現清晰易懂]() | 🔄 |
+| P13.311 | **** | [#- [ ] 警告和異常能快速識別]() | 🔄 |
+| P13.312 | **** | [### 依賴關係]() | 🔄 |
+| P13.313 | **** | [#- 依賴 Issue #52 (PerformanceMetrics 擴展)]() | 🔄 |
+| P13.314 | **** | [#- 依賴後端 API 端點開發]() | 🔄 |
+| P13.315 | **** | [#- 需要前端圖表庫選型 (建議 Chart.js 或 Recharts)]() | 🔄 |
+| P13.316 | **📊 自動週報生成系統 - 團隊 AI 使用效益報告** | [#57](https://github.com/chimerakang/alice/issues/57) | 🔄 |
+| P13.317 | **** | [#開發自動化的週報生成系統，定期產生團隊 AI 使用效益報告，並支援郵件發送給管理層。]() | 🔄 |
+| P13.318 | **** | [### 具體任務]() | 🔄 |
+| P13.319 | **** | [#### 1. 報告生成核心邏輯]() | 🔄 |
+| P13.320 | **** | [#- [ ] 建立 `internal/app/reports.go` 報告生成模組]() | 🔄 |
+| P13.321 | **** | [#- [ ] 實現週報數據收集和分析算法]() | 🔄 |
+| P13.322 | **** | [#- [ ] 設計報告模板和格式化邏輯]() | 🔄 |
+| P13.323 | **** | [#- [ ] 添加報告歷史存儲功能]() | 🔄 |
+| P13.324 | **** | [#### 2. 報告內容設計]() | 🔄 |
+| P13.325 | **** | [#- [ ] **執行摘要**]() | 🔄 |
+| P13.326 | **** | [#  - [ ] 團隊總體 AI 使用概況]() | 🔄 |
+| P13.327 | **** | [#  - [ ] 成本效益快速摘要]() | 🔄 |
+| P13.328 | **** | [#  - [ ] 重要警告和建議]() | 🔄 |
+| P13.329 | **** | [#- [ ] **詳細分析**]() | 🔄 |
+| P13.330 | **** | [#  - [ ] 個人效益排行榜]() | 🔄 |
+| P13.331 | **** | [#  - [ ] 工具使用統計分析]() | 🔄 |
+| P13.332 | **** | [#  - [ ] 任務完成效率趨勢]() | 🔄 |
+| P13.333 | **** | [#  - [ ] 異常使用模式檢測]() | 🔄 |
+| P13.334 | **** | [#- [ ] **行動建議**]() | 🔄 |
+| P13.335 | **** | [#  - [ ] 識別需要 AI 使用培訓的成員]() | 🔄 |
+| P13.336 | **** | [#  - [ ] 成本優化建議]() | 🔄 |
+| P13.337 | **** | [#  - [ ] 效率提升建議]() | 🔄 |
+| P13.338 | **** | [#### 3. 多格式輸出支援]() | 🔄 |
+| P13.339 | **** | [#- [ ] **HTML 格式** (網頁檢視)]() | 🔄 |
+| P13.340 | **** | [#  - [ ] 響應式設計，支援手機閱讀]() | 🔄 |
+| P13.341 | **** | [#  - [ ] 包含互動式圖表]() | 🔄 |
+| P13.342 | **** | [#  - [ ] 支援列印友好格式]() | 🔄 |
+| P13.343 | **** | [#- [ ] **PDF 格式** (正式報告)]() | 🔄 |
+| P13.344 | **** | [#  - [ ] 專業排版和格式]() | 🔄 |
+| P13.345 | **** | [#  - [ ] 包含圖表和統計數據]() | 🔄 |
+| P13.346 | **** | [#  - [ ] 適合存檔和分享]() | 🔄 |
+| P13.347 | **** | [#- [ ] **JSON/CSV 格式** (數據匯出)]() | 🔄 |
+| P13.348 | **** | [#  - [ ] 原始數據匯出]() | 🔄 |
+| P13.349 | **** | [#  - [ ] 便於進一步分析]() | 🔄 |
+| P13.350 | **** | [#### 4. 排程系統]() | 🔄 |
+| P13.351 | **** | [#- [ ] 實現週報自動生成排程]() | 🔄 |
+| P13.352 | **** | [#- [ ] 支援自訂報告頻率 (週報/雙週/月報)]() | 🔄 |
+| P13.353 | **** | [#- [ ] 添加手動觸發報告生成功能]() | 🔄 |
+| P13.354 | **** | [#- [ ] 實現報告生成失敗重試機制]() | 🔄 |
+| P13.355 | **** | [#### 5. 通知和分發系統]() | 🔄 |
+| P13.356 | **** | [#- [ ] **郵件發送功能**]() | 🔄 |
+| P13.357 | **** | [#  - [ ] SMTP 設定和郵件範本]() | 🔄 |
+| P13.358 | **** | [#  - [ ] 支援多個收件人]() | 🔄 |
+| P13.359 | **** | [#  - [ ] HTML 和純文字雙格式]() | 🔄 |
+| P13.360 | **** | [#- [ ] **Telegram 通知**]() | 🔄 |
+| P13.361 | **** | [#  - [ ] 報告生成完成通知]() | 🔄 |
+| P13.362 | **** | [#  - [ ] 重要異常即時通知]() | 🔄 |
+| P13.363 | **** | [#  - [ ] 簡化版報告摘要]() | 🔄 |
+| P13.364 | **** | [#- [ ] **Web Dashboard 整合**]() | 🔄 |
+| P13.365 | **** | [#  - [ ] 報告歷史瀏覽頁面]() | 🔄 |
+| P13.366 | **** | [#  - [ ] 線上報告檢視器]() | 🔄 |
+| P13.367 | **** | [### 技術實現]() | 🔄 |
+| P13.368 | **** | [#### 報告數據結構]() | 🔄 |
+| P13.369 | **** | [#```go]() | 🔄 |
+| P13.370 | **** | [#type WeeklyReport struct {]() | 🔄 |
+| P13.371 | **** | [#    ID              string                 `json:"id"`]() | 🔄 |
+| P13.372 | **** | [#    GeneratedAt     time.Time             `json:"generated_at"`]() | 🔄 |
+| P13.373 | **** | [#    PeriodStart     time.Time             `json:"period_start"`]() | 🔄 |
+| P13.374 | **** | [#    PeriodEnd       time.Time             `json:"period_end"`]() | 🔄 |
+| P13.375 | **** | [#    TeamSummary     TeamSummary           `json:"team_summary"`]() | 🔄 |
+| P13.376 | **** | [#    CostAnalysis    CostAnalysis          `json:"cost_analysis"`]() | 🔄 |
+| P13.377 | **** | [#    UserInsights    []UserInsight         `json:"user_insights"`]() | 🔄 |
+| P13.378 | **** | [#    Recommendations []Recommendation      `json:"recommendations"`]() | 🔄 |
+| P13.379 | **** | [#    Alerts          []Alert               `json:"alerts"`]() | 🔄 |
+| P13.380 | **** | [#}]() | 🔄 |
+| P13.381 | **** | [#```]() | 🔄 |
+| P13.382 | **** | [#### 報告生成 API]() | 🔄 |
+| P13.383 | **** | [#```]() | 🔄 |
+| P13.384 | **** | [#POST /api/reports/generate - 手動生成報告]() | 🔄 |
+| P13.385 | **** | [#GET  /api/reports/weekly/{date} - 獲取指定週報]() | 🔄 |
+| P13.386 | **** | [#GET  /api/reports/list - 獲取報告清單]() | 🔄 |
+| P13.387 | **** | [#GET  /api/reports/{id}/pdf - 下載 PDF 格式]() | 🔄 |
+| P13.388 | **** | [#GET  /api/reports/{id}/html - 檢視 HTML 格式]() | 🔄 |
+| P13.389 | **** | [#```]() | 🔄 |
+| P13.390 | **** | [#### 排程設定]() | 🔄 |
+| P13.391 | **** | [#- 使用 Go 的 `time.Ticker` 實現定時任務]() | 🔄 |
+| P13.392 | **** | [#- 支援 cron 表達式設定複雜排程]() | 🔄 |
+| P13.393 | **** | [#- 配置檔案支援自訂報告時間]() | 🔄 |
+| P13.394 | **** | [### 報告範本設計]() | 🔄 |
+| P13.395 | **** | [#### 週報結構範例]() | 🔄 |
+| P13.396 | **** | [#```]() | 🔄 |
+| P13.397 | **** | [#📊 團隊 AI 使用週報 - 第 X 週]() | 🔄 |
+| P13.398 | **** | [#🎯 核心指標]() | 🔄 |
+| P13.399 | **** | [#- AI 總花費: $XXX (vs 上週 ±X%)]() | 🔄 |
+| P13.400 | **** | [#- 節省工時: XX 小時]() | 🔄 |
+| P13.401 | **** | [#- 投資回報率: XXX%]() | 🔄 |
+| P13.402 | **** | [#- 活躍用戶: X/Y 人]() | 🔄 |
+| P13.403 | **** | [#📈 趋势分析]() | 🔄 |
+| P13.404 | **** | [#[成本趨勢圖]]() | 🔄 |
+| P13.405 | **** | [#[效率趨勢圖]]() | 🔄 |
+| P13.406 | **** | [#👥 個人表現]() | 🔄 |
+| P13.407 | **** | [#1. 張三 - 效率提升 45% ⭐]() | 🔄 |
+| P13.408 | **** | [#2. 李四 - 穩定使用 ✅]() | 🔄 |
+| P13.409 | **** | [#3. 王五 - 需要指導 ⚠️]() | 🔄 |
+| P13.410 | **** | [#⚠️ 需要注意]() | 🔄 |
+| P13.411 | **** | [#- 檢測到異常使用模式 (詳情...)]() | 🔄 |
+| P13.412 | **** | [#- 成本增長 30%，建議審查]() | 🔄 |
+| P13.413 | **** | [#💡 建議行動]() | 🔄 |
+| P13.414 | **** | [#- 為王五安排 AI 工具使用培訓]() | 🔄 |
+| P13.415 | **** | [#- 檢討 debug 工作流程優化]() | 🔄 |
+| P13.416 | **** | [#```]() | 🔄 |
+| P13.417 | **** | [### 驗收標準]() | 🔄 |
+| P13.418 | **** | [#### 功能測試]() | 🔄 |
+| P13.419 | **** | [#- [ ] 能自動生成包含所有必要資訊的週報]() | 🔄 |
+| P13.420 | **** | [#- [ ] 排程系統準時觸發報告生成]() | 🔄 |
+| P13.421 | **** | [#- [ ] 多格式輸出正常 (HTML/PDF/JSON)]() | 🔄 |
+| P13.422 | **** | [#- [ ] 郵件發送成功率 > 95%]() | 🔄 |
+| P13.423 | **** | [#### 品質標準]() | 🔄 |
+| P13.424 | **** | [#- [ ] 報告數據準確性 > 95%]() | 🔄 |
+| P13.425 | **** | [#- [ ] PDF 格式專業美觀]() | 🔄 |
+| P13.426 | **** | [#- [ ] HTML 版本響應式正常]() | 🔄 |
+| P13.427 | **** | [#- [ ] 報告生成時間 < 10秒]() | 🔄 |
+| P13.428 | **** | [#### 使用體驗]() | 🔄 |
+| P13.429 | **** | [#- [ ] 管理者能快速 (< 2分鐘) 掌握團隊狀況]() | 🔄 |
+| P13.430 | **** | [#- [ ] 警告和建議具體可行]() | 🔄 |
+| P13.431 | **** | [#- [ ] 報告易於理解和分享]() | 🔄 |
+| P13.432 | **** | [### 配置選項]() | 🔄 |
+| P13.433 | **** | [#```json]() | 🔄 |
+| P13.434 | **** | [#{]() | 🔄 |
+| P13.435 | **** | [#  "reports": {]() | 🔄 |
+| P13.436 | **** | [#    "weekly": {]() | 🔄 |
+| P13.437 | **** | [#      "enabled": true,]() | 🔄 |
+| P13.438 | **** | [#      "schedule": "Mon 09:00",]() | 🔄 |
+| P13.439 | **** | [#      "recipients": ["manager@company.com"],]() | 🔄 |
+| P13.440 | **** | [#      "formats": ["html", "pdf"],]() | 🔄 |
+| P13.441 | **** | [#      "include_sensitive_data": false]() | 🔄 |
+| P13.442 | **** | [#    },]() | 🔄 |
+| P13.443 | **** | [#    "alerts": {]() | 🔄 |
+| P13.444 | **** | [#      "cost_threshold": 1000,]() | 🔄 |
+| P13.445 | **** | [#      "efficiency_drop_threshold": 0.2]() | 🔄 |
+| P13.446 | **** | [#    }]() | 🔄 |
+| P13.447 | **** | [#  }]() | 🔄 |
+| P13.448 | **** | [#}]() | 🔄 |
+| P13.449 | **** | [#```]() | 🔄 |
+| P13.450 | **** | [### 依賴關係]() | 🔄 |
+| P13.451 | **** | [#- 依賴 Issue #52 (PerformanceMetrics 擴展)]() | 🔄 |
+| P13.452 | **** | [#- 需要 PDF 生成函式庫 (建議 wkhtmltopdf 或 headless Chrome)]() | 🔄 |
+| P13.453 | **** | [#- 需要郵件發送配置 (SMTP)]() | 🔄 |
+| P13.454 | **🚨 智能異常檢測系統 - AI 使用模式風險預警** | [#59](https://github.com/chimerakang/alice/issues/59) | 🔄 |
+| P13.455 | **** | [#開發智能異常檢測系統，自動識別團隊 AI 使用中的風險模式，並即時發出預警，幫助管理層及早介入處理。]() | 🔄 |
+| P13.456 | **** | [### 具體任務]() | 🔄 |
+| P13.457 | **** | [#### 1. 異常模式定義]() | 🔄 |
+| P13.458 | **** | [#- [ ] **成本異常**]() | 🔄 |
+| P13.459 | **** | [#  - [ ] Token 消耗量突然激增 (> 平常 200%)]() | 🔄 |
+| P13.460 | **** | [#  - [ ] 單次對話成本過高 (> $5)]() | 🔄 |
+| P13.461 | **** | [#  - [ ] 連續高成本操作檢測]() | 🔄 |
+| P13.462 | **** | [#- [ ] **效率異常**]() | 🔄 |
+| P13.463 | **** | [#  - [ ] 同一任務重複執行 > 5 次]() | 🔄 |
+| P13.464 | **** | [#  - [ ] 任務完成時間異常延長]() | 🔄 |
+| P13.465 | **** | [#  - [ ] 工具使用序列不合理 (如反覆 read/write 同一檔案)]() | 🔄 |
+| P13.466 | **** | [#- [ ] **行為異常**]() | 🔄 |
+| P13.467 | **** | [#  - [ ] 非工作時間大量 AI 使用]() | 🔄 |
+| P13.468 | **** | [#  - [ ] 與專案無關的操作過多]() | 🔄 |
+| P13.469 | **** | [#  - [ ] 長時間無進展的工作會話]() | 🔄 |
+| P13.470 | **** | [#### 2. 檢測算法實現]() | 🔄 |
+| P13.471 | **** | [#- [ ] 建立 `internal/app/anomaly_detector.go`]() | 🔄 |
+| P13.472 | **** | [#- [ ] 實現基線建立算法 (正常使用模式學習)]() | 🔄 |
+| P13.473 | **** | [#- [ ] 開發即時異常評分系統]() | 🔄 |
+| P13.474 | **** | [#- [ ] 實現異常嚴重性分級 (低/中/高/緊急)]() | 🔄 |
+| P13.475 | **** | [#### 3. 預警觸發機制]() | 🔄 |
+| P13.476 | **** | [#- [ ] **即時監控**]() | 🔄 |
+| P13.477 | **** | [#  - [ ] 每次 AI 操作後進行異常評估]() | 🔄 |
+| P13.478 | **** | [#  - [ ] 累積異常評分超過閾值時觸發警告]() | 🔄 |
+| P13.479 | **** | [#  - [ ] 支援不同類型異常的獨立閾值設定]() | 🔄 |
+| P13.480 | **** | [#- [ ] **批次分析**]() | 🔄 |
+| P13.481 | **** | [#  - [ ] 每小時進行一次深度分析]() | 🔄 |
+| P13.482 | **** | [#  - [ ] 檢測較長週期的異常模式]() | 🔄 |
+| P13.483 | **** | [#  - [ ] 生成趨勢異常報告]() | 🔄 |
+| P13.484 | **** | [#### 4. 警告通知系統]() | 🔄 |
+| P13.485 | **** | [#- [ ] **多通道通知**]() | 🔄 |
+| P13.486 | **** | [#  - [ ] Telegram 即時通知]() | 🔄 |
+| P13.487 | **** | [#  - [ ] 郵件警告 (嚴重異常)]() | 🔄 |
+| P13.488 | **** | [#  - [ ] Dashboard 警告面板]() | 🔄 |
+| P13.489 | **** | [#  - [ ] WebSocket 推送到前端]() | 🔄 |
+| P13.490 | **** | [#- [ ] **分級通知策略**]() | 🔄 |
+| P13.491 | **** | [#  ```]() | 🔄 |
+| P13.492 | **** | [#  🟢 低級 - 僅 Dashboard 顯示]() | 🔄 |
+| P13.493 | **** | [#  🟡 中級 - Telegram 通知]() | 🔄 |
+| P13.494 | **** | [#  🟠 高級 - 郵件 + Telegram]() | 🔄 |
+| P13.495 | **** | [#  🔴 緊急 - 電話 + 多通道]() | 🔄 |
+| P13.496 | **** | [#  ```]() | 🔄 |
+| P13.497 | **** | [#### 5. 警告管理功能]() | 🔄 |
+| P13.498 | **** | [#- [ ] 警告確認和關閉機制]() | 🔄 |
+| P13.499 | **** | [#- [ ] 誤報標記和學習功能]() | 🔄 |
+| P13.500 | **** | [#- [ ] 警告歷史查詢和統計]() | 🔄 |
+| P13.501 | **** | [#- [ ] 自動警告降級 (問題解決後)]() | 🔄 |
+| P13.502 | **** | [### 異常檢測演算法]() | 🔄 |
+| P13.503 | **** | [#### 1. 統計基線法]() | 🔄 |
+| P13.504 | **** | [#```go]() | 🔄 |
+| P13.505 | **** | [#type BaselineModel struct {]() | 🔄 |
+| P13.506 | **** | [#    UserID          string]() | 🔄 |
+| P13.507 | **** | [#    AvgTokensPerHour float64]() | 🔄 |
+| P13.508 | **** | [#    AvgSessionLength time.Duration]() | 🔄 |
+| P13.509 | **** | [#    CommonTools     []string]() | 🔄 |
+| P13.510 | **** | [#    WorkingHours    TimeRange]() | 🔄 |
+| P13.511 | **** | [#    ProjectPatterns []string]() | 🔄 |
+| P13.512 | **** | [#}]() | 🔄 |
+| P13.513 | **** | [#```]() | 🔄 |
+| P13.514 | **** | [#### 2. 滑動視窗異常檢測]() | 🔄 |
+| P13.515 | **** | [#- 比較最近 1 小時與過去 7 天平均值]() | 🔄 |
+| P13.516 | **** | [#- 使用 Z-score 評估偏離程度]() | 🔄 |
+| P13.517 | **** | [#- 考慮時間週期性 (工作時間 vs 非工作時間)]() | 🔄 |
+| P13.518 | **** | [#### 3. 序列模式分析]() | 🔄 |
+| P13.519 | **** | [#- 分析工具使用序列的合理性]() | 🔄 |
+| P13.520 | **** | [#- 檢測循環和重複模式]() | 🔄 |
+| P13.521 | **** | [#- 識別非正常的工作流程]() | 🔄 |
+| P13.522 | **** | [### 預警規則配置]() | 🔄 |
+| P13.523 | **** | [#### 成本相關警告]() | 🔄 |
+| P13.524 | **** | [#```json]() | 🔄 |
+| P13.525 | **** | [#{]() | 🔄 |
+| P13.526 | **** | [#  "cost_alerts": {]() | 🔄 |
+| P13.527 | **** | [#    "hourly_limit": 50.0,]() | 🔄 |
+| P13.528 | **** | [#    "session_limit": 10.0,]() | 🔄 |
+| P13.529 | **** | [#    "spike_threshold": 3.0,]() | 🔄 |
+| P13.530 | **** | [#    "enabled": true]() | 🔄 |
+| P13.531 | **** | [#  }]() | 🔄 |
+| P13.532 | **** | [#}]() | 🔄 |
+| P13.533 | **** | [#```]() | 🔄 |
+| P13.534 | **** | [#### 效率相關警告]() | 🔄 |
+| P13.535 | **** | [#```json]() | 🔄 |
+| P13.536 | **** | [#{]() | 🔄 |
+| P13.537 | **** | [#  "efficiency_alerts": {]() | 🔄 |
+| P13.538 | **** | [#    "max_retries": 5,]() | 🔄 |
+| P13.539 | **** | [#    "session_timeout_minutes": 60,]() | 🔄 |
+| P13.540 | **** | [#    "repetitive_action_threshold": 10,]() | 🔄 |
+| P13.541 | **** | [#    "enabled": true]() | 🔄 |
+| P13.542 | **** | [#  }]() | 🔄 |
+| P13.543 | **** | [#}]() | 🔄 |
+| P13.544 | **** | [#```]() | 🔄 |
+| P13.545 | **** | [#### 行為相關警告]() | 🔄 |
+| P13.546 | **** | [#```json]() | 🔄 |
+| P13.547 | **** | [#{]() | 🔄 |
+| P13.548 | **** | [#  "behavior_alerts": {]() | 🔄 |
+| P13.549 | **** | [#    "off_hours_threshold": 0.3,]() | 🔄 |
+| P13.550 | **** | [#    "non_project_ratio": 0.5,]() | 🔄 |
+| P13.551 | **** | [#    "idle_session_minutes": 30,]() | 🔄 |
+| P13.552 | **** | [#    "enabled": true]() | 🔄 |
+| P13.553 | **** | [#  }]() | 🔄 |
+| P13.554 | **** | [#}]() | 🔄 |
+| P13.555 | **** | [#```]() | 🔄 |
+| P13.556 | **** | [### 機器學習增強 (進階功能)]() | 🔄 |
+| P13.557 | **** | [#### 1. 無監督學習]() | 🔄 |
+| P13.558 | **** | [#- [ ] 使用 Isolation Forest 檢測異常點]() | 🔄 |
+| P13.559 | **** | [#- [ ] K-means 聚類分析用戶行為模式]() | 🔄 |
+| P13.560 | **** | [#- [ ] 自動調整異常檢測閾值]() | 🔄 |
+| P13.561 | **** | [#### 2. 時間序列分析]() | 🔄 |
+| P13.562 | **** | [#- [ ] 季節性趨勢分析]() | 🔄 |
+| P13.563 | **** | [#- [ ] 異常點檢測和預測]() | 🔄 |
+| P13.564 | **** | [#- [ ] 自適應基線調整]() | 🔄 |
+| P13.565 | **** | [### API 設計]() | 🔄 |
+| P13.566 | **** | [#### 異常檢測 API]() | 🔄 |
+| P13.567 | **** | [#```]() | 🔄 |
+| P13.568 | **** | [#POST /api/anomaly/detect - 手動觸發異常檢測]() | 🔄 |
+| P13.569 | **** | [#GET  /api/anomaly/alerts - 獲取活躍警告列表]() | 🔄 |
+| P13.570 | **** | [#POST /api/anomaly/acknowledge/{id} - 確認警告]() | 🔄 |
+| P13.571 | **** | [#GET  /api/anomaly/history - 獲取異常歷史]() | 🔄 |
+| P13.572 | **** | [#PUT  /api/anomaly/settings - 更新檢測設定]() | 🔄 |
+| P13.573 | **** | [#```]() | 🔄 |
+| P13.574 | **** | [#### WebSocket 事件]() | 🔄 |
+| P13.575 | **** | [#```]() | 🔄 |
+| P13.576 | **** | [#anomaly_detected - 新異常檢測到]() | 🔄 |
+| P13.577 | **** | [#alert_resolved - 異常已解決]() | 🔄 |
+| P13.578 | **** | [#threshold_updated - 閾值已更新]() | 🔄 |
+| P13.579 | **** | [#```]() | 🔄 |
+| P13.580 | **** | [### 使用者介面]() | 🔄 |
+| P13.581 | **** | [#### Dashboard 警告面板]() | 🔄 |
+| P13.582 | **** | [#```]() | 🔄 |
+| P13.583 | **** | [#🚨 活躍警告 (3)]() | 🔄 |
+| P13.584 | **** | [#┌─────────────────────────────────────┐]() | 🔄 |
+| P13.585 | **** | [#│ 🔴 張三：Token 使用量異常 (2小時前)   │]() | 🔄 |
+| P13.586 | **** | [#│ 🟡 系統：成本增長 30% (今日)          │  ]() | 🔄 |
+| P13.587 | **** | [#│ 🟢 李四：重複操作檢測 (已確認)        │]() | 🔄 |
+| P13.588 | **** | [#└─────────────────────────────────────┘]() | 🔄 |
+| P13.589 | **** | [#```]() | 🔄 |
+| P13.590 | **** | [#### 異常詳情頁面]() | 🔄 |
+| P13.591 | **** | [#- 異常時間軸視圖]() | 🔄 |
+| P13.592 | **** | [#- 相關數據圖表]() | 🔄 |
+| P13.593 | **** | [#- 建議處理方式]() | 🔄 |
+| P13.594 | **** | [#- 類似異常歷史]() | 🔄 |
+| P13.595 | **** | [### 驗收標準]() | 🔄 |
+| P13.596 | **** | [#### 檢測準確性]() | 🔄 |
+| P13.597 | **** | [#- [ ] 真正異常檢測率 > 80%]() | 🔄 |
+| P13.598 | **** | [#- [ ] 誤報率 < 15%]() | 🔄 |
+| P13.599 | **** | [#- [ ] 檢測延遲 < 5 分鐘]() | 🔄 |
+| P13.600 | **** | [#### 系統效能]() | 🔄 |
+| P13.601 | **** | [#- [ ] 即時檢測不影響正常功能效能]() | 🔄 |
+| P13.602 | **** | [#- [ ] 批次分析在 1 分鐘內完成]() | 🔄 |
+| P13.603 | **** | [#- [ ] 警告通知 99% 成功送達]() | 🔄 |
+| P13.604 | **** | [#### 使用體驗]() | 🔄 |
+| P13.605 | **** | [#- [ ] 警告描述清晰易懂]() | 🔄 |
+| P13.606 | **** | [#- [ ] 提供具體的處理建議]() | 🔄 |
+| P13.607 | **** | [#- [ ] 支援快速確認和關閉]() | 🔄 |
+| P13.608 | **** | [### 風險評估]() | 🔄 |
+| P13.609 | **** | [#### 技術風險]() | 🔄 |
+| P13.610 | **** | [#- **誤報過多**：影響使用者信任，需要細調演算法]() | 🔄 |
+| P13.611 | **** | [#- **效能影響**：即時檢測可能影響系統回應速度]() | 🔄 |
+| P13.612 | **** | [#- **資料隱私**：使用者行為分析涉及隱私考量]() | 🔄 |
+| P13.613 | **** | [#### 業務風險]() | 🔄 |
+| P13.614 | **** | [#- **過度監控感**：可能讓團隊成員感到被監視]() | 🔄 |
+| P13.615 | **** | [#- **警告疲勞**：過多警告導致忽視真正問題]() | 🔄 |
+| P13.616 | **** | [#- **誤判成本**：錯誤警告可能中斷正常工作]() | 🔄 |
+| P13.617 | **** | [### 依賴關係]() | 🔄 |
+| P13.618 | **** | [#- 依賴 Issue #52 (PerformanceMetrics 擴展)]() | 🔄 |
+| P13.619 | **** | [#- 依賴實時數據收集系統]() | 🔄 |
+| P13.620 | **** | [#- 需要通知系統基礎設施]() | 🔄 |
+| P13.621 | **** | [#- 為 Issue #57 (週報系統) 提供異常數據]() | 🔄 |
+| P13.622 | **💰【商業功能】Alice SecureGuard - AI 開發防洩密系統** | [#60](https://github.com/chimerakang/alice/issues/60) | 🔄 |
+| P13.623 | **** | [#**核心恐懼**: 企業最怕 AI 把內部 API token、密碼、商業機密寫到程式碼裡]() | 🔄 |
+| P13.624 | **** | [#**解決方案**: 即時檢測 + 自動檢查點 + 智能修復 = 零洩密風險]() | 🔄 |
+| P13.625 | **** | [#**目標收入**: $4,470 萬美元/年 (2,500 家企業 × $149/月/開發者 × 10 開發者)]() | 🔄 |
+| P13.626 | **** | [### 核心功能設計]() | 🔄 |
+| P13.627 | **** | [#### 1. 三層防護架構]() | 🔄 |
+| P13.628 | **** | [##### 第一層: 即時敏感資訊檢測]() | 🔄 |
+| P13.629 | **** | [#- [ ] **Token 模式識別引擎**]() | 🔄 |
+| P13.630 | **** | [#  - [ ] AWS/Azure/GCP access keys]() | 🔄 |
+| P13.631 | **** | [#  - [ ] Database connection strings  ]() | 🔄 |
+| P13.632 | **** | [#  - [ ] API keys (Stripe, Slack, etc.)]() | 🔄 |
+| P13.633 | **** | [#  - [ ] SSH private keys]() | 🔄 |
+| P13.634 | **** | [#  - [ ] JWT secrets 和加密金鑰]() | 🔄 |
+| P13.635 | **** | [#- [ ] **自動檢查點 + 修復**]() | 🔄 |
+| P13.636 | **** | [#  - [ ] 檢測到敏感資訊立即建立 checkpoint]() | 🔄 |
+| P13.637 | **** | [#  - [ ] 自動替換為環境變數引用]() | 🔄 |
+| P13.638 | **** | [#  - [ ] 更新 .env.example 範本]() | 🔄 |
+| P13.639 | **** | [#  - [ ] 確保 .env 在 .gitignore 中]() | 🔄 |
+| P13.640 | **** | [##### 第二層: Git 預提交掃描]() | 🔄 |
+| P13.641 | **** | [#- [ ] **提交前安全掃描**]() | 🔄 |
+| P13.642 | **** | [#  - [ ] 全檔案樹敏感資訊掃描]() | 🔄 |
+| P13.643 | **** | [#  - [ ] .env 檔案洩漏檢測]() | 🔄 |
+| P13.644 | **** | [#  - [ ] 硬編碼密碼檢測]() | 🔄 |
+| P13.645 | **** | [#  - [ ] 第三方套件安全漏洞檢查]() | 🔄 |
+| P13.646 | **** | [#- [ ] **智能修復建議**]() | 🔄 |
+| P13.647 | **** | [#  - [ ] 一鍵修復所有安全問題]() | 🔄 |
+| P13.648 | **** | [#  - [ ] 生成安全修復報告]() | 🔄 |
+| P13.649 | **** | [#  - [ ] 可選擇個別修復或全部修復]() | 🔄 |
+| P13.650 | **** | [##### 第三層: 企業政策引擎]() | 🔄 |
+| P13.651 | **** | [#- [ ] **可配置安全政策**]() | 🔄 |
+| P13.652 | **** | [#  - [ ] 自定義敏感資訊規則]() | 🔄 |
+| P13.653 | **** | [#  - [ ] 部門別安全等級設定]() | 🔄 |
+| P13.654 | **** | [#  - [ ] 專案別風險閾值]() | 🔄 |
+| P13.655 | **** | [#  - [ ] 合規標準模板 (GDPR/SOX/ISO27001)]() | 🔄 |
+| P13.656 | **** | [#- [ ] **中央化監控**]() | 🔄 |
+| P13.657 | **** | [#  - [ ] 全公司安全事件儀表板]() | 🔄 |
+| P13.658 | **** | [#  - [ ] 風險熱點分析]() | 🔄 |
+| P13.659 | **** | [#  - [ ] 開發者安全分數排行]() | 🔄 |
+| P13.660 | **** | [#  - [ ] 自動生成合規報告]() | 🔄 |
+| P13.661 | **** | [#### 2. 企業級管理功能]() | 🔄 |
+| P13.662 | **** | [##### 管理員控制台]() | 🔄 |
+| P13.663 | **** | [#- [ ] **政策管理**]() | 🔄 |
+| P13.664 | **** | [#  - [ ] 安全規則編輯器]() | 🔄 |
+| P13.665 | **** | [#  - [ ] 例外情況審批流程]() | 🔄 |
+| P13.666 | **** | [#  - [ ] 緊急情況處理程序]() | 🔄 |
+| P13.667 | **** | [#  - [ ] 安全培訓追蹤]() | 🔄 |
+| P13.668 | **** | [#- [ ] **監控儀表板**]() | 🔄 |
+| P13.669 | **** | [#  - [ ] 即時安全事件流]() | 🔄 |
+| P13.670 | **** | [#  - [ ] 風險趨勢分析]() | 🔄 |
+| P13.671 | **** | [#  - [ ] 團隊安全評分]() | 🔄 |
+| P13.672 | **** | [#  - [ ] 合規狀態總覽]() | 🔄 |
+| P13.673 | **** | [##### 審計和報告]() | 🔄 |
+| P13.674 | **** | [#- [ ] **完整審計追蹤**]() | 🔄 |
+| P13.675 | **** | [#  - [ ] 每個 AI 操作的完整記錄]() | 🔄 |
+| P13.676 | **** | [#  - [ ] 敏感資訊處理日誌]() | 🔄 |
+| P13.677 | **** | [#  - [ ] 安全事件時間軸]() | 🔄 |
+| P13.678 | **** | [#  - [ ] 用戶行為分析]() | 🔄 |
+| P13.679 | **** | [#- [ ] **自動報告生成**]() | 🔄 |
+| P13.680 | **** | [#  - [ ] 週/月安全報告]() | 🔄 |
+| P13.681 | **** | [#  - [ ] 合規證明文件]() | 🔄 |
+| P13.682 | **** | [#  - [ ] 風險評估報告]() | 🔄 |
+| P13.683 | **** | [#  - [ ] 董事會級別摘要]() | 🔄 |
+| P13.684 | **** | [#### 3. 開發者體驗優化]() | 🔄 |
+| P13.685 | **** | [##### 無感知安全]() | 🔄 |
+| P13.686 | **** | [#- [ ] **背景運作**]() | 🔄 |
+| P13.687 | **** | [#  - [ ] 不干擾正常開發流程]() | 🔄 |
+| P13.688 | **** | [#  - [ ] 智能學習常用模式]() | 🔄 |
+| P13.689 | **** | [#  - [ ] 減少誤報率]() | 🔄 |
+| P13.690 | **** | [#  - [ ] 快速操作響應 (<0.5秒)]() | 🔄 |
+| P13.691 | **** | [#- [ ] **智能建議**]() | 🔄 |
+| P13.692 | **** | [#  - [ ] 安全最佳實踐提示]() | 🔄 |
+| P13.693 | **** | [#  - [ ] 個人化安全培訓]() | 🔄 |
+| P13.694 | **** | [#  - [ ] 程式碼安全評分]() | 🔄 |
+| P13.695 | **** | [#  - [ ] 同儕比較和激勵]() | 🔄 |
+| P13.696 | **** | [### 技術實現計劃]() | 🔄 |
+| P13.697 | **** | [#### Phase 1: 核心檢測引擎 (4 週)]() | 🔄 |
+| P13.698 | **** | [#基於現有的 Alice Security 模組擴展:]() | 🔄 |
+| P13.699 | **** | [#```go]() | 🔄 |
+| P13.700 | **** | [#// 擴展現有的 SecurityManager]() | 🔄 |
+| P13.701 | **** | [#type SecureGuardManager struct {]() | 🔄 |
+| P13.702 | **** | [#    *SecurityManager]() | 🔄 |
+| P13.703 | **** | [#    tokenDetector     *TokenDetector]() | 🔄 |
+| P13.704 | **** | [#    checkpointManager *CheckpointManager]() | 🔄 |
+| P13.705 | **** | [#    policyEngine      *PolicyEngine]() | 🔄 |
+| P13.706 | **** | [#    auditLogger       *AuditLogger]() | 🔄 |
+| P13.707 | **** | [#}]() | 🔄 |
+| P13.708 | **** | [#// 新增 Token 檢測器]() | 🔄 |
+| P13.709 | **** | [#type TokenDetector struct {]() | 🔄 |
+| P13.710 | **** | [#    patterns         []TokenPattern]() | 🔄 |
+| P13.711 | **** | [#    whitelist        []string]() | 🔄 |
+| P13.712 | **** | [#    customRules      map[string]*SecurityRule]() | 🔄 |
+| P13.713 | **** | [#    mlClassifier     *MLTokenClassifier  // 機器學習增強]() | 🔄 |
+| P13.714 | **** | [#}]() | 🔄 |
+| P13.715 | **** | [#```]() | 🔄 |
+| P13.716 | **** | [#### Phase 2: 企業管理介面 (6 週)]() | 🔄 |
+| P13.717 | **** | [#在現有 React Dashboard 基礎上增加:]() | 🔄 |
+| P13.718 | **** | [#- 企業安全控制台]() | 🔄 |
+| P13.719 | **** | [#- 政策管理介面]() | 🔄 |
+| P13.720 | **** | [#- 審計報告系統]() | 🔄 |
+| P13.721 | **** | [#- 用戶權限管理]() | 🔄 |
+| P13.722 | **** | [#### Phase 3: 高級功能 (8 週)]() | 🔄 |
+| P13.723 | **** | [#- ML 增強的誤報減少]() | 🔄 |
+| P13.724 | **** | [#- 多專案統一管理]() | 🔄 |
+| P13.725 | **** | [#- 第三方整合 (Slack/Teams 通知)]() | 🔄 |
+| P13.726 | **** | [#- API 開放給企業內部系統]() | 🔄 |
+| P13.727 | **** | [### 定價和市場策略]() | 🔄 |
+| P13.728 | **** | [#### 定價模式]() | 🔄 |
+| P13.729 | **** | [#```]() | 🔄 |
+| P13.730 | **** | [#個人版: 免費 (基本檢測)]() | 🔄 |
+| P13.731 | **** | [#├─ 本地 token 檢測]() | 🔄 |
+| P13.732 | **** | [#├─ 基本 checkpoint 功能]() | 🔄 |
+| P13.733 | **** | [#└─ 社群支援]() | 🔄 |
+| P13.734 | **** | [#企業版: $149/月/開發者 (最低 3 席位)]() | 🔄 |
+| P13.735 | **** | [#├─ 即時檢測 + 自動修復]() | 🔄 |
+| P13.736 | **** | [#├─ Git 預提交掃描]() | 🔄 |
+| P13.737 | **** | [#├─ 基礎企業政策]() | 🔄 |
+| P13.738 | **** | [#├─ 標準審計報告]() | 🔄 |
+| P13.739 | **** | [#└─ 電子郵件支援]() | 🔄 |
+| P13.740 | **** | [#白金版: $299/月/開發者]() | 🔄 |
+| P13.741 | **** | [#├─ 全功能安全引擎]() | 🔄 |
+| P13.742 | **** | [#├─ 高級 ML 檢測]() | 🔄 |
+| P13.743 | **** | [#├─ 自定義政策引擎]() | 🔄 |
+| P13.744 | **** | [#├─ 即時監控儀表板]() | 🔄 |
+| P13.745 | **** | [#├─ API 整合支援]() | 🔄 |
+| P13.746 | **** | [#└─ 專屬客戶成功經理]() | 🔄 |
+| P13.747 | **** | [#```]() | 🔄 |
+| P13.748 | **** | [#### 目標客戶分層]() | 🔄 |
+| P13.749 | **** | [#1. **金融科技**: 最高安全要求，願意付白金版價格]() | 🔄 |
+| P13.750 | **** | [#2. **中型軟體公司**: 企業版主要客群]() | 🔄 |
+| P13.751 | **** | [#3. **新創公司**: 個人版培養用戶習慣]() | 🔄 |
+| P13.752 | **** | [### 競爭優勢分析]() | 🔄 |
+| P13.753 | **** | [#### 技術優勢]() | 🔄 |
+| P13.754 | **** | [#- **即時防護**: 不是事後檢查，而是執行前攔截]() | 🔄 |
+| P13.755 | **** | [#- **自動修復**: 不只發現問題，還自動解決]() | 🔄 |
+| P13.756 | **** | [#- **無縫整合**: 基於 Alice 成熟的 AI 開發工具]() | 🔄 |
+| P13.757 | **** | [#### 市場優勢]() | 🔄 |
+| P13.758 | **** | [#- **市場空白**: 目前沒有專門的 AI 開發防洩密工具]() | 🔄 |
+| P13.759 | **** | [#- **真實痛點**: 解決企業最核心的安全恐懼]() | 🔄 |
+| P13.760 | **** | [#- **本地部署**: 企業數據不出門，信任度更高]() | 🔄 |
+| P13.761 | **** | [#### 商業優勢]() | 🔄 |
+| P13.762 | **** | [#- **訂閱模式**: 穩定的月度收入]() | 🔄 |
+| P13.763 | **** | [#- **企業市場**: 高價值客戶，低流失率]() | 🔄 |
+| P13.764 | **** | [#- **可擴展性**: 一次開發，服務全球企業]() | 🔄 |
+| P13.765 | **** | [### 風險評估和對策]() | 🔄 |
+| P13.766 | **** | [#### 技術風險]() | 🔄 |
+| P13.767 | **** | [#- **誤報率過高**: 投資 ML 模型訓練，持續優化]() | 🔄 |
+| P13.768 | **** | [#- **效能影響**: 異步處理，不影響開發體驗]() | 🔄 |
+| P13.769 | **** | [#- **繞過檢測**: 多層防護，持續更新檢測規則]() | 🔄 |
+| P13.770 | **** | [#### 市場風險]() | 🔄 |
+| P13.771 | **** | [#- **大廠競爭**: 搶先進入市場，建立品牌優勢]() | 🔄 |
+| P13.772 | **** | [#- **需求不足**: 透過安全事件案例教育市場]() | 🔄 |
+| P13.773 | **** | [#- **價格壓力**: 強調 ROI，證明防護價值]() | 🔄 |
+| P13.774 | **** | [#### 執行風險]() | 🔄 |
+| P13.775 | **** | [#- **技術複雜度**: 分階段開發，先 MVP 驗證]() | 🔄 |
+| P13.776 | **** | [#- **銷售困難**: 建立安全專家諮詢團隊]() | 🔄 |
+| P13.777 | **** | [#- **客戶成功**: 投資客戶成功團隊，確保續約]() | 🔄 |
+| P13.778 | **** | [### 成功指標]() | 🔄 |
+| P13.779 | **** | [#### 技術指標]() | 🔄 |
+| P13.780 | **** | [#- [ ] 檢測準確率 > 95%]() | 🔄 |
+| P13.781 | **** | [#- [ ] 誤報率 < 5%]() | 🔄 |
+| P13.782 | **** | [#- [ ] 響應時間 < 0.5 秒]() | 🔄 |
+| P13.783 | **** | [#- [ ] 系統可用性 > 99.9%]() | 🔄 |
+| P13.784 | **** | [#### 商業指標]() | 🔄 |
+| P13.785 | **** | [#- [ ] 第一年獲得 100 個付費企業客戶]() | 🔄 |
+| P13.786 | **** | [#- [ ] 客戶留存率 > 90%]() | 🔄 |
+| P13.787 | **** | [#- [ ] 年度經常性收入 > $500 萬]() | 🔄 |
+| P13.788 | **** | [#- [ ] 淨推薦分數 (NPS) > 50]() | 🔄 |
+| P13.789 | **** | [#### 市場指標]() | 🔄 |
+| P13.790 | **** | [#- [ ] 在 AI 開發安全領域建立領導地位]() | 🔄 |
+| P13.791 | **** | [#- [ ] 獲得主要安全認證 (SOC2, ISO27001)]() | 🔄 |
+| P13.792 | **** | [#- [ ] 成為行業標準解決方案]() | 🔄 |
+| P13.793 | **** | [#- [ ] 被主要分析師機構 (Gartner) 認可]() | 🔄 |
+| P13.794 | **** | [### 下一步行動]() | 🔄 |
+| P13.795 | **** | [#### 立即執行 (本週)]() | 🔄 |
+| P13.796 | **** | [#1. 市場驗證: 訪談 10 家企業的 CTO/CISO]() | 🔄 |
+| P13.797 | **** | [#2. 技術可行性: 評估現有代碼擴展難度]() | 🔄 |
+| P13.798 | **** | [#3. 競品分析: 研究 GitGuardian, TruffleHog 等工具]() | 🔄 |
+| P13.799 | **** | [#4. 定價測試: 確認企業付費意願和價格敏感度]() | 🔄 |
+| P13.800 | **** | [#### 短期目標 (1 個月)]() | 🔄 |
+| P13.801 | **** | [#1. 完成 MVP 功能設計和技術架構]() | 🔄 |
+| P13.802 | **** | [#2. 建立初始客戶試用計劃]() | 🔄 |
+| P13.803 | **** | [#3. 確定市場推廣策略]() | 🔄 |
+| P13.804 | **** | [#4. 組建產品開發團隊]() | 🔄 |
+| P13.805 | **** | [#### 中期目標 (3 個月)]() | 🔄 |
+| P13.806 | **** | [#1. 發布 MVP 版本]() | 🔄 |
+| P13.807 | **** | [#2. 獲得首批 10 個付費客戶]() | 🔄 |
+| P13.808 | **** | [#3. 完善產品功能和用戶體驗]() | 🔄 |
+| P13.809 | **** | [#4. 建立銷售和客戶成功流程]() | 🔄 |
+| P13.810 | **** | [#這個才是真正的商業機會! 解決企業對 AI 開發的核心恐懼。]() | 🔄 |
+| P13.811 | **🔍 智能 Token 檢測引擎 - SecureGuard 核心功能** | [#61](https://github.com/chimerakang/alice/issues/61) | 🔄 |
+| P13.812 | **** | [#開發智能 Token 檢測引擎，能夠即時識別程式碼中的各種敏感資訊，並與 Checkpoints 系統整合提供自動防護。]() | 🔄 |
+| P13.813 | **** | [### 具體任務]() | 🔄 |
+| P13.814 | **** | [#### 1. Token 檢測規則引擎]() | 🔄 |
+| P13.815 | **** | [#- [ ] **常見 Token 模式庫**]() | 🔄 |
+| P13.816 | **** | [#  - [ ] AWS Access/Secret Keys (AKIA*, ASIA*)]() | 🔄 |
+| P13.817 | **** | [#  - [ ] Google API Keys (AIza*)]() | 🔄 |
+| P13.818 | **** | [#  - [ ] Azure Keys 和 Connection Strings  ]() | 🔄 |
+| P13.819 | **** | [#  - [ ] GitHub Personal Access Tokens (ghp_*, gho_*)]() | 🔄 |
+| P13.820 | **** | [#  - [ ] Stripe API Keys (sk_live_*, pk_live_*)]() | 🔄 |
+| P13.821 | **** | [#  - [ ] Database URLs (postgres://, mysql://, mongodb://)]() | 🔄 |
+| P13.822 | **** | [#  - [ ] JWT Tokens 和 Secrets]() | 🔄 |
+| P13.823 | **** | [#  - [ ] SSH Private Keys (-----BEGIN RSA PRIVATE KEY-----)]() | 🔄 |
+| P13.824 | **** | [#  - [ ] API Endpoints 含認證參數]() | 🔄 |
+| P13.825 | **** | [#- [ ] **動態模式學習**]() | 🔄 |
+| P13.826 | **** | [#  - [ ] 企業自定義 Token 格式學習]() | 🔄 |
+| P13.827 | **** | [#  - [ ] 上下文相關的敏感度評估]() | 🔄 |
+| P13.828 | **** | [#  - [ ] 誤報模式識別和排除]() | 🔄 |
+| P13.829 | **** | [#  - [ ] 持續學習用戶標記結果]() | 🔄 |
+| P13.830 | **** | [#### 2. 智能檢測算法]() | 🔄 |
+| P13.831 | **** | [#- [ ] **多層檢測策略**]() | 🔄 |
+| P13.832 | **** | [#  ```go]() | 🔄 |
+| P13.833 | **** | [#  type DetectionStrategy struct {]() | 🔄 |
+| P13.834 | **** | [#      RegexPatterns    []Pattern     // 正規表達式檢測]() | 🔄 |
+| P13.835 | **** | [#      MLClassifier     *MLModel      // 機器學習分類器]() | 🔄 |
+| P13.836 | **** | [#      ContextAnalysis  *Analyzer     // 上下文語意分析]() | 🔄 |
+| P13.837 | **** | [#      EntropyAnalysis  *Entropy      // 熵值分析 (隨機字串)]() | 🔄 |
+| P13.838 | **** | [#      Whitelisting     *Whitelist    // 白名單排除機制]() | 🔄 |
+| P13.839 | **** | [#  }]() | 🔄 |
+| P13.840 | **** | [#  ```]() | 🔄 |
+| P13.841 | **** | [#- [ ] **實時檢測引擎**]() | 🔄 |
+| P13.842 | **** | [#  - [ ] 檔案變更監聽]() | 🔄 |
+| P13.843 | **** | [#  - [ ] 增量檢測 (只檢查變更部分)]() | 🔄 |
+| P13.844 | **** | [#  - [ ] 異步處理避免阻塞]() | 🔄 |
+| P13.845 | **** | [#  - [ ] 檢測結果快取優化]() | 🔄 |
+| P13.846 | **** | [#### 3. 自動修復機制]() | 🔄 |
+| P13.847 | **** | [#- [ ] **智能替換策略**]() | 🔄 |
+| P13.848 | **** | [#  ```python]() | 🔄 |
+| P13.849 | **** | [#  # 原始代碼]() | 🔄 |
+| P13.850 | **** | [#  DATABASE_URL = "postgresql://user:password@prod-db:5432/app"]() | 🔄 |
+| P13.851 | **** | [#  ]() | 🔄 |
+| P13.852 | **** | [#  # 自動修復後]() | 🔄 |
+| P13.853 | **** | [#  DATABASE_URL = os.getenv("DATABASE_URL")  # 添加環境變數引用]() | 🔄 |
+| P13.854 | **** | [#  ```]() | 🔄 |
+| P13.855 | **** | [#- [ ] **環境變數管理**]() | 🔄 |
+| P13.856 | **** | [#  - [ ] 自動生成 .env.example]() | 🔄 |
+| P13.857 | **** | [#  - [ ] 確保 .env 在 .gitignore]() | 🔄 |
+| P13.858 | **** | [#  - [ ] 生成安全的隨機 secrets]() | 🔄 |
+| P13.859 | **** | [#  - [ ] Docker/K8s secrets 整合]() | 🔄 |
+| P13.860 | **** | [#### 4. Checkpoint 深度整合]() | 🔄 |
+| P13.861 | **** | [#- [ ] **觸發機制增強**]() | 🔄 |
+| P13.862 | **** | [#  ```go]() | 🔄 |
+| P13.863 | **** | [#  // 擴展現有的 ShouldCreateCheckpoint]() | 🔄 |
+| P13.864 | **** | [#  func (cm *CheckpointManager) ShouldCreateSecurityCheckpoint(]() | 🔄 |
+| P13.865 | **** | [#      content string, ]() | 🔄 |
+| P13.866 | **** | [#      detectedTokens []DetectedToken]() | 🔄 |
+| P13.867 | **** | [#  ) (bool, SecurityRisk, string) {]() | 🔄 |
+| P13.868 | **** | [#      // 根據檢測到的 token 決定是否建立檢查點]() | 🔄 |
+| P13.869 | **** | [#  }]() | 🔄 |
+| P13.870 | **** | [#  ```]() | 🔄 |
+| P13.871 | **** | [#- [ ] **安全檢查點類型**]() | 🔄 |
+| P13.872 | **** | [#  - [ ] `TriggerSecurityBreach` - 檢測到高風險 token]() | 🔄 |
+| P13.873 | **** | [#  - [ ] `TriggerPreCommit` - Git 提交前安全檢查]() | 🔄 |
+| P13.874 | **** | [#  - [ ] `TriggerPolicyViolation` - 違反企業安全政策]() | 🔄 |
+| P13.875 | **** | [#  - [ ] `TriggerAutofix` - 自動修復前的備份]() | 🔄 |
+| P13.876 | **** | [#### 5. 企業政策引擎]() | 🔄 |
+| P13.877 | **** | [#- [ ] **可配置規則系統**]() | 🔄 |
+| P13.878 | **** | [#  ```yaml]() | 🔄 |
+| P13.879 | **** | [#  security_policies:]() | 🔄 |
+| P13.880 | **** | [#    high_risk_patterns:]() | 🔄 |
+| P13.881 | **** | [#      - pattern: "aws.*key"]() | 🔄 |
+| P13.882 | **** | [#        action: "block_and_checkpoint"]() | 🔄 |
+| P13.883 | **** | [#        severity: "critical"]() | 🔄 |
+| P13.884 | **** | [#    ]() | 🔄 |
+| P13.885 | **** | [#    medium_risk_patterns:]() | 🔄 |
+| P13.886 | **** | [#      - pattern: "password.*="]() | 🔄 |
+| P13.887 | **** | [#        action: "warn_and_suggest"]() | 🔄 |
+| P13.888 | **** | [#        severity: "medium"]() | 🔄 |
+| P13.889 | **** | [#        ]() | 🔄 |
+| P13.890 | **** | [#    whitelist_patterns:]() | 🔄 |
+| P13.891 | **** | [#      - "example.com"]() | 🔄 |
+| P13.892 | **** | [#      - "test_token_*"]() | 🔄 |
+| P13.893 | **** | [#      - "dummy_key_*"]() | 🔄 |
+| P13.894 | **** | [#  ```]() | 🔄 |
+| P13.895 | **** | [#- [ ] **部門層級政策**]() | 🔄 |
+| P13.896 | **** | [#  - [ ] 不同團隊不同安全等級]() | 🔄 |
+| P13.897 | **** | [#  - [ ] 專案別風險閾值設定]() | 🔄 |
+| P13.898 | **** | [#  - [ ] 角色別權限控制]() | 🔄 |
+| P13.899 | **** | [#  - [ ] 例外申請審批流程]() | 🔄 |
+| P13.900 | **** | [### 技術實現細節]() | 🔄 |
+| P13.901 | **** | [#### 新增 Go 模組結構]() | 🔄 |
+| P13.902 | **** | [#```]() | 🔄 |
+| P13.903 | **** | [#internal/app/security/]() | 🔄 |
+| P13.904 | **** | [#├── detector.go          # 主檢測引擎]() | 🔄 |
+| P13.905 | **** | [#├── patterns.go          # Token 模式定義]() | 🔄 |
+| P13.906 | **** | [#├── classifier.go        # ML 分類器]() | 🔄 |
+| P13.907 | **** | [#├── auto_fix.go         # 自動修復邏輯]() | 🔄 |
+| P13.908 | **** | [#├── policy_engine.go    # 企業政策引擎]() | 🔄 |
+| P13.909 | **** | [#└── integration.go      # Checkpoint 整合]() | 🔄 |
+| P13.910 | **** | [#```]() | 🔄 |
+| P13.911 | **** | [#### 關鍵資料結構]() | 🔄 |
+| P13.912 | **** | [#```go]() | 🔄 |
+| P13.913 | **** | [#type DetectedToken struct {]() | 🔄 |
+| P13.914 | **** | [#    Type        TokenType         `json:"type"`]() | 🔄 |
+| P13.915 | **** | [#    Pattern     string           `json:"pattern"`]() | 🔄 |
+| P13.916 | **** | [#    Location    FileLocation     `json:"location"`]() | 🔄 |
+| P13.917 | **** | [#    Confidence  float64          `json:"confidence"`]() | 🔄 |
+| P13.918 | **** | [#    Risk        RiskLevel        `json:"risk"`]() | 🔄 |
+| P13.919 | **** | [#    Context     string           `json:"context"`]() | 🔄 |
+| P13.920 | **** | [#    Suggestion  string           `json:"suggestion"`]() | 🔄 |
+| P13.921 | **** | [#}]() | 🔄 |
+| P13.922 | **** | [#type SecurityCheckpoint struct {]() | 🔄 |
+| P13.923 | **** | [#    *Checkpoint]() | 🔄 |
+| P13.924 | **** | [#    DetectedTokens  []DetectedToken  `json:"detected_tokens"`]() | 🔄 |
+| P13.925 | **** | [#    PolicyViolations []PolicyViolation `json:"policy_violations"`]() | 🔄 |
+| P13.926 | **** | [#    AutoFixApplied  bool             `json:"auto_fix_applied"`]() | 🔄 |
+| P13.927 | **** | [#    RequiresApproval bool            `json:"requires_approval"`]() | 🔄 |
+| P13.928 | **** | [#}]() | 🔄 |
+| P13.929 | **** | [#```]() | 🔄 |
+| P13.930 | **** | [#### API 端點設計]() | 🔄 |
+| P13.931 | **** | [#```]() | 🔄 |
+| P13.932 | **** | [#POST /api/security/scan - 手動掃描檔案或目錄]() | 🔄 |
+| P13.933 | **** | [#GET  /api/security/policies - 獲取安全政策]() | 🔄 |
+| P13.934 | **** | [#PUT  /api/security/policies - 更新安全政策]() | 🔄 |
+| P13.935 | **** | [#POST /api/security/whitelist - 添加白名單項目]() | 🔄 |
+| P13.936 | **** | [#GET  /api/security/events - 獲取安全事件歷史]() | 🔄 |
+| P13.937 | **** | [#POST /api/security/approve/{event_id} - 審批安全例外]() | 🔄 |
+| P13.938 | **** | [#```]() | 🔄 |
+| P13.939 | **** | [### 效能要求]() | 🔄 |
+| P13.940 | **** | [#### 響應時間]() | 🔄 |
+| P13.941 | **** | [#- [ ] 單檔案檢測 < 100ms]() | 🔄 |
+| P13.942 | **** | [#- [ ] 全專案掃描 < 5s (1000 檔案)]() | 🔄 |
+| P13.943 | **** | [#- [ ] 即時檢測延遲 < 50ms]() | 🔄 |
+| P13.944 | **** | [#- [ ] Checkpoint 建立 < 2s]() | 🔄 |
+| P13.945 | **** | [#### 準確性指標  ]() | 🔄 |
+| P13.946 | **** | [#- [ ] Token 檢測準確率 > 95%]() | 🔄 |
+| P13.947 | **** | [#- [ ] 誤報率 < 5%]() | 🔄 |
+| P13.948 | **** | [#- [ ] 漏報率 < 1% (高風險 token)]() | 🔄 |
+| P13.949 | **** | [#- [ ] 自動修復成功率 > 90%]() | 🔄 |
+| P13.950 | **** | [### 安全考量]() | 🔄 |
+| P13.951 | **** | [#### 資料保護]() | 🔄 |
+| P13.952 | **** | [#- [ ] 檢測過程中不記錄實際 token 內容]() | 🔄 |
+| P13.953 | **** | [#- [ ] 僅記錄 token 類型和位置資訊]() | 🔄 |
+| P13.954 | **** | [#- [ ] 本地處理，不上傳到雲端]() | 🔄 |
+| P13.955 | **** | [#- [ ] 檢測結果加密存儲]() | 🔄 |
+| P13.956 | **** | [#### 隱私保護]() | 🔄 |
+| P13.957 | **** | [#- [ ] 遵守企業資料保護政策]() | 🔄 |
+| P13.958 | **** | [#- [ ] 支援資料本地化要求]() | 🔄 |
+| P13.959 | **** | [#- [ ] 提供資料清除功能]() | 🔄 |
+| P13.960 | **** | [#- [ ] 審計日誌訪問控制]() | 🔄 |
+| P13.961 | **** | [### 測試策略]() | 🔄 |
+| P13.962 | **** | [#### 單元測試]() | 🔄 |
+| P13.963 | **** | [#- [ ] 各種 token 模式檢測測試]() | 🔄 |
+| P13.964 | **** | [#- [ ] 誤報和漏報測試用例]() | 🔄 |
+| P13.965 | **** | [#- [ ] 效能壓力測試]() | 🔄 |
+| P13.966 | **** | [#- [ ] 邊界條件測試]() | 🔄 |
+| P13.967 | **** | [#### 整合測試]() | 🔄 |
+| P13.968 | **** | [#- [ ] 與 Checkpoint 系統整合測試]() | 🔄 |
+| P13.969 | **** | [#- [ ] Git hook 整合測試]() | 🔄 |
+| P13.970 | **** | [#- [ ] 企業政策引擎測試]() | 🔄 |
+| P13.971 | **** | [#- [ ] 多用戶權限測試]() | 🔄 |
+| P13.972 | **** | [#### 安全測試]() | 🔄 |
+| P13.973 | **** | [#- [ ] 繞過檢測嘗試測試]() | 🔄 |
+| P13.974 | **** | [#- [ ] 資料洩漏風險評估]() | 🔄 |
+| P13.975 | **** | [#- [ ] 權限提升漏洞測試]() | 🔄 |
+| P13.976 | **** | [#- [ ] 拒絕服務攻擊測試]() | 🔄 |
+| P13.977 | **** | [### 部署和監控]() | 🔄 |
+| P13.978 | **** | [#### 部署要求]() | 🔄 |
+| P13.979 | **** | [#- [ ] 支援 Docker 容器化部署]() | 🔄 |
+| P13.980 | **** | [#- [ ] 企業防火牆內網部署]() | 🔄 |
+| P13.981 | **** | [#- [ ] 多實例負載均衡]() | 🔄 |
+| P13.982 | **** | [#- [ ] 零停機更新機制]() | 🔄 |
+| P13.983 | **** | [#### 監控指標]() | 🔄 |
+| P13.984 | **** | [#- [ ] 檢測引擎效能監控]() | 🔄 |
+| P13.985 | **** | [#- [ ] 安全事件統計]() | 🔄 |
+| P13.986 | **** | [#- [ ] 用戶行為分析]() | 🔄 |
+| P13.987 | **** | [#- [ ] 系統健康度監控]() | 🔄 |
+| P13.988 | **** | [### 依賴關係]() | 🔄 |
+| P13.989 | **** | [#- 基於現有的 `internal/app/security.go`]() | 🔄 |
+| P13.990 | **** | [#- 依賴 `internal/app/checkpoint.go` 的檢查點功能]() | 🔄 |
+| P13.991 | **** | [#- 需要擴展 SQLite schema 支援新的資料結構]() | 🔄 |
+| P13.992 | **** | [#- 前端需要新增安全管理介面]() | 🔄 |
+| P13.993 | **** | [#這是 Alice SecureGuard 的核心技術功能，為企業提供 AI 開發的安全保障。]() | 🔄 |
+| P13.994 | **Security 頁面：PII Detection Records 缺乏上下文資訊，無法判斷問題內容** | [#69](https://github.com/chimerakang/alice/issues/69) | 🔄 |
+| P13.995 | **** | [#Security & Privacy 頁面的 **Recent PII Detection Records** 表格目前只顯示 4 欄資訊，且 Masked Value 永遠是硬編碼的 `[redacted]`，完全無法幫助管理者理解實際發生了什麼：]() | 🔄 |
+| P13.996 | **** | [#使用者反饋：「有問題的資料，但根本不知道內情是什麼，隔靴搔癢」]() | 🔄 |
+| P13.997 | **** | [### 根本原因]() | 🔄 |
+| P13.998 | **** | [#### 後端 (security.go:421-427)]() | 🔄 |
+| P13.999 | **** | [#`DetectAndFilterPII` 記錄的 Details 太少：]() | 🔄 |
+| P13.1000 | **** | [#- `context` 永遠是 `"generic"`]() | 🔄 |
+| P13.1001 | **** | [#- `location` 永遠是 `"System"`]() | 🔄 |
+| P13.1002 | **** | [#- 沒有記錄 chat ID、user ID、message type 等資訊]() | 🔄 |
+| P13.1003 | **** | [#### 前端 (Security.tsx:198-204)]() | 🔄 |
+| P13.1004 | **** | [#- `masked_value` 硬編碼為 `"[redacted]"`]() | 🔄 |
+| P13.1005 | **** | [#- 只使用了 `details.context`，其他 Details 欄位完全沒利用]() | 🔄 |
+| P13.1006 | **** | [#- 沒有顯示匹配數量 (`details.matches` 已有但未用)]() | 🔄 |
+| P13.1007 | **** | [### 建議改善]() | 🔄 |
+| P13.1008 | **** | [#### 後端增強 — 記錄更多上下文]() | 🔄 |
+| P13.1009 | **** | [#在 `DetectAndFilterPII` 呼叫時傳入上下文：]() | 🔄 |
+| P13.1010 | **** | [#- `chat_id` / `user_id` — 誰觸發的]() | 🔄 |
+| P13.1011 | **** | [#- `message_type` — voice / photo / text / batch]() | 🔄 |
+| P13.1012 | **** | [#- `matched_count` — 匹配了幾個]() | 🔄 |
+| P13.1013 | **** | [#- `redacted_snippet` — 過濾後的文字片段（前 100 字，PII 已脫敏）]() | 🔄 |
+| P13.1014 | **** | [#- `action_taken` — filtered / logged / blocked]() | 🔄 |
+| P13.1015 | **** | [#### 前端增強 — 更豐富的展示]() | 🔄 |
+| P13.1016 | **** | [#- 顯示 Severity badge]() | 🔄 |
+| P13.1017 | **** | [#- 顯示匹配數量]() | 🔄 |
+| P13.1018 | **** | [#- 顯示訊息來源（Chat/User）]() | 🔄 |
+| P13.1019 | **** | [#- 顯示脫敏後的內容片段]() | 🔄 |
+| P13.1020 | **** | [#- 可展開的詳細資訊面板]() | 🔄 |
+| P13.1021 | **** | [### 影響範圍]() | 🔄 |
+| P13.1022 | **** | [#- `internal/app/security.go` — DetectAndFilterPII]() | 🔄 |
+| P13.1023 | **** | [#- `internal/app/telegram.go` — 呼叫 DetectAndFilterPII 時傳入上下文]() | 🔄 |
+| P13.1024 | **** | [#- `internal/app/agent.go` — 呼叫 DetectAndFilterPII 時傳入上下文]() | 🔄 |
+| P13.1025 | **** | [#- `frontend/src/pages/Security.tsx` — PII records 表格]() | 🔄 |
+| P13.1026 | **Security 頁面：Events Trend 圖表未跟隨時間篩選器 + 標題硬編碼** | [#70](https://github.com/chimerakang/alice/issues/70) | 🔄 |
+| P13.1027 | **** | [#Security & Privacy 頁面的 **Security Events Trend** 圖表有兩個問題：]() | 🔄 |
+| P13.1028 | **** | [#### Bug 1：標題硬編碼 "Last 12 Hours"]() | 🔄 |
+| P13.1029 | **** | [#`Security.tsx:384` 標題是靜態字串：]() | 🔄 |
+| P13.1030 | **** | [#```tsx]() | 🔄 |
+| P13.1031 | **** | [#Security Events Trend (Last 12 Hours)]() | 🔄 |
+| P13.1032 | **** | [#```]() | 🔄 |
+| P13.1033 | **** | [#無論用戶選擇 1h、6h、24h、7d、30d 或自訂範圍，標題永遠顯示 "Last 12 Hours"。]() | 🔄 |
+| P13.1034 | **** | [#### Bug 2：圖表資料永遠只顯示最近 12 小時]() | 🔄 |
+| P13.1035 | **** | [#`Security.tsx:135-160` 的 `eventTrends` 計算邏輯：]() | 🔄 |
+| P13.1036 | **** | [#```tsx]() | 🔄 |
+| P13.1037 | **** | [#// 永遠初始化最近 12 小時的 bucket]() | 🔄 |
+| P13.1038 | **** | [#for (let i = 11; i >= 0; i--) {]() | 🔄 |
+| P13.1039 | **** | [#  const d = new Date(now.getTime() - i * 60 * 60 * 1000);]() | 🔄 |
+| P13.1040 | **** | [#  // ...]() | 🔄 |
+| P13.1041 | **** | [#}]() | 🔄 |
+| P13.1042 | **** | [#```]() | 🔄 |
+| P13.1043 | **** | [#- 不管用戶選什麼時間範圍，圖表永遠只有最近 12 小時的 bucket]() | 🔄 |
+| P13.1044 | **** | [#- `useMemo` 的依賴只有 `[allEvents]`，完全忽略 `dateRange`]() | 🔄 |
+| P13.1045 | **** | [#- 選擇 7d 或 30d 時，圖表仍然只顯示 12 小時，需要按天或按 4 小時分組]() | 🔄 |
+| P13.1046 | **** | [### 預期行為]() | 🔄 |
+| P13.1047 | **** | [### 修復方向]() | 🔄 |
+| P13.1048 | **** | [#1. 讓 `eventTrends` 的 bucket 初始化根據 `dateRange` 動態調整]() | 🔄 |
+| P13.1049 | **** | [#2. 標題根據選擇的時間範圍動態顯示]() | 🔄 |
+| P13.1050 | **** | [#3. `useMemo` 加入 `dateRange` 依賴]() | 🔄 |
+| P13.1051 | **** | [### 影響範圍]() | 🔄 |
+| P13.1052 | **** | [#- `frontend/src/pages/Security.tsx` — eventTrends 計算邏輯 + 圖表標題]() | 🔄 |
+| P13.1053 | **🐛 Telegram /tasks 無法顯示 GitHub Issues（private repo 認證失敗）** | [#71](https://github.com/chimerakang/alice/issues/71) | ✅ |
+| P13.1054 | **** | [#Telegram 中執行 `/tasks` 命令時，無法從 GitHub API 取得 milestone 資料，總是 fallback 到 `docs/MASTER_TASKS.md` 解析，並顯示「💡 使用 /task-init 設定 GitHub Milestones」的誤導訊息。]() | 🔄 |
+| P13.1055 | **** | [#同樣的 `/tasks` 在 VS Code 中運作正常。]() | 🔄 |
+| P13.1056 | **** | [### 根本原因]() | 🔄 |
+| P13.1057 | **** | [#`fetchGitHubMilestones()` (`telegram.go:1608-1641`) 使用 raw `net/http` 請求 GitHub API，僅在 `GITHUB_TOKEN` 環境變數存在時才帶認證。對於 private repo，未認證請求回傳 404。]() | 🔄 |
+| P13.1058 | **** | [### 修復方案]() | 🔄 |
+| P13.1059 | **** | [#將 `fetchGitHubMilestones` 改為使用 `gh api` CLI 命令（與 VS Code skill 一致），利用已有的 `gh auth` 認證，無需額外設定 `GITHUB_TOKEN`。]() | 🔄 |
+| P13.1060 | **** | [### 影響範圍]() | 🔄 |
+| P13.1061 | **** | [#- `internal/app/telegram.go` — `fetchGitHubMilestones()` 函數]() | 🔄 |
+| P13.1062 | **** | [#- 所有使用 private GitHub repo 的專案在 Telegram 中的 `/tasks` 命令]() | 🔄 |
+| P13.1063 | **** | [### 重現步驟]() | 🔄 |
+| P13.1064 | **** | [#1. 設定 Alice 指向一個 private GitHub repo 的專案目錄]() | 🔄 |
+| P13.1065 | **** | [#2. 在 Telegram 中執行 `/tasks`]() | 🔄 |
+| P13.1066 | **** | [#3. 觀察結果為 MD fallback + "/task-init" 建議，而非即時 GitHub Issues 資料]() | 🔄 |
+| P13.1067 | **P13: Dynamic Model Routing - 智慧模型路由降低 Token 成本** | [#72](https://github.com/chimerakang/alice/issues/72) | ✅ |
+| P13.1068 | **** | [#實作動態模型路由（Dynamic Model Routing），根據任務複雜度自動選擇最經濟的模型，預估可降低 40-50% Token 成本。]() | 🔄 |
+| P13.1069 | **** | [#**此功能為 Alice Telegram Bot 專屬優勢** — VS Code / Terminal 直接使用 Claude Code CLI 無法實現動態路由，因為 hooks 是唯讀的 post-execution 回調，無法攔截或修改模型選擇。（但搭配未來的 VS Code Extension 可統一覆蓋，見 Phase 4）]() | 🔄 |
+| P13.1070 | **** | [### 背景]() | 🔄 |
+| P13.1071 | **** | [#目前 Alice 所有請求統一使用 config.json 中設定的模型（預設 Sonnet），但大量簡單任務（翻譯、解釋、格式轉換、查看檔案）不需要 Sonnet 等級的推理能力，可以交給 Haiku 處理以節省成本。]() | 🔄 |
+| P13.1072 | **** | [### 實作計畫]() | 🔄 |
+| P13.1073 | **** | [#### Phase 1: 靜態規則路由 + 手動覆寫指令]() | 🔄 |
+| P13.1074 | **** | [#**改動範圍**：~3 檔案，~100-150 行程式碼]() | 🔄 |
+| P13.1075 | **** | [##### 1.1 CLIClient 支援 model override]() | 🔄 |
+| P13.1076 | **** | [#- `api.go`: `Call()` / `CallStream()` 增加 `modelOverride string` 參數]() | 🔄 |
+| P13.1077 | **** | [#- 若 `modelOverride != ""` 則使用 override，否則用 `c.Model`（預設行為不變）]() | 🔄 |
+| P13.1078 | **** | [##### 1.2 Agent 層模型選擇]() | 🔄 |
+| P13.1079 | **** | [#- `agent.go`: 新增 `selectModel(userMessage string) string` 方法]() | 🔄 |
+| P13.1080 | **** | [#- `Agent.Run()` 傳遞選定的 model 給 `CallStream()`]() | 🔄 |
+| P13.1081 | **** | [##### 1.3 路由規則引擎]() | 🔄 |
+| P13.1082 | **** | [#```go]() | 🔄 |
+| P13.1083 | **** | [#type ModelRoute struct {]() | 🔄 |
+| P13.1084 | **** | [#    Pattern  string // 關鍵字或正則]() | 🔄 |
+| P13.1085 | **** | [#    Model    string // 目標模型]() | 🔄 |
+| P13.1086 | **** | [#    Priority int    // 優先順序]() | 🔄 |
+| P13.1087 | **** | [#}]() | 🔄 |
+| P13.1088 | **** | [#```]() | 🔄 |
+| P13.1089 | **** | [#**預設規則**：]() | 🔄 |
+| P13.1090 | **** | [##### 1.4 Session 隔離]() | 🔄 |
+| P13.1091 | **** | [#- Haiku 任務使用 one-shot 模式（不傳 `--resume`），避免 session 跨模型問題]() | 🔄 |
+| P13.1092 | **** | [#- Sonnet/Opus 任務繼續使用原本的 session resume 機制]() | 🔄 |
+| P13.1093 | **** | [##### 1.5 Config 擴展]() | 🔄 |
+| P13.1094 | **** | [#```json]() | 🔄 |
+| P13.1095 | **** | [#{]() | 🔄 |
+| P13.1096 | **** | [#  "model_routing": {]() | 🔄 |
+| P13.1097 | **** | [#    "enabled": true,]() | 🔄 |
+| P13.1098 | **** | [#    "default_model": "sonnet",]() | 🔄 |
+| P13.1099 | **** | [#    "fast_model": "claude-haiku-4-5-20251001",]() | 🔄 |
+| P13.1100 | **** | [#    "deep_model": "claude-opus-4-20250514",]() | 🔄 |
+| P13.1101 | **** | [#    "rules": [...]]() | 🔄 |
+| P13.1102 | **** | [#  }]() | 🔄 |
+| P13.1103 | **** | [#}]() | 🔄 |
+| P13.1104 | **** | [#```]() | 🔄 |
+| P13.1105 | **** | [##### 1.6 Decision Log 擴展]() | 🔄 |
+| P13.1106 | **** | [#- `logDecision()` 記錄 `selected_model` 和 `routing_reason`]() | 🔄 |
+| P13.1107 | **** | [#- 追蹤每次路由決策，支持後續 Dashboard 可視化]() | 🔄 |
+| P13.1108 | **** | [#---]() | 🔄 |
+| P13.1109 | **** | [#### Phase 2: OpenAI GPT-4o-mini 智慧路由（LLM-as-a-Router）]() | 🔄 |
+| P13.1110 | **** | [#**利用現有 OpenAI API Key**（已用於 Whisper 語音轉文字），零新依賴。]() | 🔄 |
+| P13.1111 | **** | [##### 為什麼選 GPT-4o-mini 而非 Anthropic Haiku]() | 🔄 |
+| P13.1112 | **** | [##### 2.1 實作方式]() | 🔄 |
+| P13.1113 | **** | [#複用 `config.Multimedia.OpenAIAPIKey`，新增一個 HTTP 呼叫：]() | 🔄 |
+| P13.1114 | **** | [#```go]() | 🔄 |
+| P13.1115 | **** | [#func classifyTaskComplexity(apiKey, userMessage string) (int, error) {]() | 🔄 |
+| P13.1116 | **** | [#    // POST https://api.openai.com/v1/chat/completions]() | 🔄 |
+| P13.1117 | **** | [#    // model: "gpt-4o-mini"]() | 🔄 |
+| P13.1118 | **** | [#    // max_tokens: 10]() | 🔄 |
+| P13.1119 | **** | [#    // system: "你是任務分類器。判斷複雜度：1=簡單 2=一般 3=複雜。只回數字。"]() | 🔄 |
+| P13.1120 | **** | [#    // user: userMessage]() | 🔄 |
+| P13.1121 | **** | [#    // 回傳: 1, 2, 或 3]() | 🔄 |
+| P13.1122 | **** | [#}]() | 🔄 |
+| P13.1123 | **** | [#```]() | 🔄 |
+| P13.1124 | **** | [#- Input: ~150 tokens（system prompt + 用戶訊息）]() | 🔄 |
+| P13.1125 | **** | [#- Output: ~5 tokens（只回一個數字）]() | 🔄 |
+| P13.1126 | **** | [#- 每 1000 次路由成本: ~$0.03]() | 🔄 |
+| P13.1127 | **** | [##### 2.2 三層 Fallback 策略]() | 🔄 |
+| P13.1128 | **** | [#```]() | 🔄 |
+| P13.1129 | **** | [#用戶訊息進來]() | 🔄 |
+| P13.1130 | **** | [#    │]() | 🔄 |
+| P13.1131 | **** | [#    ├─ /fast 前綴？ → 直接用 Haiku（0ms，用戶指定）]() | 🔄 |
+| P13.1132 | **** | [#    ├─ /deep 前綴？ → 直接用 Opus（0ms，用戶指定）]() | 🔄 |
+| P13.1133 | **** | [#    │]() | 🔄 |
+| P13.1134 | **** | [#    ├─ 有 OpenAI Key？]() | 🔄 |
+| P13.1135 | **** | [#    │   └─ YES → GPT-4o-mini 分類（~300ms）→ 選模型]() | 🔄 |
+| P13.1136 | **** | [#    │       ├─ 回傳 1 → Haiku]() | 🔄 |
+| P13.1137 | **** | [#    │       ├─ 回傳 2 → Sonnet]() | 🔄 |
+| P13.1138 | **** | [#    │       └─ 回傳 3 → Opus]() | 🔄 |
+| P13.1139 | **** | [#    │]() | 🔄 |
+| P13.1140 | **** | [#    └─ 沒有 Key → fallback 靜態規則（Phase 1 邏輯，0ms）]() | 🔄 |
+| P13.1141 | **** | [#```]() | 🔄 |
+| P13.1142 | **** | [##### 2.3 路由成本 vs 節省]() | 🔄 |
+| P13.1143 | **** | [#路由成本可忽略不計，投資報酬率極高。]() | 🔄 |
+| P13.1144 | **** | [#---]() | 🔄 |
+| P13.1145 | **** | [#### Phase 3: Dashboard 可視化（依賴 Phase 1+2）]() | 🔄 |
+| P13.1146 | **** | [#- 模型使用比例圓餅圖（Haiku / Sonnet / Opus）]() | 🔄 |
+| P13.1147 | **** | [#- 節省金額計算與顯示（"本週 Routed to Haiku: Saved $12.50"）]() | 🔄 |
+| P13.1148 | **** | [#- 路由決策歷史（每個 decision 標記 model + routing_reason）]() | 🔄 |
+| P13.1149 | **** | [#- 路由準確度追蹤（用戶是否用 /fast /deep 覆蓋了 AI 判斷）]() | 🔄 |
+| P13.1150 | **** | [#---]() | 🔄 |
+| P13.1151 | **** | [#### Phase 4: VS Code Extension 整合（長期）]() | 🔄 |
+| P13.1152 | **** | [#動態模型路由作為 Alice 後端核心功能，未來 VS Code Extension 作為薄前端時可直接受益：]() | 🔄 |
+| P13.1153 | **** | [#- Extension 透過 `POST /api/prompt` 提交訊息]() | 🔄 |
+| P13.1154 | **** | [#- Alice 後端統一處理路由邏輯]() | 🔄 |
+| P13.1155 | **** | [#- 所有前端（Telegram / VS Code / 未來 Mobile）共用同一套路由引擎]() | 🔄 |
+| P13.1156 | **** | [#---]() | 🔄 |
+| P13.1157 | **** | [### 技術限制]() | 🔄 |
+| P13.1158 | **** | [#- **VS Code / Terminal 原生不適用**：Claude Code hooks 是 post-execution 唯讀回調（但 Alice VS Code Extension 可繞過此限制）]() | 🔄 |
+| P13.1159 | **** | [#- **`--resume` + 不同 model**：行為未明確定義，Haiku 任務採用 one-shot 模式規避]() | 🔄 |
+| P13.1160 | **** | [#- **`--fallback-model`**：僅在模型超載時觸發，非任務路由]() | 🔄 |
+| P13.1161 | **** | [#- **OpenAI API 依賴**：Phase 2 需要網路連線，Phase 1 純本地不受影響]() | 🔄 |
+| P13.1162 | **** | [### 預估效益]() | 🔄 |
+| P13.1163 | **** | [### Checklist]() | 🔄 |
+| P13.1164 | **** | [#### Phase 1: 靜態規則路由]() | 🔄 |
+| P13.1165 | **** | [#- [x] 1.1: CLIClient model override 參數]() | 🔄 |
+| P13.1166 | **** | [#- [x] 1.2: Agent.selectModel() 方法]() | 🔄 |
+| P13.1167 | **** | [#- [x] 1.3: 路由規則引擎 + 預設規則]() | 🔄 |
+| P13.1168 | **** | [#- [x] 1.4: Session 隔離策略（Haiku one-shot）]() | 🔄 |
+| P13.1169 | **** | [#- [x] 1.5: Config model_routing 設定區塊]() | 🔄 |
+| P13.1170 | **** | [#- [x] 1.6: Decision Log 記錄 routing 資訊]() | 🔄 |
+| P13.1171 | **** | [#- [x] 1.7: `/fast` `/deep` Telegram 指令]() | 🔄 |
+| P13.1172 | **** | [#### Phase 2: OpenAI GPT-4o-mini 智慧路由]() | 🔄 |
+| P13.1173 | **** | [#- [x] 2.1: classifyTaskComplexity() 函數（複用 OpenAI API Key）]() | 🔄 |
+| P13.1174 | **** | [#- [x] 2.2: 三層 Fallback 策略整合]() | 🔄 |
+| P13.1175 | **** | [#- [x] 2.3: 路由延遲與成本監控]() | 🔄 |
+| P13.1176 | **** | [#### Phase 3: Dashboard 可視化]() | 🔄 |
+| P13.1177 | **** | [#- [x] 3.1: 模型使用比例圓餅圖]() | 🔄 |
+| P13.1178 | **** | [#- [x] 3.2: 節省金額計算與顯示]() | 🔄 |
+| P13.1179 | **** | [#- [x] 3.3: 路由決策歷史頁面]() | 🔄 |
+| P13.1180 | **** | [#### Phase 4: VS Code Extension 整合]() | 🔄 |
+| P13.1181 | **** | [#- [x] 4.1: /api/prompt endpoint 支援路由]() | 🔄 |
+| P13.1182 | **** | [#- [x] 4.2: Extension 透過 API 提交帶路由的請求]() | 🔄 |
+| P13.1183 | **P13: Per-Model Cost Tracking - 按模型記錄 Token 成本與用量** | [#73](https://github.com/chimerakang/alice/issues/73) | ✅ |
+| P13.1184 | **** | [#為 Dynamic Model Routing (#72) 提供記帳基礎設施。當不同請求使用不同模型時，需要按模型獨立記錄 token 用量與成本，支撐後續的成本分析和節省計算。]() | 🔄 |
+| P13.1185 | **** | [### 背景]() | 🔄 |
+| P13.1186 | **** | [#目前 `decision_logs` 和 `performance_metrics` 表**沒有 model 欄位**，model 資訊僅藏在 `context_json` 的 JSON blob 中，無法高效查詢或聚合。Dynamic Model Routing 啟用後，每個請求可能使用不同模型（Haiku / Sonnet / Opus），必須有結構化的記帳系統。]() | 🔄 |
+| P13.1187 | **** | [### 現狀分析]() | 🔄 |
+| P13.1188 | **** | [#### 缺失欄位]() | 🔄 |
+| P13.1189 | **** | [### 實作計畫]() | 🔄 |
+| P13.1190 | **** | [#### 1. Database Schema Migration]() | 🔄 |
+| P13.1191 | **** | [#```sql]() | 🔄 |
+| P13.1192 | **** | [#-- decision_logs: model 從 JSON blob 提升為獨立欄位]() | 🔄 |
+| P13.1193 | **** | [#ALTER TABLE decision_logs ADD COLUMN model TEXT DEFAULT '';]() | 🔄 |
+| P13.1194 | **** | [#ALTER TABLE decision_logs ADD COLUMN routing_reason TEXT DEFAULT '';]() | 🔄 |
+| P13.1195 | **** | [#ALTER TABLE decision_logs ADD COLUMN routing_latency_ms INTEGER DEFAULT 0;]() | 🔄 |
+| P13.1196 | **** | [#CREATE INDEX idx_decision_logs_model ON decision_logs(model);]() | 🔄 |
+| P13.1197 | **** | [#-- performance_metrics: 加 model 維度]() | 🔄 |
+| P13.1198 | **** | [#ALTER TABLE performance_metrics ADD COLUMN model TEXT DEFAULT '';]() | 🔄 |
+| P13.1199 | **** | [#CREATE INDEX idx_performance_metrics_model ON performance_metrics(model);]() | 🔄 |
+| P13.1200 | **** | [#```]() | 🔄 |
+| P13.1201 | **** | [#向後相容：舊紀錄 model 為空字串，查詢時 `COALESCE(model, 'sonnet')` 作為預設。]() | 🔄 |
+| P13.1202 | **** | [#### 2. Go Struct 擴展]() | 🔄 |
+| P13.1203 | **** | [#```go]() | 🔄 |
+| P13.1204 | **** | [#// TokenStats — 加 Model]() | 🔄 |
+| P13.1205 | **** | [#type TokenStats struct {]() | 🔄 |
+| P13.1206 | **** | [#    TotalInputTokens  int64]() | 🔄 |
+| P13.1207 | **** | [#    TotalOutputTokens int64]() | 🔄 |
+| P13.1208 | **** | [#    TotalCostUSD      float64]() | 🔄 |
+| P13.1209 | **** | [#    APICallCount      int]() | 🔄 |
+| P13.1210 | **** | [#    Model             string  // NEW]() | 🔄 |
+| P13.1211 | **** | [#}]() | 🔄 |
+| P13.1212 | **** | [#// DecisionLog — 加路由資訊]() | 🔄 |
+| P13.1213 | **** | [#type DecisionLog struct {]() | 🔄 |
+| P13.1214 | **** | [#    // ... 現有欄位 ...]() | 🔄 |
+| P13.1215 | **** | [#    Model          string  // NEW: "haiku", "sonnet", "opus"]() | 🔄 |
+| P13.1216 | **** | [#    RoutingReason  string  // NEW: "user_command", "ai_router", "static_rule", "default"]() | 🔄 |
+| P13.1217 | **** | [#    RoutingLatency int     // NEW: 路由判斷耗時 (ms)]() | 🔄 |
+| P13.1218 | **** | [#}]() | 🔄 |
+| P13.1219 | **** | [#// PerformanceMetrics — 加 model]() | 🔄 |
+| P13.1220 | **** | [#type PerformanceMetrics struct {]() | 🔄 |
+| P13.1221 | **** | [#    // ... 現有欄位 ...]() | 🔄 |
+| P13.1222 | **** | [#    Model string // NEW]() | 🔄 |
+| P13.1223 | **** | [#}]() | 🔄 |
+| P13.1224 | **** | [#```]() | 🔄 |
+| P13.1225 | **** | [#### 3. 函數簽名更新]() | 🔄 |
+| P13.1226 | **** | [#### 4. 模型費率表]() | 🔄 |
+| P13.1227 | **** | [#```go]() | 🔄 |
+| P13.1228 | **** | [#var ModelPricing = map[string]struct {]() | 🔄 |
+| P13.1229 | **** | [#    InputPerMTok  float64]() | 🔄 |
+| P13.1230 | **** | [#    OutputPerMTok float64]() | 🔄 |
+| P13.1231 | **** | [#}{]() | 🔄 |
+| P13.1232 | **** | [#    "haiku":  {1.00, 5.00},     // Claude Haiku 4.5]() | 🔄 |
+| P13.1233 | **** | [#    "sonnet": {3.00, 15.00},    // Claude Sonnet 4.5]() | 🔄 |
+| P13.1234 | **** | [#    "opus":   {15.00, 75.00},   // Claude Opus 4]() | 🔄 |
+| P13.1235 | **** | [#}]() | 🔄 |
+| P13.1236 | **** | [#```]() | 🔄 |
+| P13.1237 | **** | [#用途：]() | 🔄 |
+| P13.1238 | **** | [#- 驗證 CLI 回傳的 `cost_usd` 是否合理]() | 🔄 |
+| P13.1239 | **** | [#- 計算「如果用其他模型會花多少」（節省金額計算依賴此表）]() | 🔄 |
+| P13.1240 | **** | [#### 5. 新增 API Endpoints]() | 🔄 |
+| P13.1241 | **** | [#```]() | 🔄 |
+| P13.1242 | **** | [#GET /api/costs/by-model?hours=168]() | 🔄 |
+| P13.1243 | **** | [#→ { "haiku": {"calls": 45, "tokens": 52000, "cost": 0.12},]() | 🔄 |
+| P13.1244 | **** | [#     "sonnet": {"calls": 28, "tokens": 180000, "cost": 3.50},]() | 🔄 |
+| P13.1245 | **** | [#     "opus": {"calls": 5, "tokens": 95000, "cost": 8.20} }]() | 🔄 |
+| P13.1246 | **** | [#GET /api/costs/summary?hours=168]() | 🔄 |
+| P13.1247 | **** | [#→ { "total_cost": 11.82, "total_calls": 78, "total_tokens": 327000,]() | 🔄 |
+| P13.1248 | **** | [#     "by_model": {...}, "period_hours": 168 }]() | 🔄 |
+| P13.1249 | **** | [#```]() | 🔄 |
+| P13.1250 | **** | [### 影響範圍]() | 🔄 |
+| P13.1251 | **** | [### 依賴關係]() | 🔄 |
+| P13.1252 | **** | [#- 被依賴於：#72 (Dynamic Model Routing)]() | 🔄 |
+| P13.1253 | **** | [#- 被依賴於：Savings Calculator（省錢可視化 issue）]() | 🔄 |
+| P13.1254 | **** | [### Checklist]() | 🔄 |
+| P13.1255 | **** | [#- [ ] Database migration（decision_logs + performance_metrics 加 model 欄位）]() | 🔄 |
+| P13.1256 | **** | [#- [ ] TokenStats struct 加 Model 欄位]() | 🔄 |
+| P13.1257 | **** | [#- [ ] DecisionLog struct 加 Model / RoutingReason / RoutingLatency]() | 🔄 |
+| P13.1258 | **** | [#- [ ] RecordAPICall() 加 model 參數]() | 🔄 |
+| P13.1259 | **** | [#- [ ] logDecision() 使用獨立 model 欄位]() | 🔄 |
+| P13.1260 | **** | [#- [ ] SaveDecisionLog() INSERT 新欄位]() | 🔄 |
+| P13.1261 | **** | [#- [ ] GetDecisionLogs() / query 函數 SELECT 新欄位]() | 🔄 |
+| P13.1262 | **** | [#- [ ] 模型費率表 ModelPricing]() | 🔄 |
+| P13.1263 | **** | [#- [ ] GET /api/costs/by-model endpoint]() | 🔄 |
+| P13.1264 | **** | [#- [ ] GET /api/costs/summary endpoint]() | 🔄 |
+| P13.1265 | **** | [#- [ ] 向後相容：舊紀錄 model 預設為 config 中的模型]() | 🔄 |
+| P13.1266 | **P13: Savings Calculator - 智慧路由省錢可視化（商業賣點）** | [#74](https://github.com/chimerakang/alice/issues/74) | 🔄 |
+| P13.1267 | **** | [#在 Dashboard 中展示 Dynamic Model Routing 為用戶節省了多少錢。這是 Alice 的**核心商業賣點** — 讓用戶一眼看到「使用 Alice 比直接用 Claude Code 省了多少」。]() | 🔄 |
+| P13.1268 | **** | [### 商業價值]() | 🔄 |
+| P13.1269 | **** | [#> 「直接用 Claude Code CLI → 每次都燒 Sonnet/Opus 的錢」]() | 🔄 |
+| P13.1270 | **** | [#> 「透過 Alice → 智慧路由自動降級，簡單任務省 90% 成本」]() | 🔄 |
+| P13.1271 | **** | [#> **Dashboard 上一個綠色數字告訴你：本週省了 $18.70**]() | 🔄 |
+| P13.1272 | **** | [#這個數字就是用戶續用 Alice 的理由。]() | 🔄 |
+| P13.1273 | **** | [### 功能設計]() | 🔄 |
+| P13.1274 | **** | [#### 1. 節省金額計算邏輯]() | 🔄 |
+| P13.1275 | **** | [#核心問題：**「如果不用路由，全部用預設模型，要多花多少錢？」**]() | 🔄 |
+| P13.1276 | **** | [#```sql]() | 🔄 |
+| P13.1277 | **** | [#-- 「被路由到 Haiku 的任務，如果改用 Sonnet 要花多少？」]() | 🔄 |
+| P13.1278 | **** | [#SELECT ]() | 🔄 |
+| P13.1279 | **** | [#    -- 實際花費（Haiku 處理）]() | 🔄 |
+| P13.1280 | **** | [#    SUM(CASE WHEN model = 'haiku' THEN cost_usd ELSE 0 END) ]() | 🔄 |
+| P13.1281 | **** | [#        AS haiku_actual_cost,]() | 🔄 |
+| P13.1282 | **** | [#    ]() | 🔄 |
+| P13.1283 | **** | [#    -- 假設用 Sonnet 的花費（用費率表計算）]() | 🔄 |
+| P13.1284 | **** | [#    SUM(CASE WHEN model = 'haiku' ]() | 🔄 |
+| P13.1285 | **** | [#        THEN (tokens_input * 3.0 / 1000000) + (tokens_output * 15.0 / 1000000)]() | 🔄 |
+| P13.1286 | **** | [#        ELSE 0 END) ]() | 🔄 |
+| P13.1287 | **** | [#        AS haiku_would_cost_on_sonnet,]() | 🔄 |
+| P13.1288 | **** | [#    -- 總實際花費]() | 🔄 |
+| P13.1289 | **** | [#    SUM(cost_usd) AS total_actual_cost,]() | 🔄 |
+| P13.1290 | **** | [#    ]() | 🔄 |
+| P13.1291 | **** | [#    -- 總假設花費（全部用預設模型）]() | 🔄 |
+| P13.1292 | **** | [#    SUM((tokens_input * 3.0 / 1000000) + (tokens_output * 15.0 / 1000000)) ]() | 🔄 |
+| P13.1293 | **** | [#        AS total_default_model_cost]() | 🔄 |
+| P13.1294 | **** | [#FROM decision_logs ]() | 🔄 |
+| P13.1295 | **** | [#WHERE timestamp >= ? AND model != '';]() | 🔄 |
+| P13.1296 | **** | [#-- savings = total_default_model_cost - total_actual_cost]() | 🔄 |
+| P13.1297 | **** | [#```]() | 🔄 |
+| P13.1298 | **** | [#### 2. API Endpoints]() | 🔄 |
+| P13.1299 | **** | [#```]() | 🔄 |
+| P13.1300 | **** | [#GET /api/costs/savings?hours=168]() | 🔄 |
+| P13.1301 | **** | [#→ {]() | 🔄 |
+| P13.1302 | **** | [#    "period_hours": 168,]() | 🔄 |
+| P13.1303 | **** | [#    "actual_cost": 12.50,]() | 🔄 |
+| P13.1304 | **** | [#    "would_have_cost": 31.20,]() | 🔄 |
+| P13.1305 | **** | [#    "savings": 18.70,]() | 🔄 |
+| P13.1306 | **** | [#    "savings_percent": 59.9,]() | 🔄 |
+| P13.1307 | **** | [#    "routing_stats": {]() | 🔄 |
+| P13.1308 | **** | [#        "total_requests": 78,]() | 🔄 |
+| P13.1309 | **** | [#        "routed_to_haiku": 45,]() | 🔄 |
+| P13.1310 | **** | [#        "routed_to_sonnet": 28,]() | 🔄 |
+| P13.1311 | **** | [#        "routed_to_opus": 5,]() | 🔄 |
+| P13.1312 | **** | [#        "routing_method": {]() | 🔄 |
+| P13.1313 | **** | [#            "ai_router": 52,]() | 🔄 |
+| P13.1314 | **** | [#            "static_rule": 18,]() | 🔄 |
+| P13.1315 | **** | [#            "user_command": 8]() | 🔄 |
+| P13.1316 | **** | [#        }]() | 🔄 |
+| P13.1317 | **** | [#    },]() | 🔄 |
+| P13.1318 | **** | [#    "by_model": {]() | 🔄 |
+| P13.1319 | **** | [#        "haiku": {]() | 🔄 |
+| P13.1320 | **** | [#            "calls": 45, ]() | 🔄 |
+| P13.1321 | **** | [#            "actual_cost": 0.12, ]() | 🔄 |
+| P13.1322 | **** | [#            "would_have_cost": 3.80,]() | 🔄 |
+| P13.1323 | **** | [#            "saved": 3.68]() | 🔄 |
+| P13.1324 | **** | [#        },]() | 🔄 |
+| P13.1325 | **** | [#        "sonnet": {]() | 🔄 |
+| P13.1326 | **** | [#            "calls": 28, ]() | 🔄 |
+| P13.1327 | **** | [#            "actual_cost": 3.50, ]() | 🔄 |
+| P13.1328 | **** | [#            "would_have_cost": 3.50,]() | 🔄 |
+| P13.1329 | **** | [#            "saved": 0]() | 🔄 |
+| P13.1330 | **** | [#        },]() | 🔄 |
+| P13.1331 | **** | [#        "opus": {]() | 🔄 |
+| P13.1332 | **** | [#            "calls": 5, ]() | 🔄 |
+| P13.1333 | **** | [#            "actual_cost": 8.88, ]() | 🔄 |
+| P13.1334 | **** | [#            "would_have_cost": 3.50,]() | 🔄 |
+| P13.1335 | **** | [#            "saved": -5.38,]() | 🔄 |
+| P13.1336 | **** | [#            "note": "upgraded for complex tasks"]() | 🔄 |
+| P13.1337 | **** | [#        }]() | 🔄 |
+| P13.1338 | **** | [#    }]() | 🔄 |
+| P13.1339 | **** | [#  }]() | 🔄 |
+| P13.1340 | **** | [#```]() | 🔄 |
+| P13.1341 | **** | [#### 3. Dashboard 可視化元件]() | 🔄 |
+| P13.1342 | **** | [##### 3.1 Savings Banner（首頁頂部）]() | 🔄 |
+| P13.1343 | **** | [#```]() | 🔄 |
+| P13.1344 | **** | [#┌─────────────────────────────────────────────────┐]() | 🔄 |
+| P13.1345 | **** | [#│  💰 Smart Routing Savings                        │]() | 🔄 |
+| P13.1346 | **** | [#│                                                   │]() | 🔄 |
+| P13.1347 | **** | [#│  本週節省  $18.70  (60%)                          │]() | 🔄 |
+| P13.1348 | **** | [#│  ████████████████████░░░░░░░░                    │]() | 🔄 |
+| P13.1349 | **** | [#│  實際: $12.50          如果全用 Sonnet: $31.20    │]() | 🔄 |
+| P13.1350 | **** | [#└─────────────────────────────────────────────────┘]() | 🔄 |
+| P13.1351 | **** | [#```]() | 🔄 |
+| P13.1352 | **** | [##### 3.2 模型使用比例圓餅圖]() | 🔄 |
+| P13.1353 | **** | [#```]() | 🔄 |
+| P13.1354 | **** | [#┌──────────────────────┐]() | 🔄 |
+| P13.1355 | **** | [#│  Model Distribution   │]() | 🔄 |
+| P13.1356 | **** | [#│                       │]() | 🔄 |
+| P13.1357 | **** | [#│      ┌─────┐          │]() | 🔄 |
+| P13.1358 | **** | [#│     /  62%  \   Haiku │]() | 🔄 |
+| P13.1359 | **** | [#│    │  Haiku  │        │]() | 🔄 |
+| P13.1360 | **** | [#│     \ 30%   /  Sonnet │]() | 🔄 |
+| P13.1361 | **** | [#│      └─────┘          │]() | 🔄 |
+| P13.1362 | **** | [#│        8%     Opus    │]() | 🔄 |
+| P13.1363 | **** | [#│                       │]() | 🔄 |
+| P13.1364 | **** | [#│  Total: 78 requests   │]() | 🔄 |
+| P13.1365 | **** | [#└──────────────────────┘]() | 🔄 |
+| P13.1366 | **** | [#```]() | 🔄 |
+| P13.1367 | **** | [##### 3.3 路由決策時間線（Timeline 頁面增強）]() | 🔄 |
+| P13.1368 | **** | [#每個 decision 旁邊顯示：]() | 🔄 |
+| P13.1369 | **** | [#- 🟢 Haiku — 省 $0.08（AI Router）]() | 🔄 |
+| P13.1370 | **** | [#- 🟡 Sonnet — 預設]() | 🔄 |
+| P13.1371 | **** | [#- 🔴 Opus — 升級 +$1.20（User /deep）]() | 🔄 |
+| P13.1372 | **** | [##### 3.4 每日/每週趨勢圖]() | 🔄 |
+| P13.1373 | **** | [#```]() | 🔄 |
+| P13.1374 | **** | [#Cost Trend (7 days)]() | 🔄 |
+| P13.1375 | **** | [#$  │    ╭─ Would have cost (Sonnet)]() | 🔄 |
+| P13.1376 | **** | [#   │   ╱  ╲]() | 🔄 |
+| P13.1377 | **** | [#   │  ╱    ╲────]() | 🔄 |
+| P13.1378 | **** | [#   │ ╱ ╭────────── Actual cost (routed)]() | 🔄 |
+| P13.1379 | **** | [#   │╱─╱]() | 🔄 |
+| P13.1380 | **** | [#   └────────────────]() | 🔄 |
+| P13.1381 | **** | [#     Mon  Tue  Wed  Thu  Fri  Sat  Sun]() | 🔄 |
+| P13.1382 | **** | [#     ]() | 🔄 |
+| P13.1383 | **** | [#     Shaded area = savings]() | 🔄 |
+| P13.1384 | **** | [#```]() | 🔄 |
+| P13.1385 | **** | [#### 4. Telegram 指令]() | 🔄 |
+| P13.1386 | **** | [#```]() | 🔄 |
+| P13.1387 | **** | [#/savings]() | 🔄 |
+| P13.1388 | **** | [#→ 📊 本週路由統計]() | 🔄 |
+| P13.1389 | **** | [#   Haiku: 45 次 (57.7%) — 省 $3.68]() | 🔄 |
+| P13.1390 | **** | [#   Sonnet: 28 次 (35.9%) — 預設]() | 🔄 |
+| P13.1391 | **** | [#   Opus: 5 次 (6.4%) — 複雜任務]() | 🔄 |
+| P13.1392 | **** | [#   💰 實際花費: $12.50]() | 🔄 |
+| P13.1393 | **** | [#   💚 節省金額: $18.70 (60%)]() | 🔄 |
+| P13.1394 | **** | [#   ]() | 🔄 |
+| P13.1395 | **** | [#   如果全部使用 Sonnet: $31.20]() | 🔄 |
+| P13.1396 | **** | [#```]() | 🔄 |
+| P13.1397 | **** | [### 實作檔案]() | 🔄 |
+| P13.1398 | **** | [### 依賴關係]() | 🔄 |
+| P13.1399 | **** | [#- 依賴：#73 (Per-Model Cost Tracking — DB schema + API)]() | 🔄 |
+| P13.1400 | **** | [#- 依賴：#72 (Dynamic Model Routing — 產生不同模型的紀錄)]() | 🔄 |
+| P13.1401 | **** | [#- 執行順序：#72 → #73 → 本 issue]() | 🔄 |
+| P13.1402 | **** | [### Checklist]() | 🔄 |
+| P13.1403 | **** | [#### Backend]() | 🔄 |
+| P13.1404 | **** | [#- [ ] `GetCostSavings()` SQL 查詢（計算實際 vs 假設成本）]() | 🔄 |
+| P13.1405 | **** | [#- [ ] `GET /api/costs/savings` endpoint]() | 🔄 |
+| P13.1406 | **** | [#- [ ] 模型費率表 `ModelPricing`（用於假設成本計算）]() | 🔄 |
+| P13.1407 | **** | [#- [ ] `/savings` Telegram 指令]() | 🔄 |
+| P13.1408 | **** | [#### Frontend]() | 🔄 |
+| P13.1409 | **** | [#- [ ] SavingsBanner 元件（節省金額 + 百分比 + 進度條）]() | 🔄 |
+| P13.1410 | **** | [#- [ ] ModelDistributionChart 圓餅圖（Haiku/Sonnet/Opus 比例）]() | 🔄 |
+| P13.1411 | **** | [#- [ ] CostTrendChart 雙線圖（實際 vs 假設，shaded area = savings）]() | 🔄 |
+| P13.1412 | **** | [#- [ ] Decision Timeline 增強（每個 decision 標記模型 + 節省金額）]() | 🔄 |
+| P13.1413 | **** | [#- [ ] Dashboard 頁面整合]() | 🔄 |
+| P13.1414 | **** | [#- [ ] Performance 頁面整合]() | 🔄 |
+| P13.1415 | **回填歷史資料缺失的 model 與費用欄位** | [#75](https://github.com/chimerakang/alice/issues/75) | ✅ |
+| P13.1416 | **** | [#資料庫中的 `decision_logs` 和 `performance_metrics` 表在 Issue #72/#73 實作時才新增了 `model` 欄位（ALTER TABLE），導致先前的歷史資料幾乎全部缺失 model 資訊：]() | 🔄 |
+| P13.1417 | **** | [#- `decision_logs`: 1043/1048 筆缺少 model（99.5%）]() | 🔄 |
+| P13.1418 | **** | [#- `performance_metrics`: 914/919 筆缺少 model（99.5%）]() | 🔄 |
+| P13.1419 | **** | [#這些空值會影響 cost savings 計算（Issue #74）和 model routing 統計的準確性。]() | 🔄 |
+| P13.1420 | **** | [### 任務]() | 🔄 |
+| P13.1421 | **** | [#撰寫一次性的資料庫遷移/修復腳本，將所有 model 為空的歷史紀錄回填為 `claude-sonnet-4-5-20250929`（當時使用的預設模型），並計算對應的費用。]() | 🔄 |
+| P13.1422 | **** | [### Sub-tasks]() | 🔄 |
+| P13.1423 | **** | [#- [ ] 為 `decision_logs` 表中 model 為空的紀錄回填 model 為 `claude-sonnet-4-5-20250929`]() | 🔄 |
+| P13.1424 | **** | [#- [ ] 根據 tokens_input/tokens_output 計算並回填 `cost_usd`（使用 Sonnet 定價）]() | 🔄 |
+| P13.1425 | **** | [#- [ ] 為 `performance_metrics` 表中 model 為空的紀錄回填 model 為 `claude-sonnet-4-5-20250929`]() | 🔄 |
+| P13.1426 | **** | [#- [ ] 根據 tokens_used 計算並回填 `estimated_cost`]() | 🔄 |
+| P13.1427 | **** | [#- [ ] 確保修復腳本具有冪等性（重複執行不會造成問題）]() | 🔄 |
+| P13.1428 | **** | [#- [ ] 修復後驗證 /api/costs/savings 端點數據正確性]() | 🔄 |
+| P13.1429 | **Bot 多國語系支援 — 可切換顯示語言** | [#76](https://github.com/chimerakang/alice/issues/76) | 🔄 |
+| P13.1430 | **** | [#目前 Alice Bot 的所有回應訊息（系統提示、指令說明、錯誤訊息等）皆為硬編碼的繁體中文。隨著使用者群體擴展，需要支援多國語系切換功能。]() | 🔄 |
+| P13.1431 | **** | [### 目標]() | 🔄 |
+| P13.1432 | **** | [#讓使用者可以透過指令切換 Bot 的顯示語言，所有 Bot 產生的 UI 文字（非 AI 回覆內容）應根據使用者選擇的語系顯示。]() | 🔄 |
+| P13.1433 | **** | [### 範圍]() | 🔄 |
+| P13.1434 | **** | [#需要國際化（i18n）的項目：]() | 🔄 |
+| P13.1435 | **** | [#- Telegram Bot 指令回應訊息（如 `/help`、`/status`、錯誤提示）]() | 🔄 |
+| P13.1436 | **** | [#- Dashboard 前端 UI 文字]() | 🔄 |
+| P13.1437 | **** | [#- 系統通知與狀態訊息]() | 🔄 |
+| P13.1438 | **** | [#**不包含**：AI Agent 的對話回覆（由 Claude 模型自行決定語言）]() | 🔄 |
+| P13.1439 | **** | [### Sub-tasks]() | 🔄 |
+| P13.1440 | **** | [#- [ ] 設計 i18n 架構（語系檔格式、載入機制）]() | 🔄 |
+| P13.1441 | **** | [#- [ ] 建立語系檔目錄結構（如 `locales/zh-TW.json`, `locales/en.json`）]() | 🔄 |
+| P13.1442 | **** | [#- [ ] 抽取現有硬編碼文字到語系檔]() | 🔄 |
+| P13.1443 | **** | [#- [ ] 實作 Telegram Bot `/lang` 指令切換語言]() | 🔄 |
+| P13.1444 | **** | [#- [ ] 每個 chat 獨立儲存語系偏好（持久化到 SQLite）]() | 🔄 |
+| P13.1445 | **** | [#- [ ] 前端 Dashboard 語系切換功能]() | 🔄 |
+| P13.1446 | **** | [#- [ ] 初始支援語系：繁體中文（zh-TW）、英文（en）]() | 🔄 |
+| P13.1447 | **** | [#- [ ] 撰寫新增語系的開發指南文件]() | 🔄 |
+| P13.1448 | **/usage 指令增加按模型分類的 token 用量與費用顯示** | [#77](https://github.com/chimerakang/alice/issues/77) | ✅ |
+| P13.1449 | **** | [#目前 `/usage` 指令只顯示整體的 input/output tokens 和總費用，沒有按不同模型（Haiku、Sonnet、Opus）分類顯示。自從 Issue #72 實作 Smart Routing 後，Bot 會動態路由到不同模型，但 `/usage` 無法反映每個模型各自用了多少 token 和費用。]() | 🔄 |
+| P13.1450 | **** | [#### 現況]() | 🔄 |
+| P13.1451 | **** | [#```]() | 🔄 |
+| P13.1452 | **** | [#💰 Token 用量]() | 🔄 |
+| P13.1453 | **** | [#本次對話:]() | 🔄 |
+| P13.1454 | **** | [#  輸入: 12345 tokens]() | 🔄 |
+| P13.1455 | **** | [#  輸出: 6789 tokens]() | 🔄 |
+| P13.1456 | **** | [#  CLI 呼叫: 10 次]() | 🔄 |
+| P13.1457 | **** | [#  CLI 費用: $0.1234]() | 🔄 |
+| P13.1458 | **** | [#模式: Claude Max 訂閱]() | 🔄 |
+| P13.1459 | **** | [#  月費固定 $200，無額外 token 費用]() | 🔄 |
+| P13.1460 | **** | [#```]() | 🔄 |
+| P13.1461 | **** | [#### 期望]() | 🔄 |
+| P13.1462 | **** | [#```]() | 🔄 |
+| P13.1463 | **** | [#💰 Token 用量]() | 🔄 |
+| P13.1464 | **** | [#本次對話:]() | 🔄 |
+| P13.1465 | **** | [#  輸入: 12345 tokens]() | 🔄 |
+| P13.1466 | **** | [#  輸出: 6789 tokens]() | 🔄 |
+| P13.1467 | **** | [#  CLI 呼叫: 10 次]() | 🔄 |
+| P13.1468 | **** | [#  CLI 費用: $0.1234]() | 🔄 |
+| P13.1469 | **** | [#📊 按模型分類:]() | 🔄 |
+| P13.1470 | ** 3,000 in / 1,500 out ** | [#  🟢 haiku: 5 次 ]() | 🔄 |
+| P13.1471 | ** 6,000 in / 3,000 out ** | [#  🟡 sonnet: 3 次 ]() | 🔄 |
+| P13.1472 | ** 3,345 in / 2,289 out ** | [#  🔴 opus: 2 次 ]() | 🔄 |
+| P13.1473 | **** | [#模式: Claude Max 訂閱]() | 🔄 |
+| P13.1474 | **** | [#  月費固定 $200，無額外 token 費用]() | 🔄 |
+| P13.1475 | **** | [#```]() | 🔄 |
+| P13.1476 | **** | [### 分析]() | 🔄 |
+| P13.1477 | **** | [#- 資料庫 `decision_logs` 和 `performance_metrics` 已有 `model` 和費用欄位]() | 🔄 |
+| P13.1478 | **** | [#- Web API 已有 `/api/costs/by-model` 端點，邏輯可以複用]() | 🔄 |
+| P13.1479 | **** | [#- `/savings` 指令已有按模型分類顯示的實作（`telegram.go:284`）]() | 🔄 |
+| P13.1480 | **** | [#- 只需修改 `/usage` handler（`telegram.go:801`），從 storage 查詢 per-model 數據]() | 🔄 |
+| P13.1481 | **** | [### Sub-tasks]() | 🔄 |
+| P13.1482 | **** | [#- [ ] 修改 `/usage` handler，增加從 storage 查詢 per-model token 用量]() | 🔄 |
+| P13.1483 | **** | [#- [ ] 顯示每個模型的呼叫次數、input/output tokens、費用]() | 🔄 |
+| P13.1484 | **** | [#- [ ] 無 storage 或無數據時 graceful fallback（僅顯示現有整體統計）]() | 🔄 |
+| P13.1485 | **Add project_path field to performance_metrics table for per-project token cost tracking** | [#78](https://github.com/chimerakang/alice/issues/78) | 🔄 |
+| P13.1486 | **** | [#Add `project_path` field to the `performance_metrics` table to enable per-project token cost tracking and filtering. This complements the existing `decision_logs` table which already tracks project paths.]() | 🔄 |
+| P13.1487 | **** | [### Context]() | 🔄 |
+| P13.1488 | **** | [#The `decision_logs` table already has `project_path` field with proper indexing, allowing tracking of token usage per project. The `performance_metrics` table currently lacks this field, making it impossible to filter performance data by project.]() | 🔄 |
+| P13.1489 | **** | [### Tasks]() | 🔄 |
+| P13.1490 | **** | [#- [ ] Add `project_path` VARCHAR column to `performance_metrics` table migration]() | 🔄 |
+| P13.1491 | **** | [#- [ ] Update `PerformanceMetrics` struct in performance.go to include ProjectPath field]() | 🔄 |
+| P13.1492 | **** | [#- [ ] Modify `InsertPerformanceMetric` function to persist project_path]() | 🔄 |
+| P13.1493 | **** | [#- [ ] Add optional `projectPath` parameter to `GetCostSavings()" for project filtering]() | 🔄 |
+| P13.1494 | **** | [#- [ ] Update Telegram `/usage" and `/savings" commands to support per-project queries]() | 🔄 |
+| P13.1495 | **** | [#- [ ] Update Web API endpoints to accept optional project_dir parameter]() | 🔄 |
+| P13.1496 | **** | [#- [ ] Test per-project cost tracking end-to-end]() | 🔄 |
+| P13.1497 | **** | [### Related Issues]() | 🔄 |
+| P13.1498 | **** | [#- #72 - Smart Routing Dashboard Implementation]() | 🔄 |
+| P13.1499 | **** | [#- #74 - Cost tracking and savings display]() | 🔄 |
+| P13.1500 | **** | [#- #75 - Backfill missing model and cost data]() | 🔄 |
+| P13.1501 | **🐛 Smart Routing 導致對話上下文丟失：Model 切換時強制清空 Session** | [#79](https://github.com/chimerakang/alice/issues/79) | ✅ |
+| P13.1502 | **** | [#當 Smart Routing 啟用 (`/auto` 模式) 時，自動 model routing 會導致對話上下文丟失。]() | 🔄 |
+| P13.1503 | **** | [#### 症狀]() | 🔄 |
+| P13.1504 | **** | [#- 用戶執行指令和進行調查]() | 🔄 |
+| P13.1505 | **** | [#- 系統自動切換 model（如 Opus → Haiku）]() | 🔄 |
+| P13.1506 | **** | [#- Claude AI 表現得像完全不知道之前發生了什麼]() | 🔄 |
+| P13.1507 | **** | [#- 無法「繼續」之前的任務]() | 🔄 |
+| P13.1508 | **** | [#### 根本原因]() | 🔄 |
+| P13.1509 | **** | [#在 agent.go:449-450：]() | 🔄 |
+| P13.1510 | **** | [#```go]() | 🔄 |
+| P13.1511 | **** | [#// If model changed, clear session to start fresh]() | 🔄 |
+| P13.1512 | **** | [#if selectedModel != "" && selectedModel != a.lastUsedModel {]() | 🔄 |
+| P13.1513 | **** | [#    ps.sessionID = ""  // Force new session when model changes]() | 🔄 |
+| P13.1514 | **** | [#}]() | 🔄 |
+| P13.1515 | **** | [#```]() | 🔄 |
+| P13.1516 | **** | [#每當 model 改變時，系統會**強制清空 sessionID**，迫使 Claude CLI 開啟全新會話。]() | 🔄 |
+| P13.1517 | **** | [#### 驗證]() | 🔄 |
+| P13.1518 | **** | [#已確認通過數據庫日誌：]() | 🔄 |
+| P13.1519 | **** | [#- ID 1416 (13:36:07): opus model, session: 99b4c024-a0cc-493e-a7c0-83892d498aa2]() | 🔄 |
+| P13.1520 | **** | [#- ID 1417 (13:36:23): haiku model, session: ce3bb970-0f54-429d-8c70-2ad3598ea3a0 [新 session!]]() | 🔄 |
+| P13.1521 | **** | [#用戶無法「繼續」之前的調查。]() | 🔄 |
+| P13.1522 | **** | [#### 技術分析]() | 🔄 |
+| P13.1523 | **** | [#Claude Code CLI **支持在同一個 session 中改變 model**：]() | 🔄 |
+| P13.1524 | **** | [#```bash]() | 🔄 |
+| P13.1525 | **** | [#claude -p --model haiku --resume <session_id> "message"]() | 🔄 |
+| P13.1526 | **** | [#```]() | 🔄 |
+| P13.1527 | **** | [#問題不在 Claude CLI 的限制，而在 Alice 的設計決策。]() | 🔄 |
+| P13.1528 | **** | [### 解決方案]() | 🔄 |
+| P13.1529 | **** | [#### 核心修復]() | 🔄 |
+| P13.1530 | **** | [#移除 agent.go:449-450 的強制清空邏輯，允許跨 model 使用同一個 session。]() | 🔄 |
+| P13.1531 | **** | [#### 影響評估]() | 🔄 |
+| P13.1532 | **** | [#### 後續工作]() | 🔄 |
+| P13.1533 | **** | [#- [ ] 移除強制清空 sessionID 邏輯]() | 🔄 |
+| P13.1534 | **** | [#- [ ] 改進決策日誌以記錄同一 session 內的 model 切換]() | 🔄 |
+| P13.1535 | **** | [#- [ ] 改進成本計算，分別追蹤每個 model 的 token 使用]() | 🔄 |
+| P13.1536 | **** | [#- [ ] 測試跨 model session 的對話連貫性]() | 🔄 |
+| P13.1537 | **** | [#- [ ] 驗證成本計算的準確性]() | 🔄 |
+| P13.1538 | **** | [### 關聯 Issue]() | 🔄 |
+| P13.1539 | **** | [#- Issue #72: Smart Routing Dashboard Implementation]() | 🔄 |
+| P13.1540 | **** | [#- 此 bug 影響 Smart Routing 的實用性]() | 🔄 |
+| P13.1541 | **** | [### 優先級]() | 🔄 |
+| P13.1542 | **** | [#High — 此 bug 直接影響 Smart Routing 的核心功能可用性]() | 🔄 |
 
 ## P14 - Commercialization Strategy (🔄 0%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
 | P14.1 | **Alice 商業化：單機版隱私優先定位策略** | [#49](https://github.com/chimerakang/alice/issues/49) | 🔄 |
-| | — 制定 "完全本地化 AI 助手" 的品牌定位 | | ☐ |
-| | — 對比分析：Alice vs 雲端競品的隱私優勢 | | ☐ |
-| | — 準備隱私合規認證材料（GDPR、SOC2、ISO 27001） | | ☐ |
-| | — 金融機構：資料不出境要求 | | ☐ |
-| | — 政府單位：機密專案開發 | | ☐ |
-| | — 醫療軟體：HIPAA 合規要求 | | ☐ |
-| | — 國防承包商：高安全等級要求 | | ☐ |
-| | — 企業授權模式：單機 $2,999/年 | | ☐ |
-| | — 部門授權：$9,999/年（10台機器） | | ☐ |
-| | — 個人開發者：$199/年 | | ☐ |
-| | — 分析 Entire Checkpoints 的雲端 SaaS 模式 | | ☐ |
-| | — 識別單機版無法被雲端服務取代的場景 | | ☐ |
-| | — 制定反雲端化的行銷策略 | | ☐ |
-| P14.2 | **多人版架構設計：從單機到團隊協作** | [#51](https://github.com/chimerakang/alice/issues/51) | 🔄 |
-| | — 分析當前架構：單一 Bot 實例 + 本地 SQLite | | ☐ |
-| | — 識別多人協作的技術瓶頸 | | ☐ |
-| | — 評估現有程式碼的重用性 | | ☐ |
-| | — 研究 Entire Checkpoints 的多人協作功能 | | ☐ |
-| | — 分析 GitHub Copilot Business 的團隊管理 | | ☐ |
-| | — 比較其他 AI 編程工具的協作模式 | | ☐ |
-| | — SQLite → PostgreSQL 資料庫遷移 | | ☐ |
-| | — 用戶認證與權限系統設計 | | ☐ |
-| | — 多專案隔離機制 | | ☐ |
-| | — 基於角色的存取控制（RBAC） | | ☐ |
-| | — 設計可選雲端同步機制 | | ☐ |
-| | — 團隊設定中心化管理 | | ☐ |
-| | — 跨實例數據聚合分析 | | ☐ |
-| | — 企業級 SSO 整合規劃 | | ☐ |
-| | — 多租戶架構設計 | | ☐ |
-| | — 微服務拆分策略 | | ☐ |
-| | — 水平擴展能力規劃 | | ☐ |
-| | — API 開放與生態建設 | | ☐ |
-| | — 多用戶認證系統 | | ☐ |
-| | — 資料庫遷移方案 | | ☐ |
-| | — 基礎權限管理 | | ☐ |
-| | — 團隊協作功能 | | ☐ |
-| | — 跨專案管理 | | ☐ |
-| | — 企業整合介面 | | ☐ |
-| | — 完整 SaaS 平台 | | ☐ |
-| | — 高級分析功能 | | ☐ |
-| | — 第三方生態 | | ☐ |
-| | — 架構重構的工程量估算 | | ☐ |
-| | — 向下兼容性考量 | | ☐ |
-| | — 資料遷移風險控制 | | ☐ |
-| | — 效能影響評估 | | ☐ |
-| P14.3 | **競品分析深化：Entire Checkpoints vs Alice 差異化策略** | [#53](https://github.com/chimerakang/alice/issues/53) | 🔄 |
-| | — 下載並試用 Entire Checkpoints 開源工具 | | ☐ |
-| | — 分析其 Git 整合和透明化追蹤功能 | | ☐ |
-| | — 研究支援的 AI 工具（Claude Code、Gemini CLI） | | ☐ |
-| | — 評估其開發者體驗和易用性 | | ☐ |
-| | — 分析 Entire 的三層平台架構 | | ☐ |
-| | — 研究其企業級功能規劃 | | ☐ |
-| | — 評估其定價策略（如果公開） | | ☐ |
-| | — 分析其目標市場定位 | | ☐ |
-| | — Alice vs Entire 功能對比矩陣 | | ☐ |
-| | — 技術實現方式差異分析 | | ☐ |
-| | — 各自的技術優劣勢評估 | | ☐ |
-| | — Telegram 整合優勢分析 | | ☐ |
-| | — 多模態支援（語音、圖像）競爭力 | | ☐ |
-| | — 完全本地化部署的市場需求 | | ☐ |
-| | — 企業 Dashboard 的可視化價值 | | ☐ |
-| | — 制定 "Mobile-First AI Assistant" 定位 | | ☐ |
-| | — 遠程工作場景的應用分析 | | ☐ |
-| | — 亞洲市場 Telegram 普及度研究 | | ☐ |
-| | — 跨時區團隊協作價值主張 | | ☐ |
-| | — 對比雲端 vs 本地化的隱私優勢 | | ☐ |
-| | — 合規市場（金融、醫療、政府）需求分析 | | ☐ |
-| | — "Never sends code to cloud" 行銷策略 | | ☐ |
-| | — 資料主權完全掌控的企業價值 | | ☐ |
-| | — 識別 Entire 不會涉足的市場區隔 | | ☐ |
-| | — 中小企業市場策略 | | ☐ |
-| | — 特定垂直行業策略 | | ☐ |
-| | — 地理市場差異化（亞洲優先） | | ☐ |
-| | — 評估成為 Entire 生態夥伴的可能性 | | ☐ |
-| | — Alice 作為 Entire 的 Telegram 介面 | | ☐ |
-| | — 技術互補合作模式研究 | | ☐ |
-| | — 建立 Entire 產品更新追蹤機制 | | ☐ |
-| | — 競爭對手動態監控流程 | | ☐ |
-| | — 市場反應收集與分析 | | ☐ |
-| P14.4 | **產品授權與定價模式設計** | [#54](https://github.com/chimerakang/alice/issues/54) | 🔄 |
-| | — 單機授權：$2,999/年 | | ☐ |
-| | — 部門授權：$9,999/年（最多10台機器） | | ☐ |
-| | — 企業授權：$29,999/年（無限機器） | | ☐ |
-| | — 免費版：基礎功能 | | ☐ |
-| | — Pro 版：$199/年 | | ☐ |
-| | — Studio 版：$499/年 | | ☐ |
-| | — 設計離線授權驗證機制 | | ☐ |
-| | — 實現授權密鑰管理系統 | | ☐ |
-| | — 建立授權有效期檢查 | | ☐ |
-| | — 設計功能開關控制 | | ☐ |
-| | — AI 使用量統計機制 | | ☐ |
-| | — 成本追蹤與報告系統 | | ☐ |
-| | — 授權續約提醒功能 | | ☐ |
-| | — 使用情況分析報告 | | ☐ |
-| | — 客戶資料庫設計 | | ☐ |
-| | — 授權分發管理介面 | | ☐ |
-| | — 技術支援工單系統 | | ☐ |
-| | — 客戶使用情況監控 | | ☐ |
-| | — GitHub Copilot: $10/月個人，$39/月企業 | | ☐ |
-| | — Cursor: $20/月 Pro | | ☐ |
-| | — Tabnine Enterprise: $234K+/年（500人） | | ☐ |
-| | — Telegram Bot 平台：$19/月起 | | ☐ |
-| | — 客戶 ROI 計算模型 | | ☐ |
-| | — 價格敏感度測試 | | ☐ |
-| | — 不同市場區隔接受度調研 | | ☐ |
-| | — 定價彈性分析 | | ☐ |
-| | — 企業客戶開發策略 | | ☐ |
-| | — POC（概念驗證）流程設計 | | ☐ |
-| | — 合約談判標準化 | | ☐ |
-| | — 客戶成功管理流程 | | ☐ |
-| | — 線上購買流程設計 | | ☐ |
-| | — 免費試用體驗優化 | | ☐ |
-| | — 付費轉換漏斗分析 | | ☐ |
-| | — 客戶自助服務平台 | | ☐ |
-| | — EULA（終端使用者授權協議）制定 | | ☐ |
-| | — 資料處理與隱私條款 | | ☐ |
-| | — 技術支援條款與 SLA | | ☐ |
-| | — 智慧財產權保護 | | ☐ |
-| | — 不同國家的授權法規研究 | | ☐ |
-| | — 跨國企業授權模式設計 | | ☐ |
-| | — 稅務與會計處理方案 | | ☐ |
-| P14.5 | **品牌定位與行銷策略規劃** | [#56](https://github.com/chimerakang/alice/issues/56) | 🔄 |
-| | — 制定品牌標語："The AI coding assistant that stays home" | | ☐ |
-| | — 對比競品雲端模式的差異化訊息 | | ☐ |
-| | — 隱私優先的品牌形象建立 | | ☐ |
-| | — 企業資料主權的價值主張 | | ☐ |
-| | — 強調 Telegram 整合的便利性 | | ☐ |
-| | — 遠程工作時代的移動協作價值 | | ☐ |
-| | — 跨時區團隊的即時 AI 支援 | | ☐ |
-| | — 多模態互動的創新體驗 | | ☐ |
-| | — 金融科技公司：合規要求嚴格 | | ☐ |
-| | — 政府承包商：資安等級要求高 | | ☐ |
-| | — 醫療軟體公司：HIPAA 合規需求 | | ☐ |
-| | — 中型軟體公司：成本敏感但注重隱私 | | ☐ |
-| | — 個人開發者：重視隱私的技術專家 | | ☐ |
-| | — 新創公司：資源有限但需要 AI 助手 | | ☐ |
-| | — 教育機構：學生實驗環境需求 | | ☐ |
-| | — 諮詢公司：需要向客戶展示 AI 過程 | | ☐ |
-| | — "為什麼企業需要本地化 AI 助手" 白皮書 | | ☐ |
-| | — "AI 編程工具的隱私風險分析" 研究報告 | | ☐ |
-| | — "計算雲端 AI 的真實成本" ROI 分析 | | ☐ |
-| | — "遠程團隊的 AI 協作最佳實踐" 指南 | | ☐ |
-| | — "一鍵回滾 AI 錯誤" 功能演示影片 | | ☐ |
-| | — "Telegram + Dashboard 雙重體驗" 使用案例 | | ☐ |
-| | — "隱私保護 vs 雲端風險" 對比演示 | | ☐ |
-| | — "企業級監控與透明化" 功能展示 | | ☐ |
-| | — "AI 編程工具使用情況" 年度報告 | | ☐ |
-| | — "企業 AI 採用障礙" 調查分析 | | ☐ |
-| | — "開發者隱私關注" 趨勢研究 | | ☐ |
-| | — Alice 使用者成功案例集 | | ☐ |
-| | — 產品官網設計與開發 | | ☐ |
-| | — SEO 關鍵字策略規劃 | | ☐ |
-| | — 著陸頁面 A/B 測試 | | ☐ |
-| | — 轉換率優化（CRO） | | ☐ |
-| | — CTO/技術主管目標廣告 | | ☐ |
-| | — 企業決策者內容行銷 | | ☐ |
-| | — 行業專家意見領袖合作 | | ☐ |
-| | — 企業客戶成功故事分享 | | ☐ |
-| | — 開發者社群參與策略 | | ☐ |
-| | — 技術內容分享計畫 | | ☐ |
-| | — KOL 與技術專家合作 | | ☐ |
-| | — 開源社群關係建立 | | ☐ |
-| | — 產品教學影片系列 | | ☐ |
-| | — 技術深度分析內容 | | ☐ |
-| | — 客戶訪談與案例分享 | | ☐ |
-| | — 競品對比分析影片 | | ☐ |
-| | — 技術會議演講申請 | | ☐ |
-| | — 工程師大會展位規劃 | | ☐ |
-| | — 隱私與資安會議參與 | | ☐ |
-| | — 企業 IT 高峰會議行銷 | | ☐ |
-| | — 科技媒體關係建立 | | ☐ |
-| | — 產品發布新聞稿撰寫 | | ☐ |
-| | — 記者專訪安排 | | ☐ |
-| | — 行業報告引用推廣 | | ☐ |
-| | — AI 顧問公司合作計畫 | | ☐ |
-| | — 系統整合商夥伴方案 | | ☐ |
-| | — 企業軟體廠商聯盟 | | ☐ |
-| | — 教育機構合作專案 | | ☐ |
-| | — 軟體分銷商合作 | | ☐ |
-| | — 企業採購平台上架 | | ☐ |
-| | — 雲端市場（AWS、Azure）評估 | | ☐ |
-| | — 第三方軟體商店策略 | | ☐ |
-| | — 品牌知名度調查 | | ☐ |
-| | — 客戶滿意度監控 | | ☐ |
-| | — 競品品牌對比分析 | | ☐ |
-| | — 行銷 ROI 測量機制 | | ☐ |
-| | — 商標註冊申請 | | ☐ |
-| | — 網域名稱保護 | | ☐ |
-| | — 負面評論管理機制 | | ☐ |
-| | — 品牌形象危機處理預案 | | ☐ |
-| P14.6 | **Alice 商業化執行藍圖：6個月行動計畫** | [#58](https://github.com/chimerakang/alice/issues/58) | 🔄 |
-| | — 實現基礎授權驗證系統 | | ☐ |
-| | — 添加使用量追蹤與計費功能 | | ☐ |
-| | — 優化 Dashboard 企業級展示 | | ☐ |
-| | — 改善產品穩定性與效能 | | ☐ |
-| | — 制定 EULA 與服務條款 | | ☐ |
-| | — 準備隱私政策與 GDPR 合規文件 | | ☐ |
-| | — 申請必要的軟體授權與商標 | | ☐ |
-| | — 建立客戶支援與 SLA 框架 | | ☐ |
-| | — 完成 Entire Checkpoints 深度競品分析 | | ☐ |
-| | — 進行目標客戶訪談 (5-10 家企業) | | ☐ |
-| | — 驗證定價策略與市場接受度 | | ☐ |
-| | — 完善客戶人群分析與需求調研 | | ☐ |
-| | — 建立產品官網與註冊系統 | | ☐ |
-| | — 開放 Beta 測試申請 | | ☐ |
-| | — 招募 10-15 個企業 Beta 客戶 | | ☐ |
-| | — 建立客戶反饋收集機制 | | ☐ |
-| | — 執行客戶開發訪談 | | ☐ |
-| | — 收集產品使用情況數據 | | ☐ |
-| | — 分析客戶痛點與需求變化 | | ☐ |
-| | — 調整產品功能優先級 | | ☐ |
-| | — 建立產品使用情況分析 | | ☐ |
-| | — 追蹤客戶滿意度與 NPS | | ☐ |
-| | — 分析定價策略有效性 | | ☐ |
-| | — 收集客戶成功案例 | | ☐ |
-| | — 完成品牌視覺識別設計 | | ☐ |
-| | — 制作產品演示影片與簡報 | | ☐ |
-| | — 準備客戶案例研究報告 | | ☐ |
-| | — 建立完整的行銷素材庫 | | ☐ |
-| | — 官網 SEO 優化與內容行銷 | | ☐ |
-| | — LinkedIn B2B 廣告投放 | | ☐ |
-| | — Twitter 技術社群參與 | | ☐ |
-| | — YouTube 產品教學頻道建立 | | ☐ |
-| | — 建立 AI 顧問公司合作關係 | | ☐ |
-| | — 接觸系統整合商夥伴 | | ☐ |
-| | — 參加相關技術會議與展覽 | | ☐ |
-| | — 建立 KOL 與意見領袖網絡 | | ☐ |
-| | — Beta 客戶數量：15+ 家企業 | | ☐ |
-| | — 產品穩定性：99%+ uptime | | ☐ |
-| | — 客戶滿意度：NPS > 50 | | ☐ |
-| | — 功能完成度：核心功能 100% | | ☐ |
-| | — 付費客戶轉換率：20%+ | | ☐ |
-| | — 月度經常性收入 (MRR)：K+ | | ☐ |
-| | — 客戶獲取成本 (CAC)：< ,000 | | ☐ |
-| | — 客戶生命週期價值 (LTV)：> ,000 | | ☐ |
-| | — 官網月訪問量：1,000+ UV | | ☐ |
-| | — 行銷合格潛在客戶 (MQL)：50+/月 | | ☐ |
-| | — 銷售合格潛在客戶 (SQL)：10+/月 | | ☐ |
-| | — 內容行銷覆蓋率：10K+ 閱讀 | | ☐ |
-| | — 月 2 結束：是否繼續單機版策略 vs 開發多人版 | | ☐ |
-| | — 月 4 結束：是否調整定價策略與目標市場 | | ☐ |
-| | — 月 6 結束：是否進入規模化成長階段 | | ☐ |
-| | — 技術延遲：建立開發緩衝時間 | | ☐ |
-| | — 競品壓力：準備差異化應對策略 | | ☐ |
-| | — 客戶需求變化：保持產品靈活性 | | ☐ |
-| | — 市場接受度低：準備產品定位調整 | | ☐ |
-| | — 定價策略失效：建立動態定價機制 | | ☐ |
-| | — 競爭加劇：強化獨特價值主張 | | ☐ |
-| | — 現金流壓力：控制燒錢速度 | | ☐ |
-| | — 客戶付款延遲：建立付款保障機制 | | ☐ |
-| | — 投資回報不佳：設定止損線 | | ☐ |
+| P14.2 | **** | [#基於對 Entire Checkpoints 競品分析，Alice 需要重新定位為隱私優先的單機版 AI 編程助手。]() | 🔄 |
+| P14.3 | **** | [### 策略重點]() | 🔄 |
+| P14.4 | **** | [#### 🔒 隱私優先價值主張]() | 🔄 |
+| P14.5 | **** | [#- [ ] 制定 "完全本地化 AI 助手" 的品牌定位]() | 🔄 |
+| P14.6 | **** | [#- [ ] 對比分析：Alice vs 雲端競品的隱私優勢]() | 🔄 |
+| P14.7 | **** | [#- [ ] 準備隱私合規認證材料（GDPR、SOC2、ISO 27001）]() | 🔄 |
+| P14.8 | **** | [#### 🎯 目標市場細分]() | 🔄 |
+| P14.9 | **** | [#- [ ] 金融機構：資料不出境要求]() | 🔄 |
+| P14.10 | **** | [#- [ ] 政府單位：機密專案開發]() | 🔄 |
+| P14.11 | **** | [#- [ ] 醫療軟體：HIPAA 合規要求  ]() | 🔄 |
+| P14.12 | **** | [#- [ ] 國防承包商：高安全等級要求]() | 🔄 |
+| P14.13 | **** | [#### 💰 定價策略]() | 🔄 |
+| P14.14 | **** | [#- [ ] 企業授權模式：單機 $2,999/年]() | 🔄 |
+| P14.15 | **** | [#- [ ] 部門授權：$9,999/年（10台機器）]() | 🔄 |
+| P14.16 | **** | [#- [ ] 個人開發者：$199/年]() | 🔄 |
+| P14.17 | **** | [#### 📊 競爭定位]() | 🔄 |
+| P14.18 | **** | [#- [ ] 分析 Entire Checkpoints 的雲端 SaaS 模式]() | 🔄 |
+| P14.19 | **** | [#- [ ] 識別單機版無法被雲端服務取代的場景]() | 🔄 |
+| P14.20 | **** | [#- [ ] 制定反雲端化的行銷策略]() | 🔄 |
+| P14.21 | **** | [### 交付成果]() | 🔄 |
+| P14.22 | **** | [#- 商業化策略文件]() | 🔄 |
+| P14.23 | **** | [#- 目標客戶分析報告]() | 🔄 |
+| P14.24 | **** | [#- 定價策略方案]() | 🔄 |
+| P14.25 | **** | [#- 競爭分析報告]() | 🔄 |
+| P14.26 | **多人版架構設計：從單機到團隊協作** | [#51](https://github.com/chimerakang/alice/issues/51) | 🔄 |
+| P14.27 | **** | [#Alice 目前是單機版架構，要發展商業化需要支援多人協作。本 Issue 研究從單機版升級到多人版的技術路線。]() | 🔄 |
+| P14.28 | **** | [### 現況分析]() | 🔄 |
+| P14.29 | **** | [#### 當前單機版限制]() | 🔄 |
+| P14.30 | **** | [#- [ ] 分析當前架構：單一 Bot 實例 + 本地 SQLite]() | 🔄 |
+| P14.31 | **** | [#- [ ] 識別多人協作的技術瓶頸]() | 🔄 |
+| P14.32 | **** | [#- [ ] 評估現有程式碼的重用性]() | 🔄 |
+| P14.33 | **** | [#### 競品多人版功能研究]() | 🔄 |
+| P14.34 | **** | [#- [ ] 研究 Entire Checkpoints 的多人協作功能]() | 🔄 |
+| P14.35 | **** | [#- [ ] 分析 GitHub Copilot Business 的團隊管理]() | 🔄 |
+| P14.36 | **** | [#- [ ] 比較其他 AI 編程工具的協作模式]() | 🔄 |
+| P14.37 | **** | [### 技術方案設計]() | 🔄 |
+| P14.38 | **** | [#### Phase 1: 本地多用戶支援]() | 🔄 |
+| P14.39 | **** | [#- [ ] SQLite → PostgreSQL 資料庫遷移]() | 🔄 |
+| P14.40 | **** | [#- [ ] 用戶認證與權限系統設計]() | 🔄 |
+| P14.41 | **** | [#- [ ] 多專案隔離機制]() | 🔄 |
+| P14.42 | **** | [#- [ ] 基於角色的存取控制（RBAC）]() | 🔄 |
+| P14.43 | **** | [#### Phase 2: 混合雲架構]() | 🔄 |
+| P14.44 | **** | [#- [ ] 設計可選雲端同步機制]() | 🔄 |
+| P14.45 | **** | [#- [ ] 團隊設定中心化管理]() | 🔄 |
+| P14.46 | **** | [#- [ ] 跨實例數據聚合分析]() | 🔄 |
+| P14.47 | **** | [#- [ ] 企業級 SSO 整合規劃]() | 🔄 |
+| P14.48 | **** | [#### Phase 3: 完整 SaaS 平台]() | 🔄 |
+| P14.49 | **** | [#- [ ] 多租戶架構設計]() | 🔄 |
+| P14.50 | **** | [#- [ ] 微服務拆分策略]() | 🔄 |
+| P14.51 | **** | [#- [ ] 水平擴展能力規劃]() | 🔄 |
+| P14.52 | **** | [#- [ ] API 開放與生態建設]() | 🔄 |
+| P14.53 | **** | [### 實作優先級]() | 🔄 |
+| P14.54 | **** | [#### 🔴 高優先級]() | 🔄 |
+| P14.55 | **** | [#- [ ] 多用戶認證系統]() | 🔄 |
+| P14.56 | **** | [#- [ ] 資料庫遷移方案]() | 🔄 |
+| P14.57 | **** | [#- [ ] 基礎權限管理]() | 🔄 |
+| P14.58 | **** | [#### 🟡 中優先級  ]() | 🔄 |
+| P14.59 | **** | [#- [ ] 團隊協作功能]() | 🔄 |
+| P14.60 | **** | [#- [ ] 跨專案管理]() | 🔄 |
+| P14.61 | **** | [#- [ ] 企業整合介面]() | 🔄 |
+| P14.62 | **** | [#### 🟢 低優先級]() | 🔄 |
+| P14.63 | **** | [#- [ ] 完整 SaaS 平台]() | 🔄 |
+| P14.64 | **** | [#- [ ] 高級分析功能]() | 🔄 |
+| P14.65 | **** | [#- [ ] 第三方生態]() | 🔄 |
+| P14.66 | **** | [### 技術風險評估]() | 🔄 |
+| P14.67 | **** | [#- [ ] 架構重構的工程量估算]() | 🔄 |
+| P14.68 | **** | [#- [ ] 向下兼容性考量]() | 🔄 |
+| P14.69 | **** | [#- [ ] 資料遷移風險控制]() | 🔄 |
+| P14.70 | **** | [#- [ ] 效能影響評估]() | 🔄 |
+| P14.71 | **** | [### 交付成果]() | 🔄 |
+| P14.72 | **** | [#- 多人版技術架構文件]() | 🔄 |
+| P14.73 | **** | [#- 分階段實作計畫]() | 🔄 |
+| P14.74 | **** | [#- 資源需求評估]() | 🔄 |
+| P14.75 | **** | [#- 風險控制方案]() | 🔄 |
+| P14.76 | **競品分析深化：Entire Checkpoints vs Alice 差異化策略** | [#53](https://github.com/chimerakang/alice/issues/53) | 🔄 |
+| P14.77 | **** | [#Entire Checkpoints (前 GitHub CEO，$60M 融資) 是直接競爭對手，需要深入分析其產品功能和商業策略。]() | 🔄 |
+| P14.78 | **** | [### 競品情報收集]() | 🔄 |
+| P14.79 | **** | [#### Entire Checkpoints 產品分析]() | 🔄 |
+| P14.80 | **** | [#- [ ] 下載並試用 Entire Checkpoints 開源工具]() | 🔄 |
+| P14.81 | **** | [#- [ ] 分析其 Git 整合和透明化追蹤功能]() | 🔄 |
+| P14.82 | **** | [#- [ ] 研究支援的 AI 工具（Claude Code、Gemini CLI）]() | 🔄 |
+| P14.83 | **** | [#- [ ] 評估其開發者體驗和易用性]() | 🔄 |
+| P14.84 | **** | [#### 商業模式研究]() | 🔄 |
+| P14.85 | **** | [#- [ ] 分析 Entire 的三層平台架構]() | 🔄 |
+| P14.86 | **** | [#- [ ] 研究其企業級功能規劃]() | 🔄 |
+| P14.87 | **** | [#- [ ] 評估其定價策略（如果公開）]() | 🔄 |
+| P14.88 | **** | [#- [ ] 分析其目標市場定位]() | 🔄 |
+| P14.89 | **** | [#### 技術能力對比]() | 🔄 |
+| P14.90 | **** | [#- [ ] Alice vs Entire 功能對比矩陣]() | 🔄 |
+| P14.91 | **** | [#- [ ] 技術實現方式差異分析]() | 🔄 |
+| P14.92 | **** | [#- [ ] 各自的技術優劣勢評估]() | 🔄 |
+| P14.93 | **** | [### Alice 差異化策略]() | 🔄 |
+| P14.94 | **** | [#### 🎯 獨特價值主張識別]() | 🔄 |
+| P14.95 | **** | [#- [ ] Telegram 整合優勢分析]() | 🔄 |
+| P14.96 | **** | [#- [ ] 多模態支援（語音、圖像）競爭力]() | 🔄 |
+| P14.97 | **** | [#- [ ] 完全本地化部署的市場需求]() | 🔄 |
+| P14.98 | **** | [#- [ ] 企業 Dashboard 的可視化價值]() | 🔄 |
+| P14.99 | **** | [#### 📱 移動優先策略]() | 🔄 |
+| P14.100 | **** | [#- [ ] 制定 "Mobile-First AI Assistant" 定位]() | 🔄 |
+| P14.101 | **** | [#- [ ] 遠程工作場景的應用分析]() | 🔄 |
+| P14.102 | **** | [#- [ ] 亞洲市場 Telegram 普及度研究]() | 🔄 |
+| P14.103 | **** | [#- [ ] 跨時區團隊協作價值主張]() | 🔄 |
+| P14.104 | **** | [#### 🔒 隱私優先定位]() | 🔄 |
+| P14.105 | **** | [#- [ ] 對比雲端 vs 本地化的隱私優勢]() | 🔄 |
+| P14.106 | **** | [#- [ ] 合規市場（金融、醫療、政府）需求分析]() | 🔄 |
+| P14.107 | **** | [#- [ ] "Never sends code to cloud" 行銷策略]() | 🔄 |
+| P14.108 | **** | [#- [ ] 資料主權完全掌控的企業價值]() | 🔄 |
+| P14.109 | **** | [### 市場策略制定]() | 🔄 |
+| P14.110 | **** | [#### 避開正面競爭]() | 🔄 |
+| P14.111 | **** | [#- [ ] 識別 Entire 不會涉足的市場區隔]() | 🔄 |
+| P14.112 | **** | [#- [ ] 中小企業市場策略]() | 🔄 |
+| P14.113 | **** | [#- [ ] 特定垂直行業策略]() | 🔄 |
+| P14.114 | **** | [#- [ ] 地理市場差異化（亞洲優先）]() | 🔄 |
+| P14.115 | **** | [#### 合作可能性探索]() | 🔄 |
+| P14.116 | **** | [#- [ ] 評估成為 Entire 生態夥伴的可能性]() | 🔄 |
+| P14.117 | **** | [#- [ ] Alice 作為 Entire 的 Telegram 介面]() | 🔄 |
+| P14.118 | **** | [#- [ ] 技術互補合作模式研究]() | 🔄 |
+| P14.119 | **** | [### 競爭情報持續監控]() | 🔄 |
+| P14.120 | **** | [#- [ ] 建立 Entire 產品更新追蹤機制]() | 🔄 |
+| P14.121 | **** | [#- [ ] 競爭對手動態監控流程]() | 🔄 |
+| P14.122 | **** | [#- [ ] 市場反應收集與分析]() | 🔄 |
+| P14.123 | **** | [### 交付成果]() | 🔄 |
+| P14.124 | **** | [#- Entire vs Alice 詳細對比報告]() | 🔄 |
+| P14.125 | **** | [#- 差異化策略建議書]() | 🔄 |
+| P14.126 | **** | [#- 市場定位重新評估]() | 🔄 |
+| P14.127 | **** | [#- 競爭監控機制建立]() | 🔄 |
+| P14.128 | **產品授權與定價模式設計** | [#54](https://github.com/chimerakang/alice/issues/54) | 🔄 |
+| P14.129 | **** | [#基於 Alice 單機版的特性，設計適合的授權模式和定價策略，平衡商業價值與市場接受度。]() | 🔄 |
+| P14.130 | **** | [### 授權模式設計]() | 🔄 |
+| P14.131 | **** | [#### 🏢 企業授權模式]() | 🔄 |
+| P14.132 | **** | [#- [ ] 單機授權：$2,999/年]() | 🔄 |
+| P14.133 | **** | [#  - 單一機器部署]() | 🔄 |
+| P14.134 | **** | [#  - 基礎監控功能]() | 🔄 |
+| P14.135 | **** | [#  - 郵件技術支援]() | 🔄 |
+| P14.136 | **** | [#  ]() | 🔄 |
+| P14.137 | **** | [#- [ ] 部門授權：$9,999/年（最多10台機器）]() | 🔄 |
+| P14.138 | **** | [#  - 統一設定管理]() | 🔄 |
+| P14.139 | **** | [#  - 聚合分析報告]() | 🔄 |
+| P14.140 | **** | [#  - 優先技術支援]() | 🔄 |
+| P14.141 | **** | [#  - 客製化設定協助]() | 🔄 |
+| P14.142 | **** | [#- [ ] 企業授權：$29,999/年（無限機器）]() | 🔄 |
+| P14.143 | **** | [#  - 完整企業功能]() | 🔄 |
+| P14.144 | **** | [#  - 專屬客戶成功經理]() | 🔄 |
+| P14.145 | **** | [#  - 客製化開發支援]() | 🔄 |
+| P14.146 | **** | [#  - SLA 保證]() | 🔄 |
+| P14.147 | **** | [#### 👨‍💻 個人開發者模式]() | 🔄 |
+| P14.148 | **** | [#- [ ] 免費版：基礎功能]() | 🔄 |
+| P14.149 | **** | [#  - 每月 100 次 AI 互動]() | 🔄 |
+| P14.150 | **** | [#  - 基礎 Dashboard]() | 🔄 |
+| P14.151 | **** | [#  - 社群支援]() | 🔄 |
+| P14.152 | **** | [#  ]() | 🔄 |
+| P14.153 | **** | [#- [ ] Pro 版：$199/年]() | 🔄 |
+| P14.154 | **** | [#  - 無限 AI 互動]() | 🔄 |
+| P14.155 | **** | [#  - 完整 Dashboard 功能]() | 🔄 |
+| P14.156 | **** | [#  - 郵件技術支援]() | 🔄 |
+| P14.157 | **** | [#  - 優先更新]() | 🔄 |
+| P14.158 | **** | [#- [ ] Studio 版：$499/年]() | 🔄 |
+| P14.159 | **** | [#  - 高級分析功能]() | 🔄 |
+| P14.160 | **** | [#  - 多專案管理]() | 🔄 |
+| P14.161 | **** | [#  - API 存取權限]() | 🔄 |
+| P14.162 | **** | [#  - 開發者優先支援]() | 🔄 |
+| P14.163 | **** | [### 技術實現需求]() | 🔄 |
+| P14.164 | **** | [#### 授權驗證系統]() | 🔄 |
+| P14.165 | **** | [#- [ ] 設計離線授權驗證機制]() | 🔄 |
+| P14.166 | **** | [#- [ ] 實現授權密鑰管理系統]() | 🔄 |
+| P14.167 | **** | [#- [ ] 建立授權有效期檢查]() | 🔄 |
+| P14.168 | **** | [#- [ ] 設計功能開關控制]() | 🔄 |
+| P14.169 | **** | [#### 計費與追蹤]() | 🔄 |
+| P14.170 | **** | [#- [ ] AI 使用量統計機制]() | 🔄 |
+| P14.171 | **** | [#- [ ] 成本追蹤與報告系統]() | 🔄 |
+| P14.172 | **** | [#- [ ] 授權續約提醒功能]() | 🔄 |
+| P14.173 | **** | [#- [ ] 使用情況分析報告]() | 🔄 |
+| P14.174 | **** | [#### 客戶管理系統]() | 🔄 |
+| P14.175 | **** | [#- [ ] 客戶資料庫設計]() | 🔄 |
+| P14.176 | **** | [#- [ ] 授權分發管理介面]() | 🔄 |
+| P14.177 | **** | [#- [ ] 技術支援工單系統]() | 🔄 |
+| P14.178 | **** | [#- [ ] 客戶使用情況監控]() | 🔄 |
+| P14.179 | **** | [### 市場定價研究]() | 🔄 |
+| P14.180 | **** | [#### 競品定價分析]() | 🔄 |
+| P14.181 | **** | [#- [ ] GitHub Copilot: $10/月個人，$39/月企業]() | 🔄 |
+| P14.182 | **** | [#- [ ] Cursor: $20/月 Pro]() | 🔄 |
+| P14.183 | **** | [#- [ ] Tabnine Enterprise: $234K+/年（500人）]() | 🔄 |
+| P14.184 | **** | [#- [ ] Telegram Bot 平台：$19/月起]() | 🔄 |
+| P14.185 | **** | [#### 價值定位驗證]() | 🔄 |
+| P14.186 | **** | [#- [ ] 客戶 ROI 計算模型]() | 🔄 |
+| P14.187 | **** | [#- [ ] 價格敏感度測試]() | 🔄 |
+| P14.188 | **** | [#- [ ] 不同市場區隔接受度調研]() | 🔄 |
+| P14.189 | **** | [#- [ ] 定價彈性分析]() | 🔄 |
+| P14.190 | **** | [### 銷售流程設計]() | 🔄 |
+| P14.191 | **** | [#### 企業銷售]() | 🔄 |
+| P14.192 | **** | [#- [ ] 企業客戶開發策略]() | 🔄 |
+| P14.193 | **** | [#- [ ] POC（概念驗證）流程設計]() | 🔄 |
+| P14.194 | **** | [#- [ ] 合約談判標準化]() | 🔄 |
+| P14.195 | **** | [#- [ ] 客戶成功管理流程]() | 🔄 |
+| P14.196 | **** | [#### 自助式銷售]() | 🔄 |
+| P14.197 | **** | [#- [ ] 線上購買流程設計]() | 🔄 |
+| P14.198 | **** | [#- [ ] 免費試用體驗優化]() | 🔄 |
+| P14.199 | **** | [#- [ ] 付費轉換漏斗分析]() | 🔄 |
+| P14.200 | **** | [#- [ ] 客戶自助服務平台]() | 🔄 |
+| P14.201 | **** | [### 合規與法務]() | 🔄 |
+| P14.202 | **** | [#### 軟體授權條款]() | 🔄 |
+| P14.203 | **** | [#- [ ] EULA（終端使用者授權協議）制定]() | 🔄 |
+| P14.204 | **** | [#- [ ] 資料處理與隱私條款]() | 🔄 |
+| P14.205 | **** | [#- [ ] 技術支援條款與 SLA]() | 🔄 |
+| P14.206 | **** | [#- [ ] 智慧財產權保護]() | 🔄 |
+| P14.207 | **** | [#### 國際化考量]() | 🔄 |
+| P14.208 | **** | [#- [ ] 不同國家的授權法規研究]() | 🔄 |
+| P14.209 | **** | [#- [ ] 跨國企業授權模式設計]() | 🔄 |
+| P14.210 | **** | [#- [ ] 稅務與會計處理方案]() | 🔄 |
+| P14.211 | **** | [### 交付成果]() | 🔄 |
+| P14.212 | **** | [#- 完整授權與定價方案]() | 🔄 |
+| P14.213 | **** | [#- 技術實現規格書]() | 🔄 |
+| P14.214 | **** | [#- 銷售流程標準化文件]() | 🔄 |
+| P14.215 | **** | [#- 法務條款與合規方案]() | 🔄 |
+| P14.216 | **品牌定位與行銷策略規劃** | [#56](https://github.com/chimerakang/alice/issues/56) | 🔄 |
+| P14.217 | **** | [#Alice 需要明確的品牌定位和行銷策略，以在激烈的 AI 編程工具競爭中脫穎而出。]() | 🔄 |
+| P14.218 | **** | [### 品牌定位策略]() | 🔄 |
+| P14.219 | **** | [#### 🏠 核心品牌概念："AI That Stays Home"]() | 🔄 |
+| P14.220 | **** | [#- [ ] 制定品牌標語："The AI coding assistant that stays home"]() | 🔄 |
+| P14.221 | **** | [#- [ ] 對比競品雲端模式的差異化訊息]() | 🔄 |
+| P14.222 | **** | [#- [ ] 隱私優先的品牌形象建立]() | 🔄 |
+| P14.223 | **** | [#- [ ] 企業資料主權的價值主張]() | 🔄 |
+| P14.224 | **** | [#### 📱 副品牌概念："Mobile-First AI Assistant"]() | 🔄 |
+| P14.225 | **** | [#- [ ] 強調 Telegram 整合的便利性]() | 🔄 |
+| P14.226 | **** | [#- [ ] 遠程工作時代的移動協作價值]() | 🔄 |
+| P14.227 | **** | [#- [ ] 跨時區團隊的即時 AI 支援]() | 🔄 |
+| P14.228 | **** | [#- [ ] 多模態互動的創新體驗]() | 🔄 |
+| P14.229 | **** | [### 目標客戶人群分析]() | 🔄 |
+| P14.230 | **** | [#### 🎯 主要目標市場]() | 🔄 |
+| P14.231 | **** | [#- [ ] 金融科技公司：合規要求嚴格]() | 🔄 |
+| P14.232 | **** | [#- [ ] 政府承包商：資安等級要求高]() | 🔄 |
+| P14.233 | **** | [#- [ ] 醫療軟體公司：HIPAA 合規需求]() | 🔄 |
+| P14.234 | **** | [#- [ ] 中型軟體公司：成本敏感但注重隱私]() | 🔄 |
+| P14.235 | **** | [#### 👥 次要目標市場]() | 🔄 |
+| P14.236 | **** | [#- [ ] 個人開發者：重視隱私的技術專家]() | 🔄 |
+| P14.237 | **** | [#- [ ] 新創公司：資源有限但需要 AI 助手]() | 🔄 |
+| P14.238 | **** | [#- [ ] 教育機構：學生實驗環境需求]() | 🔄 |
+| P14.239 | **** | [#- [ ] 諮詢公司：需要向客戶展示 AI 過程]() | 🔄 |
+| P14.240 | **** | [### 內容行銷策略]() | 🔄 |
+| P14.241 | **** | [#### 📝 思想領導力內容]() | 🔄 |
+| P14.242 | **** | [#- [ ] "為什麼企業需要本地化 AI 助手" 白皮書]() | 🔄 |
+| P14.243 | **** | [#- [ ] "AI 編程工具的隱私風險分析" 研究報告]() | 🔄 |
+| P14.244 | **** | [#- [ ] "計算雲端 AI 的真實成本" ROI 分析]() | 🔄 |
+| P14.245 | **** | [#- [ ] "遠程團隊的 AI 協作最佳實踐" 指南]() | 🔄 |
+| P14.246 | **** | [#### 🎥 產品示範內容]() | 🔄 |
+| P14.247 | **** | [#- [ ] "一鍵回滾 AI 錯誤" 功能演示影片]() | 🔄 |
+| P14.248 | **** | [#- [ ] "Telegram + Dashboard 雙重體驗" 使用案例]() | 🔄 |
+| P14.249 | **** | [#- [ ] "隱私保護 vs 雲端風險" 對比演示]() | 🔄 |
+| P14.250 | **** | [#- [ ] "企業級監控與透明化" 功能展示]() | 🔄 |
+| P14.251 | **** | [#### 📊 數據驅動內容]() | 🔄 |
+| P14.252 | **** | [#- [ ] "AI 編程工具使用情況" 年度報告]() | 🔄 |
+| P14.253 | **** | [#- [ ] "企業 AI 採用障礙" 調查分析]() | 🔄 |
+| P14.254 | **** | [#- [ ] "開發者隱私關注" 趨勢研究]() | 🔄 |
+| P14.255 | **** | [#- [ ] Alice 使用者成功案例集]() | 🔄 |
+| P14.256 | **** | [### 數位行銷管道]() | 🔄 |
+| P14.257 | **** | [#### 🌐 官方網站與 SEO]() | 🔄 |
+| P14.258 | **** | [#- [ ] 產品官網設計與開發]() | 🔄 |
+| P14.259 | **** | [#- [ ] SEO 關鍵字策略規劃]() | 🔄 |
+| P14.260 | **** | [#- [ ] 著陸頁面 A/B 測試]() | 🔄 |
+| P14.261 | **** | [#- [ ] 轉換率優化（CRO）]() | 🔄 |
+| P14.262 | **** | [#### 💼 LinkedIn B2B 行銷]() | 🔄 |
+| P14.263 | **** | [#- [ ] CTO/技術主管目標廣告]() | 🔄 |
+| P14.264 | **** | [#- [ ] 企業決策者內容行銷]() | 🔄 |
+| P14.265 | **** | [#- [ ] 行業專家意見領袖合作]() | 🔄 |
+| P14.266 | **** | [#- [ ] 企業客戶成功故事分享]() | 🔄 |
+| P14.267 | **** | [#### 🐦 Twitter 技術社群]() | 🔄 |
+| P14.268 | **** | [#- [ ] 開發者社群參與策略]() | 🔄 |
+| P14.269 | **** | [#- [ ] 技術內容分享計畫]() | 🔄 |
+| P14.270 | **** | [#- [ ] KOL 與技術專家合作]() | 🔄 |
+| P14.271 | **** | [#- [ ] 開源社群關係建立]() | 🔄 |
+| P14.272 | **** | [#### 📺 YouTube 技術頻道]() | 🔄 |
+| P14.273 | **** | [#- [ ] 產品教學影片系列]() | 🔄 |
+| P14.274 | **** | [#- [ ] 技術深度分析內容]() | 🔄 |
+| P14.275 | **** | [#- [ ] 客戶訪談與案例分享]() | 🔄 |
+| P14.276 | **** | [#- [ ] 競品對比分析影片]() | 🔄 |
+| P14.277 | **** | [### 公關與事件行銷]() | 🔄 |
+| P14.278 | **** | [#### 🎤 會議與演講]() | 🔄 |
+| P14.279 | **** | [#- [ ] 技術會議演講申請]() | 🔄 |
+| P14.280 | **** | [#- [ ] 工程師大會展位規劃]() | 🔄 |
+| P14.281 | **** | [#- [ ] 隱私與資安會議參與]() | 🔄 |
+| P14.282 | **** | [#- [ ] 企業 IT 高峰會議行銷]() | 🔄 |
+| P14.283 | **** | [#### 📰 媒體關係]() | 🔄 |
+| P14.284 | **** | [#- [ ] 科技媒體關係建立]() | 🔄 |
+| P14.285 | **** | [#- [ ] 產品發布新聞稿撰寫]() | 🔄 |
+| P14.286 | **** | [#- [ ] 記者專訪安排]() | 🔄 |
+| P14.287 | **** | [#- [ ] 行業報告引用推廣]() | 🔄 |
+| P14.288 | **** | [### 合作夥伴行銷]() | 🔄 |
+| P14.289 | **** | [#### 🤝 策略夥伴關係]() | 🔄 |
+| P14.290 | **** | [#- [ ] AI 顧問公司合作計畫]() | 🔄 |
+| P14.291 | **** | [#- [ ] 系統整合商夥伴方案]() | 🔄 |
+| P14.292 | **** | [#- [ ] 企業軟體廠商聯盟]() | 🔄 |
+| P14.293 | **** | [#- [ ] 教育機構合作專案]() | 🔄 |
+| P14.294 | **** | [#### 🛍️ 通路合作]() | 🔄 |
+| P14.295 | **** | [#- [ ] 軟體分銷商合作]() | 🔄 |
+| P14.296 | **** | [#- [ ] 企業採購平台上架]() | 🔄 |
+| P14.297 | **** | [#- [ ] 雲端市場（AWS、Azure）評估]() | 🔄 |
+| P14.298 | **** | [#- [ ] 第三方軟體商店策略]() | 🔄 |
+| P14.299 | **** | [### 品牌監控與管理]() | 🔄 |
+| P14.300 | **** | [#### 📈 品牌表現追蹤]() | 🔄 |
+| P14.301 | **** | [#- [ ] 品牌知名度調查]() | 🔄 |
+| P14.302 | **** | [#- [ ] 客戶滿意度監控]() | 🔄 |
+| P14.303 | **** | [#- [ ] 競品品牌對比分析]() | 🔄 |
+| P14.304 | **** | [#- [ ] 行銷 ROI 測量機制]() | 🔄 |
+| P14.305 | **** | [#### 🛡️ 品牌保護]() | 🔄 |
+| P14.306 | **** | [#- [ ] 商標註冊申請]() | 🔄 |
+| P14.307 | **** | [#- [ ] 網域名稱保護]() | 🔄 |
+| P14.308 | **** | [#- [ ] 負面評論管理機制]() | 🔄 |
+| P14.309 | **** | [#- [ ] 品牌形象危機處理預案]() | 🔄 |
+| P14.310 | **** | [### 交付成果]() | 🔄 |
+| P14.311 | **** | [#- 完整品牌定位策略書]() | 🔄 |
+| P14.312 | **** | [#- 行銷活動執行計畫]() | 🔄 |
+| P14.313 | **** | [#- 內容行銷素材庫]() | 🔄 |
+| P14.314 | **** | [#- 品牌監控與管理制度]() | 🔄 |
+| P14.315 | **Alice 商業化執行藍圖：6個月行動計畫** | [#58](https://github.com/chimerakang/alice/issues/58) | 🔄 |
+| P14.316 | **** | [#統整所有商業化策略，制定可執行的 6 個月商業化藍圖，從產品準備到市場推廣的完整計畫。]() | 🔄 |
+| P14.317 | **** | [### 📅 Phase 1: 產品準備階段 (月 1-2)]() | 🔄 |
+| P14.318 | **** | [#### 🔧 產品功能完善]() | 🔄 |
+| P14.319 | **** | [#- [ ] 實現基礎授權驗證系統]() | 🔄 |
+| P14.320 | **** | [#- [ ] 添加使用量追蹤與計費功能]() | 🔄 |
+| P14.321 | **** | [#- [ ] 優化 Dashboard 企業級展示]() | 🔄 |
+| P14.322 | **** | [#- [ ] 改善產品穩定性與效能]() | 🔄 |
+| P14.323 | **** | [#### 📄 法務與合規準備]() | 🔄 |
+| P14.324 | **** | [#- [ ] 制定 EULA 與服務條款]() | 🔄 |
+| P14.325 | **** | [#- [ ] 準備隱私政策與 GDPR 合規文件]() | 🔄 |
+| P14.326 | **** | [#- [ ] 申請必要的軟體授權與商標]() | 🔄 |
+| P14.327 | **** | [#- [ ] 建立客戶支援與 SLA 框架]() | 🔄 |
+| P14.328 | **** | [#### 🎯 市場研究深化]() | 🔄 |
+| P14.329 | **** | [#- [ ] 完成 Entire Checkpoints 深度競品分析]() | 🔄 |
+| P14.330 | **** | [#- [ ] 進行目標客戶訪談 (5-10 家企業)]() | 🔄 |
+| P14.331 | **** | [#- [ ] 驗證定價策略與市場接受度]() | 🔄 |
+| P14.332 | **** | [#- [ ] 完善客戶人群分析與需求調研]() | 🔄 |
+| P14.333 | **** | [### 📅 Phase 2: MVP 驗證階段 (月 3-4)]() | 🔄 |
+| P14.334 | **** | [#### 🚀 產品 Beta 發布]() | 🔄 |
+| P14.335 | **** | [#- [ ] 建立產品官網與註冊系統]() | 🔄 |
+| P14.336 | **** | [#- [ ] 開放 Beta 測試申請]() | 🔄 |
+| P14.337 | **** | [#- [ ] 招募 10-15 個企業 Beta 客戶]() | 🔄 |
+| P14.338 | **** | [#- [ ] 建立客戶反饋收集機制]() | 🔄 |
+| P14.339 | **** | [#### 💡 客戶開發]() | 🔄 |
+| P14.340 | **** | [#- [ ] 執行客戶開發訪談]() | 🔄 |
+| P14.341 | **** | [#- [ ] 收集產品使用情況數據]() | 🔄 |
+| P14.342 | **** | [#- [ ] 分析客戶痛點與需求變化]() | 🔄 |
+| P14.343 | **** | [#- [ ] 調整產品功能優先級]() | 🔄 |
+| P14.344 | **** | [#### 📊 數據收集與分析]() | 🔄 |
+| P14.345 | **** | [#- [ ] 建立產品使用情況分析]() | 🔄 |
+| P14.346 | **** | [#- [ ] 追蹤客戶滿意度與 NPS]() | 🔄 |
+| P14.347 | **** | [#- [ ] 分析定價策略有效性]() | 🔄 |
+| P14.348 | **** | [#- [ ] 收集客戶成功案例]() | 🔄 |
+| P14.349 | **** | [### 📅 Phase 3: 市場推廣階段 (月 5-6)]() | 🔄 |
+| P14.350 | **** | [#### 🎨 品牌與行銷物料]() | 🔄 |
+| P14.351 | **** | [#- [ ] 完成品牌視覺識別設計]() | 🔄 |
+| P14.352 | **** | [#- [ ] 制作產品演示影片與簡報]() | 🔄 |
+| P14.353 | **** | [#- [ ] 準備客戶案例研究報告]() | 🔄 |
+| P14.354 | **** | [#- [ ] 建立完整的行銷素材庫]() | 🔄 |
+| P14.355 | **** | [#### 🌐 數位行銷啟動]() | 🔄 |
+| P14.356 | **** | [#- [ ] 官網 SEO 優化與內容行銷]() | 🔄 |
+| P14.357 | **** | [#- [ ] LinkedIn B2B 廣告投放]() | 🔄 |
+| P14.358 | **** | [#- [ ] Twitter 技術社群參與]() | 🔄 |
+| P14.359 | **** | [#- [ ] YouTube 產品教學頻道建立]() | 🔄 |
+| P14.360 | **** | [#### 🤝 合作夥伴拓展]() | 🔄 |
+| P14.361 | **** | [#- [ ] 建立 AI 顧問公司合作關係]() | 🔄 |
+| P14.362 | **** | [#- [ ] 接觸系統整合商夥伴]() | 🔄 |
+| P14.363 | **** | [#- [ ] 參加相關技術會議與展覽]() | 🔄 |
+| P14.364 | **** | [#- [ ] 建立 KOL 與意見領袖網絡]() | 🔄 |
+| P14.365 | **** | [### 📊 關鍵指標 (KPIs)]() | 🔄 |
+| P14.366 | **** | [#### 產品指標]() | 🔄 |
+| P14.367 | **** | [#- [ ] Beta 客戶數量：15+ 家企業]() | 🔄 |
+| P14.368 | **** | [#- [ ] 產品穩定性：99%+ uptime]() | 🔄 |
+| P14.369 | **** | [#- [ ] 客戶滿意度：NPS > 50]() | 🔄 |
+| P14.370 | **** | [#- [ ] 功能完成度：核心功能 100%]() | 🔄 |
+| P14.371 | **** | [#### 商業指標]() | 🔄 |
+| P14.372 | **** | [#- [ ] 付費客戶轉換率：20%+]() | 🔄 |
+| P14.373 | **** | [#- [ ] 月度經常性收入 (MRR)：K+]() | 🔄 |
+| P14.374 | **** | [#- [ ] 客戶獲取成本 (CAC)：< ,000]() | 🔄 |
+| P14.375 | **** | [#- [ ] 客戶生命週期價值 (LTV)：> ,000]() | 🔄 |
+| P14.376 | **** | [#### 行銷指標]() | 🔄 |
+| P14.377 | **** | [#- [ ] 官網月訪問量：1,000+ UV]() | 🔄 |
+| P14.378 | **** | [#- [ ] 行銷合格潛在客戶 (MQL)：50+/月]() | 🔄 |
+| P14.379 | **** | [#- [ ] 銷售合格潛在客戶 (SQL)：10+/月]() | 🔄 |
+| P14.380 | **** | [#- [ ] 內容行銷覆蓋率：10K+ 閱讀]() | 🔄 |
+| P14.381 | **** | [### 🎯 成功里程碑]() | 🔄 |
+| P14.382 | **** | [#### 月度里程碑]() | 🔄 |
+| P14.383 | **** | [#**月 1**：產品功能完善，法務準備完成  ]() | 🔄 |
+| P14.384 | **** | [#**月 2**：市場研究完成，競品分析深化  ]() | 🔄 |
+| P14.385 | **** | [#**月 3**：Beta 產品發布，首批客戶獲取  ]() | 🔄 |
+| P14.386 | **** | [#**月 4**：客戶驗證完成，產品迭代優化  ]() | 🔄 |
+| P14.387 | **** | [#**月 5**：品牌行銷啟動，合作夥伴拓展  ]() | 🔄 |
+| P14.388 | **** | [#**月 6**：商業化模式驗證，下階段規劃]() | 🔄 |
+| P14.389 | **** | [#### 關鍵決策點]() | 🔄 |
+| P14.390 | **** | [#- [ ] 月 2 結束：是否繼續單機版策略 vs 開發多人版]() | 🔄 |
+| P14.391 | **** | [#- [ ] 月 4 結束：是否調整定價策略與目標市場]() | 🔄 |
+| P14.392 | **** | [#- [ ] 月 6 結束：是否進入規模化成長階段]() | 🔄 |
+| P14.393 | **** | [### 💰 預算規劃]() | 🔄 |
+| P14.394 | **** | [#### 產品開發：40%]() | 🔄 |
+| P14.395 | **** | [#- 人力成本]() | 🔄 |
+| P14.396 | **** | [#- 基礎設施]() | 🔄 |
+| P14.397 | **** | [#- 第三方工具授權]() | 🔄 |
+| P14.398 | **** | [#### 行銷推廣：35%]() | 🔄 |
+| P14.399 | **** | [#- 數位廣告投放]() | 🔄 |
+| P14.400 | **** | [#- 內容創作]() | 🔄 |
+| P14.401 | **** | [#- 會議與活動]() | 🔄 |
+| P14.402 | **** | [#### 營運支援：15%]() | 🔄 |
+| P14.403 | **** | [#- 客戶服務]() | 🔄 |
+| P14.404 | **** | [#- 法務合規]() | 🔄 |
+| P14.405 | **** | [#- 財務會計]() | 🔄 |
+| P14.406 | **** | [#### 應急儲備：10%]() | 🔄 |
+| P14.407 | **** | [#- 意外支出]() | 🔄 |
+| P14.408 | **** | [#- 機會投資]() | 🔄 |
+| P14.409 | **** | [#- 風險緩衝]() | 🔄 |
+| P14.410 | **** | [### 🚨 風險控制]() | 🔄 |
+| P14.411 | **** | [#### 產品風險]() | 🔄 |
+| P14.412 | **** | [#- [ ] 技術延遲：建立開發緩衝時間]() | 🔄 |
+| P14.413 | **** | [#- [ ] 競品壓力：準備差異化應對策略]() | 🔄 |
+| P14.414 | **** | [#- [ ] 客戶需求變化：保持產品靈活性]() | 🔄 |
+| P14.415 | **** | [#### 市場風險]() | 🔄 |
+| P14.416 | **** | [#- [ ] 市場接受度低：準備產品定位調整]() | 🔄 |
+| P14.417 | **** | [#- [ ] 定價策略失效：建立動態定價機制]() | 🔄 |
+| P14.418 | **** | [#- [ ] 競爭加劇：強化獨特價值主張]() | 🔄 |
+| P14.419 | **** | [#### 財務風險]() | 🔄 |
+| P14.420 | **** | [#- [ ] 現金流壓力：控制燒錢速度]() | 🔄 |
+| P14.421 | **** | [#- [ ] 客戶付款延遲：建立付款保障機制]() | 🔄 |
+| P14.422 | **** | [#- [ ] 投資回報不佳：設定止損線]() | 🔄 |
+| P14.423 | **** | [### 交付成果]() | 🔄 |
+| P14.424 | **** | [#- 詳細的 6 個月執行時程表]() | 🔄 |
+| P14.425 | **** | [#- 每月關鍵任務與負責人分配]() | 🔄 |
+| P14.426 | **** | [#- KPI 追蹤與報告機制]() | 🔄 |
+| P14.427 | **** | [#- 風險監控與應對預案]() | 🔄 |
+| P14.428 | **** | [#- 預算分配與財務管控制度]() | 🔄 |
+
+## P2 - Monitoring (✅ 100%)
+
+| # | Task | Issue | Status |
+|---|------|-------|--------|
+| P2.1 | **🎛️ Web Dashboard Integration** | [#1](https://github.com/chimerakang/alice/issues/1) | ✅ |
+| P2.2 | **** | [#Integrate the HTML dashboard with Alice's Go backend to provide real-time monitoring of AI agent activities, inspired by Entire's Checkpoints tool.]() | 🔄 |
+| P2.3 | **** | [### Features to Implement]() | 🔄 |
+| P2.4 | **** | [#### Backend Integration]() | 🔄 |
+| P2.5 | **** | [#- [ ] HTTP server for serving dashboard at `/dashboard`]() | 🔄 |
+| P2.6 | **** | [#- [ ] WebSocket support for real-time tool execution updates]() | 🔄 |
+| P2.7 | **** | [#- [ ] REST API endpoints for statistics and monitoring data]() | 🔄 |
+| P2.8 | **** | [#- [ ] Tool execution logging system with structured data]() | 🔄 |
+| P2.9 | **** | [#- [ ] Agent status tracking across multiple projects]() | 🔄 |
+| P2.10 | **** | [#### Data Collection & Storage]() | 🔄 |
+| P2.11 | **** | [#- [ ] Tool execution metrics collection (name, duration, success/failure)]() | 🔄 |
+| P2.12 | **** | [#- [ ] Conversation history persistence (local JSON storage)]() | 🔄 |
+| P2.13 | **** | [#- [ ] Project insights generation (most used tools, performance stats)]() | 🔄 |
+| P2.14 | **** | [#- [ ] Real-time performance monitoring]() | 🔄 |
+| P2.15 | **** | [#### API Endpoints]() | 🔄 |
+| P2.16 | **** | [#- [ ] \`GET /api/stats\` - Current statistics (active sessions, tools executed, success rate)]() | 🔄 |
+| P2.17 | **** | [#- [ ] \`GET /api/agents\` - Active agent list with project information]() | 🔄 |
+| P2.18 | **** | [#- [ ] \`GET /api/tools/recent\` - Recent tool executions with status]() | 🔄 |
+| P2.19 | **** | [#- [ ] \`GET /api/conversations\` - Conversation history by project]() | 🔄 |
+| P2.20 | **** | [#- [ ] \`WebSocket /ws\` - Real-time tool execution and status updates]() | 🔄 |
+| P2.21 | **** | [#### Configuration]() | 🔄 |
+| P2.22 | **** | [#- [ ] Add \`--dashboard-port\` CLI flag (default: 8080)]() | 🔄 |
+| P2.23 | **** | [#- [ ] Optional dashboard enable/disable setting]() | 🔄 |
+| P2.24 | **** | [#- [ ] Dashboard access control (optional authentication)]() | 🔄 |
+| P2.25 | **** | [### Technical Requirements]() | 🔄 |
+| P2.26 | **** | [#- Maintain full backward compatibility]() | 🔄 |
+| P2.27 | **** | [#- Support for multiple concurrent projects]() | 🔄 |
+| P2.28 | **** | [#- Persist monitoring data locally using JSON files]() | 🔄 |
+| P2.29 | **** | [#- Graceful degradation when dashboard is disabled]() | 🔄 |
+| P2.30 | **** | [#- Mobile responsive design integration]() | 🔄 |
+| P2.31 | **** | [### Implementation Plan]() | 🔄 |
+| P2.32 | **** | [#1. Add HTTP server capability to \`main.go\`]() | 🔄 |
+| P2.33 | **** | [#2. Create monitoring hooks in \`agent.go\` and \`tools.go\`]() | 🔄 |
+| P2.34 | **** | [#3. Implement WebSocket handlers for real-time updates]() | 🔄 |
+| P2.35 | **** | [#4. Add data persistence layer for metrics and history]() | 🔄 |
+| P2.36 | **** | [#5. Connect frontend dashboard to backend APIs]() | 🔄 |
+| P2.37 | **** | [### Acceptance Criteria]() | 🔄 |
+| P2.38 | **** | [#- ✅ Dashboard shows real-time tool execution with visual indicators]() | 🔄 |
+| P2.39 | **** | [#- ✅ Agent status updates automatically without page refresh]() | 🔄 |
+| P2.40 | **** | [#- ✅ Conversation history is preserved across restarts]() | 🔄 |
+| P2.41 | **** | [#- ✅ Performance metrics are accurate and meaningful]() | 🔄 |
+| P2.42 | **** | [#- ✅ Mobile responsive design works on all devices]() | 🔄 |
+| P2.43 | **** | [#- ✅ No impact on existing Telegram functionality]() | 🔄 |
+| P2.44 | **** | [### Related Files]() | 🔄 |
+| P2.45 | **** | [#- \`main.go\` - Add HTTP server and dashboard flag]() | 🔄 |
+| P2.46 | **** | [#- \`agent.go\` - Add execution logging hooks  ]() | 🔄 |
+| P2.47 | **** | [#- \`tools.go\` - Add tool execution tracking]() | 🔄 |
+| P2.48 | **** | [#- \`dashboard.html\` - Connect to backend WebSocket and APIs]() | 🔄 |
+| P2.49 | **** | [### Priority: High 🔥]() | 🔄 |
+| P2.50 | **** | [#This provides essential monitoring capabilities to compete with tools like Entire's Checkpoints.]() | 🔄 |
+| P2.51 | **🔍 AI Agent Transparency & Decision Logging** | [#2](https://github.com/chimerakang/alice/issues/2) | ✅ |
+| P2.52 | **** | [#Implement comprehensive AI agent transparency features similar to Entire's Checkpoints, capturing the full context behind AI-generated code and decisions.]() | 🔄 |
+| P2.53 | **** | [### Core Features]() | 🔄 |
+| P2.54 | **** | [#### Decision Context Logging]() | 🔄 |
+| P2.55 | **** | [#- [ ] Record AI reasoning process for each tool execution]() | 🔄 |
+| P2.56 | **** | [#- [ ] Capture user prompts and agent responses with full context]() | 🔄 |
+| P2.57 | **** | [#- [ ] Log tool selection rationale and decision-making process]() | 🔄 |
+| P2.58 | **** | [#- [ ] Store conversation flow and agent state transitions]() | 🔄 |
+| P2.59 | **** | [#### Execution Audit Trail]() | 🔄 |
+| P2.60 | **** | [#- [ ] Complete tool execution history with inputs/outputs]() | 🔄 |
+| P2.61 | **** | [#- [ ] Error tracking and debugging information]() | 🔄 |
+| P2.62 | **** | [#- [ ] Performance metrics (execution time, token usage)]() | 🔄 |
+| P2.63 | **** | [#- [ ] Project-specific decision patterns and learning]() | 🔄 |
+| P2.64 | **** | [#### Data Structures]() | 🔄 |
+| P2.65 | **** | [#```go]() | 🔄 |
+| P2.66 | **** | [#type DecisionLog struct {]() | 🔄 |
+| P2.67 | **** | [#    Timestamp     time.Time]() | 🔄 |
+| P2.68 | **** | [#    SessionID     string]() | 🔄 |
+| P2.69 | **** | [#    ProjectPath   string]() | 🔄 |
+| P2.70 | **** | [#    UserPrompt    string]() | 🔄 |
+| P2.71 | **** | [#    AgentResponse string]() | 🔄 |
+| P2.72 | **** | [#    ToolCalls     []ToolExecution]() | 🔄 |
+| P2.73 | **** | [#    Reasoning     string]() | 🔄 |
+| P2.74 | **** | [#    Context       map[string]interface{}]() | 🔄 |
+| P2.75 | **** | [#    Outcome       ExecutionOutcome]() | 🔄 |
+| P2.76 | **** | [#}]() | 🔄 |
+| P2.77 | **** | [#type ToolExecution struct {]() | 🔄 |
+| P2.78 | **** | [#    Name      string]() | 🔄 |
+| P2.79 | **** | [#    Input     interface{}]() | 🔄 |
+| P2.80 | **** | [#    Output    interface{}]() | 🔄 |
+| P2.81 | **** | [#    Duration  time.Duration]() | 🔄 |
+| P2.82 | **** | [#    Success   bool]() | 🔄 |
+| P2.83 | **** | [#    Error     string]() | 🔄 |
+| P2.84 | **** | [#}]() | 🔄 |
+| P2.85 | **** | [#```]() | 🔄 |
+| P2.86 | **** | [#### Export & Analysis]() | 🔄 |
+| P2.87 | **** | [#- [ ] Export decision logs to JSON/CSV for analysis]() | 🔄 |
+| P2.88 | **** | [#- [ ] Integration with external analysis tools]() | 🔄 |
+| P2.89 | **** | [#- [ ] Pattern recognition in agent behavior]() | 🔄 |
+| P2.90 | **** | [#- [ ] Performance trend analysis]() | 🔄 |
+| P2.91 | **** | [#### Privacy & Security]() | 🔄 |
+| P2.92 | **** | [#- [ ] Configurable logging levels (off/basic/detailed)]() | 🔄 |
+| P2.93 | **** | [#- [ ] Sensitive data filtering (passwords, API keys)]() | 🔄 |
+| P2.94 | **** | [#- [ ] Local-only storage with optional cloud sync]() | 🔄 |
+| P2.95 | **** | [#- [ ] Data retention policies]() | 🔄 |
+| P2.96 | **** | [### Implementation Areas]() | 🔄 |
+| P2.97 | **** | [#### Agent Modifications]() | 🔄 |
+| P2.98 | **** | [#- [ ] Add logging hooks to \`Agent.Run()\` method]() | 🔄 |
+| P2.99 | **** | [#- [ ] Capture tool execution context in \`ToolExecutor\`]() | 🔄 |
+| P2.100 | **** | [#- [ ] Enhance conversation history with decision context]() | 🔄 |
+| P2.101 | **** | [#- [ ] Add reasoning extraction from API responses]() | 🔄 |
+| P2.102 | **** | [#### Storage Layer]() | 🔄 |
+| P2.103 | **** | [#- [ ] JSON file-based persistence for decision logs]() | 🔄 |
+| P2.104 | **** | [#- [ ] Efficient indexing for large log volumes]() | 🔄 |
+| P2.105 | **** | [#- [ ] Compressed storage for long-term retention]() | 🔄 |
+| P2.106 | **** | [#- [ ] Backup and restore capabilities]() | 🔄 |
+| P2.107 | **** | [#### API Integration]() | 🔄 |
+| P2.108 | **** | [#- [ ] Dashboard endpoints for decision log visualization]() | 🔄 |
+| P2.109 | **** | [#- [ ] Real-time decision streaming via WebSocket]() | 🔄 |
+| P2.110 | **** | [#- [ ] Search and filter capabilities]() | 🔄 |
+| P2.111 | **** | [#- [ ] Export functionality]() | 🔄 |
+| P2.112 | **** | [### Benefits]() | 🔄 |
+| P2.113 | **** | [#- **Debugging**: Understand why agent made specific decisions]() | 🔄 |
+| P2.114 | **** | [#- **Learning**: Identify patterns in successful vs failed approaches  ]() | 🔄 |
+| P2.115 | **** | [#- **Transparency**: Full audit trail of AI actions]() | 🔄 |
+| P2.116 | **** | [#- **Compliance**: Meet transparency requirements for AI systems]() | 🔄 |
+| P2.117 | **** | [#- **Optimization**: Data-driven agent performance improvements]() | 🔄 |
+| P2.118 | **** | [### Configuration]() | 🔄 |
+| P2.119 | **** | [#- [ ] \`ALICE_LOG_LEVEL\` environment variable]() | 🔄 |
+| P2.120 | **** | [#- [ ] \`--enable-transparency\` CLI flag]() | 🔄 |
+| P2.121 | **** | [#- [ ] \`transparency_config.json\` for detailed settings]() | 🔄 |
+| P2.122 | **** | [#- [ ] Dashboard toggle for real-time decision viewing]() | 🔄 |
+| P2.123 | **** | [### Acceptance Criteria]() | 🔄 |
+| P2.124 | **** | [#- ✅ Every tool execution is logged with full context]() | 🔄 |
+| P2.125 | **** | [#- ✅ Agent reasoning is captured and stored]() | 🔄 |
+| P2.126 | **** | [#- ✅ Decision logs are searchable and filterable]() | 🔄 |
+| P2.127 | **** | [#- ✅ Performance impact is minimal (<5% overhead)]() | 🔄 |
+| P2.128 | **** | [#- ✅ Privacy controls work as specified]() | 🔄 |
+| P2.129 | **** | [#- ✅ Export functionality produces usable data]() | 🔄 |
+| P2.130 | **** | [### Related Files]() | 🔄 |
+| P2.131 | **** | [#- \`agent.go\` - Add decision logging]() | 🔄 |
+| P2.132 | **** | [#- \`api.go\` - Capture API response reasoning]() | 🔄 |
+| P2.133 | **** | [#- \`tools.go\` - Add execution context tracking]() | 🔄 |
+| P2.134 | **** | [#- New: \`transparency.go\` - Core logging functionality]() | 🔄 |
+| P2.135 | **** | [#- New: \`storage.go\` - Data persistence layer]() | 🔄 |
+| P2.136 | **** | [### Priority: Medium 🟡]() | 🔄 |
+| P2.137 | **** | [#Essential for matching Entire's transparency capabilities and building user trust.]() | 🔄 |
+| P2.138 | **🤖 Multi-Agent Coordination System** | [#3](https://github.com/chimerakang/alice/issues/3) | ✅ |
+| P2.139 | **** | [#Implement a multi-agent coordination system inspired by Entire's \"Universal Semantic Reasoning Layer\" to enable specialized agents for different development tasks.]() | 🔄 |
+| P2.140 | **** | [### Agent Specialization Types]() | 🔄 |
+| P2.141 | **** | [#### Core Agent Types]() | 🔄 |
+| P2.142 | **** | [#- [ ] **CodeReview Agent**: Focuses on code quality, security, best practices]() | 🔄 |
+| P2.143 | **** | [#- [ ] **Testing Agent**: Specializes in writing and running tests]() | 🔄 |
+| P2.144 | **** | [#- [ ] **Documentation Agent**: Creates and maintains project documentation]() | 🔄 |
+| P2.145 | **** | [#- [ ] **Deployment Agent**: Handles CI/CD, Docker, deployment tasks]() | 🔄 |
+| P2.146 | **** | [#- [ ] **Debug Agent**: Specialized in troubleshooting and error resolution]() | 🔄 |
+| P2.147 | **** | [#### Agent Architecture]() | 🔄 |
+| P2.148 | **** | [#```go]() | 🔄 |
+| P2.149 | **** | [#type SpecializedAgent struct {]() | 🔄 |
+| P2.150 | **** | [#    Type        AgentType]() | 🔄 |
+| P2.151 | **** | [#    Skills      []string]() | 🔄 |
+| P2.152 | **** | [#    Context     AgentContext]() | 🔄 |
+| P2.153 | **** | [#    *Agent      // Embed base agent]() | 🔄 |
+| P2.154 | **** | [#}]() | 🔄 |
+| P2.155 | **** | [#type AgentCoordinator struct {]() | 🔄 |
+| P2.156 | **** | [#    agents       map[AgentType]*SpecializedAgent]() | 🔄 |
+| P2.157 | **** | [#    activeTask   *CoordinatedTask]() | 🔄 |
+| P2.158 | **** | [#    sharedState  *SharedContext]() | 🔄 |
+| P2.159 | **** | [#}]() | 🔄 |
+| P2.160 | **** | [#type CoordinatedTask struct {]() | 🔄 |
+| P2.161 | **** | [#    ID          string]() | 🔄 |
+| P2.162 | **** | [#    Description string]() | 🔄 |
+| P2.163 | **** | [#    SubTasks    []SubTask]() | 🔄 |
+| P2.164 | **** | [#    Assignments map[AgentType][]SubTask]() | 🔄 |
+| P2.165 | **** | [#    Status      TaskStatus]() | 🔄 |
+| P2.166 | **** | [#}]() | 🔄 |
+| P2.167 | **** | [#```]() | 🔄 |
+| P2.168 | **** | [#### Task Routing & Coordination]() | 🔄 |
+| P2.169 | **** | [#- [ ] Intelligent task analysis and routing]() | 🔄 |
+| P2.170 | **** | [#- [ ] Agent capability matching]() | 🔄 |
+| P2.171 | **** | [#- [ ] Workload balancing across agents]() | 🔄 |
+| P2.172 | **** | [#- [ ] Inter-agent communication protocols]() | 🔄 |
+| P2.173 | **** | [#- [ ] Shared context and knowledge base]() | 🔄 |
+| P2.174 | **** | [### Features to Implement]() | 🔄 |
+| P2.175 | **** | [#### Agent Management]() | 🔄 |
+| P2.176 | **** | [#- [ ] Dynamic agent instantiation based on task requirements]() | 🔄 |
+| P2.177 | **** | [#- [ ] Agent lifecycle management (create, pause, terminate)]() | 🔄 |
+| P2.178 | **** | [#- [ ] Resource allocation and limits per agent]() | 🔄 |
+| P2.179 | **** | [#- [ ] Agent performance monitoring and optimization]() | 🔄 |
+| P2.180 | **** | [#### Communication Layer]() | 🔄 |
+| P2.181 | **** | [#- [ ] Shared memory/context between agents]() | 🔄 |
+| P2.182 | **** | [#- [ ] Message passing for agent coordination]() | 🔄 |
+| P2.183 | **** | [#- [ ] Event-driven agent notifications]() | 🔄 |
+| P2.184 | **** | [#- [ ] Conflict resolution for concurrent operations]() | 🔄 |
+| P2.185 | **** | [#### Task Distribution]() | 🔄 |
+| P2.186 | **** | [#- [ ] Automatic task breakdown and assignment]() | 🔄 |
+| P2.187 | **** | [#- [ ] Priority-based task scheduling]() | 🔄 |
+| P2.188 | **** | [#- [ ] Dependency management between sub-tasks]() | 🔄 |
+| P2.189 | **** | [#- [ ] Progress aggregation and reporting]() | 🔄 |
+| P2.190 | **** | [#### Telegram Integration]() | 🔄 |
+| P2.191 | **** | [#- [ ] Multi-agent status in chat interface]() | 🔄 |
+| P2.192 | **** | [#- [ ] Agent-specific command routing]() | 🔄 |
+| P2.193 | **** | [#- [ ] Group chat collaboration with multiple agents]() | 🔄 |
+| P2.194 | **** | [#- [ ] Agent handoff notifications]() | 🔄 |
+| P2.195 | **** | [### Use Cases & Examples]() | 🔄 |
+| P2.196 | **** | [#### Scenario 1: Full Stack Development]() | 🔄 |
+| P2.197 | **** | [#```]() | 🔄 |
+| P2.198 | **** | [#User: "Build a user authentication system"]() | 🔄 |
+| P2.199 | **** | [#Coordinator:]() | 🔄 |
+| P2.200 | **** | [#├── CodeReview Agent: Design API structure]() | 🔄 |
+| P2.201 | **** | [#├── Testing Agent: Plan test strategy  ]() | 🔄 |
+| P2.202 | **** | [#├── Documentation Agent: API documentation]() | 🔄 |
+| P2.203 | **** | [#└── Deployment Agent: Security considerations]() | 🔄 |
+| P2.204 | **** | [#Flow:]() | 🔄 |
+| P2.205 | **** | [#1. CodeReview designs the architecture]() | 🔄 |
+| P2.206 | **** | [#2. Testing defines test cases]() | 🔄 |
+| P2.207 | **** | [#3. Main agent implements code]() | 🔄 |
+| P2.208 | **** | [#4. CodeReview validates implementation]() | 🔄 |
+| P2.209 | **** | [#5. Testing runs comprehensive tests]() | 🔄 |
+| P2.210 | **** | [#6. Documentation updates API docs]() | 🔄 |
+| P2.211 | **** | [#7. Deployment handles security review]() | 🔄 |
+| P2.212 | **** | [#```]() | 🔄 |
+| P2.213 | **** | [#### Scenario 2: Bug Investigation]() | 🔄 |
+| P2.214 | **** | [#```]() | 🔄 |
+| P2.215 | **** | [#User: "Fix the login timeout issue"]() | 🔄 |
+| P2.216 | **** | [#Coordinator:]() | 🔄 |
+| P2.217 | **** | [#├── Debug Agent: Analyze logs and trace issue]() | 🔄 |
+| P2.218 | **** | [#├── Testing Agent: Reproduce the problem]() | 🔄 |
+| P2.219 | **** | [#├── CodeReview Agent: Identify root cause]() | 🔄 |
+| P2.220 | **** | [#└── Documentation Agent: Update troubleshooting guide]() | 🔄 |
+| P2.221 | **** | [#```]() | 🔄 |
+| P2.222 | **** | [### Configuration & Controls]() | 🔄 |
+| P2.223 | **** | [#- [ ] Agent enable/disable toggles per project]() | 🔄 |
+| P2.224 | **** | [#- [ ] Resource limits (memory, API calls, execution time)]() | 🔄 |
+| P2.225 | **** | [#- [ ] Specialization level settings (basic/advanced)]() | 🔄 |
+| P2.226 | **** | [#- [ ] Coordination strategy selection (parallel/sequential/hybrid)]() | 🔄 |
+| P2.227 | **** | [#### Configuration File]() | 🔄 |
+| P2.228 | **** | [#```json]() | 🔄 |
+| P2.229 | **** | [#{]() | 🔄 |
+| P2.230 | **** | [#  "agents": {]() | 🔄 |
+| P2.231 | **** | [#    "code_review": {]() | 🔄 |
+| P2.232 | **** | [#      "enabled": true,]() | 🔄 |
+| P2.233 | **** | [#      "max_parallel_reviews": 3,]() | 🔄 |
+| P2.234 | **** | [#      "focus_areas": ["security", "performance", "maintainability"]]() | 🔄 |
+| P2.235 | **** | [#    },]() | 🔄 |
+| P2.236 | **** | [#    "testing": {]() | 🔄 |
+| P2.237 | **** | [#      "enabled": true,]() | 🔄 |
+| P2.238 | **** | [#      "test_types": ["unit", "integration", "e2e"],]() | 🔄 |
+| P2.239 | **** | [#      "coverage_threshold": 80]() | 🔄 |
+| P2.240 | **** | [#    },]() | 🔄 |
+| P2.241 | **** | [#    "documentation": {]() | 🔄 |
+| P2.242 | **** | [#      "enabled": false,]() | 🔄 |
+| P2.243 | **** | [#      "auto_update": true,]() | 🔄 |
+| P2.244 | **** | [#      "formats": ["markdown", "openapi"]]() | 🔄 |
+| P2.245 | **** | [#    }]() | 🔄 |
+| P2.246 | **** | [#  }]() | 🔄 |
+| P2.247 | **** | [#}]() | 🔄 |
+| P2.248 | **** | [#```]() | 🔄 |
+| P2.249 | **** | [### Technical Implementation]() | 🔄 |
+| P2.250 | **** | [#- [ ] Extend existing \`Agent\` struct for specialization]() | 🔄 |
+| P2.251 | **** | [#- [ ] Add coordinator logic to \`agent.go\`]() | 🔄 |
+| P2.252 | **** | [#- [ ] Implement agent registry and discovery]() | 🔄 |
+| P2.253 | **** | [#- [ ] Create specialized prompting for each agent type]() | 🔄 |
+| P2.254 | **** | [#- [ ] Add multi-agent dashboard views]() | 🔄 |
+| P2.255 | **** | [### Benefits]() | 🔄 |
+| P2.256 | **** | [#- **Efficiency**: Parallel processing of complex tasks]() | 🔄 |
+| P2.257 | **** | [#- **Quality**: Specialized expertise for each domain]() | 🔄 |
+| P2.258 | **** | [#- **Scalability**: Add new agent types as needed]() | 🔄 |
+| P2.259 | **** | [#- **Transparency**: Clear task breakdown and assignments]() | 🔄 |
+| P2.260 | **** | [#- **Learning**: Agents can specialize and improve over time]() | 🔄 |
+| P2.261 | **** | [### Acceptance Criteria]() | 🔄 |
+| P2.262 | **** | [#- ✅ Task routing works correctly based on content analysis]() | 🔄 |
+| P2.263 | **** | [#- ✅ Multiple agents can work on same project without conflicts]() | 🔄 |
+| P2.264 | **** | [#- ✅ Shared context is maintained across agent interactions]() | 🔄 |
+| P2.265 | **** | [#- ✅ Performance is better than single-agent approach for complex tasks]() | 🔄 |
+| P2.266 | **** | [#- ✅ Telegram interface clearly shows multi-agent activity]() | 🔄 |
+| P2.267 | **** | [#- ✅ Resource usage is controlled and monitored]() | 🔄 |
+| P2.268 | **** | [### Related Files]() | 🔄 |
+| P2.269 | **** | [#- \`agent.go\` - Extend for specialization]() | 🔄 |
+| P2.270 | **** | [#- \`telegram.go\` - Multi-agent UI updates]() | 🔄 |
+| P2.271 | **** | [#- New: \`coordinator.go\` - Central coordination logic]() | 🔄 |
+| P2.272 | **** | [#- New: \`specialized_agents.go\` - Agent type implementations]() | 🔄 |
+| P2.273 | **** | [#- New: \`shared_context.go\` - Inter-agent communication]() | 🔄 |
+| P2.274 | **** | [### Priority: Low 🟢]() | 🔄 |
+| P2.275 | **** | [#Advanced feature for power users, implement after dashboard and transparency features.]() | 🔄 |
+| P2.276 | **📊 Performance Monitoring & Analytics** | [#4](https://github.com/chimerakang/alice/issues/4) | ✅ |
+| P2.277 | **** | [#Implement comprehensive performance monitoring and analytics to track Alice's efficiency and resource usage.]() | 🔄 |
+| P2.278 | **** | [### Monitoring Metrics]() | 🔄 |
+| P2.279 | **** | [#- [ ] API call latency and success rates]() | 🔄 |
+| P2.280 | **** | [#- [ ] Tool execution performance]() | 🔄 |
+| P2.281 | **** | [#- [ ] Memory and CPU usage]() | 🔄 |
+| P2.282 | **** | [#- [ ] Token consumption and cost tracking]() | 🔄 |
+| P2.283 | **** | [#- [ ] Error rates and failure patterns]() | 🔄 |
+| P2.284 | **** | [### Analytics Features]() | 🔄 |
+| P2.285 | **** | [#- [ ] Usage pattern analysis]() | 🔄 |
+| P2.286 | **** | [#- [ ] Performance trend visualization]() | 🔄 |
+| P2.287 | **** | [#- [ ] Cost optimization recommendations]() | 🔄 |
+| P2.288 | **** | [#- [ ] Bottleneck identification]() | 🔄 |
+| P2.289 | **** | [#- [ ] Success/failure correlation analysis]() | 🔄 |
+| P2.290 | **** | [### Implementation]() | 🔄 |
+| P2.291 | **** | [#- [ ] Metrics collection in core components]() | 🔄 |
+| P2.292 | **** | [#- [ ] Time-series data storage]() | 🔄 |
+| P2.293 | **** | [#- [ ] Dashboard integration for visualization]() | 🔄 |
+| P2.294 | **** | [#- [ ] Alert system for performance issues]() | 🔄 |
+| P2.295 | **** | [#- [ ] Export capabilities for external analysis]() | 🔄 |
+| P2.296 | **** | [### Priority: Medium 🟡]() | 🔄 |
+| P2.297 | **🔐 Security & Privacy Enhancements** | [#5](https://github.com/chimerakang/alice/issues/5) | ✅ |
+| P2.298 | **** | [#Enhance Alice's security posture and privacy controls to meet enterprise requirements.]() | 🔄 |
+| P2.299 | **** | [### Security Features]() | 🔄 |
+| P2.300 | **** | [#- [ ] API key rotation and management]() | 🔄 |
+| P2.301 | **** | [#- [ ] Secure storage of sensitive configuration]() | 🔄 |
+| P2.302 | **** | [#- [ ] Rate limiting and abuse prevention]() | 🔄 |
+| P2.303 | **** | [#- [ ] Input validation and sanitization]() | 🔄 |
+| P2.304 | **** | [#- [ ] Audit logging for security events]() | 🔄 |
+| P2.305 | **** | [### Privacy Controls]() | 🔄 |
+| P2.306 | **** | [#- [ ] Data retention policies]() | 🔄 |
+| P2.307 | **** | [#- [ ] PII detection and filtering]() | 🔄 |
+| P2.308 | **** | [#- [ ] Conversation history encryption]() | 🔄 |
+| P2.309 | **** | [#- [ ] Configurable data sharing settings]() | 🔄 |
+| P2.310 | **** | [#- [ ] GDPR compliance features]() | 🔄 |
+| P2.311 | **** | [### Implementation]() | 🔄 |
+| P2.312 | **** | [#- [ ] Security middleware for HTTP endpoints]() | 🔄 |
+| P2.313 | **** | [#- [ ] Encryption for sensitive data storage]() | 🔄 |
+| P2.314 | **** | [#- [ ] Access control for dashboard]() | 🔄 |
+| P2.315 | **** | [#- [ ] Security scanning integration]() | 🔄 |
+| P2.316 | **** | [#- [ ] Privacy policy and consent management]() | 🔄 |
+| P2.317 | **** | [### Priority: High 🔥]() | 🔄 |
+| P2.318 | **** | [#Critical for production deployments.]() | 🔄 |
+| P2.319 | **🖥️ Dashboard Enhancement: Timeline & Terminal** | [#12](https://github.com/chimerakang/alice/issues/12) | ✅ |
+| P2.320 | **** | [#目前 dashboard.html 有基礎的 OLED 黑化風格 UI，但缺少規劃中的兩個重要元件：]() | 🔄 |
+| P2.321 | **** | [#1. **時光機時間軸 (Timeline View)** — 以垂直時間軸呈現 AI 步驟]() | 🔄 |
+| P2.322 | **** | [#2. **終端機模擬器** — 顯示 stdout/stderr 的即時輸出]() | 🔄 |
+| P2.323 | **** | [### Proposal]() | 🔄 |
+| P2.324 | **** | [#### 1. Timeline View]() | 🔄 |
+| P2.325 | **** | [#將 Decision Log 以垂直時間軸 UI 呈現：]() | 🔄 |
+| P2.326 | **** | [#```]() | 🔄 |
+| P2.327 | **** | [#━━ 14:32:05 ━━━━━━━━━━━━━━━━━━━━━━━]() | 🔄 |
+| P2.328 | **** | [#│ 📝 User: "修改 login 頁面的 CSS"]() | 🔄 |
+| P2.329 | **** | [#│]() | 🔄 |
+| P2.330 | **** | [#│ 🔍 Read → src/login.css (142 lines)]() | 🔄 |
+| P2.331 | **** | [#│ ✏️ Edit → src/login.css (+12, -3)]() | 🔄 |
+| P2.332 | **** | [#│ 💻 Bash → npm run build (success)]() | 🔄 |
+| P2.333 | **** | [#│]() | 🔄 |
+| P2.334 | **** | [#│ ✅ 完成 — 3 tools, 2.1s, 1,200 tokens]() | 🔄 |
+| P2.335 | **** | [#━━ 14:31:22 ━━━━━━━━━━━━━━━━━━━━━━━]() | 🔄 |
+| P2.336 | **** | [#│ ...]() | 🔄 |
+| P2.337 | **** | [#```]() | 🔄 |
+| P2.338 | **** | [#- 點擊任一節點可展開查看詳細的 Input/Output]() | 🔄 |
+| P2.339 | **** | [#- 支援按時間範圍篩選]() | 🔄 |
+| P2.340 | **** | [#- 支援按專案、agent 篩選]() | 🔄 |
+| P2.341 | **** | [#### 2. Terminal Emulator]() | 🔄 |
+| P2.342 | **** | [#在儀表板底部加入終端機區域：]() | 🔄 |
+| P2.343 | **** | [#- 顯示 Claude CLI 的 stdout/stderr 輸出]() | 🔄 |
+| P2.344 | **** | [#- 使用 xterm.js 或輕量替代方案]() | 🔄 |
+| P2.345 | **** | [#- 支援多個 agent 的 output 切換]() | 🔄 |
+| P2.346 | **** | [#- 支援暫停/滾動/搜尋]() | 🔄 |
+| P2.347 | **** | [#### 3. 時光機時間軸 (Checkpoint Timeline)]() | 🔄 |
+| P2.348 | **** | [#如果 Checkpoint 系統（#10）已實作：]() | 🔄 |
+| P2.349 | **** | [#- 在時間軸上標記 checkpoint 節點]() | 🔄 |
+| P2.350 | **** | [#- 點擊 checkpoint 可預覽當時的狀態]() | 🔄 |
+| P2.351 | **** | [#- 支援「回溯到此點」按鈕]() | 🔄 |
+| P2.352 | **** | [#### Technical Approach]() | 🔄 |
+| P2.353 | **** | [#- Timeline：純 HTML/CSS + JavaScript（Tailwind 動態生成）]() | 🔄 |
+| P2.354 | **** | [#- Terminal：xterm.js（輕量的 terminal emulator library）]() | 🔄 |
+| P2.355 | **** | [#- 資料來源：WebSocket（#8）+ REST API fallback]() | 🔄 |
+| P2.356 | **** | [### Dependencies]() | 🔄 |
+| P2.357 | **** | [#- Depends on: #8 (WebSocket for real-time data)]() | 🔄 |
+| P2.358 | **** | [#- Enhanced by: #10 (Checkpoint system for timeline markers)]() | 🔄 |
+| P2.359 | **** | [### Acceptance Criteria]() | 🔄 |
+| P2.360 | **** | [#- [ ] 時間軸正確顯示所有 AI 操作步驟]() | 🔄 |
+| P2.361 | **** | [#- [ ] 可展開查看每步的詳細 Input/Output]() | 🔄 |
+| P2.362 | **** | [#- [ ] 終端機顯示 CLI 即時輸出]() | 🔄 |
+| P2.363 | **** | [#- [ ] 支援多 agent 輸出切換]() | 🔄 |
+| P2.364 | **** | [#- [ ] 保持 OLED 黑化風格一致性]() | 🔄 |
+| P2.365 | **🚀 Feature: Complete Dashboard, Monitoring & Checkpoint System** | [#14](https://github.com/chimerakang/alice/pull/14) | ✅ |
+| P2.366 | **** | [#This PR completes the comprehensive dashboard, monitoring, and checkpoint system for Alice AI Agent. It includes 13 commits with major architectural improvements and new features.]() | 🔄 |
+| P2.367 | **** | [### 📸 Issue #10: Checkpoint & State Snapshot System]() | 🔄 |
+| P2.368 | **** | [#### ✅ Core Features Implemented:]() | 🔄 |
+| P2.369 | **** | [#- **Comprehensive checkpoint management system** (794 lines in checkpoint.go)]() | 🔄 |
+| P2.370 | **** | [#- **SQLite-based persistence** with complete database schema  ]() | 🔄 |
+| P2.371 | **** | [#- **REST API endpoints** for checkpoint CRUD operations]() | 🔄 |
+| P2.372 | **** | [#- **Automatic dangerous operation detection** and triggering]() | 🔄 |
+| P2.373 | **** | [#- **WebSocket real-time event broadcasting** for checkpoint activities]() | 🔄 |
+| P2.374 | **** | [#- **Git integration framework** for version control snapshots]() | 🔄 |
+| P2.375 | **** | [#### 🔧 System Integration:]() | 🔄 |
+| P2.376 | **** | [#- Integrated into agent.go tool execution workflow (agent.go:721)]() | 🔄 |
+| P2.377 | **** | [#- Web interface with checkpoint management UI]() | 🔄 |
+| P2.378 | **** | [#- Timeline and Terminal monitoring components]() | 🔄 |
+| P2.379 | **** | [#- Complete test suite with 5 dangerous operation test cases]() | 🔄 |
+| P2.380 | **** | [#### 📊 New API Endpoints:]() | 🔄 |
+| P2.381 | **** | [#- `POST /api/checkpoints/create` - Create new checkpoints]() | 🔄 |
+| P2.382 | **** | [#- `GET /api/checkpoints` - List project checkpoints  ]() | 🔄 |
+| P2.383 | **** | [#- `DELETE /api/checkpoints` - Delete specific checkpoints]() | 🔄 |
+| P2.384 | **** | [#- `GET /api/checkpoints/stats` - Checkpoint statistics]() | 🔄 |
+| P2.385 | **** | [#### 🧪 Testing Results:]() | 🔄 |
+| P2.386 | **** | [#- ✅ Checkpoint creation/deletion via API: PASSED]() | 🔄 |
+| P2.387 | **** | [#- ✅ Dangerous operation detection (file_write, rm, etc.): PASSED]() | 🔄 |
+| P2.388 | **** | [#- ✅ SQLite persistence and data integrity: PASSED]() | 🔄 |
+| P2.389 | **** | [#- ✅ WebSocket real-time events: PASSED]() | 🔄 |
+| P2.390 | **** | [#- ✅ System integration with Alice agent workflow: PASSED]() | 🔄 |
+| P2.391 | **** | [### 🎨 Previous Completed Issues (from commit history):]() | 🔄 |
+| P2.392 | **** | [#### Issue #6: 🚀 Deployment & DevOps Improvements]() | 🔄 |
+| P2.393 | **** | [#- Docker containerization with multi-stage builds]() | 🔄 |
+| P2.394 | **** | [#- Kubernetes deployment manifests]() | 🔄 |
+| P2.395 | **** | [#- CI/CD pipeline with GitHub Actions]() | 🔄 |
+| P2.396 | **** | [#- Production monitoring with Prometheus/Grafana]() | 🔄 |
+| P2.397 | **** | [#- Comprehensive deployment documentation]() | 🔄 |
+| P2.398 | **** | [#### Issue #5: 🔒 Security & Privacy Enhancements  ]() | 🔄 |
+| P2.399 | **** | [#- Rate limiting and DDoS protection]() | 🔄 |
+| P2.400 | **** | [#- PII detection and data anonymization]() | 🔄 |
+| P2.401 | **** | [#- Audit logging for security events]() | 🔄 |
+| P2.402 | **** | [#- Session management and authentication]() | 🔄 |
+| P2.403 | **** | [#- Data retention policies]() | 🔄 |
+| P2.404 | **** | [#### Issue #4: ⚡ Performance Monitoring & Analytics]() | 🔄 |
+| P2.405 | **** | [#- Real-time performance metrics collection]() | 🔄 |
+| P2.406 | **** | [#- Memory and CPU usage tracking]() | 🔄 |
+| P2.407 | **** | [#- Tool execution timing and analytics]() | 🔄 |
+| P2.408 | **** | [#- Performance alerting system]() | 🔄 |
+| P2.409 | **** | [#- Resource optimization recommendations]() | 🔄 |
+| P2.410 | **** | [#### Issue #3: 🤝 Multi-Agent Coordination System]() | 🔄 |
+| P2.411 | **** | [#- Agent type classification (Code, Review, Test, Deploy, Security, Debug)]() | 🔄 |
+| P2.412 | **** | [#- Task delegation and coordination]() | 🔄 |
+| P2.413 | **** | [#- Agent capability mapping]() | 🔄 |
+| P2.414 | **** | [#- Performance tracking per agent]() | 🔄 |
+| P2.415 | **** | [#- Proto-based API definitions]() | 🔄 |
+| P2.416 | **** | [#### Issue #2: 📊 AI Agent Transparency & Decision Logging]() | 🔄 |
+| P2.417 | **** | [#- Comprehensive decision logging system]() | 🔄 |
+| P2.418 | **** | [#- Tool execution tracking]() | 🔄 |
+| P2.419 | **** | [#- Session management]() | 🔄 |
+| P2.420 | **** | [#- Performance metrics]() | 🔄 |
+| P2.421 | **** | [#- Audit trail capabilities]() | 🔄 |
+| P2.422 | **** | [### 🌐 Enhanced Web Interface:]() | 🔄 |
+| P2.423 | **** | [#### Timeline Component:]() | 🔄 |
+| P2.424 | **** | [#- **Real-time event visualization** with WebSocket integration]() | 🔄 |
+| P2.425 | **** | [#- **Smart filtering** by event type, chat ID, status, time range]() | 🔄 |
+| P2.426 | **** | [#- **OLED-friendly dark theme** with high contrast]() | 🔄 |
+| P2.427 | **** | [#- **Auto-scroll functionality** with manual control override]() | 🔄 |
+| P2.428 | **** | [#### Terminal Component:]() | 🔄 |
+| P2.429 | **** | [#- **Multi-color output** with event type-based coloring]() | 🔄 |
+| P2.430 | **** | [#- **Filter controls** for different message types]() | 🔄 |
+| P2.431 | **** | [#- **Copy functionality** for terminal content]() | 🔄 |
+| P2.432 | **** | [#- **Responsive design** for all screen sizes]() | 🔄 |
+| P2.433 | **** | [### 📁 New File Structure:]() | 🔄 |
+| P2.434 | **** | [#```]() | 🔄 |
+| P2.435 | **** | [#Added Files:]() | 🔄 |
+| P2.436 | **** | [#├── checkpoint.go              # Complete checkpoint management (794 lines)]() | 🔄 |
+| P2.437 | **** | [#├── TIMELINE_TERMINAL.md       # Comprehensive documentation]() | 🔄 |
+| P2.438 | **** | [#├── cmd/test_*/                # Test suites for various components]() | 🔄 |
+| P2.439 | **** | [#├── web/css/timeline.css       # Timeline styling (600+ lines)]() | 🔄 |
+| P2.440 | **** | [#├── web/js/timeline.js         # Timeline component (1200+ lines)  ]() | 🔄 |
+| P2.441 | **** | [#├── web/js/terminal.js         # Terminal component (800+ lines)]() | 🔄 |
+| P2.442 | **** | [#├── web/timeline.html          # Timeline demo page]() | 🔄 |
+| P2.443 | **** | [#├── web/test-timeline.html     # Testing suite]() | 🔄 |
+| P2.444 | **** | [#└── enhanced .gitignore        # Better project organization]() | 🔄 |
+| P2.445 | **** | [#Modified Files:]() | 🔄 |
+| P2.446 | **** | [#├── agent.go                   # Checkpoint integration]() | 🔄 |
+| P2.447 | **** | [#├── main.go                    # System initialization  ]() | 🔄 |
+| P2.448 | **** | [#├── storage.go                 # Database enhancements]() | 🔄 |
+| P2.449 | **** | [#├── web.go                     # New API endpoints]() | 🔄 |
+| P2.450 | **** | [#├── git_integration.go         # Git snapshot support]() | 🔄 |
+| P2.451 | **** | [#└── web/index.html            # Updated navigation]() | 🔄 |
+| P2.452 | **** | [#```]() | 🔄 |
+| P2.453 | **** | [### 🔄 Database Schema:]() | 🔄 |
+| P2.454 | **** | [#Complete SQLite schema for:]() | 🔄 |
+| P2.455 | **** | [#- **checkpoints** table - Checkpoint metadata and file snapshots]() | 🔄 |
+| P2.456 | **** | [#- **Enhanced sessions/conversations** - Better data organization]() | 🔄 |
+| P2.457 | **** | [#- **Performance metrics** - Real-time monitoring data]() | 🔄 |
+| P2.458 | **** | [#- **Security events** - Audit logging]() | 🔄 |
+| P2.459 | **** | [### 🧪 Test Coverage:]() | 🔄 |
+| P2.460 | **** | [#- Checkpoint system: 100% core functionality tested]() | 🔄 |
+| P2.461 | **** | [#- Dangerous operation detection: 5/5 test cases passing]() | 🔄 |
+| P2.462 | **** | [#- API endpoints: Full CRUD operations verified]() | 🔄 |
+| P2.463 | **** | [#- WebSocket events: Real-time broadcasting confirmed]() | 🔄 |
+| P2.464 | **** | [#- System integration: End-to-end workflow validated]() | 🔄 |
+| P2.465 | **** | [### 💡 Key Benefits:]() | 🔄 |
+| P2.466 | **** | [#1. **Enterprise-grade state management** - Automatic snapshots before dangerous operations]() | 🔄 |
+| P2.467 | **** | [#2. **Real-time monitoring** - Live dashboard with WebSocket updates]() | 🔄 |
+| P2.468 | **** | [#3. **Enhanced debugging** - Complete timeline of AI decisions and actions  ]() | 🔄 |
+| P2.469 | **** | [#4. **Improved reliability** - Rollback capabilities and error recovery]() | 🔄 |
+| P2.470 | **** | [#5. **Professional UI/UX** - Modern, responsive dashboard interface]() | 🔄 |
+| P2.471 | **** | [#6. **Comprehensive logging** - Full audit trail for compliance and debugging]() | 🔄 |
+| P2.472 | **** | [#This PR represents a significant milestone in Alice AI Agent development, providing production-ready features for enterprise deployment.]() | 🔄 |
+| P2.473 | **** | [### 🚀 Ready for Merge:]() | 🔄 |
+| P2.474 | **** | [#- All tests passing ✅]() | 🔄 |
+| P2.475 | **** | [#- Documentation complete ✅  ]() | 🔄 |
+| P2.476 | **** | [#- Code review ready ✅]() | 🔄 |
+| P2.477 | **** | [#- Production deployment ready ✅]() | 🔄 |
+| P2.478 | **** | [#🤖 Generated with [Claude Code](https://claude.com/claude-code)]() | 🔄 |
+
+## P3 - Data Layer (✅ 100%)
+
+| # | Task | Issue | Status |
+|---|------|-------|--------|
+| P3.1 | **🚀 Deployment & DevOps Improvements** | [#6](https://github.com/chimerakang/alice/issues/6) | ✅ |
+| P3.2 | **** | [#Improve Alice's deployment experience and DevOps capabilities for easier production use.]() | 🔄 |
+| P3.3 | **** | [### Docker & Containerization]() | 🔄 |
+| P3.4 | **** | [#- [ ] Multi-stage Docker builds for smaller images]() | 🔄 |
+| P3.5 | **** | [#- [ ] Docker Compose templates for common setups]() | 🔄 |
+| P3.6 | **** | [#- [ ] Health checks and graceful shutdowns]() | 🔄 |
+| P3.7 | **** | [#- [ ] Volume management for persistent data]() | 🔄 |
+| P3.8 | **** | [#- [ ] Environment-specific configurations]() | 🔄 |
+| P3.9 | **** | [### CI/CD Pipeline]() | 🔄 |
+| P3.10 | **** | [#- [ ] GitHub Actions for automated testing]() | 🔄 |
+| P3.11 | **** | [#- [ ] Automated Docker image builds]() | 🔄 |
+| P3.12 | **** | [#- [ ] Release automation and changelog generation]() | 🔄 |
+| P3.13 | **** | [#- [ ] Security scanning in pipeline]() | 🔄 |
+| P3.14 | **** | [#- [ ] Performance regression testing]() | 🔄 |
+| P3.15 | **** | [### Deployment Options]() | 🔄 |
+| P3.16 | **** | [#- [ ] Kubernetes manifests and Helm charts]() | 🔄 |
+| P3.17 | **** | [#- [ ] Cloud provider deployment guides]() | 🔄 |
+| P3.18 | **** | [#- [ ] Systemd service files for Linux]() | 🔄 |
+| P3.19 | **** | [#- [ ] Windows service wrapper]() | 🔄 |
+| P3.20 | **** | [#- [ ] Configuration management templates]() | 🔄 |
+| P3.21 | **** | [### Monitoring Integration]() | 🔄 |
+| P3.22 | **** | [#- [ ] Prometheus metrics export]() | 🔄 |
+| P3.23 | **** | [#- [ ] Grafana dashboard templates]() | 🔄 |
+| P3.24 | **** | [#- [ ] Log aggregation setup guides]() | 🔄 |
+| P3.25 | **** | [#- [ ] Health check endpoints]() | 🔄 |
+| P3.26 | **** | [#- [ ] Application monitoring best practices]() | 🔄 |
+| P3.27 | **** | [### Priority: Medium 🟡]() | 🔄 |
+| P3.28 | **** | [#Important for production adoption.]() | 🔄 |
+| P3.29 | **💾 Data Persistence Layer (SQLite)** | [#7](https://github.com/chimerakang/alice/issues/7) | ✅ |
+| P3.30 | **** | [#目前 Alice 所有運行時資料都存放在記憶體中的 ring buffer，程式重啟後全部消失：]() | 🔄 |
+| P3.31 | **** | [#這是目前系統最大的架構缺口。沒有持久化，儀表板的歷史數據、趨勢分析、審計追蹤都無法實現。]() | 🔄 |
+| P3.32 | **** | [### Proposal]() | 🔄 |
+| P3.33 | **** | [#引入 SQLite 作為嵌入式資料庫，新增 `storage.go`：]() | 🔄 |
+| P3.34 | **** | [#### Tables]() | 🔄 |
+| P3.35 | **** | [#```sql]() | 🔄 |
+| P3.36 | **** | [#-- 工具執行記錄]() | 🔄 |
+| P3.37 | **** | [#CREATE TABLE tool_executions (]() | 🔄 |
+| P3.38 | **** | [#    id INTEGER PRIMARY KEY AUTOINCREMENT,]() | 🔄 |
+| P3.39 | **** | [#    timestamp DATETIME NOT NULL,]() | 🔄 |
+| P3.40 | **** | [#    tool_name TEXT NOT NULL,]() | 🔄 |
+| P3.41 | **** | [#    input_json TEXT,]() | 🔄 |
+| P3.42 | **** | [#    status TEXT NOT NULL,]() | 🔄 |
+| P3.43 | **** | [#    duration_ms INTEGER,]() | 🔄 |
+| P3.44 | **** | [#    chat_id INTEGER,]() | 🔄 |
+| P3.45 | **** | [#    thread_id INTEGER,]() | 🔄 |
+| P3.46 | **** | [#    error TEXT,]() | 🔄 |
+| P3.47 | **** | [#    git_commit_hash TEXT]() | 🔄 |
+| P3.48 | **** | [#);]() | 🔄 |
+| P3.49 | **** | [#-- AI 決策日誌]() | 🔄 |
+| P3.50 | **** | [#CREATE TABLE decision_logs (]() | 🔄 |
+| P3.51 | **** | [#    id INTEGER PRIMARY KEY AUTOINCREMENT,]() | 🔄 |
+| P3.52 | **** | [#    timestamp DATETIME NOT NULL,]() | 🔄 |
+| P3.53 | **** | [#    session_id TEXT,]() | 🔄 |
+| P3.54 | **** | [#    project_path TEXT,]() | 🔄 |
+| P3.55 | **** | [#    chat_id INTEGER,]() | 🔄 |
+| P3.56 | **** | [#    thread_id INTEGER,]() | 🔄 |
+| P3.57 | **** | [#    user_prompt TEXT,]() | 🔄 |
+| P3.58 | **** | [#    agent_response TEXT,]() | 🔄 |
+| P3.59 | **** | [#    tool_calls_json TEXT,]() | 🔄 |
+| P3.60 | **** | [#    outcome_json TEXT,]() | 🔄 |
+| P3.61 | **** | [#    duration_ms INTEGER,]() | 🔄 |
+| P3.62 | **** | [#    tokens_input INTEGER,]() | 🔄 |
+| P3.63 | **** | [#    tokens_output INTEGER,]() | 🔄 |
+| P3.64 | **** | [#    cost_usd REAL,]() | 🔄 |
+| P3.65 | **** | [#    git_commit_hash TEXT]() | 🔄 |
+| P3.66 | **** | [#);]() | 🔄 |
+| P3.67 | **** | [#-- 效能指標]() | 🔄 |
+| P3.68 | **** | [#CREATE TABLE performance_metrics (]() | 🔄 |
+| P3.69 | **** | [#    id INTEGER PRIMARY KEY AUTOINCREMENT,]() | 🔄 |
+| P3.70 | **** | [#    timestamp DATETIME NOT NULL,]() | 🔄 |
+| P3.71 | **** | [#    metric_type TEXT NOT NULL,]() | 🔄 |
+| P3.72 | **** | [#    value REAL,]() | 🔄 |
+| P3.73 | **** | [#    metadata_json TEXT]() | 🔄 |
+| P3.74 | **** | [#);]() | 🔄 |
+| P3.75 | **** | [#-- 安全事件]() | 🔄 |
+| P3.76 | **** | [#CREATE TABLE security_events (]() | 🔄 |
+| P3.77 | **** | [#    id INTEGER PRIMARY KEY AUTOINCREMENT,]() | 🔄 |
+| P3.78 | **** | [#    timestamp DATETIME NOT NULL,]() | 🔄 |
+| P3.79 | **** | [#    event_type TEXT NOT NULL,]() | 🔄 |
+| P3.80 | **** | [#    severity TEXT NOT NULL,]() | 🔄 |
+| P3.81 | **** | [#    description TEXT,]() | 🔄 |
+| P3.82 | **** | [#    user_id TEXT,]() | 🔄 |
+| P3.83 | **** | [#    ip_address TEXT,]() | 🔄 |
+| P3.84 | **** | [#    metadata_json TEXT]() | 🔄 |
+| P3.85 | **** | [#);]() | 🔄 |
+| P3.86 | **** | [#```]() | 🔄 |
+| P3.87 | **** | [#### Implementation]() | 🔄 |
+| P3.88 | **** | [#1. 新增 `storage.go` — `Storage` interface + SQLite 實作]() | 🔄 |
+| P3.89 | **** | [#2. 修改各 logger，在記憶體 buffer 之外同時寫入 SQLite]() | 🔄 |
+| P3.90 | **** | [#3. 修改 Web API handler，支援從 SQLite 查詢歷史資料]() | 🔄 |
+| P3.91 | **** | [#4. 支援資料保留政策（自動清理超過 N 天的記錄）]() | 🔄 |
+| P3.92 | **** | [#5. 資料庫檔案路徑可透過 config 設定]() | 🔄 |
+| P3.93 | **** | [#### Dependencies]() | 🔄 |
+| P3.94 | **** | [#- `github.com/mattn/go-sqlite3` 或 `modernc.org/sqlite`（純 Go，無需 CGO）]() | 🔄 |
+| P3.95 | **** | [### Acceptance Criteria]() | 🔄 |
+| P3.96 | **** | [#- [ ] 程式重啟後，歷史資料仍可查詢]() | 🔄 |
+| P3.97 | **** | [#- [ ] Web API 支援時間範圍查詢]() | 🔄 |
+| P3.98 | **** | [#- [ ] 資料保留政策自動執行]() | 🔄 |
+| P3.99 | **** | [#- [ ] 不影響現有記憶體 buffer 的即時查詢效能]() | 🔄 |
+| P3.100 | **🔌 WebSocket Real-time Dashboard Connection** | [#8](https://github.com/chimerakang/alice/issues/8) | ✅ |
+| P3.101 | **** | [#目前 `static/dashboard.html` 使用 JavaScript 模擬假資料（每 3-8 秒產生隨機 tool 執行），完全沒有連接到後端的 REST API。]() | 🔄 |
+| P3.102 | **** | [#後端已有完整的 API 端點（20+），但前端沒有使用它們。]() | 🔄 |
+| P3.103 | **** | [### Proposal]() | 🔄 |
+| P3.104 | **** | [#在 `web.go` 中新增 WebSocket 支援，讓後端在事件發生時主動推送到儀表板：]() | 🔄 |
+| P3.105 | **** | [#### WebSocket Events]() | 🔄 |
+| P3.106 | **** | [#```json]() | 🔄 |
+| P3.107 | **** | [#// Tool execution event]() | 🔄 |
+| P3.108 | **** | [#{"type": "tool_execution", "data": {"tool_name": "Read", "status": "running", ...}}]() | 🔄 |
+| P3.109 | **** | [#// Decision completed event]() | 🔄 |
+| P3.110 | **** | [#{"type": "decision_complete", "data": {"session_id": "...", "success": true, ...}}]() | 🔄 |
+| P3.111 | **** | [#// Agent status change]() | 🔄 |
+| P3.112 | **** | [#{"type": "agent_status", "data": {"chat_id": 123, "status": "active", ...}}]() | 🔄 |
+| P3.113 | **** | [#// Performance metric]() | 🔄 |
+| P3.114 | **** | [#{"type": "performance", "data": {"api_latency_ms": 1200, ...}}]() | 🔄 |
+| P3.115 | **** | [#// Security alert]() | 🔄 |
+| P3.116 | **** | [#{"type": "security_alert", "data": {"severity": "high", ...}}]() | 🔄 |
+| P3.117 | **** | [#```]() | 🔄 |
+| P3.118 | **** | [#### Implementation Steps]() | 🔄 |
+| P3.119 | **** | [#1. 新增 `gorilla/websocket` 或使用 `nhooyr.io/websocket` 依賴]() | 🔄 |
+| P3.120 | **** | [#2. 在 `web.go` 新增 `/ws` endpoint]() | 🔄 |
+| P3.121 | **** | [#3. 實作 `WebSocketHub`：管理連線、廣播事件]() | 🔄 |
+| P3.122 | **** | [#4. 在各 logger（ToolLogger、DecisionLogger、PerformanceMonitor、SecurityManager）中加入事件發射]() | 🔄 |
+| P3.123 | **** | [#5. 改寫 `dashboard.html`：移除 mock data，改用 WebSocket 接收即時事件]() | 🔄 |
+| P3.124 | **** | [#6. 加入連線斷開重試機制]() | 🔄 |
+| P3.125 | **** | [#### Dashboard Integration]() | 🔄 |
+| P3.126 | **** | [#```javascript]() | 🔄 |
+| P3.127 | **** | [#// 取代現有 mock data]() | 🔄 |
+| P3.128 | **** | [#const ws = new WebSocket(`ws://${window.location.host}/ws`);]() | 🔄 |
+| P3.129 | **** | [#ws.onmessage = (event) => {]() | 🔄 |
+| P3.130 | **** | [#    const msg = JSON.parse(event.data);]() | 🔄 |
+| P3.131 | **** | [#    switch(msg.type) {]() | 🔄 |
+| P3.132 | **** | [#        case 'tool_execution': updateToolFeed(msg.data); break;]() | 🔄 |
+| P3.133 | **** | [#        case 'agent_status': updateAgentPanel(msg.data); break;]() | 🔄 |
+| P3.134 | **** | [#        // ...]() | 🔄 |
+| P3.135 | **** | [#    }]() | 🔄 |
+| P3.136 | **** | [#};]() | 🔄 |
+| P3.137 | **** | [#```]() | 🔄 |
+| P3.138 | **** | [### Dependencies]() | 🔄 |
+| P3.139 | **** | [#- Depends on: none (can work with in-memory data)]() | 🔄 |
+| P3.140 | **** | [#- Enhanced by: #7 (SQLite persistence for historical data loading)]() | 🔄 |
+| P3.141 | **** | [### Acceptance Criteria]() | 🔄 |
+| P3.142 | **** | [#- [ ] Dashboard 顯示真實的即時 tool 執行資料]() | 🔄 |
+| P3.143 | **** | [#- [ ] Agent 狀態即時更新]() | 🔄 |
+| P3.144 | **** | [#- [ ] 效能指標即時刷新]() | 🔄 |
+| P3.145 | **** | [#- [ ] 斷線自動重連]() | 🔄 |
+| P3.146 | **** | [#- [ ] 移除所有 mock/simulated data]() | 🔄 |
+| P3.147 | **🔗 Git Integration & Commit Correlation** | [#9](https://github.com/chimerakang/alice/issues/9) | ✅ |
+| P3.148 | **** | [#目前所有的 Tool Execution、Decision Log 都缺少 Git 版本資訊。無法回答「這個 AI 操作發生在哪個 commit 時」這類問題。]() | 🔄 |
+| P3.149 | **** | [#規劃中的「Git 關聯器」目前完全未實作。]() | 🔄 |
+| P3.150 | **** | [### Proposal]() | 🔄 |
+| P3.151 | **** | [#### 1. Git State Reader]() | 🔄 |
+| P3.152 | **** | [#新增 `git.go`，提供 git 狀態讀取功能：]() | 🔄 |
+| P3.153 | **** | [#```go]() | 🔄 |
+| P3.154 | **** | [#type GitState struct {]() | 🔄 |
+| P3.155 | **** | [#    CommitHash  string    // current HEAD commit]() | 🔄 |
+| P3.156 | **** | [#    Branch      string    // current branch name]() | 🔄 |
+| P3.157 | **** | [#    IsDirty     bool      // has uncommitted changes]() | 🔄 |
+| P3.158 | **** | [#    RemoteURL   string    // origin remote URL]() | 🔄 |
+| P3.159 | **** | [#}]() | 🔄 |
+| P3.160 | **** | [#func GetGitState(projectDir string) (*GitState, error)]() | 🔄 |
+| P3.161 | **** | [#```]() | 🔄 |
+| P3.162 | **** | [#### 2. 嵌入到現有結構體]() | 🔄 |
+| P3.163 | **** | [#在 `ToolExecution` 和 `DecisionLog` 中加入 git 欄位：]() | 🔄 |
+| P3.164 | **** | [#```go]() | 🔄 |
+| P3.165 | **** | [#type ToolExecution struct {]() | 🔄 |
+| P3.166 | **** | [#    // ... existing fields]() | 🔄 |
+| P3.167 | **** | [#    GitCommitHash string `json:"git_commit_hash,omitempty"`]() | 🔄 |
+| P3.168 | **** | [#    GitBranch     string `json:"git_branch,omitempty"`]() | 🔄 |
+| P3.169 | **** | [#}]() | 🔄 |
+| P3.170 | **** | [#type DecisionLog struct {]() | 🔄 |
+| P3.171 | **** | [#    // ... existing fields]() | 🔄 |
+| P3.172 | **** | [#    GitCommitHash string `json:"git_commit_hash,omitempty"`]() | 🔄 |
+| P3.173 | **** | [#    GitBranch     string `json:"git_branch,omitempty"`]() | 🔄 |
+| P3.174 | **** | [#    GitDirty      bool   `json:"git_dirty"`]() | 🔄 |
+| P3.175 | **** | [#}]() | 🔄 |
+| P3.176 | **** | [#```]() | 🔄 |
+| P3.177 | **** | [#### 3. Agent.Run() 中自動填入]() | 🔄 |
+| P3.178 | **** | [#在 `agent.go` 的 `Run()` 方法中，於每次 CLI 呼叫前讀取 git 狀態並填入 log。]() | 🔄 |
+| P3.179 | **** | [#### 4. Web API 支援]() | 🔄 |
+| P3.180 | **** | [#在 Decision search API 中支援按 git commit 或 branch 篩選：]() | 🔄 |
+| P3.181 | **** | [#```]() | 🔄 |
+| P3.182 | **** | [#GET /api/decisions/search?git_branch=feature/xxx]() | 🔄 |
+| P3.183 | **** | [#GET /api/decisions/search?git_commit=abc123]() | 🔄 |
+| P3.184 | **** | [#```]() | 🔄 |
+| P3.185 | **** | [### Acceptance Criteria]() | 🔄 |
+| P3.186 | **** | [#- [ ] 每筆 tool execution 記錄包含 git commit hash]() | 🔄 |
+| P3.187 | **** | [#- [ ] 每筆 decision log 包含 git branch 和 commit]() | 🔄 |
+| P3.188 | **** | [#- [ ] Web API 支援按 git 資訊篩選]() | 🔄 |
+| P3.189 | **** | [#- [ ] 當專案非 git repo 時不出錯（graceful fallback）]() | 🔄 |
+| P3.190 | **📸 Checkpoint & State Snapshot System** | [#10](https://github.com/chimerakang/alice/issues/10) | ✅ |
+| P3.191 | **** | [#目前沒有任何機制在 AI 執行「危險操作」（如修改檔案、執行 shell 命令）前進行環境快照。如果 AI 做了錯誤的修改，使用者無法輕易回溯。]() | 🔄 |
+| P3.192 | **** | [#規劃中的「環境快照」和「版本映射表」目前完全未實作。]() | 🔄 |
+| P3.193 | **** | [### Proposal]() | 🔄 |
+| P3.194 | **** | [#### 1. Checkpoint Manager (`checkpoint.go`)]() | 🔄 |
+| P3.195 | **** | [#```go]() | 🔄 |
+| P3.196 | **** | [#type Checkpoint struct {]() | 🔄 |
+| P3.197 | **** | [#    ID            string    `json:"id"`]() | 🔄 |
+| P3.198 | **** | [#    Timestamp     time.Time `json:"timestamp"`]() | 🔄 |
+| P3.199 | **** | [#    ProjectDir    string    `json:"project_dir"`]() | 🔄 |
+| P3.200 | **** | [#    GitCommitHash string    `json:"git_commit_hash"`]() | 🔄 |
+| P3.201 | **** | [#    GitBranch     string    `json:"git_branch"`]() | 🔄 |
+| P3.202 | **** | [#    Description   string    `json:"description"`]() | 🔄 |
+| P3.203 | **** | [#    TriggerType   string    `json:"trigger_type"` // "auto", "manual", "pre_danger"]() | 🔄 |
+| P3.204 | **** | [#    SessionID     string    `json:"session_id"`]() | 🔄 |
+| P3.205 | **** | [#    ChatID        int64     `json:"chat_id"`]() | 🔄 |
+| P3.206 | **** | [#}]() | 🔄 |
+| P3.207 | **** | [#type CheckpointManager struct {]() | 🔄 |
+| P3.208 | **** | [#    storage Storage // SQLite backend]() | 🔄 |
+| P3.209 | **** | [#}]() | 🔄 |
+| P3.210 | **** | [#func (cm *CheckpointManager) CreateCheckpoint(projectDir, description, triggerType string) (*Checkpoint, error)]() | 🔄 |
+| P3.211 | **** | [#func (cm *CheckpointManager) RestoreCheckpoint(checkpointID string) error]() | 🔄 |
+| P3.212 | **** | [#func (cm *CheckpointManager) ListCheckpoints(projectDir string) ([]Checkpoint, error)]() | 🔄 |
+| P3.213 | **** | [#```]() | 🔄 |
+| P3.214 | **** | [#### 2. 自動快照觸發]() | 🔄 |
+| P3.215 | **** | [#在 `agent.go` 中，當 Claude CLI 回傳的 tool_use 包含以下工具時自動建立 checkpoint：]() | 🔄 |
+| P3.216 | **** | [#- `Write` / `Edit` — 檔案修改前]() | 🔄 |
+| P3.217 | **** | [#- `Bash` — shell 命令執行前（特別是含 `rm`, `mv`, `git` 等的命令）]() | 🔄 |
+| P3.218 | **** | [#### 3. 快照策略]() | 🔄 |
+| P3.219 | **** | [#- **輕量級快照**：使用 `git stash create` 建立不影響工作樹的 stash 物件]() | 🔄 |
+| P3.220 | **** | [#- **完整快照**：建立臨時 commit 或 branch tag（可選）]() | 🔄 |
+| P3.221 | **** | [#- **檔案備份**：對非 git 追蹤的檔案做本地備份]() | 🔄 |
+| P3.222 | **** | [#### 4. 版本映射表]() | 🔄 |
+| P3.223 | **** | [#```sql]() | 🔄 |
+| P3.224 | **** | [#CREATE TABLE checkpoints (]() | 🔄 |
+| P3.225 | **** | [#    id TEXT PRIMARY KEY,]() | 🔄 |
+| P3.226 | **** | [#    timestamp DATETIME NOT NULL,]() | 🔄 |
+| P3.227 | **** | [#    project_dir TEXT NOT NULL,]() | 🔄 |
+| P3.228 | **** | [#    git_commit_hash TEXT,]() | 🔄 |
+| P3.229 | **** | [#    git_branch TEXT,]() | 🔄 |
+| P3.230 | **** | [#    git_stash_ref TEXT,]() | 🔄 |
+| P3.231 | **** | [#    description TEXT,]() | 🔄 |
+| P3.232 | **** | [#    trigger_type TEXT,]() | 🔄 |
+| P3.233 | **** | [#    session_id TEXT,]() | 🔄 |
+| P3.234 | **** | [#    chat_id INTEGER,]() | 🔄 |
+| P3.235 | **** | [#    files_snapshot_json TEXT]() | 🔄 |
+| P3.236 | **** | [#);]() | 🔄 |
+| P3.237 | **** | [#```]() | 🔄 |
+| P3.238 | **** | [#### 5. Web API]() | 🔄 |
+| P3.239 | **** | [#```]() | 🔄 |
+| P3.240 | **** | [#GET  /api/checkpoints?project_dir=/path/to/project]() | 🔄 |
+| P3.241 | **** | [#POST /api/checkpoints/restore  {"checkpoint_id": "..."}]() | 🔄 |
+| P3.242 | **** | [#POST /api/checkpoints/create   {"project_dir": "...", "description": "..."}]() | 🔄 |
+| P3.243 | **** | [#```]() | 🔄 |
+| P3.244 | **** | [### Dependencies]() | 🔄 |
+| P3.245 | **** | [#- Depends on: #7 (SQLite persistence), #9 (Git integration)]() | 🔄 |
+| P3.246 | **** | [### Acceptance Criteria]() | 🔄 |
+| P3.247 | **** | [#- [ ] 危險操作前自動建立 checkpoint]() | 🔄 |
+| P3.248 | **** | [#- [ ] 支援手動建立 checkpoint]() | 🔄 |
+| P3.249 | **** | [#- [ ] 支援回溯到指定 checkpoint]() | 🔄 |
+| P3.250 | **** | [#- [ ] Checkpoint 列表可在儀表板查看]() | 🔄 |
+| P3.251 | **** | [#- [ ] 非 git 專案也有基本備份機制]() | 🔄 |
+
+## P4 - Proto-First (✅ 100%)
+
+| # | Task | Issue | Status |
+|---|------|-------|--------|
+| P4.1 | **🏗️ Architecture: Proto-First API with Protocol Buffers** | [#13](https://github.com/chimerakang/alice/issues/13) | ✅ |
+| P4.2 | **** | [#目前 Alice 的 API 層有以下問題：]() | 🔄 |
+| P4.3 | **** | [#### 1. 型別鬆散]() | 🔄 |
+| P4.4 | **** | [#Web API 大量使用 `map[string]interface{}` 作為回應，沒有明確的 schema：]() | 🔄 |
+| P4.5 | **** | [#```go]() | 🔄 |
+| P4.6 | **** | [#// web.go 中常見模式]() | 🔄 |
+| P4.7 | **** | [#json.NewEncoder(w).Encode(map[string]interface{}{]() | 🔄 |
+| P4.8 | **** | [#    "agents": agents,]() | 🔄 |
+| P4.9 | **** | [#    "total":  len(agents),]() | 🔄 |
+| P4.10 | **** | [#})]() | 🔄 |
+| P4.11 | **** | [#```]() | 🔄 |
+| P4.12 | **** | [#### 2. 結構體散落各處]() | 🔄 |
+| P4.13 | **** | [#資料結構定義分散在不同檔案中：]() | 🔄 |
+| P4.14 | **** | [#- `TokenStats`, `ToolExecution`, `DecisionLog` → agent.go]() | 🔄 |
+| P4.15 | **** | [#- `AgentInfo`, `DetailedStats` → web.go]() | 🔄 |
+| P4.16 | **** | [#- `PerformanceMetric`, `PerformanceAnalytics` → performance.go]() | 🔄 |
+| P4.17 | **** | [#- `SecurityEvent` → security.go]() | 🔄 |
+| P4.18 | **** | [#- `CoordinatedTask`, `SubTask` → multiagent.go]() | 🔄 |
+| P4.19 | **** | [#### 3. 前後端缺乏型別共享]() | 🔄 |
+| P4.20 | **** | [#Dashboard (JavaScript) 和 Backend (Go) 之間沒有共享的型別定義，容易出現不一致。]() | 🔄 |
+| P4.21 | **** | [#### 4. 未來擴展困難]() | 🔄 |
+| P4.22 | **** | [#隨著 WebSocket events、Checkpoint、Control API 的加入，訊息類型會急速增加，沒有統一的 schema 管理會越來越混亂。]() | 🔄 |
+| P4.23 | **** | [### Proposal: Proto-First Architecture]() | 🔄 |
+| P4.24 | **** | [#使用 Protocol Buffers 定義所有訊息和服務，作為系統的「單一事實來源」(Single Source of Truth)。]() | 🔄 |
+| P4.25 | **** | [#### Proto File Structure]() | 🔄 |
+| P4.26 | **** | [#```]() | 🔄 |
+| P4.27 | **** | [#proto/]() | 🔄 |
+| P4.28 | **** | [#├── alice/]() | 🔄 |
+| P4.29 | **** | [#│   ├── v1/]() | 🔄 |
+| P4.30 | **** | [#│   │   ├── common.proto          # 共用型別 (Timestamp, Pagination)]() | 🔄 |
+| P4.31 | **** | [#│   │   ├── agent.proto           # Agent 相關訊息和服務]() | 🔄 |
+| P4.32 | **** | [#│   │   ├── tool.proto            # Tool execution 訊息]() | 🔄 |
+| P4.33 | **** | [#│   │   ├── decision.proto        # Decision log 訊息]() | 🔄 |
+| P4.34 | **** | [#│   │   ├── performance.proto     # Performance metrics]() | 🔄 |
+| P4.35 | **** | [#│   │   ├── security.proto        # Security events]() | 🔄 |
+| P4.36 | **** | [#│   │   ├── multiagent.proto      # Multi-agent coordination]() | 🔄 |
+| P4.37 | **** | [#│   │   ├── checkpoint.proto      # Checkpoint system]() | 🔄 |
+| P4.38 | **** | [#│   │   ├── websocket.proto       # WebSocket event envelope]() | 🔄 |
+| P4.39 | **** | [#│   │   └── dashboard.proto       # Dashboard service (aggregated)]() | 🔄 |
+| P4.40 | **** | [#│   └── buf.yaml]() | 🔄 |
+| P4.41 | **** | [#├── buf.gen.yaml]() | 🔄 |
+| P4.42 | **** | [#└── buf.yaml]() | 🔄 |
+| P4.43 | **** | [#```]() | 🔄 |
+| P4.44 | **** | [#### Example Proto Definition]() | 🔄 |
+| P4.45 | **** | [#```protobuf]() | 🔄 |
+| P4.46 | **** | [#syntax = "proto3";]() | 🔄 |
+| P4.47 | **** | [#package alice.v1;]() | 🔄 |
+| P4.48 | **** | [#import "google/protobuf/timestamp.proto";]() | 🔄 |
+| P4.49 | **** | [#message ToolExecution {]() | 🔄 |
+| P4.50 | **** | [#  string id = 1;]() | 🔄 |
+| P4.51 | **** | [#  google.protobuf.Timestamp timestamp = 2;]() | 🔄 |
+| P4.52 | **** | [#  string tool_name = 3;]() | 🔄 |
+| P4.53 | **** | [#  map<string, string> input = 4;]() | 🔄 |
+| P4.54 | **** | [#  ToolStatus status = 5;]() | 🔄 |
+| P4.55 | **** | [#  int64 duration_ms = 6;]() | 🔄 |
+| P4.56 | **** | [#  int64 chat_id = 7;]() | 🔄 |
+| P4.57 | **** | [#  int32 thread_id = 8;]() | 🔄 |
+| P4.58 | **** | [#  string error = 9;]() | 🔄 |
+| P4.59 | **** | [#  GitState git_state = 10;]() | 🔄 |
+| P4.60 | **** | [#}]() | 🔄 |
+| P4.61 | **** | [#enum ToolStatus {]() | 🔄 |
+| P4.62 | **** | [#  TOOL_STATUS_UNSPECIFIED = 0;]() | 🔄 |
+| P4.63 | **** | [#  TOOL_STATUS_RUNNING = 1;]() | 🔄 |
+| P4.64 | **** | [#  TOOL_STATUS_SUCCESS = 2;]() | 🔄 |
+| P4.65 | **** | [#  TOOL_STATUS_ERROR = 3;]() | 🔄 |
+| P4.66 | **** | [#}]() | 🔄 |
+| P4.67 | **** | [#message GitState {]() | 🔄 |
+| P4.68 | **** | [#  string commit_hash = 1;]() | 🔄 |
+| P4.69 | **** | [#  string branch = 2;]() | 🔄 |
+| P4.70 | **** | [#  bool is_dirty = 3;]() | 🔄 |
+| P4.71 | **** | [#}]() | 🔄 |
+| P4.72 | **** | [#// WebSocket event envelope]() | 🔄 |
+| P4.73 | **** | [#message WebSocketEvent {]() | 🔄 |
+| P4.74 | **** | [#  string type = 1;]() | 🔄 |
+| P4.75 | **** | [#  google.protobuf.Timestamp timestamp = 2;]() | 🔄 |
+| P4.76 | **** | [#  oneof payload {]() | 🔄 |
+| P4.77 | **** | [#    ToolExecution tool_execution = 10;]() | 🔄 |
+| P4.78 | **** | [#    DecisionLog decision = 11;]() | 🔄 |
+| P4.79 | **** | [#    AgentStatus agent_status = 12;]() | 🔄 |
+| P4.80 | **** | [#    PerformanceMetric performance = 13;]() | 🔄 |
+| P4.81 | **** | [#    SecurityAlert security_alert = 14;]() | 🔄 |
+| P4.82 | **** | [#  }]() | 🔄 |
+| P4.83 | **** | [#}]() | 🔄 |
+| P4.84 | **** | [#// Dashboard service]() | 🔄 |
+| P4.85 | **** | [#service DashboardService {]() | 🔄 |
+| P4.86 | **** | [#  rpc GetStats(GetStatsRequest) returns (GetStatsResponse);]() | 🔄 |
+| P4.87 | **** | [#  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);]() | 🔄 |
+| P4.88 | **** | [#  rpc StreamEvents(StreamEventsRequest) returns (stream WebSocketEvent);]() | 🔄 |
+| P4.89 | **** | [#  // Control endpoints]() | 🔄 |
+| P4.90 | **** | [#  rpc InterruptAgent(InterruptAgentRequest) returns (InterruptAgentResponse);]() | 🔄 |
+| P4.91 | **** | [#  rpc RestoreCheckpoint(RestoreCheckpointRequest) returns (RestoreCheckpointResponse);]() | 🔄 |
+| P4.92 | **** | [#}]() | 🔄 |
+| P4.93 | **** | [#```]() | 🔄 |
+| P4.94 | **** | [#### Migration Strategy]() | 🔄 |
+| P4.95 | **** | [#分三個階段逐步遷移，不需要一次改完：]() | 🔄 |
+| P4.96 | **** | [#**Phase 1 — Proto 定義 + 代碼生成**]() | 🔄 |
+| P4.97 | **** | [#- 安裝 buf 工具鏈]() | 🔄 |
+| P4.98 | **** | [#- 定義所有現有結構體的 proto 版本]() | 🔄 |
+| P4.99 | **** | [#- 生成 Go 代碼和 TypeScript 類型]() | 🔄 |
+| P4.100 | **** | [#- 新程式碼開始使用生成的型別]() | 🔄 |
+| P4.101 | **** | [#**Phase 2 — REST API 遷移**]() | 🔄 |
+| P4.102 | **** | [#- 使用 grpc-gateway 從 proto service 自動生成 REST handler]() | 🔄 |
+| P4.103 | **** | [#- 或手動將現有 handler 的回應改用 proto 生成的結構體]() | 🔄 |
+| P4.104 | **** | [#- Dashboard 使用生成的 TypeScript 類型]() | 🔄 |
+| P4.105 | **** | [#**Phase 3 — gRPC 支援（可選）**]() | 🔄 |
+| P4.106 | **** | [#- 加入 gRPC server（與 REST 並存）]() | 🔄 |
+| P4.107 | **** | [#- WebSocket 改用 proto 序列化的 binary format（效能更好）]() | 🔄 |
+| P4.108 | **** | [#- 支援 gRPC streaming 作為 WebSocket 的替代方案]() | 🔄 |
+| P4.109 | **** | [#### Toolchain]() | 🔄 |
+| P4.110 | **** | [#- **buf** — Proto 管理工具（linting, breaking change detection, code generation）]() | 🔄 |
+| P4.111 | **** | [#- **protoc-gen-go** — Go 代碼生成]() | 🔄 |
+| P4.112 | **** | [#- **ts-proto** 或 **protobuf-ts** — TypeScript 類型生成]() | 🔄 |
+| P4.113 | **** | [#- **grpc-gateway**（可選）— 從 gRPC service 生成 REST API]() | 🔄 |
+| P4.114 | **** | [#### Benefits]() | 🔄 |
+| P4.115 | **** | [#### Tradeoffs]() | 🔄 |
+| P4.116 | **** | [### Acceptance Criteria]() | 🔄 |
+| P4.117 | **** | [#- [ ] 建立 `proto/` 目錄結構]() | 🔄 |
+| P4.118 | **** | [#- [ ] 定義核心訊息類型的 .proto 檔案]() | 🔄 |
+| P4.119 | **** | [#- [ ] buf 工具鏈配置完成]() | 🔄 |
+| P4.120 | **** | [#- [ ] Go 代碼成功生成且可編譯]() | 🔄 |
+| P4.121 | **** | [#- [ ] 至少一個 API 端點改用 proto 生成的型別]() | 🔄 |
+| P4.122 | **** | [#- [ ] TypeScript 類型成功生成]() | 🔄 |
+
+## P5 - Frontend Foundation (✅ 100%)
+
+| # | Task | Issue | Status |
+|---|------|-------|--------|
+| P5.1 | **⚛️ React + Vite + TypeScript 專案初始化** | [#15](https://github.com/chimerakang/alice/issues/15) | ✅ |
+| P5.2 | **** | [#目前前端是純 HTML + Tailwind CDN + vanilla JS（共 5,729 行，12 個檔案），沒有框架、沒有 build step、沒有型別檢查。Tailwind 靠 CDN runtime 解析，在 Docker 中不穩定。]() | 🔄 |
+| P5.3 | **** | [#需要以 React + Vite + TypeScript 重建，並整合已有的 proto-generated TypeScript 類型。]() | 🔄 |
+| P5.4 | **** | [### Tasks]() | 🔄 |
+| P5.5 | **** | [#### 1. Vite 專案建立]() | 🔄 |
+| P5.6 | **** | [#```bash]() | 🔄 |
+| P5.7 | **** | [#cd /Volumes/eclipse/projects/alice]() | 🔄 |
+| P5.8 | **** | [#npm create vite@latest frontend -- --template react-ts]() | 🔄 |
+| P5.9 | **** | [#```]() | 🔄 |
+| P5.10 | **** | [#### 2. 核心依賴安裝]() | 🔄 |
+| P5.11 | **** | [#```bash]() | 🔄 |
+| P5.12 | **** | [#cd frontend]() | 🔄 |
+| P5.13 | **** | [#npm install react-router-dom zustand recharts]() | 🔄 |
+| P5.14 | **** | [#npm install -D tailwindcss @tailwindcss/vite]() | 🔄 |
+| P5.15 | **** | [#npm install -D @types/react @types/react-dom]() | 🔄 |
+| P5.16 | **** | [#```]() | 🔄 |
+| P5.17 | **** | [#### 3. Tailwind CSS 設定 (build-time)]() | 🔄 |
+| P5.18 | **** | [#- 配置 `tailwind.config.ts` 保留 OLED 黑化主題的自定義色彩]() | 🔄 |
+| P5.19 | **** | [#- 遷移 `dashboard.css` 和 `timeline.css` 的自定義樣式]() | 🔄 |
+| P5.20 | **** | [#- 移除 CDN 依賴]() | 🔄 |
+| P5.21 | **** | [#### 4. 整合 Proto TypeScript 類型]() | 🔄 |
+| P5.22 | **** | [#```typescript]() | 🔄 |
+| P5.23 | **** | [#// frontend/src/types/ - 從 gen/ts/alice/v1/types.ts 引入]() | 🔄 |
+| P5.24 | **** | [#import { AgentInfo, ToolExecution, DecisionLog } from '@/types/alice']() | 🔄 |
+| P5.25 | **** | [#```]() | 🔄 |
+| P5.26 | **** | [#### 5. Vite Build 輸出到 web/]() | 🔄 |
+| P5.27 | **** | [#```typescript]() | 🔄 |
+| P5.28 | **** | [#// vite.config.ts]() | 🔄 |
+| P5.29 | **** | [#export default defineConfig({]() | 🔄 |
+| P5.30 | **** | [#  build: {]() | 🔄 |
+| P5.31 | **** | [#    outDir: '../web',]() | 🔄 |
+| P5.32 | **** | [#    emptyOutDir: true]() | 🔄 |
+| P5.33 | **** | [#  },]() | 🔄 |
+| P5.34 | **** | [#  server: {]() | 🔄 |
+| P5.35 | **** | [#    proxy: {]() | 🔄 |
+| P5.36 | **** | [#      '/api': 'http://localhost:8082',]() | 🔄 |
+| P5.37 | **** | [#      '/ws': { target: 'ws://localhost:8082', ws: true }]() | 🔄 |
+| P5.38 | **** | [#    }]() | 🔄 |
+| P5.39 | **** | [#  }]() | 🔄 |
+| P5.40 | **** | [#})]() | 🔄 |
+| P5.41 | **** | [#```]() | 🔄 |
+| P5.42 | **** | [#### 6. 基礎路由結構]() | 🔄 |
+| P5.43 | **** | [#```]() | 🔄 |
+| P5.44 | **** | [#/              → Dashboard 主頁]() | 🔄 |
+| P5.45 | **** | [#/timeline      → Timeline 時間軸]() | 🔄 |
+| P5.46 | **** | [#/performance   → Performance 分析]() | 🔄 |
+| P5.47 | **** | [#/security      → Security 事件]() | 🔄 |
+| P5.48 | **** | [#/settings      → 設定頁面]() | 🔄 |
+| P5.49 | **** | [#```]() | 🔄 |
+| P5.50 | **** | [#### 7. 目錄結構]() | 🔄 |
+| P5.51 | **** | [#```]() | 🔄 |
+| P5.52 | **** | [#frontend/]() | 🔄 |
+| P5.53 | **** | [#├── src/]() | 🔄 |
+| P5.54 | **** | [#│   ├── components/    # 共用元件]() | 🔄 |
+| P5.55 | **** | [#│   ├── pages/         # 路由頁面]() | 🔄 |
+| P5.56 | **** | [#│   ├── hooks/         # Custom hooks]() | 🔄 |
+| P5.57 | **** | [#│   ├── stores/        # Zustand stores]() | 🔄 |
+| P5.58 | **** | [#│   ├── types/         # TypeScript 類型 (link to proto gen)]() | 🔄 |
+| P5.59 | **** | [#│   ├── lib/           # API client, utils]() | 🔄 |
+| P5.60 | **** | [#│   ├── styles/        # Global CSS + Tailwind]() | 🔄 |
+| P5.61 | **** | [#│   ├── App.tsx]() | 🔄 |
+| P5.62 | **** | [#│   └── main.tsx]() | 🔄 |
+| P5.63 | **** | [#├── tailwind.config.ts]() | 🔄 |
+| P5.64 | **** | [#├── vite.config.ts]() | 🔄 |
+| P5.65 | **** | [#├── tsconfig.json]() | 🔄 |
+| P5.66 | **** | [#└── package.json]() | 🔄 |
+| P5.67 | **** | [#```]() | 🔄 |
+| P5.68 | **** | [### Acceptance Criteria]() | 🔄 |
+| P5.69 | **** | [#- [ ] `npm run dev` 可啟動開發伺服器，proxy 到 Go backend]() | 🔄 |
+| P5.70 | **** | [#- [ ] `npm run build` 輸出到 `web/` 目錄]() | 🔄 |
+| P5.71 | **** | [#- [ ] Tailwind CSS build-time 編譯，非 CDN]() | 🔄 |
+| P5.72 | **** | [#- [ ] Proto TypeScript 類型可正確 import]() | 🔄 |
+| P5.73 | **** | [#- [ ] React Router 路由正常運作]() | 🔄 |
+| P5.74 | **** | [#- [ ] OLED 黑化主題色彩保留]() | 🔄 |
+| P5.75 | **** | [#- [ ] Docker build 可正常包含前端產出物]() | 🔄 |
+| P5.76 | **** | [### Dependencies]() | 🔄 |
+| P5.77 | **** | [#- None (this is the foundation)]() | 🔄 |
+| P5.78 | **** | [### Blocked By]() | 🔄 |
+| P5.79 | **** | [#- None]() | 🔄 |
+| P5.80 | **🧱 共用 UI 元件庫 (Layout, StatusBadge, MetricCard)** | [#16](https://github.com/chimerakang/alice/issues/16) | ✅ |
+| P5.81 | **** | [#建立可重用的 UI 元件庫，作為所有頁面的基礎建設。所有元件遵循 OLED 黑化主題。]() | 🔄 |
+| P5.82 | **** | [### Components]() | 🔄 |
+| P5.83 | **** | [#### Layout Components]() | 🔄 |
+| P5.84 | **** | [#```]() | 🔄 |
+| P5.85 | **** | [#AppLayout          — 整體佈局 (Sidebar + Header + Content)]() | 🔄 |
+| P5.86 | **** | [#Sidebar            — 導航選單，Active 狀態高亮]() | 🔄 |
+| P5.87 | **** | [#Header             — 頁面標題 + WebSocket 狀態 + 快速指標]() | 🔄 |
+| P5.88 | **** | [#```]() | 🔄 |
+| P5.89 | **** | [#### Data Display Components]() | 🔄 |
+| P5.90 | **** | [#```]() | 🔄 |
+| P5.91 | **** | [#MetricCard         — 大數字指標卡片（動畫計數器）]() | 🔄 |
+| P5.92 | **** | [#StatusBadge        — 狀態標籤 (success/error/running/pending)]() | 🔄 |
+| P5.93 | **** | [#StatusIndicator    — 圓點狀態燈 (green/red/yellow 脈衝動畫)]() | 🔄 |
+| P5.94 | **** | [#DataTable          — 通用資料表格（排序、分頁）]() | 🔄 |
+| P5.95 | **** | [#EmptyState         — 無資料時的佔位元件]() | 🔄 |
+| P5.96 | **** | [#LoadingSpinner     — 載入中動畫]() | 🔄 |
+| P5.97 | **** | [#LoadingSkeleton    — 骨架屏載入]() | 🔄 |
+| P5.98 | **** | [#```]() | 🔄 |
+| P5.99 | **** | [#### Feedback Components]() | 🔄 |
+| P5.100 | **** | [#```]() | 🔄 |
+| P5.101 | **** | [#Toast              — 通知提示 (info/success/warning/error)]() | 🔄 |
+| P5.102 | **** | [#ErrorBoundary      — 錯誤邊界，graceful fallback]() | 🔄 |
+| P5.103 | **** | [#```]() | 🔄 |
+| P5.104 | **** | [#### Design Tokens]() | 🔄 |
+| P5.105 | **** | [#```typescript]() | 🔄 |
+| P5.106 | **** | [#// 從現有 Tailwind config 遷移]() | 🔄 |
+| P5.107 | **** | [#const colors = {]() | 🔄 |
+| P5.108 | **** | [#  'deep-black': '#000000',]() | 🔄 |
+| P5.109 | **** | [#  'dark-grey': '#121212',]() | 🔄 |
+| P5.110 | **** | [#  'midnight-blue': '#0A0E27',]() | 🔄 |
+| P5.111 | **** | [#  'dashboard-primary': '#3B82F6',]() | 🔄 |
+| P5.112 | **** | [#  'status-success': '#22C55E',]() | 🔄 |
+| P5.113 | **** | [#  'status-warning': '#F59E0B',]() | 🔄 |
+| P5.114 | **** | [#  'status-error': '#EF4444',]() | 🔄 |
+| P5.115 | **** | [#}]() | 🔄 |
+| P5.116 | **** | [#```]() | 🔄 |
+| P5.117 | **** | [### Acceptance Criteria]() | 🔄 |
+| P5.118 | **** | [#- [ ] AppLayout 包含 Sidebar 導航 + Header + Content area]() | 🔄 |
+| P5.119 | **** | [#- [ ] MetricCard 支援動畫計數器 (數字從 0 漸增)]() | 🔄 |
+| P5.120 | **** | [#- [ ] StatusBadge 支援 5 種狀態 + 對應顏色]() | 🔄 |
+| P5.121 | **** | [#- [ ] LoadingSkeleton 適用於卡片和列表]() | 🔄 |
+| P5.122 | **** | [#- [ ] Toast 支援 auto-dismiss + 堆疊]() | 🔄 |
+| P5.123 | **** | [#- [ ] 所有元件遵循 OLED 黑化主題]() | 🔄 |
+| P5.124 | **** | [#- [ ] Storybook 或 demo page 可預覽所有元件]() | 🔄 |
+| P5.125 | **** | [### Dependencies]() | 🔄 |
+| P5.126 | **** | [#- Depends on: #15 (React project init)]() | 🔄 |
+| P5.127 | **🔌 WebSocket Hook + Zustand 狀態管理** | [#17](https://github.com/chimerakang/alice/issues/17) | ✅ |
+| P5.128 | **** | [#Dashboard 需要 WebSocket 即時連線和全域狀態管理。使用 Zustand 作為輕量級 state manager，配合 custom hook 管理 WebSocket 生命週期。]() | 🔄 |
+| P5.129 | **** | [### Implementation]() | 🔄 |
+| P5.130 | **** | [#### 1. WebSocket Hook (`useWebSocket`)]() | 🔄 |
+| P5.131 | **** | [#```typescript]() | 🔄 |
+| P5.132 | **** | [#function useWebSocket() {]() | 🔄 |
+| P5.133 | **** | [#  // 自動連線 ws://host/ws]() | 🔄 |
+| P5.134 | **** | [#  // Exponential backoff 重連 (1s → 30s)]() | 🔄 |
+| P5.135 | **** | [#  // Heartbeat ping/pong (30s)]() | 🔄 |
+| P5.136 | **** | [#  // 事件分發到 Zustand stores]() | 🔄 |
+| P5.137 | **** | [#  return { isConnected, reconnect, stats }]() | 🔄 |
+| P5.138 | **** | [#}]() | 🔄 |
+| P5.139 | **** | [#```]() | 🔄 |
+| P5.140 | **** | [#### 2. Zustand Stores]() | 🔄 |
+| P5.141 | **** | [#```]() | 🔄 |
+| P5.142 | **** | [#useAgentStore       — agents 列表、狀態變更]() | 🔄 |
+| P5.143 | **** | [#useToolStore        — tool executions (最近 100 筆)]() | 🔄 |
+| P5.144 | **** | [#useDecisionStore    — decision logs (最近 50 筆)]() | 🔄 |
+| P5.145 | **** | [#usePerformanceStore — performance metrics]() | 🔄 |
+| P5.146 | **** | [#useSecurityStore    — security events]() | 🔄 |
+| P5.147 | **** | [#useGitStore         — git status + events]() | 🔄 |
+| P5.148 | **** | [#useCheckpointStore  — checkpoint 列表]() | 🔄 |
+| P5.149 | **** | [#useStatsStore       — 總覽統計 (從 /api/stats)]() | 🔄 |
+| P5.150 | **** | [#```]() | 🔄 |
+| P5.151 | **** | [#### 3. API Client Hook (`useApi`)]() | 🔄 |
+| P5.152 | **** | [#```typescript]() | 🔄 |
+| P5.153 | **** | [#// 基於 proto-generated AliceApiClient]() | 🔄 |
+| P5.154 | **** | [#function useApi() {]() | 🔄 |
+| P5.155 | **** | [#  const api = useMemo(() => new AliceApiClient({ baseUrl: '' }), [])]() | 🔄 |
+| P5.156 | **** | [#  return api]() | 🔄 |
+| P5.157 | **** | [#}]() | 🔄 |
+| P5.158 | **** | [#// 搭配 SWR 或簡易 polling]() | 🔄 |
+| P5.159 | **** | [#function useAgents() {]() | 🔄 |
+| P5.160 | **** | [#  const api = useApi()]() | 🔄 |
+| P5.161 | **** | [#  const [agents, setAgents] = useState<AgentInfo[]>([])]() | 🔄 |
+| P5.162 | **** | [#  // 初始 fetch + WebSocket 即時更新]() | 🔄 |
+| P5.163 | **** | [#}]() | 🔄 |
+| P5.164 | **** | [#```]() | 🔄 |
+| P5.165 | **** | [#### 4. WebSocket Event Types (from backend)]() | 🔄 |
+| P5.166 | **** | [#```typescript]() | 🔄 |
+| P5.167 | **** | [#type WebSocketEventType =]() | 🔄 |
+| P5.168 | ** 'tool_execution_start'** | [#  ]() | 🔄 |
+| P5.169 | ** 'tool_execution'** | [#  ]() | 🔄 |
+| P5.170 | ** 'decision_complete'** | [#  ]() | 🔄 |
+| P5.171 | ** 'performance_metric'** | [#  ]() | 🔄 |
+| P5.172 | ** 'security_alert'** | [#  ]() | 🔄 |
+| P5.173 | ** 'agent_status'** | [#  ]() | 🔄 |
+| P5.174 | **** | [#```]() | 🔄 |
+| P5.175 | **** | [#### 5. Event → Store 分發]() | 🔄 |
+| P5.176 | **** | [#```typescript]() | 🔄 |
+| P5.177 | **** | [#// WebSocket message → 對應 store update]() | 🔄 |
+| P5.178 | **** | [#ws.onmessage = (event) => {]() | 🔄 |
+| P5.179 | **** | [#  const data = JSON.parse(event.data)]() | 🔄 |
+| P5.180 | **** | [#  switch (data.type) {]() | 🔄 |
+| P5.181 | **** | [#    case 'tool_execution':]() | 🔄 |
+| P5.182 | **** | [#      useToolStore.getState().addExecution(data.data)]() | 🔄 |
+| P5.183 | **** | [#      break]() | 🔄 |
+| P5.184 | **** | [#    case 'agent_status':]() | 🔄 |
+| P5.185 | **** | [#      useAgentStore.getState().updateStatus(data.data)]() | 🔄 |
+| P5.186 | **** | [#      break]() | 🔄 |
+| P5.187 | **** | [#    // ...]() | 🔄 |
+| P5.188 | **** | [#  }]() | 🔄 |
+| P5.189 | **** | [#}]() | 🔄 |
+| P5.190 | **** | [#```]() | 🔄 |
+| P5.191 | **** | [### Acceptance Criteria]() | 🔄 |
+| P5.192 | **** | [#- [ ] WebSocket 自動連線 + 斷線重連]() | 🔄 |
+| P5.193 | **** | [#- [ ] 所有 6 種事件正確分發到對應 store]() | 🔄 |
+| P5.194 | **** | [#- [ ] API client hook 整合 proto TypeScript 類型]() | 🔄 |
+| P5.195 | **** | [#- [ ] 初始頁面載入時 fetch API 填充 stores]() | 🔄 |
+| P5.196 | **** | [#- [ ] WebSocket 狀態在 Header 顯示 (綠燈/紅燈)]() | 🔄 |
+| P5.197 | **** | [#- [ ] DevTools 可檢視 store 狀態]() | 🔄 |
+| P5.198 | **** | [### Dependencies]() | 🔄 |
+| P5.199 | **** | [#- Depends on: #15 (React project init)]() | 🔄 |
+| P5.200 | **📊 Dashboard 主頁面 + 圖表元件** | [#18](https://github.com/chimerakang/alice/issues/18) | ✅ |
+| P5.201 | **** | [#重建 Dashboard 主頁面（原 web/index.html），使用 React 元件 + Recharts 圖表。]() | 🔄 |
+| P5.202 | **** | [### Page: `/` (Dashboard)]() | 🔄 |
+| P5.203 | **** | [#### Sections]() | 🔄 |
+| P5.204 | **** | [#1. **Metric Cards Row** (4 cards)]() | 🔄 |
+| P5.205 | **** | [#   - Active Agents (即時)]() | 🔄 |
+| P5.206 | **** | [#   - Tools Executed (累計)]() | 🔄 |
+| P5.207 | **** | [#   - Decisions Made (累計)]() | 🔄 |
+| P5.208 | **** | [#   - Token Usage / Cost (累計)]() | 🔄 |
+| P5.209 | **** | [#2. **Git Status Panel**]() | 🔄 |
+| P5.210 | **** | [#   - Current branch + commit hash]() | 🔄 |
+| P5.211 | **** | [#   - Modified files count]() | 🔄 |
+| P5.212 | **** | [#   - Recent git operations timeline]() | 🔄 |
+| P5.213 | **** | [#3. **Charts Row** (2 charts)]() | 🔄 |
+| P5.214 | **** | [#   - Activity Chart (Line) — 24h agent activity + tool executions]() | 🔄 |
+| P5.215 | **** | [#   - Tool Usage Chart (Doughnut) — tool 使用分佈]() | 🔄 |
+| P5.216 | **** | [#4. **Live Feed Columns** (3 columns)]() | 🔄 |
+| P5.217 | **** | [#   - Active Agents — 狀態卡片 + session info]() | 🔄 |
+| P5.218 | **** | [#   - Recent Tools — tool 執行列表 + status badge]() | 🔄 |
+| P5.219 | **** | [#   - Recent Decisions — decision 列表 + success rate]() | 🔄 |
+| P5.220 | **** | [#### Recharts Integration]() | 🔄 |
+| P5.221 | **** | [#```typescript]() | 🔄 |
+| P5.222 | **** | [#// 替代 Chart.js，更好的 React 整合]() | 🔄 |
+| P5.223 | **** | [#import { LineChart, PieChart, ResponsiveContainer } from 'recharts']() | 🔄 |
+| P5.224 | **** | [#// Activity Chart]() | 🔄 |
+| P5.225 | **** | [#<ResponsiveContainer>]() | 🔄 |
+| P5.226 | **** | [#  <LineChart data={activityData}>]() | 🔄 |
+| P5.227 | **** | [#    <Line dataKey="agents" stroke="#22C55E" />]() | 🔄 |
+| P5.228 | **** | [#    <Line dataKey="tools" stroke="#3B82F6" />]() | 🔄 |
+| P5.229 | **** | [#  </LineChart>]() | 🔄 |
+| P5.230 | **** | [#</ResponsiveContainer>]() | 🔄 |
+| P5.231 | **** | [#```]() | 🔄 |
+| P5.232 | **** | [#### Real-time Updates]() | 🔄 |
+| P5.233 | **** | [#- MetricCard 收到 WebSocket 事件時動畫更新]() | 🔄 |
+| P5.234 | **** | [#- Charts 每 30 秒自動刷新或收到 performance_metric 時更新]() | 🔄 |
+| P5.235 | **** | [#- Live feed 新事件插入頂部 + slide-in 動畫]() | 🔄 |
+| P5.236 | **** | [### Acceptance Criteria]() | 🔄 |
+| P5.237 | **** | [#- [ ] 4 個 MetricCard 顯示正確數值 + 動畫計數器]() | 🔄 |
+| P5.238 | **** | [#- [ ] Git 狀態面板顯示 branch/commit/modified files]() | 🔄 |
+| P5.239 | **** | [#- [ ] Activity Chart 顯示 24h 趨勢]() | 🔄 |
+| P5.240 | **** | [#- [ ] Tool Usage Chart 顯示 tool 分佈]() | 🔄 |
+| P5.241 | **** | [#- [ ] Live feed 即時更新 (WebSocket)]() | 🔄 |
+| P5.242 | **** | [#- [ ] 30 秒自動刷新 fallback]() | 🔄 |
+| P5.243 | **** | [#- [ ] 響應式佈局 (desktop/tablet)]() | 🔄 |
+| P5.244 | **** | [### Dependencies]() | 🔄 |
+| P5.245 | **** | [#- Depends on: #15, #16, #17]() | 🔄 |
+| P5.246 | **⏳ Timeline + Terminal 頁面** | [#19](https://github.com/chimerakang/alice/issues/19) | ✅ |
+| P5.247 | **** | [#重建 Timeline 頁面（原 web/timeline.html + web/js/terminal.js），使用 React 元件。]() | 🔄 |
+| P5.248 | **** | [### Page: `/timeline`]() | 🔄 |
+| P5.249 | **** | [#### Timeline Component]() | 🔄 |
+| P5.250 | **** | [#垂直時間軸顯示 AI decision process：]() | 🔄 |
+| P5.251 | **** | [#```]() | 🔄 |
+| P5.252 | **** | [#━━ 14:32:05 ━━━━━━━━━━━━━━━━━━━━━]() | 🔄 |
+| P5.253 | **** | [#│ 📝 User: "修改 login 頁面的 CSS"]() | 🔄 |
+| P5.254 | **** | [#│]() | 🔄 |
+| P5.255 | **** | [#│ 🔍 Read → src/login.css]() | 🔄 |
+| P5.256 | **** | [#│ ✏️ Edit → src/login.css (+12, -3)]() | 🔄 |
+| P5.257 | **** | [#│ 💻 Bash → npm run build (success)]() | 🔄 |
+| P5.258 | **** | [#│]() | 🔄 |
+| P5.259 | **** | [#│ ✅ 完成 — 3 tools, 2.1s, 1,200 tokens]() | 🔄 |
+| P5.260 | **** | [#━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━]() | 🔄 |
+| P5.261 | **** | [#```]() | 🔄 |
+| P5.262 | **** | [#Features:]() | 🔄 |
+| P5.263 | **** | [#- 色彩編碼事件 (tool=藍, decision=青, performance=橙, security=紅)]() | 🔄 |
+| P5.264 | **** | [#- 點擊展開查看詳細 Input/Output]() | 🔄 |
+| P5.265 | **** | [#- WebSocket 即時新增事件]() | 🔄 |
+| P5.266 | **** | [#- Auto-scroll + 手動捲動偵測]() | 🔄 |
+| P5.267 | **** | [#### Filter Panel]() | 🔄 |
+| P5.268 | **** | [#```typescript]() | 🔄 |
+| P5.269 | **** | [#interface TimelineFilters {]() | 🔄 |
+| P5.270 | ** 'tool_execution' ** | [#  eventType: 'all' ]( 'performance_metric' ) | 🔄 |
+| P5.271 | ** null** | [#  chatId: number ]() | 🔄 |
+| P5.272 | ** 'success' ** | [#  status: 'all' ]( 'running') | 🔄 |
+| P5.273 | ** '6h' ** | [#  timeRange: '1h' ]( '7d' ) | 🔄 |
+| P5.274 | **** | [#}]() | 🔄 |
+| P5.275 | **** | [#```]() | 🔄 |
+| P5.276 | **** | [#### Terminal Component]() | 🔄 |
+| P5.277 | **** | [#CLI 風格即時輸出：]() | 🔄 |
+| P5.278 | **** | [#- 顯示 tool 開始/完成/錯誤]() | 🔄 |
+| P5.279 | **** | [#- 彩色輸出 + icon]() | 🔄 |
+| P5.280 | **** | [#- 時間戳 toggle]() | 🔄 |
+| P5.281 | **** | [#- Copy / Clear 功能]() | 🔄 |
+| P5.282 | **** | [#- 最大 1000 行 + 自動清理]() | 🔄 |
+| P5.283 | **** | [#- Event type 篩選器 (Info/Warning/Error/Success/Debug)]() | 🔄 |
+| P5.284 | **** | [#### Layout]() | 🔄 |
+| P5.285 | **** | [#```]() | 🔄 |
+| P5.286 | **** | [#┌─────────────────────────────────────┐]() | 🔄 |
+| P5.287 | **** | [#│ [Filters]  [Auto-scroll ✓] [Export] │]() | 🔄 |
+| P5.288 | **** | [#├──────────────────┬──────────────────┤]() | 🔄 |
+| P5.289 | **** | [#│                  │                  │]() | 🔄 |
+| P5.290 | **** | [#│   Timeline       │   Terminal       │]() | 🔄 |
+| P5.291 | **** | [#│   (Left 60%)     │   (Right 40%)   │]() | 🔄 |
+| P5.292 | **** | [#│                  │                  │]() | 🔄 |
+| P5.293 | **** | [#└──────────────────┴──────────────────┘]() | 🔄 |
+| P5.294 | **** | [#```]() | 🔄 |
+| P5.295 | **** | [### Acceptance Criteria]() | 🔄 |
+| P5.296 | **** | [#- [ ] 垂直時間軸正確顯示事件]() | 🔄 |
+| P5.297 | **** | [#- [ ] 事件可展開/收合查看詳情]() | 🔄 |
+| P5.298 | **** | [#- [ ] Filter 正常篩選事件]() | 🔄 |
+| P5.299 | **** | [#- [ ] Terminal 即時顯示 CLI 風格輸出]() | 🔄 |
+| P5.300 | **** | [#- [ ] Auto-scroll 正常運作]() | 🔄 |
+| P5.301 | **** | [#- [ ] WebSocket 即時推送新事件]() | 🔄 |
+| P5.302 | **** | [#- [ ] OLED 黑化主題一致]() | 🔄 |
+| P5.303 | **** | [### Dependencies]() | 🔄 |
+| P5.304 | **** | [#- Depends on: #15, #16, #17]() | 🔄 |
+| P5.305 | **📋 Git/Checkpoint/Performance/Security 子頁面** | [#20](https://github.com/chimerakang/alice/issues/20) | ✅ |
+| P5.306 | **** | [#建立次要功能頁面，整合已有的後端 API。]() | 🔄 |
+| P5.307 | **** | [### Pages]() | 🔄 |
+| P5.308 | **** | [#### 1. `/performance` — Performance Analytics]() | 🔄 |
+| P5.309 | **** | [#- 總覽卡片：Total Requests, Success Rate, Avg Latency, Total Cost]() | 🔄 |
+| P5.310 | **** | [#- Recharts 趨勢圖：API latency, throughput, error rate (24h)]() | 🔄 |
+| P5.311 | **** | [#- Recommendations 列表（從 /api/performance/recommendations）]() | 🔄 |
+| P5.312 | **** | [#- Metrics 匯出按鈕]() | 🔄 |
+| P5.313 | **** | [#API endpoints:]() | 🔄 |
+| P5.314 | **** | [#- `/api/performance/analytics`]() | 🔄 |
+| P5.315 | **** | [#- `/api/performance/metrics`]() | 🔄 |
+| P5.316 | **** | [#- `/api/performance/trends`]() | 🔄 |
+| P5.317 | **** | [#- `/api/performance/recommendations`]() | 🔄 |
+| P5.318 | **** | [#- `/api/performance/export`]() | 🔄 |
+| P5.319 | **** | [#### 2. `/security` — Security Events]() | 🔄 |
+| P5.320 | **** | [#- 安全統計卡片：Total Events, Blocked Attempts, PII Detections, Threat Level]() | 🔄 |
+| P5.321 | **** | [#- Security events table（可按 severity 篩選）]() | 🔄 |
+| P5.322 | **** | [#- Audit log 詳細資訊]() | 🔄 |
+| P5.323 | **** | [#API endpoints:]() | 🔄 |
+| P5.324 | **** | [#- `/api/security/events`]() | 🔄 |
+| P5.325 | **** | [#- `/api/security/stats`]() | 🔄 |
+| P5.326 | **** | [#- `/api/security/audit`]() | 🔄 |
+| P5.327 | **** | [#### 3. `/checkpoints` — Git & Checkpoint Management]() | 🔄 |
+| P5.328 | **** | [#- Git status panel (branch, commit, dirty state)]() | 🔄 |
+| P5.329 | **** | [#- Checkpoint 列表（按專案篩選）]() | 🔄 |
+| P5.330 | **** | [#- 手動建立 checkpoint 按鈕]() | 🔄 |
+| P5.331 | **** | [#- 回溯到 checkpoint 按鈕（確認對話框）]() | 🔄 |
+| P5.332 | **** | [#- Checkpoint statistics]() | 🔄 |
+| P5.333 | **** | [#API endpoints:]() | 🔄 |
+| P5.334 | **** | [#- `/api/git/status`, `/api/git/events`]() | 🔄 |
+| P5.335 | **** | [#- `/api/checkpoints`, `/api/checkpoints/create`, `/api/checkpoints/restore`]() | 🔄 |
+| P5.336 | **** | [#- `/api/checkpoints/stats`]() | 🔄 |
+| P5.337 | **** | [#### 4. `/settings` — Settings (Optional)]() | 🔄 |
+| P5.338 | **** | [#- Multi-agent 開關 + 狀態]() | 🔄 |
+| P5.339 | **** | [#- Storage health + cleanup]() | 🔄 |
+| P5.340 | **** | [#- WebSocket statistics]() | 🔄 |
+| P5.341 | **** | [### Acceptance Criteria]() | 🔄 |
+| P5.342 | **** | [#- [ ] Performance 頁面顯示分析指標 + 趨勢圖]() | 🔄 |
+| P5.343 | **** | [#- [ ] Security 頁面顯示事件表格 + 統計]() | 🔄 |
+| P5.344 | **** | [#- [ ] Checkpoint 頁面可建立/回溯/列出 checkpoints]() | 🔄 |
+| P5.345 | **** | [#- [ ] 所有 API 端點正確整合]() | 🔄 |
+| P5.346 | **** | [#- [ ] 錯誤處理 + loading states]() | 🔄 |
+| P5.347 | **** | [### Dependencies]() | 🔄 |
+| P5.348 | **** | [#- Depends on: #15, #16, #17, #18]() | 🔄 |
+
+## P6 - AI Audit System (✅ 100%)
+
+| # | Task | Issue | Status |
+|---|------|-------|--------|
+| P6.1 | **🔍 AI Decision Timeline — 核心審計頁面** | [#21](https://github.com/chimerakang/alice/issues/21) | ✅ |
+| P6.2 | **** | [#**AI 開發追蹤系統的核心頁面**。以時間軸顯示每一次 AI 互動的完整記錄，讓開發者快速審查 AI 的推理和操作。]() | 🔄 |
+| P6.3 | **** | [### 功能需求]() | 🔄 |
+| P6.4 | **** | [#### Timeline 列表]() | 🔄 |
+| P6.5 | **** | [#每個 entry 包含：]() | 🔄 |
+| P6.6 | **** | [#```]() | 🔄 |
+| P6.7 | **** | [#[時間戳] User Prompt (摘要)]() | 🔄 |
+| P6.8 | **** | [#├── 🤖 AI Reasoning    (可展開 → 完整 markdown)]() | 🔄 |
+| P6.9 | **** | [#├── 🔧 Tool Calls      (可展開 → 列表 + input/output)]() | 🔄 |
+| P6.10 | **** | [#│   ├── Read: docs/STATUS.md ✓ 3ms]() | 🔄 |
+| P6.11 | **** | [#│   ├── Bash: git status ✓ 120ms]() | 🔄 |
+| P6.12 | **** | [#│   └── Bash: docker compose ps ✗ Error]() | 🔄 |
+| P6.13 | ** 5 tools ** | [#├── 📊 Outcome: ✓/✗ ]( $0.12) | 🔄 |
+| P6.14 | **** | [#└── 📸 Checkpoint (如有)]() | 🔄 |
+| P6.15 | **** | [#```]() | 🔄 |
+| P6.16 | **** | [#### 篩選與搜尋]() | 🔄 |
+| P6.17 | **** | [#- [ ] 日期範圍篩選]() | 🔄 |
+| P6.18 | **** | [#- [ ] 專案目錄篩選]() | 🔄 |
+| P6.19 | **** | [#- [ ] 狀態篩選 (success/error/all)]() | 🔄 |
+| P6.20 | **** | [#- [ ] 全文搜尋 (prompt + response)]() | 🔄 |
+| P6.21 | **** | [#### 即時更新]() | 🔄 |
+| P6.22 | **** | [#- [ ] WebSocket 接收新 decision events]() | 🔄 |
+| P6.23 | **** | [#- [ ] 新 entry 自動插入頂部 (with animation)]() | 🔄 |
+| P6.24 | **** | [#- [ ] "Live" 指示燈]() | 🔄 |
+| P6.25 | **** | [#### 資料來源]() | 🔄 |
+| P6.26 | **** | [#- `GET /api/decisions/recent` — Decision logs with tool calls]() | 🔄 |
+| P6.27 | **** | [#- `GET /api/tools/recent` — Tool execution details]() | 🔄 |
+| P6.28 | **** | [#- WebSocket `decision_complete` events]() | 🔄 |
+| P6.29 | **** | [### 技術要點]() | 🔄 |
+| P6.30 | **** | [#- Virtualized list (大量 entries 效能)]() | 🔄 |
+| P6.31 | **** | [#- Collapsible/Accordion UI]() | 🔄 |
+| P6.32 | **** | [#- Markdown rendering (AI response)]() | 🔄 |
+| P6.33 | **** | [#- Relative timestamps ("2 分鐘前")]() | 🔄 |
+| P6.34 | **** | [### 優先級: P0 (核心功能)]() | 🔄 |
+| P6.35 | **📋 Decision Detail View + Git Diff Viewer** | [#22](https://github.com/chimerakang/alice/issues/22) | ✅ |
+| P6.36 | **** | [#點擊 Timeline entry 後的**詳細檢視頁面**，完整呈現單次 AI 互動的所有細節。]() | 🔄 |
+| P6.37 | **** | [### 功能需求]() | 🔄 |
+| P6.38 | **** | [#### Decision 詳情]() | 🔄 |
+| P6.39 | **** | [#- [ ] 完整 User Prompt 顯示]() | 🔄 |
+| P6.40 | **** | [#- [ ] AI Response — Markdown 渲染 (支援 code blocks, tables, lists)]() | 🔄 |
+| P6.41 | **** | [#- [ ] 執行摘要 (duration, tokens in/out, cost, tool count)]() | 🔄 |
+| P6.42 | **** | [#### Tool Call Timeline]() | 🔄 |
+| P6.43 | **** | [#- [ ] 每個 tool call 的時間軸 (Gantt-like bar)]() | 🔄 |
+| P6.44 | **** | [#- [ ] 展開每個 tool 查看 input 和 output]() | 🔄 |
+| P6.45 | **** | [#- [ ] 顏色標記: ✅ success / ❌ error / ⏳ running]() | 🔄 |
+| P6.46 | **** | [#- [ ] Error stack trace 顯示]() | 🔄 |
+| P6.47 | **** | [#### Git Diff Viewer]() | 🔄 |
+| P6.48 | **** | [#- [ ] 該次互動期間變更的檔案列表]() | 🔄 |
+| P6.49 | **** | [#- [ ] Inline diff view (紅/綠色 diff)]() | 🔄 |
+| P6.50 | **** | [#- [ ] 檔案新增/刪除/修改 標記]() | 🔄 |
+| P6.51 | **** | [#- [ ] 可折疊每個檔案的 diff]() | 🔄 |
+| P6.52 | **** | [#### Token & Cost Breakdown]() | 🔄 |
+| P6.53 | **** | [#- [ ] Input/Output tokens 分拆]() | 🔄 |
+| P6.54 | **** | [#- [ ] 估算成本顯示]() | 🔄 |
+| P6.55 | **** | [#- [ ] 與歷史平均比較]() | 🔄 |
+| P6.56 | **** | [#### 導航]() | 🔄 |
+| P6.57 | **** | [#- [ ] ← → 上一筆/下一筆 Decision]() | 🔄 |
+| P6.58 | **** | [#- [ ] 回到 Timeline]() | 🔄 |
+| P6.59 | **** | [#- [ ] 連結到相關 Checkpoint]() | 🔄 |
+| P6.60 | **** | [### 資料來源]() | 🔄 |
+| P6.61 | **** | [#- `GET /api/decisions/recent` (filter by ID)]() | 🔄 |
+| P6.62 | **** | [#- `GET /api/git/events`]() | 🔄 |
+| P6.63 | **** | [#- `GET /api/tools/recent`]() | 🔄 |
+| P6.64 | **** | [### 優先級: P0]() | 🔄 |
+| P6.65 | **** | [### 依賴: #21 (Timeline 頁面)]() | 🔄 |
+| P6.66 | **📸 Checkpoint Management UI** | [#23](https://github.com/chimerakang/alice/issues/23) | ✅ |
+| P6.67 | **** | [#Checkpoint 快照管理介面，讓開發者可以查看、比較、回滾 AI 開發過程中的程式碼狀態。]() | 🔄 |
+| P6.68 | **** | [### 功能需求]() | 🔄 |
+| P6.69 | **** | [#### Checkpoint 列表]() | 🔄 |
+| P6.70 | **** | [#- [ ] 以卡片或表格顯示所有 checkpoints]() | 🔄 |
+| P6.71 | **** | [#- [ ] 顯示: timestamp, description, trigger type, git branch, commit hash, size]() | 🔄 |
+| P6.72 | **** | [#- [ ] 標記 auto vs manual checkpoints]() | 🔄 |
+| P6.73 | **** | [#- [ ] 標記「危險操作」觸發的 checkpoints]() | 🔄 |
+| P6.74 | **** | [#### Checkpoint 操作]() | 🔄 |
+| P6.75 | **** | [#- [ ] 🔄 Restore — 回滾到該 checkpoint (需確認 dialog)]() | 🔄 |
+| P6.76 | **** | [#- [ ] 📝 Create — 手動建立新 checkpoint]() | 🔄 |
+| P6.77 | **** | [#- [ ] 🗑️ Delete — 刪除不需要的 checkpoint]() | 🔄 |
+| P6.78 | **** | [#- [ ] 📊 Compare — 比較兩個 checkpoint 的差異]() | 🔄 |
+| P6.79 | **** | [#### Checkpoint ↔ Decision 關聯]() | 🔄 |
+| P6.80 | **** | [#- [ ] 顯示觸發此 checkpoint 的 decision]() | 🔄 |
+| P6.81 | **** | [#- [ ] 從 Decision Detail 跳轉到相關 checkpoint]() | 🔄 |
+| P6.82 | **** | [#- [ ] 時間軸上標記 checkpoint 位置]() | 🔄 |
+| P6.83 | **** | [#### 狀態指示]() | 🔄 |
+| P6.84 | **** | [#- [ ] 當前 active checkpoint 高亮]() | 🔄 |
+| P6.85 | **** | [#- [ ] Checkpoint 大小 (storage usage)]() | 🔄 |
+| P6.86 | **** | [#- [ ] Auto-checkpoint 設定狀態]() | 🔄 |
+| P6.87 | **** | [### 資料來源]() | 🔄 |
+| P6.88 | **** | [#- `GET /api/checkpoints?project_dir=...`]() | 🔄 |
+| P6.89 | **** | [#- `POST /api/checkpoints/create`]() | 🔄 |
+| P6.90 | **** | [#- `POST /api/checkpoints/restore`]() | 🔄 |
+| P6.91 | **** | [#- `DELETE /api/checkpoints?id=...`]() | 🔄 |
+| P6.92 | **** | [#- `GET /api/checkpoints/stats`]() | 🔄 |
+| P6.93 | **** | [### 優先級: P1]() | 🔄 |
+| P6.94 | **** | [### 依賴: #21 (Timeline), #22 (Detail View)]() | 🔄 |
+| P6.95 | **擴充 CallStream 擷取完整 AI 思考與文字內容** | [#27](https://github.com/chimerakang/alice/issues/27) | ✅ |
+| P6.96 | **** | [#目前 `CLIClient.CallStream()` (api.go) 在解析 Claude Code CLI 的 `stream-json` 輸出時，只擷取了 `tool_use` content blocks 和最終 `result` 事件。遺漏了關鍵的 AI 推理資訊。]() | 🔄 |
+| P6.97 | **** | [#### 目前擷取狀態]() | 🔄 |
+| P6.98 | **** | [#### 影響]() | 🔄 |
+| P6.99 | **** | [#- Dashboard Timeline 只能顯示工具名稱，無法顯示 AI 為什麼做出這個決策]() | 🔄 |
+| P6.100 | **** | [#- Checkpoint 關聯的 AI context 缺少思考過程]() | 🔄 |
+| P6.101 | **** | [#- 與 VS Code 中看到的完整對話相比，資訊量嚴重不足]() | 🔄 |
+| P6.102 | **** | [### 目標]() | 🔄 |
+| P6.103 | **** | [#擴充 `CallStream()` 解析能力，擷取並儲存完整的 AI 對話內容。]() | 🔄 |
+| P6.104 | **** | [### 實作範圍]() | 🔄 |
+| P6.105 | **** | [#### Backend - api.go]() | 🔄 |
+| P6.106 | **** | [#- [ ] 解析 `thinking` content blocks（AI 推理過程）]() | 🔄 |
+| P6.107 | **** | [#- [ ] 解析 `text` content blocks（AI 中間文字回應）]() | 🔄 |
+| P6.108 | **** | [#- [ ] 解析 `tool_result` 事件（工具執行結果）]() | 🔄 |
+| P6.109 | **** | [#- [ ] 擴充 `CLIResponse` struct 新增 `ThinkingBlocks []string` 和 `TextBlocks []string`]() | 🔄 |
+| P6.110 | **** | [#- [ ] 擴充 onToolUse callback 或新增 onContent callback]() | 🔄 |
+| P6.111 | **** | [#### Backend - agent.go]() | 🔄 |
+| P6.112 | **** | [#- [ ] `DecisionLog` struct 新增 `ThinkingContent` 欄位]() | 🔄 |
+| P6.113 | **** | [#- [ ] `ToolExecution` struct 新增 `Output` 欄位（工具執行結果）]() | 🔄 |
+| P6.114 | **** | [#- [ ] `logDecision()` 儲存 thinking 和 text 內容]() | 🔄 |
+| P6.115 | **** | [#### Backend - storage.go]() | 🔄 |
+| P6.116 | **** | [#- [ ] SQLite schema migration: decision_logs 加 `thinking_content` 欄位]() | 🔄 |
+| P6.117 | **** | [#- [ ] 更新 INSERT/SELECT 查詢]() | 🔄 |
+| P6.118 | **** | [#### Frontend]() | 🔄 |
+| P6.119 | **** | [#- [ ] TypeScript DecisionLog type 新增 `thinking_content` 欄位]() | 🔄 |
+| P6.120 | **** | [#- [ ] Timeline 頁面新增可展開的 "AI Thinking" 面板]() | 🔄 |
+| P6.121 | **** | [#- [ ] Checkpoint AIContextPanel 顯示 thinking 內容]() | 🔄 |
+| P6.122 | **** | [### 優先順序]() | 🔄 |
+| P6.123 | **** | [#P1 — 這是 AI 審計系統的核心能力，直接影響系統的透明度價值]() | 🔄 |
+| P6.124 | **** | [### 關聯]() | 🔄 |
+| P6.125 | **** | [#- 依賴 #26 (Checkpoint ↔ DecisionLog 關聯) 完成後更有價值]() | 🔄 |
+| P6.126 | **** | [#- 屬於 P6 AI Audit System 的延伸強化]() | 🔄 |
+
+## P7 - Dashboard & Analytics (✅ 100%)
+
+| # | Task | Issue | Status |
+|---|------|-------|--------|
+| P7.1 | **📊 Dashboard Enhancement — AI Activity Overview** | [#24](https://github.com/chimerakang/alice/issues/24) | ✅ |
+| P7.2 | **** | [#強化現有 Dashboard，加入 AI 活動摘要、Git 狀態、趨勢圖表，成為全局監控入口。]() | 🔄 |
+| P7.3 | **** | [### 功能需求]() | 🔄 |
+| P7.4 | **** | [#### Git 狀態卡片]() | 🔄 |
+| P7.5 | **** | [#- [ ] 當前 branch + commit hash]() | 🔄 |
+| P7.6 | **** | [#- [ ] Dirty/clean 狀態]() | 🔄 |
+| P7.7 | **** | [#- [ ] Modified files 數量]() | 🔄 |
+| P7.8 | **** | [#- [ ] Remote URL]() | 🔄 |
+| P7.9 | **** | [#### AI 活動摘要]() | 🔄 |
+| P7.10 | **** | [#- [ ] 最近 5 筆 decisions 的精簡卡片 (prompt 摘要 + 結果)]() | 🔄 |
+| P7.11 | **** | [#- [ ] 點擊可跳轉到 Timeline detail]() | 🔄 |
+| P7.12 | **** | [#- [ ] 「查看全部」連結到 Timeline 頁面]() | 🔄 |
+| P7.13 | **** | [#### 趨勢圖表 (Recharts)]() | 🔄 |
+| P7.14 | **** | [#- [ ] Tool execution 成功/失敗率趨勢 (折線圖)]() | 🔄 |
+| P7.15 | **** | [#- [ ] Token 使用量趨勢 (柱狀圖)]() | 🔄 |
+| P7.16 | **** | [#- [ ] 每日活動量 (area chart)]() | 🔄 |
+| P7.17 | **** | [#- [ ] 時間範圍選擇器 (24h / 7d / 30d)]() | 🔄 |
+| P7.18 | **** | [#### 系統狀態]() | 🔄 |
+| P7.19 | **** | [#- [ ] WebSocket 連線狀態]() | 🔄 |
+| P7.20 | **** | [#- [ ] Bot 運行時間 (uptime)]() | 🔄 |
+| P7.21 | **** | [#- [ ] Storage 使用量]() | 🔄 |
+| P7.22 | **** | [#- [ ] 最近的 error/warning 提醒]() | 🔄 |
+| P7.23 | **** | [### 資料來源]() | 🔄 |
+| P7.24 | **** | [#- `GET /api/stats` (基本指標)]() | 🔄 |
+| P7.25 | **** | [#- `GET /api/git/status` (Git 狀態)]() | 🔄 |
+| P7.26 | **** | [#- `GET /api/decisions/recent?limit=5` (最近決策)]() | 🔄 |
+| P7.27 | **** | [#- `GET /api/performance/trends` (趨勢資料)]() | 🔄 |
+| P7.28 | **** | [#- WebSocket events (即時更新)]() | 🔄 |
+| P7.29 | **** | [### 優先級: P1]() | 🔄 |
+| P7.30 | **** | [### 依賴: #16 (UI Components)]() | 🔄 |
+| P7.31 | **📈 Performance & Security Analysis Pages** | [#25](https://github.com/chimerakang/alice/issues/25) | ✅ |
+| P7.32 | **** | [#Performance 和 Security 兩個分析子頁面，提供深度數據可視化。]() | 🔄 |
+| P7.33 | **** | [### Performance 頁面]() | 🔄 |
+| P7.34 | **** | [#- [ ] API 響應時間趨勢 (line chart)]() | 🔄 |
+| P7.35 | **** | [#- [ ] Tool 執行時間分佈 (histogram)]() | 🔄 |
+| P7.36 | **** | [#- [ ] Token 使用量 by model (stacked bar)]() | 🔄 |
+| P7.37 | **** | [#- [ ] 成本趨勢 (area chart)]() | 🔄 |
+| P7.38 | **** | [#- [ ] Memory 使用量]() | 🔄 |
+| P7.39 | **** | [#- [ ] 效能優化建議列表 (`/api/performance/recommendations`)]() | 🔄 |
+| P7.40 | **** | [### Security 頁面]() | 🔄 |
+| P7.41 | **** | [#- [ ] Security events 列表 (sortable table)]() | 🔄 |
+| P7.42 | **** | [#- [ ] Severity 分佈 (pie/donut chart)]() | 🔄 |
+| P7.43 | **** | [#- [ ] 事件趨勢 (stacked area by severity)]() | 🔄 |
+| P7.44 | **** | [#- [ ] Blocked attempts 統計]() | 🔄 |
+| P7.45 | **** | [#- [ ] PII detection 記錄]() | 🔄 |
+| P7.46 | **** | [#- [ ] Audit log export]() | 🔄 |
+| P7.47 | **** | [### 資料來源]() | 🔄 |
+| P7.48 | **** | [#- `GET /api/performance/analytics`]() | 🔄 |
+| P7.49 | **** | [#- `GET /api/performance/metrics`]() | 🔄 |
+| P7.50 | **** | [#- `GET /api/performance/trends`]() | 🔄 |
+| P7.51 | **** | [#- `GET /api/performance/recommendations`]() | 🔄 |
+| P7.52 | **** | [#- `GET /api/security/events`]() | 🔄 |
+| P7.53 | **** | [#- `GET /api/security/stats`]() | 🔄 |
+| P7.54 | **** | [#- `GET /api/security/audit`]() | 🔄 |
+| P7.55 | **** | [### 優先級: P2]() | 🔄 |
+| P7.56 | **Checkpoint ↔ DecisionLog 直接關聯** | [#26](https://github.com/chimerakang/alice/issues/26) | ✅ |
+| P7.57 | **** | [#目前 Checkpoint 系統沒有直接關聯到觸發它的 AI 決策（DecisionLog）。前端只能靠**時間戳近似配對**（5 分鐘內）來找關聯的 DecisionLog，這種方式：]() | 🔄 |
+| P7.58 | **** | [#- 可能配對錯誤（多個決策在同一時間段）]() | 🔄 |
+| P7.59 | **** | [#- 可能找不到配對（超過 5 分鐘閾值）]() | 🔄 |
+| P7.60 | **** | [#- 效能差（需要載入所有 decisions 做 client-side matching）]() | 🔄 |
+| P7.61 | **** | [#- 不可靠（沒有資料庫層級的關聯保證）]() | 🔄 |
+| P7.62 | **** | [### 目標]() | 🔄 |
+| P7.63 | **** | [#在 Checkpoint 建立時直接記錄 `decision_id`，建立 Checkpoint ↔ DecisionLog 的資料庫層級關聯。]() | 🔄 |
+| P7.64 | **** | [### 實作範圍]() | 🔄 |
+| P7.65 | **** | [#### Backend]() | 🔄 |
+| P7.66 | **** | [#- [ ] `Checkpoint` struct 新增 `DecisionLogID` 欄位]() | 🔄 |
+| P7.67 | **** | [#- [ ] SQLite schema 新增 `decision_log_id` 欄位（ALTER TABLE + migration）]() | 🔄 |
+| P7.68 | **** | [#- [ ] `CreateCheckpoint()` 接受 `decisionLogID` 參數]() | 🔄 |
+| P7.69 | **** | [#- [ ] `checkAndCreateCheckpoint()` 傳入當前 decision context]() | 🔄 |
+| P7.70 | **** | [#- [ ] API response 包含 `decision_log_id`]() | 🔄 |
+| P7.71 | **** | [#### Frontend]() | 🔄 |
+| P7.72 | **** | [#- [ ] TypeScript `Checkpoint` interface 新增 `decision_log_id` 欄位]() | 🔄 |
+| P7.73 | **** | [#- [ ] `findLinkedDecision()` 優先使用 `decision_log_id` 直接查詢]() | 🔄 |
+| P7.74 | **** | [#- [ ] 移除純時間戳配對的 fallback（或保留為 backward compatibility）]() | 🔄 |
+| P7.75 | **** | [#- [ ] AIContextPanel 可直接透過 ID 載入 decision 資料]() | 🔄 |
+| P7.76 | **** | [### 關聯]() | 🔄 |
+| P7.77 | **** | [#- 改善 P6 AI Audit System 的 Checkpoint Management (#23)]() | 🔄 |
+| P7.78 | **** | [#- 屬於 P7 Dashboard & Analytics 系列]() | 🔄 |
+| P7.79 | **Checkpoints 頁面重新定位：AI 決策歷程 + 安全快照** | [#30](https://github.com/chimerakang/alice/issues/30) | ✅ |
+| P7.80 | **** | [#目前 Checkpoints 頁面主要顯示 git commit 資訊（commit hash、branch、size），這些在 GitHub 上都看得到，缺乏獨特價值。]() | 🔄 |
+| P7.81 | **** | [#經過與 Entire Checkpoints 概念的比較分析，Alice 的 DecisionLog 系統已經記錄了完整的 AI 推理過程（user_prompt、thinking_content、tool_calls、agent_response），但 Checkpoints 頁面沒有好好展示這些資料。]() | 🔄 |
+| P7.82 | **** | [### 目標]() | 🔄 |
+| P7.83 | **** | [#將 Checkpoints 頁面從「git 快照列表」重新定位為「AI 決策歷程 + 安全快照」：]() | 🔄 |
+| P7.84 | **** | [#- **DecisionLog 為主體**：顯示 AI 做了什麼、為什麼這樣做]() | 🔄 |
+| P7.85 | **** | [#- **Checkpoint 為附註**：標記哪些決策觸發了安全快照，提供 restore 功能]() | 🔄 |
+| P7.86 | **** | [### 子任務]() | 🔄 |
+| P7.87 | **** | [#- [ ] 重構頁面佈局：DecisionLog 為主體，Checkpoint 為附註標記]() | 🔄 |
+| P7.88 | **** | [#- [ ] 加入 DateRangeFilter + server-side 分頁（復用 Timeline 模式）]() | 🔄 |
+| P7.89 | **** | [#- [ ] 重新設計卡片：user prompt → tool chain → outcome 為主，git/snapshot 為 collapsible 次要區塊]() | 🔄 |
+| P7.90 | **** | [#- [ ] 加入 slide-over Detail Panel（完整 thinking/response/ToolCallGantt/GitDiff + checkpoint restore）]() | 🔄 |
+| P7.91 | **** | [#- [ ] 搜尋與篩選（搜尋 prompts/tools、filter by trigger type/project）]() | 🔄 |
+| P7.92 | **** | [#- [ ] 建置驗證 + Docker dashboard 重建]() | 🔄 |
+| P7.93 | **** | [### 技術細節]() | 🔄 |
+| P7.94 | **** | [#### 資料流變更]() | 🔄 |
+| P7.95 | **** | [#- **主要資料源**：`api.getRecentDecisions()` with pagination + time range]() | 🔄 |
+| P7.96 | **** | [#- **輔助資料源**：`api.getCheckpoints()` 用於標註哪些 decision 有 checkpoint]() | 🔄 |
+| P7.97 | **** | [#- **連結邏輯**：保留現有 `decision_log_id` 直連 + timestamp proximity fallback]() | 🔄 |
+| P7.98 | **** | [#### 可復用元件]() | 🔄 |
+| P7.99 | **** | [#- `DateRangeFilter` — 時間範圍篩選（已有）]() | 🔄 |
+| P7.100 | **** | [#- `SearchFilter` — 搜尋 + 狀態篩選（已有）]() | 🔄 |
+| P7.101 | **** | [#- `TimelineEntry` — Decision 卡片展示（已有）]() | 🔄 |
+| P7.102 | **** | [#- `CollapsiblePanel` — 可折疊區塊（已有）]() | 🔄 |
+| P7.103 | **** | [#- `ToolCallGantt` — Tool call 時間線（已有）]() | 🔄 |
+| P7.104 | **** | [#- `DiffViewer` — Git diff 顯示（已有）]() | 🔄 |
+| P7.105 | **** | [#- `ConfirmDialog` — Restore 確認（已有）]() | 🔄 |
+| P7.106 | **** | [#### 頁面結構]() | 🔄 |
+| P7.107 | **** | [#```]() | 🔄 |
+| P7.108 | **** | [#Header: "Checkpoints" + checkpoint/decision 計數]() | 🔄 |
+| P7.109 | **** | [#DateRangeFilter]() | 🔄 |
+| P7.110 | **** | [#SearchFilter + Project Filter + Trigger Type Filter]() | 🔄 |
+| P7.111 | **** | [#Decision Cards:]() | 🔄 |
+| P7.112 | **** | [#  ├── User Prompt（主要）]() | 🔄 |
+| P7.113 | **** | [#  ├── Tool Calls 摘要 + Outcome]() | 🔄 |
+| P7.114 | **** | [#  ├── [如有 Checkpoint] 安全快照附註（CollapsiblePanel）]() | 🔄 |
+| P7.115 | **** | [#  │   ├── Trigger type + dangerous_op]() | 🔄 |
+| P7.116 | **** | [#  │   ├── Git branch/commit + size]() | 🔄 |
+| P7.117 | **** | [#  │   └── Restore 按鈕]() | 🔄 |
+| P7.118 | **** | [#  └── 點擊展開 Detail Panel]() | 🔄 |
+| P7.119 | **** | [#Pagination]() | 🔄 |
+| P7.120 | **** | [#```]() | 🔄 |
+| P7.121 | **** | [### 相關]() | 🔄 |
+| P7.122 | **** | [#- Task 7.5 in MASTER_TASKS.md]() | 🔄 |
+| P7.123 | **** | [#- 基於 #23 (Checkpoint Management UI) 和 #26 (Checkpoint ↔ DecisionLog 直接關聯) 的改進]() | 🔄 |
+
+## P8 - Control API (✅ 100%)
+
+| # | Task | Issue | Status |
+|---|------|-------|--------|
+| P8.1 | **🎮 Remote Control API (Interrupt & Rollback)** | [#11](https://github.com/chimerakang/alice/issues/11) | ✅ |
+| P8.2 | **** | [#目前所有 Web API 端點都是唯讀的（GET），沒有任何控制端點可以從儀表板操作 AI 代理。使用者無法從 Web 介面中斷正在執行的任務或回溯版本。]() | 🔄 |
+| P8.3 | **** | [### Proposal]() | 🔄 |
+| P8.4 | **** | [#### Control Endpoints]() | 🔄 |
+| P8.5 | **** | [#```]() | 🔄 |
+| P8.6 | **** | [#POST /api/agents/{chat_id}/interrupt     — 中斷當前執行的 CLI 子程序]() | 🔄 |
+| P8.7 | **** | [#POST /api/agents/{chat_id}/reset         — 清除對話歷史（等同 /reset 指令）]() | 🔄 |
+| P8.8 | **** | [#POST /api/agents/{chat_id}/project       — 切換專案目錄]() | 🔄 |
+| P8.9 | **** | [#POST /api/checkpoints/restore            — 回溯到指定 checkpoint]() | 🔄 |
+| P8.10 | **** | [#POST /api/agents/{chat_id}/send          — 從儀表板發送訊息給 agent]() | 🔄 |
+| P8.11 | **** | [#```]() | 🔄 |
+| P8.12 | **** | [#### Implementation]() | 🔄 |
+| P8.13 | **** | [#1. **Interrupt**：在 `Agent` struct 中維護當前 `exec.Cmd` 的引用，支援 `cmd.Process.Kill()` 或 `cmd.Process.Signal(syscall.SIGTERM)`]() | 🔄 |
+| P8.14 | **** | [#2. **Reset**：呼叫現有的 `agent.Reset()` 方法]() | 🔄 |
+| P8.15 | **** | [#3. **Project Switch**：呼叫 `agent.SetProjectDir()`]() | 🔄 |
+| P8.16 | **** | [#4. **Restore**：整合 Checkpoint Manager（依賴 #10）]() | 🔄 |
+| P8.17 | **** | [#5. **Send Message**：將訊息注入 agent 的處理流程]() | 🔄 |
+| P8.18 | **** | [#### Authentication]() | 🔄 |
+| P8.19 | **** | [#控制端點需要認證保護：]() | 🔄 |
+| P8.20 | **** | [#- Bearer token（從 config 讀取）]() | 🔄 |
+| P8.21 | **** | [#- 或整合現有的 SecurityManager]() | 🔄 |
+| P8.22 | **** | [#### Dashboard Integration]() | 🔄 |
+| P8.23 | **** | [#在儀表板的 Agent 面板加入控制按鈕：]() | 🔄 |
+| P8.24 | **** | [#- 🛑 Interrupt（確認對話框後執行）]() | 🔄 |
+| P8.25 | **** | [#- 🔄 Reset Session]() | 🔄 |
+| P8.26 | **** | [#- ⏪ Rollback to Checkpoint]() | 🔄 |
+| P8.27 | **** | [### Dependencies]() | 🔄 |
+| P8.28 | **** | [#- Enhanced by: #10 (Checkpoint system for rollback)]() | 🔄 |
+| P8.29 | **** | [#- Enhanced by: #8 (WebSocket for real-time feedback)]() | 🔄 |
+| P8.30 | **** | [### Acceptance Criteria]() | 🔄 |
+| P8.31 | **** | [#- [ ] 可從儀表板中斷正在執行的 agent]() | 🔄 |
+| P8.32 | **** | [#- [ ] 可從儀表板重置 agent 對話]() | 🔄 |
+| P8.33 | **** | [#- [ ] 控制端點有認證保護]() | 🔄 |
+| P8.34 | **** | [#- [ ] 操作結果透過 WebSocket 即時反饋]() | 🔄 |
+
+## P8.5 - TG 指令增強 (✅ 100%)
+
+| # | Task | Issue | Status |
+|---|------|-------|--------|
+| P8.5.1 | **📋 /tasks 指令 — Telegram 查看待辦工作清單** | [#31](https://github.com/chimerakang/alice/issues/31) | ✅ |
+| P8.5.2 | **** | [#新增 `/tasks` Telegram 指令，讓用戶可以在聊天中快速查看所有尚未完成的工作項目。]() | 🔄 |
+| P8.5.3 | **** | [### 技術設計]() | 🔄 |
+| P8.5.4 | **** | [#### 方案：解析 MASTER_TASKS.md（方案 A）]() | 🔄 |
+| P8.5.5 | **** | [#**優點：** 本地快速、離線可用、不需額外 token]() | 🔄 |
+| P8.5.6 | **** | [#### 流程]() | 🔄 |
+| P8.5.7 | **** | [#```]() | 🔄 |
+| P8.5.8 | **** | [#用戶輸入 /tasks]() | 🔄 |
+| P8.5.9 | **** | [#  → 讀取 projectDir 下的 docs/MASTER_TASKS.md]() | 🔄 |
+| P8.5.10 | **** | [#  → 解析 Phase Overview 表格，找出未完成的 Phase（非 ✅）]() | 🔄 |
+| P8.5.11 | **** | [#  → 解析各 Phase 區塊內的任務表格，提取狀態為 📋/🔄/🧪 的項目]() | 🔄 |
+| P8.5.12 | **** | [#  → 格式化輸出到 Telegram]() | 🔄 |
+| P8.5.13 | **** | [#```]() | 🔄 |
+| P8.5.14 | **** | [#### 輸出格式]() | 🔄 |
+| P8.5.15 | **** | [#```]() | 🔄 |
+| P8.5.16 | **** | [#📋 待辦工作清單]() | 🔄 |
+| P8.5.17 | **** | [#🔄 P7 - Dashboard & Analytics (90%)]() | 🔄 |
+| P8.5.18 | **** | [#  🔄 7.5 Checkpoints 頁面重新定位 (#30)]() | 🔄 |
+| P8.5.19 | **** | [#📋 P9 - Multimedia Input (0%)]() | 🔄 |
+| P8.5.20 | **** | [#  📋 9.1 Telegram 圖片訊息支援 (#28)]() | 🔄 |
+| P8.5.21 | **** | [#  📋 9.2 Telegram 語音訊息轉文字 (#29)]() | 🔄 |
+| P8.5.22 | **** | [#  📋 9.3 共用媒體基礎設施]() | 🔄 |
+| P8.5.23 | **** | [#共 4 項待辦]() | 🔄 |
+| P8.5.24 | **** | [#```]() | 🔄 |
+| P8.5.25 | **** | [#### 需修改的檔案]() | 🔄 |
+| P8.5.26 | **** | [#1. **`internal/app/telegram.go`**]() | 🔄 |
+| P8.5.27 | **** | [#   - `handleCommand()` 新增 `/tasks` case]() | 🔄 |
+| P8.5.28 | **** | [#   - 新增 `handleTasks(key chatKey)` 方法]() | 🔄 |
+| P8.5.29 | **** | [#   - 新增 `parseMasterTasks(filePath string)` 解析函數]() | 🔄 |
+| P8.5.30 | **** | [#   - 更新 `/help` 指令說明文字]() | 🔄 |
+| P8.5.31 | **** | [#### 解析邏輯]() | 🔄 |
+| P8.5.32 | **** | [#1. 讀取 `docs/MASTER_TASKS.md` 檔案]() | 🔄 |
+| P8.5.33 | ** Phase ** | [#2. 找 Phase Overview 表格（`]() | 🔄 |
+| P8.5.34 | **** | [#3. 對每個未完成 Phase，找對應的區塊標題（`## Px -`）]() | 🔄 |
+| P8.5.35 | ** 9.1 ** | [#4. 解析該區塊內的任務表格，提取帶編號的主要任務行（如 `]() | 🔄 |
+| P8.5.36 | **** | [#5. 過濾狀態為 📋、🔄、🧪 的項目]() | 🔄 |
+| P8.5.37 | **** | [#6. 格式化為 Telegram 友善的文字輸出]() | 🔄 |
+| P8.5.38 | **** | [#### 注意事項]() | 🔄 |
+| P8.5.39 | **** | [#- MASTER_TASKS.md 格式是穩定的，一直由 AI 維護]() | 🔄 |
+| P8.5.40 | **** | [#- 只提取主要任務行（帶編號的），子任務不列出以保持簡潔]() | 🔄 |
+| P8.5.41 | **** | [#- 無外部依賴，純檔案讀取 + 字串解析]() | 🔄 |
+| P8.5.42 | **** | [### 驗收標準]() | 🔄 |
+| P8.5.43 | **** | [#- [ ] `/tasks` 指令能正確列出所有未完成的工作項目]() | 🔄 |
+| P8.5.44 | **** | [#- [ ] 顯示 Phase 名稱、進度百分比、狀態 emoji]() | 🔄 |
+| P8.5.45 | **** | [#- [ ] 顯示任務編號、名稱、Issue 編號]() | 🔄 |
+| P8.5.46 | **** | [#- [ ] 無待辦項目時顯示全部完成訊息]() | 🔄 |
+| P8.5.47 | **** | [#- [ ] `/help` 指令包含 `/tasks` 說明]() | 🔄 |
+| P8.5.48 | **** | [#- [ ] MASTER_TASKS.md 不存在時顯示友善錯誤訊息]() | 🔄 |
+| P8.5.49 | **🔄 Topic-Project 對應持久化 — 重啟後保留設定** | [#33](https://github.com/chimerakang/alice/issues/33) | ✅ |
+| P8.5.50 | **** | [#目前 Telegram Forum Topic 對應的 project 目錄設定（透過 `/project` 指令設定）僅存在記憶體中（`agents map[chatKey]*Agent`）。每次 bot 重啟後，所有 topic 的 project 設定會遺失，回到 `config.DefaultProjectDir`，使用者必須重新設定。]() | 🔄 |
+| P8.5.51 | **** | [### 根本原因]() | 🔄 |
+| P8.5.52 | **** | [#- `TelegramBot.agents` 是純記憶體 map，重啟即清空]() | 🔄 |
+| P8.5.53 | **** | [#- 資料庫沒有 topic → project 對應表]() | 🔄 |
+| P8.5.54 | **** | [#- `getAgent()` 建立新 Agent 時一律使用預設路徑]() | 🔄 |
+| P8.5.55 | **** | [### 實作方案]() | 🔄 |
+| P8.5.56 | **** | [#### 1. 新增 SQLite 表 `topic_settings`]() | 🔄 |
+| P8.5.57 | **** | [#```sql]() | 🔄 |
+| P8.5.58 | **** | [#CREATE TABLE IF NOT EXISTS topic_settings (]() | 🔄 |
+| P8.5.59 | **** | [#    chat_id INTEGER NOT NULL,]() | 🔄 |
+| P8.5.60 | **** | [#    thread_id INTEGER NOT NULL,]() | 🔄 |
+| P8.5.61 | **** | [#    project_dir TEXT NOT NULL,]() | 🔄 |
+| P8.5.62 | **** | [#    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,]() | 🔄 |
+| P8.5.63 | **** | [#    PRIMARY KEY (chat_id, thread_id)]() | 🔄 |
+| P8.5.64 | **** | [#);]() | 🔄 |
+| P8.5.65 | **** | [#```]() | 🔄 |
+| P8.5.66 | **** | [#### 2. `/project` 切換時同步寫入資料庫]() | 🔄 |
+| P8.5.67 | **** | [#在 `/project` command handler 中，成功切換後呼叫 storage 寫入。]() | 🔄 |
+| P8.5.68 | **** | [#### 3. `getAgent()` 建立新 Agent 時查詢資料庫]() | 🔄 |
+| P8.5.69 | **** | [#建立新 Agent 前先查 `topic_settings`，有記錄就用儲存的路徑，否則用預設值。]() | 🔄 |
+| P8.5.70 | **** | [### 影響檔案]() | 🔄 |
+| P8.5.71 | **** | [#- `internal/app/storage.go` — 新增表 + CRUD 方法]() | 🔄 |
+| P8.5.72 | **** | [#- `internal/app/telegram.go` — `getAgent()` + `/project` handler]() | 🔄 |
+| P8.5.73 | **** | [### 驗收標準]() | 🔄 |
+| P8.5.74 | **** | [#- [ ] `/project` 設定後重啟 bot，topic 仍記得之前的 project 路徑]() | 🔄 |
+| P8.5.75 | **** | [#- [ ] 新 topic（從未設定過）仍使用預設路徑]() | 🔄 |
+| P8.5.76 | **** | [#- [ ] 多個 topic 各自獨立持久化]() | 🔄 |
+
+## P9 - Multimedia Input (✅ 100%)
+
+| # | Task | Issue | Status |
+|---|------|-------|--------|
+| P9.1 | **📷 Telegram 圖片訊息支援 — 傳送圖片給 Claude 分析** | [#28](https://github.com/chimerakang/alice/issues/28) | ✅ |
+| P9.2 | **** | [#讓用戶可以在 Telegram 中直接傳送圖片（截圖、照片等），Alice Bot 接收後傳給 Claude 進行分析。]() | 🔄 |
+| P9.3 | **** | [### 背景]() | 🔄 |
+| P9.4 | **** | [#- Claude Code CLI 的 Read tool 原生支援讀取圖片（multimodal LLM）]() | 🔄 |
+| P9.5 | **** | [#- 目前 Telegram update 解析只處理 `Text` 欄位，完全忽略 `Photo`]() | 🔄 |
+| P9.6 | **** | [#- `MultimediaConfig` 已定義在 `security.go:38-45` 但未接線]() | 🔄 |
+| P9.7 | **** | [### 技術設計]() | 🔄 |
+| P9.8 | **** | [#### 流程]() | 🔄 |
+| P9.9 | **** | [#```]() | 🔄 |
+| P9.10 | **** | [#用戶在 TG 發送圖片（可附帶 caption 文字）]() | 🔄 |
+| P9.11 | **** | [#  → Bot 解析 Photo 欄位 + Caption]() | 🔄 |
+| P9.12 | **** | [#  → 呼叫 Telegram getFile API 取得 file_path]() | 🔄 |
+| P9.13 | **** | [#  → 下載圖片到臨時目錄]() | 🔄 |
+| P9.14 | **** | [#  → 組合 prompt：「請分析這張圖片 /path/to/image.png」+ caption]() | 🔄 |
+| P9.15 | **** | [#  → Claude CLI Read tool 讀取圖片檔]() | 🔄 |
+| P9.16 | **** | [#  → 回覆結果]() | 🔄 |
+| P9.17 | **** | [#  → 清理臨時檔案]() | 🔄 |
+| P9.18 | **** | [#```]() | 🔄 |
+| P9.19 | **** | [#### 需修改的檔案]() | 🔄 |
+| P9.20 | **** | [#1. **`internal/app/telegram.go`**]() | 🔄 |
+| P9.21 | **** | [#   - 擴展 update 解析結構，加入 `Photo []PhotoSize` 和 `Caption` 欄位]() | 🔄 |
+| P9.22 | **** | [#   - 新增 `downloadFile()` 函數（呼叫 `https://api.telegram.org/file/bot<token>/<file_path>`）]() | 🔄 |
+| P9.23 | **** | [#   - 修改 `handleMessage()` 判斷圖片附件，組合帶路徑的 prompt]() | 🔄 |
+| P9.24 | **** | [#   ]() | 🔄 |
+| P9.25 | **** | [#2. **`internal/app/main.go`** — 確保 `TempDownloadDir` 目錄建立]() | 🔄 |
+| P9.26 | **** | [#3. **`config.example.json`** — 加入 multimedia 設定範例]() | 🔄 |
+| P9.27 | **** | [#### Telegram Photo 物件結構]() | 🔄 |
+| P9.28 | **** | [#```json]() | 🔄 |
+| P9.29 | **** | [#{]() | 🔄 |
+| P9.30 | **** | [#  "photo": []() | 🔄 |
+| P9.31 | **** | [#    {"file_id": "xxx", "width": 90, "height": 90, "file_size": 1234},]() | 🔄 |
+| P9.32 | **** | [#    {"file_id": "yyy", "width": 320, "height": 320, "file_size": 12345},]() | 🔄 |
+| P9.33 | **** | [#    {"file_id": "zzz", "width": 800, "height": 800, "file_size": 54321}]() | 🔄 |
+| P9.34 | **** | [#  ],]() | 🔄 |
+| P9.35 | **** | [#  "caption": "幫我看一下這個錯誤截圖"]() | 🔄 |
+| P9.36 | **** | [#}]() | 🔄 |
+| P9.37 | **** | [#```]() | 🔄 |
+| P9.38 | **** | [#取最後一個（最大解析度）的 `file_id` 進行下載。]() | 🔄 |
+| P9.39 | **** | [#### 注意事項]() | 🔄 |
+| P9.40 | **** | [#- Telegram 檔案大小限制：Bot API 最大下載 20MB]() | 🔄 |
+| P9.41 | **** | [#- 需定期清理臨時目錄中的下載檔案]() | 🔄 |
+| P9.42 | **** | [#- 支援格式：JPEG, PNG, GIF, WebP]() | 🔄 |
+| P9.43 | **** | [#- `MultimediaConfig.EnablePhotoSupport` 控制開關]() | 🔄 |
+| P9.44 | **** | [### 驗收標準]() | 🔄 |
+| P9.45 | **** | [#- [ ] 可在 TG 傳送圖片，Claude 能描述圖片內容]() | 🔄 |
+| P9.46 | **** | [#- [ ] 圖片 + caption 文字一起傳送給 Claude]() | 🔄 |
+| P9.47 | **** | [#- [ ] 臨時檔案使用後清理]() | 🔄 |
+| P9.48 | **** | [#- [ ] `enable_photo_support: false` 時回覆提示訊息]() | 🔄 |
+| P9.49 | **** | [#- [ ] 超過大小限制時回覆錯誤訊息]() | 🔄 |
+| P9.50 | **🎙️ Telegram 語音訊息轉文字 — 語音輸入支援** | [#29](https://github.com/chimerakang/alice/issues/29) | ✅ |
+| P9.51 | **** | [#讓用戶可以在 Telegram 中傳送語音訊息，Alice Bot 自動轉成文字後傳給 Claude 處理。]() | 🔄 |
+| P9.52 | **** | [### 背景]() | 🔄 |
+| P9.53 | **** | [#- Telegram 語音訊息格式：OGG with OPUS codec]() | 🔄 |
+| P9.54 | **** | [#- OpenAI Whisper API 直接支援 OGG 格式，不需額外轉換]() | 🔄 |
+| P9.55 | **** | [#- `MultimediaConfig` 已定義 `VoiceToTextProvider: "openai_whisper"` 和 `OpenAIAPIKey` 欄位]() | 🔄 |
+| P9.56 | **** | [#- 需要外部 STT 服務（推薦 OpenAI Whisper API）]() | 🔄 |
+| P9.57 | **** | [### 技術設計]() | 🔄 |
+| P9.58 | **** | [#### 流程]() | 🔄 |
+| P9.59 | **** | [#```]() | 🔄 |
+| P9.60 | **** | [#用戶在 TG 發送語音訊息]() | 🔄 |
+| P9.61 | **** | [#  → Bot 解析 Voice 欄位]() | 🔄 |
+| P9.62 | **** | [#  → 呼叫 Telegram getFile API 下載 OGG 檔案]() | 🔄 |
+| P9.63 | **** | [#  → 發送到 OpenAI Whisper API 進行語音轉文字]() | 🔄 |
+| P9.64 | **** | [#  → 取得轉錄文字]() | 🔄 |
+| P9.65 | **** | [#  → 將文字作為普通訊息傳給 Claude CLI]() | 🔄 |
+| P9.66 | **** | [#  → 回覆結果]() | 🔄 |
+| P9.67 | **** | [#  → 清理臨時檔案]() | 🔄 |
+| P9.68 | **** | [#```]() | 🔄 |
+| P9.69 | **** | [#### 需修改/新增的檔案]() | 🔄 |
+| P9.70 | **** | [#1. **`internal/app/telegram.go`**]() | 🔄 |
+| P9.71 | **** | [#   - 擴展 update 解析結構，加入 `Voice` 欄位]() | 🔄 |
+| P9.72 | **** | [#   - 修改 `handleMessage()` 判斷語音訊息]() | 🔄 |
+| P9.73 | **** | [#   - 下載語音檔並呼叫 STT 服務]() | 🔄 |
+| P9.74 | **** | [#2. **新增 `internal/app/stt.go`**（或整合到 telegram.go）]() | 🔄 |
+| P9.75 | **** | [#   - `STTClient` 結構 — 語音轉文字客戶端]() | 🔄 |
+| P9.76 | **** | [#   - `TranscribeAudio(filePath string) (string, error)` — 呼叫 Whisper API]() | 🔄 |
+| P9.77 | **** | [#   - 支援多 provider 架構（未來可擴展 Google STT 等）]() | 🔄 |
+| P9.78 | **** | [#3. **`internal/app/main.go`** — 初始化 STT client]() | 🔄 |
+| P9.79 | **** | [#4. **`config.example.json`** — 加入 `openai_api_key` 和 `voice_to_text_provider` 設定範例]() | 🔄 |
+| P9.80 | **** | [#### OpenAI Whisper API 呼叫]() | 🔄 |
+| P9.81 | **** | [#```]() | 🔄 |
+| P9.82 | **** | [#POST https://api.openai.com/v1/audio/transcriptions]() | 🔄 |
+| P9.83 | **** | [#Content-Type: multipart/form-data]() | 🔄 |
+| P9.84 | **** | [#file: (OGG binary)]() | 🔄 |
+| P9.85 | **** | [#model: whisper-1]() | 🔄 |
+| P9.86 | **** | [#language: zh (可選，提升中文辨識率)]() | 🔄 |
+| P9.87 | **** | [#```]() | 🔄 |
+| P9.88 | **** | [#### STT Provider 選項]() | 🔄 |
+| P9.89 | **** | [#### Telegram Voice 物件結構]() | 🔄 |
+| P9.90 | **** | [#```json]() | 🔄 |
+| P9.91 | **** | [#{]() | 🔄 |
+| P9.92 | **** | [#  "voice": {]() | 🔄 |
+| P9.93 | **** | [#    "file_id": "xxx",]() | 🔄 |
+| P9.94 | **** | [#    "file_unique_id": "yyy",]() | 🔄 |
+| P9.95 | **** | [#    "duration": 5,]() | 🔄 |
+| P9.96 | **** | [#    "mime_type": "audio/ogg",]() | 🔄 |
+| P9.97 | **** | [#    "file_size": 12345]() | 🔄 |
+| P9.98 | **** | [#  }]() | 🔄 |
+| P9.99 | **** | [#}]() | 🔄 |
+| P9.100 | **** | [#```]() | 🔄 |
+| P9.101 | **** | [#### 注意事項]() | 🔄 |
+| P9.102 | **** | [#- Whisper API 檔案大小限制：25MB]() | 🔄 |
+| P9.103 | **** | [#- Telegram 語音訊息最長 ~60 分鐘（通常 < 1 分鐘）]() | 🔄 |
+| P9.104 | **** | [#- 需處理轉錄失敗的情況（網路錯誤、API 額度等）]() | 🔄 |
+| P9.105 | **** | [#- 可選：回覆時附帶轉錄文字讓用戶確認]() | 🔄 |
+| P9.106 | **** | [#- `MultimediaConfig.EnableVoiceSupport` 控制開關]() | 🔄 |
+| P9.107 | **** | [### 依賴]() | 🔄 |
+| P9.108 | **** | [#- OpenAI API Key（需在設定中配置）]() | 🔄 |
+| P9.109 | **** | [#- 網路連線（呼叫 Whisper API）]() | 🔄 |
+| P9.110 | **** | [### 驗收標準]() | 🔄 |
+| P9.111 | **** | [#- [ ] 可在 TG 傳送語音訊息，Claude 能回覆]() | 🔄 |
+| P9.112 | **** | [#- [ ] 轉錄文字在回覆中顯示（讓用戶確認辨識結果）]() | 🔄 |
+| P9.113 | **** | [#- [ ] 支援中文和英文語音]() | 🔄 |
+| P9.114 | **** | [#- [ ] 臨時檔案使用後清理]() | 🔄 |
+| P9.115 | **** | [#- [ ] `enable_voice_support: false` 時回覆提示訊息]() | 🔄 |
+| P9.116 | **** | [#- [ ] 無 OpenAI API Key 時顯示設定提示]() | 🔄 |
+| P9.117 | **** | [#- [ ] 轉錄失敗時回覆錯誤訊息]() | 🔄 |
+
+## P9.5 - Multimedia Enhancement (✅ 100%)
+
+| # | Task | Issue | Status |
+|---|------|-------|--------|
+| P9.5.1 | **🖼️ 多張圖片批次處理支援 — Telegram 媒體群組分析** | [#34](https://github.com/chimerakang/alice/issues/34) | ✅ |
+| P9.5.2 | **** | [#目前 Alice bot 在處理多張圖片時存在以下限制：]() | 🔄 |
+| P9.5.3 | **** | [#- 每張圖片被當作獨立訊息處理，無法識別同一批次的關聯性]() | 🔄 |
+| P9.5.4 | **** | [#- 無法進行多張圖片的綜合比較分析]() | 🔄 |
+| P9.5.5 | **** | [#- 用戶收到多個獨立回應，體驗不佳]() | 🔄 |
+| P9.5.6 | **** | [### 期望功能]() | 🔄 |
+| P9.5.7 | **** | [#### 核心功能 (P0)]() | 🔄 |
+| P9.5.8 | **** | [#- [ ] **時間窗口批次機制** - 3-5秒內收到的圖片自動歸為同一批次]() | 🔄 |
+| P9.5.9 | **** | [#- [ ] **暫存多張圖片** - 等待組合後一起分析]() | 🔄 |
+| P9.5.10 | **** | [#- [ ] **Telegram media_group_id 支援** - 利用官方媒體群組機制]() | 🔄 |
+| P9.5.11 | **** | [#- [ ] **組合 Claude 分析** - 將多張圖片一起傳給 Claude 做綜合比較]() | 🔄 |
+| P9.5.12 | **** | [#### 最佳化功能 (P1)]() | 🔄 |
+| P9.5.13 | **** | [#- [ ] **避免重複回應** - 單張圖片不觸發多次分析]() | 🔄 |
+| P9.5.14 | **** | [#- [ ] **混合媒體處理** - 優雅處理圖片+文字+語音混合訊息]() | 🔄 |
+| P9.5.15 | **** | [#- [ ] **記憶體管理** - 大量圖片的儲存與清理機制]() | 🔄 |
+| P9.5.16 | **** | [#- [ ] **用戶反饋** - 顯示處理進度「正在分析第 X/Y 張圖片...」]() | 🔄 |
+| P9.5.17 | **** | [### 技術實現]() | 🔄 |
+| P9.5.18 | **** | [#```go]() | 🔄 |
+| P9.5.19 | **** | [#// 新增媒體群組處理邏輯]() | 🔄 |
+| P9.5.20 | **** | [#type MediaBatch struct {]() | 🔄 |
+| P9.5.21 | **** | [#    Photos    []PhotoSize]() | 🔄 |
+| P9.5.22 | **** | [#    Caption   string]() | 🔄 |
+| P9.5.23 | **** | [#    Timestamp time.Time]() | 🔄 |
+| P9.5.24 | **** | [#    UserID    int64]() | 🔄 |
+| P9.5.25 | **** | [#}]() | 🔄 |
+| P9.5.26 | **** | [#// 時間窗口批次收集]() | 🔄 |
+| P9.5.27 | **** | [#func (t *TelegramBot) collectMediaBatch(key chatKey, timeout time.Duration) *MediaBatch]() | 🔄 |
+| P9.5.28 | **** | [#```]() | 🔄 |
+| P9.5.29 | **** | [### 驗收標準]() | 🔄 |
+| P9.5.30 | **** | [#- [ ] 用戶一次傳送多張圖片，Alice 等待完整批次後進行綜合分析]() | 🔄 |
+| P9.5.31 | **** | [#- [ ] 回應中包含多張圖片的比較和關聯分析]() | 🔄 |
+| P9.5.32 | **** | [#- [ ] 單張圖片仍正常處理，不受影響]() | 🔄 |
+| P9.5.33 | **** | [#- [ ] 大量圖片時記憶體使用合理]() | 🔄 |
+| P9.5.34 | **** | [#- [ ] 用戶能看到處理進度提示]() | 🔄 |
+| P9.5.35 | **** | [### 相關檔案]() | 🔄 |
+| P9.5.36 | **** | [#- `internal/app/telegram.go` - handlePhotoMessage 函數]() | 🔄 |
+| P9.5.37 | **** | [#- `internal/app/agent.go` - Agent.Run 方法]() | 🔄 |
+| P9.5.38 | **** | [### 優先級]() | 🔄 |
+| P9.5.39 | **** | [#**P0** - 這是重要的用戶體驗改善，影響圖片分析功能的實用性]() | 🔄 |
+| P9.5.40 | **🔧 修復跨專案圖片存取問題 — 圖片路徑權限修復** | [#35](https://github.com/chimerakang/alice/issues/35) | ✅ |
+| P9.5.41 | **** | [#**嚴重 Bug**: 當用戶在非 Alice 專案中發送圖片時，圖片分析功能失效。]() | 🔄 |
+| P9.5.42 | **** | [#### 問題根本原因]() | 🔄 |
+| P9.5.43 | **** | [#1. **圖片下載路徑**: 圖片被下載到 Alice 的臨時目錄 (`t.config.Multimedia.TempDownloadDir`)]() | 🔄 |
+| P9.5.44 | **** | [#2. **Claude CLI 工作目錄**: Claude CLI 在目標專案目錄下執行 (`cmd.Dir = projectDir`)  ]() | 🔄 |
+| P9.5.45 | **** | [#3. **路徑不匹配**: Claude CLI 無法存取 Alice 臨時目錄中的圖片檔案]() | 🔄 |
+| P9.5.46 | **** | [#### 錯誤流程]() | 🔄 |
+| P9.5.47 | **** | [#```]() | 🔄 |
+| P9.5.48 | **** | [#用戶在其他專案發送圖片]() | 🔄 |
+| P9.5.49 | **** | [#    ↓]() | 🔄 |
+| P9.5.50 | **** | [#圖片下載到: /tmp/alice/photo_123.jpg  (Alice 臨時目錄)]() | 🔄 |
+| P9.5.51 | **** | [#    ↓]() | 🔄 |
+| P9.5.52 | **** | [#Agent.Run() 傳送: "請分析這張圖片: /tmp/alice/photo_123.jpg"]() | 🔄 |
+| P9.5.53 | **** | [#    ↓]() | 🔄 |
+| P9.5.54 | **** | [#Claude CLI 在: /other-project/ 執行]() | 🔄 |
+| P9.5.55 | **** | [#    ↓]() | 🔄 |
+| P9.5.56 | **** | [#❌ 失敗：無法存取 /tmp/alice/photo_123.jpg]() | 🔄 |
+| P9.5.57 | **** | [#```]() | 🔄 |
+| P9.5.58 | **** | [### 解決方案]() | 🔄 |
+| P9.5.59 | **** | [#### 方案 1: 圖片複製到專案目錄 (推薦)]() | 🔄 |
+| P9.5.60 | **** | [#```go]() | 🔄 |
+| P9.5.61 | **** | [#func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []PhotoSize, caption string) {]() | 🔄 |
+| P9.5.62 | **** | [#    // 1. 下載圖片到 Alice 臨時目錄]() | 🔄 |
+| P9.5.63 | **** | [#    imagePath, err := t.DownloadTelegramFile(targetPhoto.FileID, "photo")]() | 🔄 |
+| P9.5.64 | **** | [#    ]() | 🔄 |
+| P9.5.65 | **** | [#    // 2. 複製到目標專案的臨時目錄]() | 🔄 |
+| P9.5.66 | **** | [#    agent := t.getAgent(key)]() | 🔄 |
+| P9.5.67 | **** | [#    projectTempDir := filepath.Join(agent.ProjectDir(), "temp")]() | 🔄 |
+| P9.5.68 | **** | [#    os.MkdirAll(projectTempDir, 0755)]() | 🔄 |
+| P9.5.69 | **** | [#    ]() | 🔄 |
+| P9.5.70 | **** | [#    projectImagePath := filepath.Join(projectTempDir, filepath.Base(imagePath))]() | 🔄 |
+| P9.5.71 | **** | [#    copyFile(imagePath, projectImagePath)]() | 🔄 |
+| P9.5.72 | **** | [#    ]() | 🔄 |
+| P9.5.73 | **** | [#    // 3. 使用相對路徑告訴 Claude]() | 🔄 |
+| P9.5.74 | **** | [#    relativePath := filepath.Join("temp", filepath.Base(imagePath))]() | 🔄 |
+| P9.5.75 | **** | [#    prompt := fmt.Sprintf("請分析這張圖片: %s", relativePath)]() | 🔄 |
+| P9.5.76 | **** | [#}]() | 🔄 |
+| P9.5.77 | **** | [#```]() | 🔄 |
+| P9.5.78 | **** | [### 修復清單]() | 🔄 |
+| P9.5.79 | **** | [#- [ ] **圖片複製機制** - 將圖片從 Alice 臨時目錄複製到目標專案]() | 🔄 |
+| P9.5.80 | **** | [#- [ ] **相對路徑使用** - 使用 `temp/photo.jpg` 而非絕對路徑]() | 🔄 |
+| P9.5.81 | **** | [#- [ ] **專案級清理** - Agent 結束時清理專案臨時檔案]() | 🔄 |
+| P9.5.82 | **** | [#- [ ] **目錄確保存在** - 自動建立 `{projectDir}/temp/` 目錄]() | 🔄 |
+| P9.5.83 | **** | [#- [ ] **錯誤處理** - 複製失敗時的適當錯誤訊息]() | 🔄 |
+| P9.5.84 | **** | [### 測試方案]() | 🔄 |
+| P9.5.85 | **** | [#1. 在 Alice 專案中發送圖片 ✅ (目前正常)]() | 🔄 |
+| P9.5.86 | **** | [#2. 在其他專案中發送圖片 ❌ (目前失效) → ✅ (修復後)]() | 🔄 |
+| P9.5.87 | **** | [#3. 混合文字+圖片訊息測試]() | 🔄 |
+| P9.5.88 | **** | [#4. 大量圖片記憶體使用測試]() | 🔄 |
+| P9.5.89 | **** | [### 相關檔案]() | 🔄 |
+| P9.5.90 | **** | [#- `internal/app/telegram.go:1227` - `DownloadTelegramFile` ]() | 🔄 |
+| P9.5.91 | **** | [#- `internal/app/telegram.go:1242` - 圖片 prompt 組合邏輯]() | 🔄 |
+| P9.5.92 | **** | [#- `internal/app/api.go:61` - Claude CLI 工作目錄設定]() | 🔄 |
+| P9.5.93 | **** | [### 優先級]() | 🔄 |
+| P9.5.94 | **** | [#**P0 Critical** - 這是一個影響核心功能的嚴重 bug，必須立即修復]() | 🔄 |
 
 ---
 
@@ -1230,6 +3973,36 @@
 
 | Issue | Title | Phase | Status |
 |-------|-------|-------|--------|
+| [#32](https://github.com/chimerakang/alice/issues/32) | Claude Code Hooks 整合：攔截所有 AI Agent 互動 | P10 - Claude Code Hooks | ✅ |
+| [#37](https://github.com/chimerakang/alice/issues/37) | 🔍 /project 指令需要路徑驗證：防止設定不存在的專案目錄 | P11 - User Experience | ✅ |
+| [#36](https://github.com/chimerakang/alice/issues/36) | 📊 Claude Code Hooks UI 增強：Dashboard 統計圖表 + 用戶指南 | P12 - Dashboard Analytics | ✅ |
+| [#38](https://github.com/chimerakang/alice/issues/38) | 🐛 Telegram 429 Rate Limiting: 多 Agent 同時發送導致訊息遺失 | P13 - Future Enhancements | ✅ |
+| [#39](https://github.com/chimerakang/alice/issues/39) | 🐛 Telegram 訊息 UTF-8 編碼錯誤導致發送失敗 | P13 - Future Enhancements | ✅ |
+| [#48](https://github.com/chimerakang/alice/issues/48) | 【MVP】AI 開發審計系統 - 企業安全合規功能 | P13 - Future Enhancements | 🔄 |
+| [#50](https://github.com/chimerakang/alice/issues/50) | 【商業功能】單機版主管報告系統 - AI 使用效益監控 | P13 - Future Enhancements | 🔄 |
+| [#52](https://github.com/chimerakang/alice/issues/52) | 🔧 擴展 PerformanceMetrics - 增加管理層洞察數據收集 | P13 - Future Enhancements | 🔄 |
+| [#55](https://github.com/chimerakang/alice/issues/55) | 🎨 Manager Dashboard 前端介面 - 主管視角的 AI 使用分析頁面 | P13 - Future Enhancements | 🔄 |
+| [#57](https://github.com/chimerakang/alice/issues/57) | 📊 自動週報生成系統 - 團隊 AI 使用效益報告 | P13 - Future Enhancements | 🔄 |
+| [#59](https://github.com/chimerakang/alice/issues/59) | 🚨 智能異常檢測系統 - AI 使用模式風險預警 | P13 - Future Enhancements | 🔄 |
+| [#60](https://github.com/chimerakang/alice/issues/60) | 💰【商業功能】Alice SecureGuard - AI 開發防洩密系統 | P13 - Future Enhancements | 🔄 |
+| [#61](https://github.com/chimerakang/alice/issues/61) | 🔍 智能 Token 檢測引擎 - SecureGuard 核心功能 | P13 - Future Enhancements | 🔄 |
+| [#69](https://github.com/chimerakang/alice/issues/69) | Security 頁面：PII Detection Records 缺乏上下文資訊，無法判斷問題內容 | P13 - Future Enhancements | 🔄 |
+| [#70](https://github.com/chimerakang/alice/issues/70) | Security 頁面：Events Trend 圖表未跟隨時間篩選器 + 標題硬編碼 | P13 - Future Enhancements | 🔄 |
+| [#71](https://github.com/chimerakang/alice/issues/71) | 🐛 Telegram /tasks 無法顯示 GitHub Issues（private repo 認證失敗） | P13 - Future Enhancements | ✅ |
+| [#72](https://github.com/chimerakang/alice/issues/72) | P13: Dynamic Model Routing - 智慧模型路由降低 Token 成本 | P13 - Future Enhancements | ✅ |
+| [#73](https://github.com/chimerakang/alice/issues/73) | P13: Per-Model Cost Tracking - 按模型記錄 Token 成本與用量 | P13 - Future Enhancements | ✅ |
+| [#74](https://github.com/chimerakang/alice/issues/74) | P13: Savings Calculator - 智慧路由省錢可視化（商業賣點） | P13 - Future Enhancements | 🔄 |
+| [#75](https://github.com/chimerakang/alice/issues/75) | 回填歷史資料缺失的 model 與費用欄位 | P13 - Future Enhancements | ✅ |
+| [#76](https://github.com/chimerakang/alice/issues/76) | Bot 多國語系支援 — 可切換顯示語言 | P13 - Future Enhancements | 🔄 |
+| [#77](https://github.com/chimerakang/alice/issues/77) | /usage 指令增加按模型分類的 token 用量與費用顯示 | P13 - Future Enhancements | ✅ |
+| [#78](https://github.com/chimerakang/alice/issues/78) | Add project_path field to performance_metrics table for per-project token cost tracking | P13 - Future Enhancements | 🔄 |
+| [#79](https://github.com/chimerakang/alice/issues/79) | 🐛 Smart Routing 導致對話上下文丟失：Model 切換時強制清空 Session | P13 - Future Enhancements | ✅ |
+| [#49](https://github.com/chimerakang/alice/issues/49) | Alice 商業化：單機版隱私優先定位策略 | P14 - Commercialization Strategy | 🔄 |
+| [#51](https://github.com/chimerakang/alice/issues/51) | 多人版架構設計：從單機到團隊協作 | P14 - Commercialization Strategy | 🔄 |
+| [#53](https://github.com/chimerakang/alice/issues/53) | 競品分析深化：Entire Checkpoints vs Alice 差異化策略 | P14 - Commercialization Strategy | 🔄 |
+| [#54](https://github.com/chimerakang/alice/issues/54) | 產品授權與定價模式設計 | P14 - Commercialization Strategy | 🔄 |
+| [#56](https://github.com/chimerakang/alice/issues/56) | 品牌定位與行銷策略規劃 | P14 - Commercialization Strategy | 🔄 |
+| [#58](https://github.com/chimerakang/alice/issues/58) | Alice 商業化執行藍圖：6個月行動計畫 | P14 - Commercialization Strategy | 🔄 |
 | [#1](https://github.com/chimerakang/alice/issues/1) | 🎛️ Web Dashboard Integration | P2 - Monitoring | ✅ |
 | [#2](https://github.com/chimerakang/alice/issues/2) | 🔍 AI Agent Transparency & Decision Logging | P2 - Monitoring | ✅ |
 | [#3](https://github.com/chimerakang/alice/issues/3) | 🤖 Multi-Agent Coordination System | P2 - Monitoring | ✅ |
@@ -1264,36 +4037,6 @@
 | [#29](https://github.com/chimerakang/alice/issues/29) | 🎙️ Telegram 語音訊息轉文字 — 語音輸入支援 | P9 - Multimedia Input | ✅ |
 | [#34](https://github.com/chimerakang/alice/issues/34) | 🖼️ 多張圖片批次處理支援 — Telegram 媒體群組分析 | P9.5 - Multimedia Enhancement | ✅ |
 | [#35](https://github.com/chimerakang/alice/issues/35) | 🔧 修復跨專案圖片存取問題 — 圖片路徑權限修復 | P9.5 - Multimedia Enhancement | ✅ |
-| [#32](https://github.com/chimerakang/alice/issues/32) | Claude Code Hooks 整合：攔截所有 AI Agent 互動 | P10 - Claude Code Hooks | ✅ |
-| [#37](https://github.com/chimerakang/alice/issues/37) | 🔍 /project 指令需要路徑驗證：防止設定不存在的專案目錄 | P11 - User Experience | ✅ |
-| [#36](https://github.com/chimerakang/alice/issues/36) | 📊 Claude Code Hooks UI 增強：Dashboard 統計圖表 + 用戶指南 | P12 - Dashboard Analytics | ✅ |
-| [#38](https://github.com/chimerakang/alice/issues/38) | 🐛 Telegram 429 Rate Limiting: 多 Agent 同時發送導致訊息遺失 | P13 - Future Enhancements | ✅ |
-| [#39](https://github.com/chimerakang/alice/issues/39) | 🐛 Telegram 訊息 UTF-8 編碼錯誤導致發送失敗 | P13 - Future Enhancements | ✅ |
-| [#48](https://github.com/chimerakang/alice/issues/48) | 【MVP】AI 開發審計系統 - 企業安全合規功能 | P13 - Future Enhancements | 🔄 |
-| [#50](https://github.com/chimerakang/alice/issues/50) | 【商業功能】單機版主管報告系統 - AI 使用效益監控 | P13 - Future Enhancements | 🔄 |
-| [#52](https://github.com/chimerakang/alice/issues/52) | 🔧 擴展 PerformanceMetrics - 增加管理層洞察數據收集 | P13 - Future Enhancements | 🔄 |
-| [#55](https://github.com/chimerakang/alice/issues/55) | 🎨 Manager Dashboard 前端介面 - 主管視角的 AI 使用分析頁面 | P13 - Future Enhancements | 🔄 |
-| [#57](https://github.com/chimerakang/alice/issues/57) | 📊 自動週報生成系統 - 團隊 AI 使用效益報告 | P13 - Future Enhancements | 🔄 |
-| [#59](https://github.com/chimerakang/alice/issues/59) | 🚨 智能異常檢測系統 - AI 使用模式風險預警 | P13 - Future Enhancements | 🔄 |
-| [#60](https://github.com/chimerakang/alice/issues/60) | 💰【商業功能】Alice SecureGuard - AI 開發防洩密系統 | P13 - Future Enhancements | 🔄 |
-| [#61](https://github.com/chimerakang/alice/issues/61) | 🔍 智能 Token 檢測引擎 - SecureGuard 核心功能 | P13 - Future Enhancements | 🔄 |
-| [#69](https://github.com/chimerakang/alice/issues/69) | Security 頁面：PII Detection Records 缺乏上下文資訊，無法判斷問題內容 | P13 - Future Enhancements | 🔄 |
-| [#70](https://github.com/chimerakang/alice/issues/70) | Security 頁面：Events Trend 圖表未跟隨時間篩選器 + 標題硬編碼 | P13 - Future Enhancements | 🔄 |
-| [#71](https://github.com/chimerakang/alice/issues/71) | 🐛 Telegram /tasks 無法顯示 GitHub Issues（private repo 認證失敗） | P13 - Future Enhancements | ✅ |
-| [#72](https://github.com/chimerakang/alice/issues/72) | P13: Dynamic Model Routing - 智慧模型路由降低 Token 成本 | P13 - Future Enhancements | ✅ |
-| [#73](https://github.com/chimerakang/alice/issues/73) | P13: Per-Model Cost Tracking - 按模型記錄 Token 成本與用量 | P13 - Future Enhancements | ✅ |
-| [#74](https://github.com/chimerakang/alice/issues/74) | P13: Savings Calculator - 智慧路由省錢可視化（商業賣點） | P13 - Future Enhancements | 🔄 |
-| [#75](https://github.com/chimerakang/alice/issues/75) | 回填歷史資料缺失的 model 與費用欄位 | P13 - Future Enhancements | ✅ |
-| [#76](https://github.com/chimerakang/alice/issues/76) | Bot 多國語系支援 — 可切換顯示語言 | P13 - Future Enhancements | 🔄 |
-| [#77](https://github.com/chimerakang/alice/issues/77) | /usage 指令增加按模型分類的 token 用量與費用顯示 | P13 - Future Enhancements | ✅ |
-| [#78](https://github.com/chimerakang/alice/issues/78) | Add project_path field to performance_metrics table for per-project token cost tracking | P13 - Future Enhancements | 🔄 |
-| [#79](https://github.com/chimerakang/alice/issues/79) | 🐛 Smart Routing 導致對話上下文丟失：Model 切換時強制清空 Session | P13 - Future Enhancements | ✅ |
-| [#49](https://github.com/chimerakang/alice/issues/49) | Alice 商業化：單機版隱私優先定位策略 | P14 - Commercialization Strategy | 🔄 |
-| [#51](https://github.com/chimerakang/alice/issues/51) | 多人版架構設計：從單機到團隊協作 | P14 - Commercialization Strategy | 🔄 |
-| [#53](https://github.com/chimerakang/alice/issues/53) | 競品分析深化：Entire Checkpoints vs Alice 差異化策略 | P14 - Commercialization Strategy | 🔄 |
-| [#54](https://github.com/chimerakang/alice/issues/54) | 產品授權與定價模式設計 | P14 - Commercialization Strategy | 🔄 |
-| [#56](https://github.com/chimerakang/alice/issues/56) | 品牌定位與行銷策略規劃 | P14 - Commercialization Strategy | 🔄 |
-| [#58](https://github.com/chimerakang/alice/issues/58) | Alice 商業化執行藍圖：6個月行動計畫 | P14 - Commercialization Strategy | 🔄 |
 
 ---
 
@@ -1303,4 +4046,5 @@
 **Completed:** 45 ✅
 **In Progress:** 19 🔄
 
-**Last sync:** 2026-02-16 15:51 UTC
+**Last sync:** 2026-02-16 16:16 UTC
+
