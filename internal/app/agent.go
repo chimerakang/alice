@@ -300,10 +300,11 @@ func (dl *DecisionLogger) SearchDecisions(projectPath string, taskType string, s
 
 // projectState 保存單一專案的對話狀態
 type projectState struct {
-	sessionID    string
-	stats        TokenStats
-	lastActivity time.Time
-	createdAt    time.Time
+	sessionID         string
+	stats             TokenStats
+	lastActivity      time.Time
+	createdAt         time.Time
+	lastTotalCostUSD  float64 // CLI's cumulative cost from last call (for delta calculation)
 }
 
 type Agent struct {
@@ -511,38 +512,47 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	if err != nil {
 		// Even on error, resp may contain partial text content from streaming
 		partialText := ""
+		deltaCost := 0.0
 		if resp != nil {
 			partialText = resp.TextContent
 			// Still save session ID and stats for partial results
 			if resp.SessionID != "" {
 				ps.sessionID = resp.SessionID
 			}
+			// Calculate cost delta (CLI's TotalCostUSD is session-cumulative)
+			deltaCost = resp.TotalCostUSD - ps.lastTotalCostUSD
+			ps.lastTotalCostUSD = resp.TotalCostUSD
+
 			ps.stats.APICallCount++
 			ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
 			ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
-			ps.stats.TotalCostUSD += resp.TotalCostUSD
+			ps.stats.TotalCostUSD += deltaCost
 			ps.lastActivity = time.Now()
 		}
-		a.logDecision(userMessage, partialText, toolCallsForDecision, startTime, resp, err, routingReason, routingLatency)
+		a.logDecision(userMessage, partialText, toolCallsForDecision, startTime, resp, err, routingReason, routingLatency, deltaCost)
 		return partialText, fmt.Errorf("CLI call failed: %w", err)
 	}
 
 	// 保存 session ID 以便下次 --resume
 	ps.sessionID = resp.SessionID
 
+	// Calculate cost delta (CLI's TotalCostUSD is session-cumulative)
+	deltaCost := resp.TotalCostUSD - ps.lastTotalCostUSD
+	ps.lastTotalCostUSD = resp.TotalCostUSD
+
 	// 更新統計
 	ps.stats.APICallCount++
 	ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
 	ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
-	ps.stats.TotalCostUSD += resp.TotalCostUSD
+	ps.stats.TotalCostUSD += deltaCost
 	ps.lastActivity = time.Now()
 
-	log.Printf("[agent] done: turns=%d tokens_in=%d tokens_out=%d cost=$%.4f session=%s",
+	log.Printf("[agent] done: turns=%d tokens_in=%d tokens_out=%d cost=$%.4f (delta from $%.4f) session=%s",
 		resp.NumTurns, resp.Usage.InputTokens, resp.Usage.OutputTokens,
-		resp.TotalCostUSD, resp.SessionID)
+		deltaCost, resp.TotalCostUSD, resp.SessionID)
 
 	// Log decision for transparency (success case)
-	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil, routingReason, routingLatency)
+	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil, routingReason, routingLatency, deltaCost)
 
 	return resp.Result, nil
 }
@@ -633,7 +643,7 @@ func (a *Agent) ProjectCount() int {
 }
 
 // logDecision records a complete AI decision with full context
-func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolExecution, startTime time.Time, resp *CLIResponse, err error, routingReason string, routingLatency int) {
+func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolExecution, startTime time.Time, resp *CLIResponse, err error, routingReason string, routingLatency int, deltaCost float64) {
 	if !globalDecisionLogger.IsEnabled() {
 		return
 	}
@@ -684,7 +694,7 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 	if resp != nil {
 		tokenStats.TotalInputTokens = int64(resp.Usage.InputTokens)
 		tokenStats.TotalOutputTokens = int64(resp.Usage.OutputTokens)
-		tokenStats.TotalCostUSD = resp.TotalCostUSD
+		tokenStats.TotalCostUSD = deltaCost // Use delta cost instead of cumulative session cost
 		tokenStats.APICallCount = 1
 	}
 

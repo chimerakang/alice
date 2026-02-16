@@ -824,18 +824,32 @@ func (s *SQLiteStorage) GetCostSavings(hours int) (CostSavingsReport, error) {
 		RoutingMethodStat: make(map[string]int),
 	}
 
-	// 查詢 decision_logs 按模型分類
+	// 查詢 decision_logs 按模型分類 - 規範化模型名稱為簡稱
+	// 只包含有有效成本的記錄（cost > 0 或有 tokens）
 	rows, err := s.db.Query(`
 		SELECT
-			COALESCE(model, 'unknown') as model,
-			COALESCE(routing_reason, 'unknown') as routing_reason,
+			CASE
+				WHEN model LIKE '%haiku%' THEN 'haiku'
+				WHEN model LIKE '%opus%' THEN 'opus'
+				WHEN model LIKE '%sonnet%' OR model = '' OR model IS NULL THEN 'sonnet'
+				ELSE 'sonnet'
+			END as model,
+			COALESCE(NULLIF(routing_reason, ''), 'default') as routing_reason,
 			COUNT(*) as calls,
 			SUM(CASE WHEN tokens_input IS NOT NULL THEN tokens_input ELSE 0 END) as total_input_tokens,
 			SUM(CASE WHEN tokens_output IS NOT NULL THEN tokens_output ELSE 0 END) as total_output_tokens,
 			SUM(CASE WHEN cost_usd IS NOT NULL THEN cost_usd ELSE 0.0 END) as total_cost
 		FROM decision_logs
 		WHERE timestamp BETWEEN ? AND ?
-		GROUP BY model, routing_reason
+		  AND (cost_usd > 0 OR tokens_input > 0 OR tokens_output > 0)
+		GROUP BY
+			CASE
+				WHEN model LIKE '%haiku%' THEN 'haiku'
+				WHEN model LIKE '%opus%' THEN 'opus'
+				WHEN model LIKE '%sonnet%' OR model = '' OR model IS NULL THEN 'sonnet'
+				ELSE 'sonnet'
+			END,
+			routing_reason
 		ORDER BY total_cost DESC`,
 		startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
 
@@ -861,7 +875,7 @@ func (s *SQLiteStorage) GetCostSavings(hours int) (CostSavingsReport, error) {
 		// 累計實際成本和請求數
 		report.TotalRequests += calls
 		report.ActualCost += cost
-		actualCostByModel[model] = cost
+		actualCostByModel[model] += cost  // 累加而不是覆盖！
 		callsByModel[model] += calls
 		report.RoutingMethodStat[routingReason] += calls
 

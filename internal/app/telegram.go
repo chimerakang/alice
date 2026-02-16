@@ -517,23 +517,22 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		} else if userPref == "deep" {
 			modelOverride = t.config.ModelRouting.DeepModel
 			log.Printf("[telegram] model routing: using deep model (user preference)")
-		} else if t.config.ModelRouting.UseGPT4oMini {
-			// Priority 2: AI triage with GPT-4o-mini
-			log.Printf("[telegram] model routing: running AI triage for complexity classification")
-			complexity, err := t.triageWithGPT4oMini(text)
-			if err != nil {
-				log.Printf("[telegram] AI triage error: %v, falling back to fast model", err)
-				modelOverride = t.config.ModelRouting.FastModel
-			} else if complexity == "deep" {
+		} else {
+			// Priority 2: Local heuristic-based complexity evaluation (three-tier algorithm)
+			// No external API call needed - fast and cheap
+			complexity := evaluateTaskComplexity(text)
+			switch complexity {
+			case "deep":
 				modelOverride = t.config.ModelRouting.DeepModel
-				log.Printf("[telegram] model routing: AI triage classified as deep")
-			} else {
+				log.Printf("[telegram] model routing: complexity evaluation classified as deep (Opus)")
+			case "balanced":
+				// Keep default model (Sonnet) - no override needed
+				log.Printf("[telegram] model routing: complexity evaluation classified as balanced (Sonnet)")
+			default: // "fast"
 				modelOverride = t.config.ModelRouting.FastModel
-				log.Printf("[telegram] model routing: AI triage classified as fast")
+				log.Printf("[telegram] model routing: complexity evaluation classified as fast (Haiku)")
 			}
 		}
-		// Priority 3: Static rules (future enhancement)
-		// else { /* static rules would go here */ }
 
 		// Apply model override to agent
 		if modelOverride != "" {
@@ -631,6 +630,10 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	if response == "" {
 		response = "（完成，無文字回覆）"
 	}
+
+	// 加上模型標籤
+	modelTag := getModelTag(agent.lastUsedModel)
+	response = modelTag + "\n\n" + response
 
 	// Telegram 訊息限制 4096 字元，分段發送
 	t.sendLong(key, response)
@@ -801,21 +804,50 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 	case "/usage":
 		agent := t.getAgent(key)
 		stats := agent.Stats()
-		usage := fmt.Sprintf(
+
+		var msg strings.Builder
+		msg.WriteString(fmt.Sprintf(
 			"💰 *Token 用量*\n\n"+
 				"*本次對話:*\n"+
 				"  輸入: %d tokens\n"+
 				"  輸出: %d tokens\n"+
 				"  CLI 呼叫: %d 次\n"+
-				"  CLI 費用: $%.4f\n\n"+
-				"*模式: Claude Max 訂閱*\n"+
-				"  月費固定 $200，無額外 token 費用",
+				"  CLI 費用: $%.4f\n",
 			stats.TotalInputTokens,
 			stats.TotalOutputTokens,
 			stats.APICallCount,
 			stats.TotalCostUSD,
-		)
-		t.sendMarkdown(key, usage)
+		))
+
+		// 按模型分類顯示（從資料庫查詢最近 7 天）
+		if globalStorage != nil {
+			report, err := globalStorage.GetCostSavings(168)
+			if err == nil && report.TotalRequests > 0 {
+				msg.WriteString("\n📊 *按模型分類（近 7 天）:*\n")
+				for model, breakdown := range report.ByModel {
+					modelIcon := "🟢"
+					if model == "sonnet" {
+						modelIcon = "🟡"
+					} else if model == "opus" {
+						modelIcon = "🔴"
+					} else if model == "haiku" {
+						modelIcon = "⚡"
+					}
+					msg.WriteString(fmt.Sprintf("  %s %s: %d 次 | %d in / %d out | $%.4f\n",
+						modelIcon, model, breakdown.Calls,
+						breakdown.InputTokens, breakdown.OutputTokens,
+						breakdown.ActualCost))
+				}
+				if report.SavingsPercent != 0 {
+					msg.WriteString(fmt.Sprintf("\n💡 *路由節省: %.1f%%* ($%.4f → $%.4f)\n",
+						report.SavingsPercent, report.DefaultModelCost, report.ActualCost))
+				}
+			}
+		}
+
+		msg.WriteString("\n*模式: Claude Max 訂閱*\n")
+		msg.WriteString("  月費固定 $200，無額外 token 費用")
+		t.sendMarkdown(key, msg.String())
 
 	case "/dashboard":
 		t.handleDashboard(key)
@@ -2835,6 +2867,133 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 	if response != "" {
 		t.send(key, response)
 	}
+}
+
+// getModelTag 根據模型名稱返回對應的標籤
+func getModelTag(model string) string {
+	switch {
+	case strings.Contains(model, "haiku"):
+		return "⚡ [Haiku]"
+	case strings.Contains(model, "opus"):
+		return "🧠 [Opus]"
+	case strings.Contains(model, "sonnet"):
+		return "🟡 [Sonnet]"
+	default:
+		return "🤖 [Default]"
+	}
+}
+
+// evaluateTaskComplexity 使用本地啟發式算法評估任務複雜度
+// 基於多個信號判斷任務難度，無需外部 API 調用
+// 返回值: "fast" (簡單任務) 或 "deep" (複雜任務)
+func evaluateTaskComplexity(userMessage string) string {
+	score := 0
+
+	// 1. 消息長度 (越長越可能複雜)
+	if len(userMessage) > 800 {
+		score += 3
+	} else if len(userMessage) > 500 {
+		score += 2
+	} else if len(userMessage) > 200 {
+		score += 1
+	}
+
+	// 2. 代碼塊數量 (``` 標記)
+	codeBlocks := strings.Count(userMessage, "```")
+	if codeBlocks >= 6 {
+		score += 4
+	} else if codeBlocks >= 4 {
+		score += 3
+	} else if codeBlocks >= 2 {
+		score += 2
+	} else if codeBlocks >= 1 {
+		score += 1
+	}
+
+	// 3. 深度複雜度關鍵詞 (Opus 層級)
+	deepKeywords := []string{
+		"refactor", "架構", "architecture", "設計", "design",
+		"實現", "implement", "演算法", "algorithm",
+		"性能", "optimize", "效能", "優化",
+		"跨",  // 跨檔案、跨模組
+		"整合", "integration", "aggregate",
+		"系統", "system", "framework",
+		"複雜", "complex", "難度",
+	}
+	for _, kw := range deepKeywords {
+		if strings.Contains(strings.ToLower(userMessage), kw) {
+			score += 1
+		}
+	}
+
+	// 4. 中等難度關鍵詞 (Sonnet 層級)
+	balancedKeywords := []string{
+		"功能", "feature", "添加", "add",
+		"測試", "test", "testing", "改進", "improve",
+		"檢查", "review", "分析", "analyze",
+		"連接", "connect", "統計", "statistics",
+	}
+	for _, kw := range balancedKeywords {
+		if strings.Contains(strings.ToLower(userMessage), kw) {
+			score += 1
+		}
+	}
+
+	// 5. 簡單度關鍵詞 (Haiku 層級)
+	fastKeywords := []string{
+		"翻譯", "translate", "explain", "解釋",
+		"改寫", "rewrite", "轉換", "convert",
+		"查看", "show", "list", "看", "列出",
+		"格式", "format", "json", "csv", "yaml",
+		"簡單", "quick", "快速", "一行",
+	}
+	for _, kw := range fastKeywords {
+		if strings.Contains(strings.ToLower(userMessage), kw) {
+			score -= 1
+		}
+	}
+
+	// 6. 危險操作 (write, delete, modify files) - 很複雜
+	dangerousOps := []string{
+		"file_patch", "write_file", "delete file", "刪除檔案",
+		"修改全部", "modify all", "update all", "所有檔案",
+		"批量", "batch",
+	}
+	for _, op := range dangerousOps {
+		if strings.Contains(strings.ToLower(userMessage), op) {
+			score += 2
+		}
+	}
+
+	// 7. 多檔案操作指標 (中到高複雜度)
+	if strings.Contains(strings.ToLower(userMessage), "多個") ||
+		strings.Contains(strings.ToLower(userMessage), "multiple") ||
+		strings.Contains(strings.ToLower(userMessage), "all files") ||
+		strings.Contains(strings.ToLower(userMessage), "所有") {
+		score += 2
+	}
+
+	// 8. 調試/修復指標 (中複雜度)
+	debugKeywords := []string{
+		"bug", "error", "問題", "修復", "fix", "debug", "為什麼",
+		"不工作", "not working", "失敗", "fail", "錯誤",
+	}
+	for _, kw := range debugKeywords {
+		if strings.Contains(strings.ToLower(userMessage), kw) {
+			score += 1
+		}
+	}
+
+	// 決策門檻 (三層級)
+	//    score <= 1  : Fast (Haiku) - 簡單任務
+	//    2-5         : Balanced (Sonnet) - 中等難度
+	//    >= 6        : Deep (Opus) - 複雜任務
+	if score >= 6 {
+		return "deep"
+	} else if score >= 2 {
+		return "balanced"
+	}
+	return "fast"
 }
 
 // triageWithGPT4oMini 使用 OpenAI GPT-4o-mini 判斷任務複雜度

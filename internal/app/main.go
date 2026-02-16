@@ -334,6 +334,20 @@ func Main() {
 		config.Security.EnableAuditLogging,
 	)
 
+	// Log model routing configuration
+	if config.ModelRouting.EnableDynamicRouting {
+		triageMethod := "user command only"
+		if config.ModelRouting.UseGPT4oMini {
+			triageMethod = "AI triage (GPT-4o-mini)"
+		}
+		log.Printf("   Model routing: enabled (triage: %s)", triageMethod)
+		log.Printf("      Fast model: %s", config.ModelRouting.FastModel)
+		log.Printf("      Deep model: %s", config.ModelRouting.DeepModel)
+		log.Printf("      Default: %s", config.Model)
+	} else {
+		log.Printf("   Model routing: disabled (using default model: %s)", config.Model)
+	}
+
 	// Initialize multimedia support
 	if config.Multimedia.EnablePhotoSupport || config.Multimedia.EnableVoiceSupport {
 		// Ensure temp directory exists

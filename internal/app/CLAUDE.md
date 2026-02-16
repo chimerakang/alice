@@ -1,16 +1,6 @@
 <claude-mem-context>
 # Recent Activity
 
-### Feb 13, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #1596 | 7:16 PM | ✅ | Stop button text updated to use more appropriate Chinese terminology | ~308 |
-| #1593 | " | 🔵 | Multi-agent task routing and execution flow with stop button lifecycle | ~443 |
-| #1591 | " | 🔵 | Dynamic stop button implementation using Telegram inline keyboards | ~351 |
-| #1589 | " | 🔵 | Stop button implementation across Alice bot interfaces | ~324 |
-| #1587 | " | 🔵 | Alice bot multi-agent system architecture | ~350 |
-
 ### Feb 14, 2026
 
 | ID | Time | T | Title | Read |
@@ -18,9 +8,6 @@
 | #2046 | 4:56 PM | 🔵 | Storage initialization requires InitStorage call with database path | ~477 |
 | #2045 | " | 🔴 | Dashboard data display issues root causes identified: Git integration not initialized, token chart hardcoded 7-day filter, tool executions from WebSocket only | ~759 |
 | #2044 | " | 🔵 | Storage stats handler returns minimal response when globalStorage uninitialized | ~441 |
-| #2037 | 4:54 PM | 🔵 | Git API handlers fully implemented with gitManager dependency check | ~421 |
-| #2026 | 4:51 PM | 🔵 | Git integration implementation with state caching and event logging | ~416 |
-| #2024 | " | 🔵 | Web interface API routing and Git status endpoint identified | ~368 |
 
 ### Feb 15, 2026
 
@@ -54,6 +41,14 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #3477 | 10:47 PM | 🔵 | Session Cleared on Model Change Causing Context Loss | ~373 |
+| #3474 | " | 🔵 | Agent Instances Created Once Per ChatKey and Persist Across Model Changes | ~443 |
+| #3472 | " | 🔵 | Model Switching Commands Only Update Preferences Without Agent Recreation | ~396 |
+| #3470 | " | 🔵 | Telegram Bot Architecture Uses Per-Chat Agent Instances | ~408 |
+| #3446 | 9:36 PM | 🔵 | CLI Response Includes Total Cost from Claude Code, Not Calculated Locally | ~446 |
+| #3436 | 9:34 PM | 🔵 | Three-Tier Model Routing System Determines Haiku Usage | ~400 |
+| #3435 | 9:33 PM | 🔵 | Database Schema Tracks Model-Specific Cost Data | ~379 |
+| #3434 | " | 🔵 | Haiku Token Cost Configuration Located | ~300 |
 | #3140 | 2:40 AM | 🔵 | Performance Monitoring API Call Recording Infrastructure | ~440 |
 | #3139 | " | 🔵 | Keyword-Based Task Routing Implementation in AgentCoordinator | ~575 |
 | #3138 | " | 🔵 | Task Routing Methods in AgentCoordinator | ~458 |
