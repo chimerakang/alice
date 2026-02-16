@@ -1,9 +1,10 @@
 # Alice - Master Tasks
 
-> Telegram bot AI agent for code assistance
-> Last updated: 2026-02-16 13:23:25
-> Auto-generated from GitHub Issues — do not edit manually.
-> Run `/task-sync` to regenerate.
+> Alice 是一個 Go-based Telegram bot，通過 Claude Code CLI 進行代碼輔助，搭配 React 儀表板監控 AI 決策、工具執行和專案活動。
+>
+> **Last updated:** 2026-02-16
+>
+> **Auto-generated from GitHub Issues** — Run `/task-sync` to regenerate.
 
 ## Status Legend
 
@@ -16,32 +17,35 @@
 | ⏸️ | 暫停 |
 | ❌ | 已取消 |
 
+---
+
 ## Phase Overview
 
 | Phase | Description | Progress | Status |
 |-------|-------------|----------|--------|
-| P1 - Core Backend | Telegram Bot + Claude CLI 整合 | 0% | 📋 |
-| P2 - Monitoring | Web Dashboard + API + 監控系統 | 100% | ✅ |
-| P3 - Data Layer | 持久化 + Git 整合 + Checkpoint | 100% | ✅ |
-| P4 - Proto-First | Protocol Buffers 架構遷移 | 100% | ✅ |
-| P5 - Frontend Foundation | React + Vite 框架 + 基礎元件 | 100% | ✅ |
-| P6 - AI Audit System | AI 開發追蹤核心功能 | 100% | ✅ |
-| P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 + 歷史資料查詢 | 100% | ✅ |
-| P8 - Control API | 遠端控制 + 中斷/回溯 | 100% | ✅ |
-| P8.5 - TG 指令增強 | /tasks 待辦清單 + Topic 設定持久化 | 100% | ✅ |
-| P9 - Multimedia Input | 圖片分析 + 語音轉文字 | 100% | ✅ |
-| P9.5 - Multimedia Enhancement | 多張圖片批次處理 + 媒體群組支援 | 100% | ✅ |
-| P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 100% | ✅ |
-| P11 - User Experience | 指令健全性和用戶體驗改善 | 100% | ✅ |
-| P12 - Dashboard Analytics | Claude Code Hooks UI 增強：統計圖表 + 用戶指南 | 100% | ✅ |
-| P13 - Future Enhancements | 未來功能增強與優化 | 31% | 🔄 |
-| P14 - Commercialization Strategy | Alice AI Agent 商業化發展策略與產品定位 | 0% | 📋 |
+| P1 - Core Backend | Telegram Bot + Claude CLI 整合 | 0% (0/0) | 📋 |
+| P2 - Monitoring | Web Dashboard + API + 監控系統 | 100% (7/7) | ✅ |
+| P3 - Data Layer | 持久化 + Git 整合 + Checkpoint | 100% (5/5) | ✅ |
+| P4 - Proto-First | Protocol Buffers 架構遷移 | 100% (1/1) | ✅ |
+| P5 - Frontend Foundation | React + Vite 框架 + 基礎元件 | 100% (6/6) | ✅ |
+| P6 - AI Audit System | AI 開發追蹤核心功能 | 100% (4/4) | ✅ |
+| P7 - Dashboard & Analytics | 儀表板強化 + 分析圖表 + 歷史資料查詢 | 100% (4/4) | ✅ |
+| P8 - Control API | 遠端控制 + 中斷/回溯 | 100% (1/1) | ✅ |
+| P8.5 - TG 指令增強 | /tasks 待辦清單 + Topic 設定持久化 | 100% (2/2) | ✅ |
+| P9 - Multimedia Input | 圖片分析 + 語音轉文字 | 100% (2/2) | ✅ |
+| P9.5 - Multimedia Enhancement | 多張圖片批次處理 + 媒體群組支援 | 100% (2/2) | ✅ |
+| P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 100% (1/1) | ✅ |
+| P11 - User Experience | 指令健全性和用戶體驗改善 | 100% (1/1) | ✅ |
+| P12 - Dashboard Analytics | Claude Code Hooks UI 增強：統計圖表 + 用戶指南 | 100% (1/1) | ✅ |
+| P13 - Future Enhancements | 未來功能增強與優化 | 38% (8/21) | 🔄 |
+| P14 - Commercialization Strategy | Alice AI Agent 商業化發展策略與產品定位 | 0% (0/6) | 🔄 |
 
 ---
 
 ## P1 - Core Backend (📋 0%)
 
-No issues yet.
+| # | Task | Issue | Status |
+|---|------|-------|--------|
 
 ## P2 - Monitoring (✅ 100%)
 
@@ -509,7 +513,7 @@ No issues yet.
 | | — 用戶可依照文件快速設置 Claude Code Hooks | | ☐ |
 | | — 設置指南包含完整的故障排除說明 | | ☐ |
 
-## P13 - Future Enhancements (🔄 31%)
+## P13 - Future Enhancements (🔄 38%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
@@ -928,8 +932,42 @@ No issues yet.
 | | — Decision Timeline 增強（每個 decision 標記模型 + 節省金額） | | ☐ |
 | | — Dashboard 頁面整合 | | ☐ |
 | | — Performance 頁面整合 | | ☐ |
+| P13.17 | **回填歷史資料缺失的 model 與費用欄位** | [#75](https://github.com/chimerakang/alice/issues/75) | ✅ |
+| | — 為 `decision_logs` 表中 model 為空的紀錄回填 model 為 `claude-sonnet-4-5-20250929` | | ☐ |
+| | — 根據 tokens_input/tokens_output 計算並回填 `cost_usd`（使用 Sonnet 定價） | | ☐ |
+| | — 為 `performance_metrics` 表中 model 為空的紀錄回填 model 為 `claude-sonnet-4-5-20250929` | | ☐ |
+| | — 根據 tokens_used 計算並回填 `estimated_cost` | | ☐ |
+| | — 確保修復腳本具有冪等性（重複執行不會造成問題） | | ☐ |
+| | — 修復後驗證 /api/costs/savings 端點數據正確性 | | ☐ |
+| P13.18 | **Bot 多國語系支援 — 可切換顯示語言** | [#76](https://github.com/chimerakang/alice/issues/76) | 🔄 |
+| | — 設計 i18n 架構（語系檔格式、載入機制） | | ☐ |
+| | — 建立語系檔目錄結構（如 `locales/zh-TW.json`, `locales/en.json`） | | ☐ |
+| | — 抽取現有硬編碼文字到語系檔 | | ☐ |
+| | — 實作 Telegram Bot `/lang` 指令切換語言 | | ☐ |
+| | — 每個 chat 獨立儲存語系偏好（持久化到 SQLite） | | ☐ |
+| | — 前端 Dashboard 語系切換功能 | | ☐ |
+| | — 初始支援語系：繁體中文（zh-TW）、英文（en） | | ☐ |
+| | — 撰寫新增語系的開發指南文件 | | ☐ |
+| P13.19 | **/usage 指令增加按模型分類的 token 用量與費用顯示** | [#77](https://github.com/chimerakang/alice/issues/77) | ✅ |
+| | — 修改 `/usage` handler，增加從 storage 查詢 per-model token 用量 | | ☐ |
+| | — 顯示每個模型的呼叫次數、input/output tokens、費用 | | ☐ |
+| | — 無 storage 或無數據時 graceful fallback（僅顯示現有整體統計） | | ☐ |
+| P13.20 | **Add project_path field to performance_metrics table for per-project token cost tracking** | [#78](https://github.com/chimerakang/alice/issues/78) | 🔄 |
+| | — Add `project_path` VARCHAR column to `performance_metrics` table migration | | ☐ |
+| | — Update `PerformanceMetrics` struct in performance.go to include ProjectPath field | | ☐ |
+| | — Modify `InsertPerformanceMetric` function to persist project_path | | ☐ |
+| | — Add optional `projectPath` parameter to `GetCostSavings()" for project filtering | | ☐ |
+| | — Update Telegram `/usage" and `/savings" commands to support per-project queries | | ☐ |
+| | — Update Web API endpoints to accept optional project_dir parameter | | ☐ |
+| | — Test per-project cost tracking end-to-end | | ☐ |
+| P13.21 | **🐛 Smart Routing 導致對話上下文丟失：Model 切換時強制清空 Session** | [#79](https://github.com/chimerakang/alice/issues/79) | ✅ |
+| | — 移除強制清空 sessionID 邏輯 | | ☐ |
+| | — 改進決策日誌以記錄同一 session 內的 model 切換 | | ☐ |
+| | — 改進成本計算，分別追蹤每個 model 的 token 使用 | | ☐ |
+| | — 測試跨 model session 的對話連貫性 | | ☐ |
+| | — 驗證成本計算的準確性 | | ☐ |
 
-## P14 - Commercialization Strategy (📋 0%)
+## P14 - Commercialization Strategy (🔄 0%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
@@ -1185,3 +1223,84 @@ No issues yet.
 | | — 現金流壓力：控制燒錢速度 | | ☐ |
 | | — 客戶付款延遲：建立付款保障機制 | | ☐ |
 | | — 投資回報不佳：設定止損線 | | ☐ |
+
+---
+
+## Issue Tracker
+
+| Issue | Title | Phase | Status |
+|-------|-------|-------|--------|
+| [#1](https://github.com/chimerakang/alice/issues/1) | 🎛️ Web Dashboard Integration | P2 - Monitoring | ✅ |
+| [#2](https://github.com/chimerakang/alice/issues/2) | 🔍 AI Agent Transparency & Decision Logging | P2 - Monitoring | ✅ |
+| [#3](https://github.com/chimerakang/alice/issues/3) | 🤖 Multi-Agent Coordination System | P2 - Monitoring | ✅ |
+| [#4](https://github.com/chimerakang/alice/issues/4) | 📊 Performance Monitoring & Analytics | P2 - Monitoring | ✅ |
+| [#5](https://github.com/chimerakang/alice/issues/5) | 🔐 Security & Privacy Enhancements | P2 - Monitoring | ✅ |
+| [#12](https://github.com/chimerakang/alice/issues/12) | 🖥️ Dashboard Enhancement: Timeline & Terminal | P2 - Monitoring | ✅ |
+| [#14](https://github.com/chimerakang/alice/pull/14) | 🚀 Feature: Complete Dashboard, Monitoring & Checkpoint System | P2 - Monitoring | ✅ |
+| [#6](https://github.com/chimerakang/alice/issues/6) | 🚀 Deployment & DevOps Improvements | P3 - Data Layer | ✅ |
+| [#7](https://github.com/chimerakang/alice/issues/7) | 💾 Data Persistence Layer (SQLite) | P3 - Data Layer | ✅ |
+| [#8](https://github.com/chimerakang/alice/issues/8) | 🔌 WebSocket Real-time Dashboard Connection | P3 - Data Layer | ✅ |
+| [#9](https://github.com/chimerakang/alice/issues/9) | 🔗 Git Integration & Commit Correlation | P3 - Data Layer | ✅ |
+| [#10](https://github.com/chimerakang/alice/issues/10) | 📸 Checkpoint & State Snapshot System | P3 - Data Layer | ✅ |
+| [#13](https://github.com/chimerakang/alice/issues/13) | 🏗️ Architecture: Proto-First API with Protocol Buffers | P4 - Proto-First | ✅ |
+| [#15](https://github.com/chimerakang/alice/issues/15) | ⚛️ React + Vite + TypeScript 專案初始化 | P5 - Frontend Foundation | ✅ |
+| [#16](https://github.com/chimerakang/alice/issues/16) | 🧱 共用 UI 元件庫 (Layout, StatusBadge, MetricCard) | P5 - Frontend Foundation | ✅ |
+| [#17](https://github.com/chimerakang/alice/issues/17) | 🔌 WebSocket Hook + Zustand 狀態管理 | P5 - Frontend Foundation | ✅ |
+| [#18](https://github.com/chimerakang/alice/issues/18) | 📊 Dashboard 主頁面 + 圖表元件 | P5 - Frontend Foundation | ✅ |
+| [#19](https://github.com/chimerakang/alice/issues/19) | ⏳ Timeline + Terminal 頁面 | P5 - Frontend Foundation | ✅ |
+| [#20](https://github.com/chimerakang/alice/issues/20) | 📋 Git/Checkpoint/Performance/Security 子頁面 | P5 - Frontend Foundation | ✅ |
+| [#21](https://github.com/chimerakang/alice/issues/21) | 🔍 AI Decision Timeline — 核心審計頁面 | P6 - AI Audit System | ✅ |
+| [#22](https://github.com/chimerakang/alice/issues/22) | 📋 Decision Detail View + Git Diff Viewer | P6 - AI Audit System | ✅ |
+| [#23](https://github.com/chimerakang/alice/issues/23) | 📸 Checkpoint Management UI | P6 - AI Audit System | ✅ |
+| [#27](https://github.com/chimerakang/alice/issues/27) | 擴充 CallStream 擷取完整 AI 思考與文字內容 | P6 - AI Audit System | ✅ |
+| [#24](https://github.com/chimerakang/alice/issues/24) | 📊 Dashboard Enhancement — AI Activity Overview | P7 - Dashboard & Analytics | ✅ |
+| [#25](https://github.com/chimerakang/alice/issues/25) | 📈 Performance & Security Analysis Pages | P7 - Dashboard & Analytics | ✅ |
+| [#26](https://github.com/chimerakang/alice/issues/26) | Checkpoint ↔ DecisionLog 直接關聯 | P7 - Dashboard & Analytics | ✅ |
+| [#30](https://github.com/chimerakang/alice/issues/30) | Checkpoints 頁面重新定位：AI 決策歷程 + 安全快照 | P7 - Dashboard & Analytics | ✅ |
+| [#11](https://github.com/chimerakang/alice/issues/11) | 🎮 Remote Control API (Interrupt & Rollback) | P8 - Control API | ✅ |
+| [#31](https://github.com/chimerakang/alice/issues/31) | 📋 /tasks 指令 — Telegram 查看待辦工作清單 | P8.5 - TG 指令增強 | ✅ |
+| [#33](https://github.com/chimerakang/alice/issues/33) | 🔄 Topic-Project 對應持久化 — 重啟後保留設定 | P8.5 - TG 指令增強 | ✅ |
+| [#28](https://github.com/chimerakang/alice/issues/28) | 📷 Telegram 圖片訊息支援 — 傳送圖片給 Claude 分析 | P9 - Multimedia Input | ✅ |
+| [#29](https://github.com/chimerakang/alice/issues/29) | 🎙️ Telegram 語音訊息轉文字 — 語音輸入支援 | P9 - Multimedia Input | ✅ |
+| [#34](https://github.com/chimerakang/alice/issues/34) | 🖼️ 多張圖片批次處理支援 — Telegram 媒體群組分析 | P9.5 - Multimedia Enhancement | ✅ |
+| [#35](https://github.com/chimerakang/alice/issues/35) | 🔧 修復跨專案圖片存取問題 — 圖片路徑權限修復 | P9.5 - Multimedia Enhancement | ✅ |
+| [#32](https://github.com/chimerakang/alice/issues/32) | Claude Code Hooks 整合：攔截所有 AI Agent 互動 | P10 - Claude Code Hooks | ✅ |
+| [#37](https://github.com/chimerakang/alice/issues/37) | 🔍 /project 指令需要路徑驗證：防止設定不存在的專案目錄 | P11 - User Experience | ✅ |
+| [#36](https://github.com/chimerakang/alice/issues/36) | 📊 Claude Code Hooks UI 增強：Dashboard 統計圖表 + 用戶指南 | P12 - Dashboard Analytics | ✅ |
+| [#38](https://github.com/chimerakang/alice/issues/38) | 🐛 Telegram 429 Rate Limiting: 多 Agent 同時發送導致訊息遺失 | P13 - Future Enhancements | ✅ |
+| [#39](https://github.com/chimerakang/alice/issues/39) | 🐛 Telegram 訊息 UTF-8 編碼錯誤導致發送失敗 | P13 - Future Enhancements | ✅ |
+| [#48](https://github.com/chimerakang/alice/issues/48) | 【MVP】AI 開發審計系統 - 企業安全合規功能 | P13 - Future Enhancements | 🔄 |
+| [#50](https://github.com/chimerakang/alice/issues/50) | 【商業功能】單機版主管報告系統 - AI 使用效益監控 | P13 - Future Enhancements | 🔄 |
+| [#52](https://github.com/chimerakang/alice/issues/52) | 🔧 擴展 PerformanceMetrics - 增加管理層洞察數據收集 | P13 - Future Enhancements | 🔄 |
+| [#55](https://github.com/chimerakang/alice/issues/55) | 🎨 Manager Dashboard 前端介面 - 主管視角的 AI 使用分析頁面 | P13 - Future Enhancements | 🔄 |
+| [#57](https://github.com/chimerakang/alice/issues/57) | 📊 自動週報生成系統 - 團隊 AI 使用效益報告 | P13 - Future Enhancements | 🔄 |
+| [#59](https://github.com/chimerakang/alice/issues/59) | 🚨 智能異常檢測系統 - AI 使用模式風險預警 | P13 - Future Enhancements | 🔄 |
+| [#60](https://github.com/chimerakang/alice/issues/60) | 💰【商業功能】Alice SecureGuard - AI 開發防洩密系統 | P13 - Future Enhancements | 🔄 |
+| [#61](https://github.com/chimerakang/alice/issues/61) | 🔍 智能 Token 檢測引擎 - SecureGuard 核心功能 | P13 - Future Enhancements | 🔄 |
+| [#69](https://github.com/chimerakang/alice/issues/69) | Security 頁面：PII Detection Records 缺乏上下文資訊，無法判斷問題內容 | P13 - Future Enhancements | 🔄 |
+| [#70](https://github.com/chimerakang/alice/issues/70) | Security 頁面：Events Trend 圖表未跟隨時間篩選器 + 標題硬編碼 | P13 - Future Enhancements | 🔄 |
+| [#71](https://github.com/chimerakang/alice/issues/71) | 🐛 Telegram /tasks 無法顯示 GitHub Issues（private repo 認證失敗） | P13 - Future Enhancements | ✅ |
+| [#72](https://github.com/chimerakang/alice/issues/72) | P13: Dynamic Model Routing - 智慧模型路由降低 Token 成本 | P13 - Future Enhancements | ✅ |
+| [#73](https://github.com/chimerakang/alice/issues/73) | P13: Per-Model Cost Tracking - 按模型記錄 Token 成本與用量 | P13 - Future Enhancements | ✅ |
+| [#74](https://github.com/chimerakang/alice/issues/74) | P13: Savings Calculator - 智慧路由省錢可視化（商業賣點） | P13 - Future Enhancements | 🔄 |
+| [#75](https://github.com/chimerakang/alice/issues/75) | 回填歷史資料缺失的 model 與費用欄位 | P13 - Future Enhancements | ✅ |
+| [#76](https://github.com/chimerakang/alice/issues/76) | Bot 多國語系支援 — 可切換顯示語言 | P13 - Future Enhancements | 🔄 |
+| [#77](https://github.com/chimerakang/alice/issues/77) | /usage 指令增加按模型分類的 token 用量與費用顯示 | P13 - Future Enhancements | ✅ |
+| [#78](https://github.com/chimerakang/alice/issues/78) | Add project_path field to performance_metrics table for per-project token cost tracking | P13 - Future Enhancements | 🔄 |
+| [#79](https://github.com/chimerakang/alice/issues/79) | 🐛 Smart Routing 導致對話上下文丟失：Model 切換時強制清空 Session | P13 - Future Enhancements | ✅ |
+| [#49](https://github.com/chimerakang/alice/issues/49) | Alice 商業化：單機版隱私優先定位策略 | P14 - Commercialization Strategy | 🔄 |
+| [#51](https://github.com/chimerakang/alice/issues/51) | 多人版架構設計：從單機到團隊協作 | P14 - Commercialization Strategy | 🔄 |
+| [#53](https://github.com/chimerakang/alice/issues/53) | 競品分析深化：Entire Checkpoints vs Alice 差異化策略 | P14 - Commercialization Strategy | 🔄 |
+| [#54](https://github.com/chimerakang/alice/issues/54) | 產品授權與定價模式設計 | P14 - Commercialization Strategy | 🔄 |
+| [#56](https://github.com/chimerakang/alice/issues/56) | 品牌定位與行銷策略規劃 | P14 - Commercialization Strategy | 🔄 |
+| [#58](https://github.com/chimerakang/alice/issues/58) | Alice 商業化執行藍圖：6個月行動計畫 | P14 - Commercialization Strategy | 🔄 |
+
+---
+
+## Summary
+
+**Total Issues:** 64
+**Completed:** 45 ✅
+**In Progress:** 19 🔄
+
+**Last sync:** 2026-02-16 15:51 UTC
