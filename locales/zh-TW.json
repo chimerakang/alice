@@ -125,6 +125,16 @@
     "checkpoint_stats_size": "💾 總大小: {size} bytes\n",
     "checkpoint_stats_avg_size": "📏 平均大小: {size} bytes\n",
     "checkpoint_stats_error": "❌ 獲取檢查點統計失敗: {error}",
+    "usage_stats_by_model": "\n📊 *按模型分類（近 7 天）:*\n",
+    "usage_stats_model_item": "  {icon} {model}: {calls} 次 | {input}K in / {output}K out | ${cost}\n",
+    "usage_stats_routing_savings": "\n💡 *路由節省: {percent}%* (${actual} → ${default})\n",
+    "usage_stats_mode": "\n*模式: Claude Max 訂閱*\n  月費固定 $200，無額外 token 費用",
+    "dashboard_status_connections": "  🔌 連接數: {count}\n",
+    "dashboard_title": "\n🌐 *Web 監控介面*:\n",
+    "dashboard_main": "  📊 主面板: http://localhost:{port}/\n",
+    "dashboard_timeline": "  📈 Timeline: http://localhost:{port}/timeline.html\n",
+    "dashboard_test": "  🧪 測試頁面: http://localhost:{port}/test-timeline.html\n",
+    "dashboard_database": "  📁 資料庫: {path}\n",
     "i18n_not_initialized": "❌ i18n 系統未初始化"
   }
 }

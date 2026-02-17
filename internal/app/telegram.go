@@ -870,7 +870,8 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		if globalStorage != nil {
 			report, err := globalStorage.GetCostSavings(168)
 			if err == nil && report.TotalRequests > 0 {
-				msg.WriteString("\n📊 *按模型分類（近 7 天）:*\n")
+				byModelMsg := t.getLocalizedMessage(key.chatID, "usage_stats_by_model", nil)
+				msg.WriteString(byModelMsg)
 				for model, breakdown := range report.ByModel {
 					modelIcon := "🟢"
 					if model == "sonnet" {
@@ -880,20 +881,27 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 					} else if model == "haiku" {
 						modelIcon = "⚡"
 					}
-					msg.WriteString(fmt.Sprintf("  %s %s: %d 次 | %d in / %d out | $%.4f\n",
-						modelIcon, model, breakdown.Calls,
-						breakdown.InputTokens, breakdown.OutputTokens,
-						breakdown.ActualCost))
+					itemMsg := t.getLocalizedMessage(key.chatID, "usage_stats_model_item", nil)
+					itemMsg = strings.ReplaceAll(itemMsg, "{icon}", modelIcon)
+					itemMsg = strings.ReplaceAll(itemMsg, "{model}", model)
+					itemMsg = strings.ReplaceAll(itemMsg, "{calls}", fmt.Sprintf("%d", breakdown.Calls))
+					itemMsg = strings.ReplaceAll(itemMsg, "{input}", fmt.Sprintf("%d", breakdown.InputTokens/1000))
+					itemMsg = strings.ReplaceAll(itemMsg, "{output}", fmt.Sprintf("%d", breakdown.OutputTokens/1000))
+					itemMsg = strings.ReplaceAll(itemMsg, "{cost}", fmt.Sprintf("%.4f", breakdown.ActualCost))
+					msg.WriteString(itemMsg)
 				}
 				if report.SavingsPercent != 0 {
-					msg.WriteString(fmt.Sprintf("\n💡 *路由節省: %.1f%%* ($%.4f → $%.4f)\n",
-						report.SavingsPercent, report.DefaultModelCost, report.ActualCost))
+					savingsMsg := t.getLocalizedMessage(key.chatID, "usage_stats_routing_savings", nil)
+					savingsMsg = strings.ReplaceAll(savingsMsg, "{percent}", fmt.Sprintf("%.1f", report.SavingsPercent))
+					savingsMsg = strings.ReplaceAll(savingsMsg, "{actual}", fmt.Sprintf("%.4f", report.ActualCost))
+					savingsMsg = strings.ReplaceAll(savingsMsg, "{default}", fmt.Sprintf("%.4f", report.DefaultModelCost))
+					msg.WriteString(savingsMsg)
 				}
 			}
 		}
 
-		msg.WriteString("\n*模式: Claude Max 訂閱*\n")
-		msg.WriteString("  月費固定 $200，無額外 token 費用")
+		modeMsg := t.getLocalizedMessage(key.chatID, "usage_stats_mode", nil)
+		msg.WriteString(modeMsg)
 		t.sendMarkdown(key, msg.String())
 
 	case "/dashboard":
@@ -1407,7 +1415,9 @@ func (t *TelegramBot) handleDashboard(key chatKey) {
 	if globalWebSocketHub != nil {
 		dashboard += "  ✅ WebSocket Hub: 運行中\n"
 		connectedClients := globalWebSocketHub.GetConnectedClients()
-		dashboard += fmt.Sprintf("  🔌 連接數: %d\n", connectedClients)
+		connMsg := t.getLocalizedMessage(key.chatID, "dashboard_status_connections", nil)
+		connMsg = strings.ReplaceAll(connMsg, "{count}", fmt.Sprintf("%d", connectedClients))
+		dashboard += connMsg
 	}
 
 	if globalCheckpointManager != nil && globalCheckpointManager.IsEnabled() {
@@ -1424,16 +1434,28 @@ func (t *TelegramBot) handleDashboard(key chatKey) {
 
 	// Web Interface
 	if t.config.EnableWebInterface {
-		dashboard += fmt.Sprintf("\n🌐 *Web 監控介面*:\n")
-		dashboard += fmt.Sprintf("  📊 主面板: http://localhost:%s/\n", t.config.WebPort)
-		dashboard += fmt.Sprintf("  📈 Timeline: http://localhost:%s/timeline.html\n", t.config.WebPort)
-		dashboard += fmt.Sprintf("  🧪 測試頁面: http://localhost:%s/test-timeline.html\n", t.config.WebPort)
+		titleMsg := t.getLocalizedMessage(key.chatID, "dashboard_title", nil)
+		dashboard += titleMsg
+
+		mainMsg := t.getLocalizedMessage(key.chatID, "dashboard_main", nil)
+		mainMsg = strings.ReplaceAll(mainMsg, "{port}", t.config.WebPort)
+		dashboard += mainMsg
+
+		timelineMsg := t.getLocalizedMessage(key.chatID, "dashboard_timeline", nil)
+		timelineMsg = strings.ReplaceAll(timelineMsg, "{port}", t.config.WebPort)
+		dashboard += timelineMsg
+
+		testMsg := t.getLocalizedMessage(key.chatID, "dashboard_test", nil)
+		testMsg = strings.ReplaceAll(testMsg, "{port}", t.config.WebPort)
+		dashboard += testMsg
 	}
 
 	// Storage Info
 	if globalStorage != nil {
 		dashboard += "\n💾 *資料存儲狀態*:\n"
-		dashboard += fmt.Sprintf("  📁 資料庫: %s\n", t.config.DatabasePath)
+		dbMsg := t.getLocalizedMessage(key.chatID, "dashboard_database", nil)
+		dbMsg = strings.ReplaceAll(dbMsg, "{path}", t.config.DatabasePath)
+		dashboard += dbMsg
 		dashboard += "  ✅ SQLite: 運行中\n"
 	}
 

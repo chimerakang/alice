@@ -125,6 +125,16 @@
     "checkpoint_stats_size": "💾 Total Size: {size} bytes\n",
     "checkpoint_stats_avg_size": "📏 Average Size: {size} bytes\n",
     "checkpoint_stats_error": "❌ Failed to get checkpoint statistics: {error}",
+    "usage_stats_by_model": "\n📊 *Models (Last 7 Days):*\n",
+    "usage_stats_model_item": "  {icon} {model}: {calls} calls | {input}K in / {output}K out | ${cost}\n",
+    "usage_stats_routing_savings": "\n💡 *Routing Savings: {percent}%* (${actual} → ${default})\n",
+    "usage_stats_mode": "\n*Mode: Claude Max Subscription*\n  Monthly fee $200, no additional token cost",
+    "dashboard_status_connections": "  🔌 Connected Clients: {count}\n",
+    "dashboard_title": "\n🌐 *Web Monitoring Interface*:\n",
+    "dashboard_main": "  📊 Main Dashboard: http://localhost:{port}/\n",
+    "dashboard_timeline": "  📈 Timeline: http://localhost:{port}/timeline.html\n",
+    "dashboard_test": "  🧪 Test Page: http://localhost:{port}/test-timeline.html\n",
+    "dashboard_database": "  📁 Database: {path}\n",
     "i18n_not_initialized": "❌ i18n system is not initialized"
   }
 }
