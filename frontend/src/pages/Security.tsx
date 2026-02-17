@@ -47,6 +47,12 @@ interface PIIRecord {
   type: string;
   location: string;
   masked_value: string;
+  chat_id?: number;
+  user_id?: number;
+  message_type?: string;
+  match_count?: number;
+  redacted_snippet?: string;
+  severity?: string;
 }
 
 export default function Security() {
@@ -245,39 +251,41 @@ export default function Security() {
         const typeMatch = e.description?.match(/PII detected(?:\s+in\s+\w+\s+\w+)?:\s*(.+)/);
         const piiType = typeMatch ? typeMatch[1] : e.event_type || "Unknown";
 
-        // Derive location from event_type and details
+        // Derive location from message_type and source_type
         let location = "System";
+        const messageType = e.details?.message_type as string | undefined;
+        const sourceType = e.details?.source_type as string | undefined;
 
-        // Check details first for more specific context
-        const context = e.details?.context;
-        if (context) {
-          switch (context) {
-            case "telegram_photo": location = "Telegram Photo"; break;
-            case "telegram_batch_photo": location = "Batch Photos"; break;
-            case "telegram_voice": location = "Voice Message"; break;
-            case "telegram_single_photo": location = "Single Photo"; break;
-            default: location = context.replace(/_/g, " ");
-          }
-        }
-        // Fallback to event_type parsing
-        else if (e.event_type?.includes("telegram")) {
+        if (messageType === "text" && sourceType === "telegram") {
           location = "Telegram Message";
-        } else if (e.event_type?.includes("voice_caption")) {
-          location = "Voice Caption";
-        } else if (e.event_type?.includes("photo_caption")) {
-          location = "Photo Caption";
-        } else if (e.event_type?.includes("batch_caption")) {
-          location = "Batch Upload Caption";
-        } else if (e.event_type?.includes("filtered_in_logs")) {
+        } else if (messageType === "photo") {
+          location = "Telegram Photo";
+        } else if (messageType === "voice") {
+          location = "Voice Message";
+        } else if (messageType === "batch") {
+          location = "Batch Photos";
+        } else if (sourceType === "agent") {
           location = "Agent Logs";
         }
+
+        // Get match count and snippet from details
+        const matchCount = e.details?.matches as number | undefined;
+        const redactedSnippet = e.details?.redacted_snippet as string | undefined;
+        const chatId = e.details?.chat_id as number | undefined;
+        const userId = e.details?.user_id as number | undefined;
 
         return {
           id: e.event_id || `pii_${i}`,
           timestamp: e.timestamp ? new Date(e.timestamp).toLocaleString() : "N/A",
           type: piiType,
           location,
-          masked_value: "[redacted]",
+          masked_value: redactedSnippet || "[redacted]",
+          chat_id: chatId,
+          user_id: userId,
+          message_type: messageType,
+          match_count: matchCount,
+          redacted_snippet: redactedSnippet,
+          severity: e.severity,
         };
       })
       .slice(0, 20); // Show last 20
@@ -532,29 +540,40 @@ export default function Security() {
                 <th className="text-left py-2 text-gray-400 font-medium">Timestamp</th>
                 <th className="text-left py-2 text-gray-400 font-medium">PII Type</th>
                 <th className="text-left py-2 text-gray-400 font-medium">Location</th>
-                <th className="text-left py-2 text-gray-400 font-medium">Masked Value</th>
+                <th className="text-left py-2 text-gray-400 font-medium">Source</th>
+                <th className="text-left py-2 text-gray-400 font-medium">Matches</th>
+                <th className="text-left py-2 text-gray-400 font-medium">Preview</th>
               </tr>
             </thead>
             <tbody>
               {piiRecords.map((record) => (
-                <tr key={record.id} className="border-b border-gray-800/50">
-                  <td className="py-2 text-gray-300 font-mono">{record.timestamp}</td>
+                <tr key={record.id} className="border-b border-gray-800/50 hover:bg-gray-800/20">
+                  <td className="py-2 text-gray-300 font-mono text-xs">{record.timestamp}</td>
                   <td className="py-2">
-                    <span className={`px-2 py-1 rounded-full text-xs ${
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                       record.type === "Credit Card" ? "bg-red-500/20 text-red-300" :
                       record.type === "SSN" ? "bg-orange-500/20 text-orange-300" :
+                      record.type === "Email" ? "bg-purple-500/20 text-purple-300" :
                       "bg-blue-500/20 text-blue-300"
                     }`}>
                       {record.type}
                     </span>
                   </td>
-                  <td className="py-2 text-gray-300">{record.location}</td>
-                  <td className="py-2 text-gray-400 font-mono">{record.masked_value}</td>
+                  <td className="py-2 text-gray-300 text-xs">{record.location}</td>
+                  <td className="py-2 text-gray-400 text-xs">
+                    {record.chat_id ? `Chat ${record.chat_id}` : "Unknown"}
+                  </td>
+                  <td className="py-2 text-gray-300 text-xs font-mono">
+                    {record.match_count ? `${record.match_count} found` : "-"}
+                  </td>
+                  <td className="py-2 text-gray-400 text-xs font-mono max-w-xs truncate">
+                    {record.redacted_snippet ? `"${record.redacted_snippet.substring(0, 50)}..."` : "[redacted]"}
+                  </td>
                 </tr>
               ))}
               {piiRecords.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="py-4 text-center text-gray-500">
+                  <td colSpan={6} className="py-4 text-center text-gray-500">
                     No PII detections recorded.
                   </td>
                 </tr>

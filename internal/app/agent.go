@@ -825,7 +825,7 @@ func (a *Agent) filterSensitiveData(text string) string {
 	// Use security manager's PII detection if available
 	if globalSecurityManager != nil {
 		// Don't log events here to avoid double-logging (the original detection point should log)
-		filtered, _ := globalSecurityManager.DetectAndFilterPII(text, false)
+		filtered, _ := globalSecurityManager.DetectAndFilterPII(text, false, nil)
 		return filtered
 	}
 

@@ -430,7 +430,16 @@ func (rl *RateLimiter) cleanupExpired() {
 }
 
 // DetectAndFilterPII 偵測和過濾 PII
-func (sm *SecurityManager) DetectAndFilterPII(text string, logEvent bool) (filtered string, detected []string) {
+// PIIDetectionContext provides context information for PII detection logging
+type PIIDetectionContext struct {
+	ChatID        int64  // Telegram chat ID
+	UserID        int64  // User ID if available
+	MessageType   string // "text", "voice", "photo", "batch", etc.
+	SourceType    string // "telegram", "agent", "api", etc.
+	RedactedSnippet string // First 100 chars of filtered text for reference
+}
+
+func (sm *SecurityManager) DetectAndFilterPII(text string, logEvent bool, ctx *PIIDetectionContext) (filtered string, detected []string) {
 	if !sm.config.EnablePIIDetection {
 		return text, nil
 	}
@@ -449,19 +458,44 @@ func (sm *SecurityManager) DetectAndFilterPII(text string, logEvent bool) (filte
 			detected = append(detected, pattern.Name)
 			filtered = regex.ReplaceAllString(filtered, pattern.Replacement)
 
-			// 只在需要時記錄 PII 偵測事件
+			// Only log PII detection event if requested
 			if logEvent {
+				details := map[string]interface{}{
+					"pattern":      pattern.Name,
+					"matches":      len(matches),
+					"source_type":  "text_processing",
+				}
+
+				// Add context information if provided
+				if ctx != nil {
+					if ctx.ChatID > 0 {
+						details["chat_id"] = ctx.ChatID
+					}
+					if ctx.UserID > 0 {
+						details["user_id"] = ctx.UserID
+					}
+					if ctx.MessageType != "" {
+						details["message_type"] = ctx.MessageType
+					}
+					if ctx.SourceType != "" {
+						details["source_type"] = ctx.SourceType
+					}
+					// Create redacted snippet from filtered text
+					snippet := filtered
+					if len(snippet) > 100 {
+						snippet = snippet[:100]
+					}
+					if snippet != "" {
+						details["redacted_snippet"] = snippet
+					}
+				}
+
 				sm.LogSecurityEvent(SecurityEvent{
 					EventType:   "pii_detected",
 					Severity:    pattern.Severity,
 					Description: fmt.Sprintf("PII detected: %s", pattern.Name),
-					Details: map[string]interface{}{
-						"pattern":     pattern.Name,
-						"matches":     len(matches),
-						"context":     "generic",
-						"location":    "System",
-						"source_type": "text_processing",
-					},
+					Details:     details,
+					UserID:      ctx.UserID,
 				})
 			}
 		}
