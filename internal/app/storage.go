@@ -1195,6 +1195,9 @@ func (s *SQLiteStorage) scanSecurityEvents(rows *sql.Rows) ([]SecurityEvent, err
 			event.UserID = userID.Int64
 		}
 
+		// 同步 ID → EventID 供前端使用
+		event.EventID = event.ID
+
 		// 解析 JSON 詳情
 		json.Unmarshal([]byte(detailsJSON), &event.Details)
 
