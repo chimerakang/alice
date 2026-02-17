@@ -880,7 +880,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.config.ModelRouting.DeepModel)
 		} else {
 			modelDisplay = t.getLocalizedMessage(key.chatID, "model_auto", nil)
-		modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.client.Model)
+			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.client.Model)
 		}
 
 		status := t.getLocalizedMessage(key.chatID, "status_format", nil)
