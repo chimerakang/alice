@@ -53,6 +53,7 @@ interface PIIRecord {
   match_count?: number;
   redacted_snippet?: string;
   severity?: string;
+  event_id?: string; // Reference to original SecurityEvent for modal
 }
 
 export default function Security() {
@@ -277,6 +278,7 @@ export default function Security() {
 
         return {
           id: e.event_id || `pii_${i}`,
+          event_id: e.event_id, // Reference to original event for modal
           timestamp: e.timestamp ? new Date(e.timestamp).toLocaleString() : "N/A",
           type: piiType,
           location,
@@ -548,7 +550,17 @@ export default function Security() {
             </thead>
             <tbody>
               {piiRecords.map((record) => (
-                <tr key={record.id} className="border-b border-gray-800/50 hover:bg-gray-800/20">
+                <tr
+                  key={record.id}
+                  className="border-b border-gray-800/50 hover:bg-gray-800/20 cursor-pointer transition-colors"
+                  onClick={() => {
+                    // Find the original SecurityEvent by event_id
+                    const sourceEvent = events.find(e => e.event_id === record.event_id);
+                    if (sourceEvent) {
+                      setSelectedEvent(sourceEvent);
+                    }
+                  }}
+                >
                   <td className="py-2 text-gray-300 font-mono text-xs">{record.timestamp}</td>
                   <td className="py-2">
                     <span className={`px-2 py-1 rounded-full text-xs font-medium ${
