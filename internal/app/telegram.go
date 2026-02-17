@@ -127,7 +127,7 @@ func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
 	log.Printf("[telegram] bot authorized: @%s", me.Result.Username)
 
 	// Initialize i18n manager
-	i18nManager, err := NewI18nManager("locales", "zh-TW")
+	i18nManager, err := NewI18nManager("locales", "en")
 	if err != nil {
 		log.Printf("[telegram] warning: i18n initialization failed: %v", err)
 		// Don't fail - we can still run without i18n
@@ -3363,7 +3363,7 @@ func (t *TelegramBot) getChatLanguage(chatID int64) string {
 		return t.i18n.GetDefaultLanguage()
 	}
 
-	return "zh-TW"
+	return "en"
 }
 
 // setChatlanguage 設定指定 chat 的語言偏好
