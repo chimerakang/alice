@@ -596,7 +596,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	userLang := t.getChatLanguage(key.chatID)
 	userMessage := text
 	if userLang == "en" {
-		userMessage = "Please respond in English.\n\n" + text
+		userMessage = "Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n" + text
 	} else if userLang == "zh-TW" {
 		userMessage = "請用繁體中文回應。\n\n" + text
 	}
@@ -2073,7 +2073,7 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 	userLang := t.getChatLanguage(key.chatID)
 	promptWithLang := prompt
 	if userLang == "en" {
-		promptWithLang = "Please respond in English.\n\n" + prompt
+		promptWithLang = "Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n" + prompt
 	} else if userLang == "zh-TW" {
 		promptWithLang = "請用繁體中文回應。\n\n" + prompt
 	}
@@ -2229,7 +2229,7 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 	userLang := t.getChatLanguage(key.chatID)
 	promptWithLang := prompt
 	if userLang == "en" {
-		promptWithLang = "Please respond in English.\n\n" + prompt
+		promptWithLang = "Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n" + prompt
 	} else if userLang == "zh-TW" {
 		promptWithLang = "請用繁體中文回應。\n\n" + prompt
 	}
@@ -2352,7 +2352,7 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 	userLang := t.getChatLanguage(key.chatID)
 	promptWithLang := prompt
 	if userLang == "en" {
-		promptWithLang = "Please respond in English.\n\n" + prompt
+		promptWithLang = "Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n" + prompt
 	} else if userLang == "zh-TW" {
 		promptWithLang = "請用繁體中文回應。\n\n" + prompt
 	}
@@ -2671,7 +2671,7 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 	userLang := t.getChatLanguage(key.chatID)
 	promptWithLang := prompt
 	if userLang == "en" {
-		promptWithLang = "Please respond in English.\n\n" + prompt
+		promptWithLang = "Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n" + prompt
 	} else if userLang == "zh-TW" {
 		promptWithLang = "請用繁體中文回應。\n\n" + prompt
 	}
@@ -3102,7 +3102,7 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 	userLang := t.getChatLanguage(key.chatID)
 	promptWithLang := prompt
 	if userLang == "en" {
-		promptWithLang = "Please respond in English.\n\n" + prompt
+		promptWithLang = "Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n" + prompt
 	} else if userLang == "zh-TW" {
 		promptWithLang = "請用繁體中文回應。\n\n" + prompt
 	}
