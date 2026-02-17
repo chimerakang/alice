@@ -596,6 +596,28 @@ func (sm *SecurityManager) LogSecurityEvent(event SecurityEvent) {
 
 // GetSecurityEvents 獲取安全事件
 func (sm *SecurityManager) GetSecurityEvents(limit int, severity string) []SecurityEvent {
+	// Try to get events from database first (persistent storage)
+	if globalStorage != nil {
+		events, err := globalStorage.GetSecurityEvents(limit, 0)
+		if err == nil && len(events) > 0 {
+			// Filter by severity if needed
+			if severity != "" {
+				var filtered []SecurityEvent
+				for _, e := range events {
+					if e.Severity == severity {
+						filtered = append(filtered, e)
+						if limit > 0 && len(filtered) >= limit {
+							break
+						}
+					}
+				}
+				return filtered
+			}
+			return events
+		}
+	}
+
+	// Fallback to in-memory audit log if database is unavailable
 	sm.auditMu.RLock()
 	defer sm.auditMu.RUnlock()
 

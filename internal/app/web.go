@@ -1172,7 +1172,7 @@ func (wi *WebInterface) handleCostSavings(w http.ResponseWriter, r *http.Request
 
 // === Security API Handlers ===
 
-// handleSecurityEvents returns recent security events
+// handleSecurityEvents returns recent security events with optional time range filtering
 func (wi *WebInterface) handleSecurityEvents(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1195,6 +1195,8 @@ func (wi *WebInterface) handleSecurityEvents(w http.ResponseWriter, r *http.Requ
 		}
 
 		severity := r.URL.Query().Get("severity")
+
+		// Get events using the manager (which queries database first, then falls back to audit log)
 		events := globalSecurityManager.GetSecurityEvents(limit, severity)
 
 		response := map[string]interface{}{
