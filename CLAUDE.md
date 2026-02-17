@@ -291,6 +291,135 @@ These rules apply universally to any GitHub repository with milestones, enabling
 2. Add a case in `ToolExecutor.Execute()` switch
 3. Implement the handler method on `*ToolExecutor`
 
+## Multi-Language Support (i18n) Guidelines
+
+### Architecture Overview
+
+Alice implements a **centralized i18n system** with SQLite persistence and in-memory caching to support multiple languages:
+
+```
+User Message
+    ↓
+TelegramBot.handleCommand()
+    ↓
+t.getLocalizedMessage(chatID, messageKey, templateVars)
+    ↓
+I18nManager.GetMessage(langCode, messageKey, templateVars)
+    ↓
+Memory Cache Hit? → Return cached value
+Memory Cache Miss? → Query SQLite chat_language → Apply template → Cache → Return
+```
+
+### Supported Languages
+
+| Language | Code | File | Messages |
+|----------|------|------|----------|
+| Traditional Chinese | `zh-TW` | `internal/app/i18n/zh-TW.json` | 271+ keys |
+| English | `en` | `internal/app/i18n/en.json` | 271+ keys |
+
+### Adding New User-Facing Text
+
+**❌ DO NOT hardcode strings like this:**
+```go
+// WRONG - hardcoded string
+t.send(key, "Token 使用量統計")
+```
+
+**✅ CORRECT - use message keys:**
+```go
+// CORRECT - localized message
+msgKey := "token_usage_format"
+msg := t.getLocalizedMessage(key.chatID, msgKey, map[string]string{
+    "{input}": fmt.Sprintf("%d", stats.TotalInputTokens),
+    "{output}": fmt.Sprintf("%d", stats.TotalOutputTokens),
+})
+t.send(key, msg)
+```
+
+### Workflow for New Features
+
+1. **Identify all user-facing strings** in your new feature
+   - Command responses in Telegram
+   - Dashboard messages
+   - Error messages
+   - Status indicators
+
+2. **Add message keys to language files:**
+   ```
+   internal/app/i18n/
+   ├── zh-TW.json    # Add: "new_feature_message": "新功能訊息..."
+   └── en.json       # Add: "new_feature_message": "New feature message..."
+   ```
+
+3. **Use message keys in code:**
+   ```go
+   msgKey := "new_feature_message"
+   templatedMsg := t.getLocalizedMessage(key.chatID, msgKey, nil)
+   t.send(key, templatedMsg)
+   ```
+
+4. **Support template variables** for dynamic content:
+   ```json
+   {
+     "cost_report": "您的成本為 ${cost}，節省 ${savings}%"
+   }
+   ```
+   ```go
+   msg := t.getLocalizedMessage(chatID, "cost_report", map[string]string{
+       "${cost}": fmt.Sprintf("%.2f", actualCost),
+       "${savings}": fmt.Sprintf("%.1f", savingsPercent),
+   })
+   ```
+
+### Message Key Naming Convention
+
+Use **snake_case** for message keys, organized by feature:
+
+```
+token_usage_format          → Token usage display
+error_get_cost              → Error when fetching cost data
+model_distribution_title    → Model distribution chart title
+task_savings_amount         → Savings amount display
+mode_switched_fast          → Mode switched notification
+usage_stats_by_model        → Usage statistics by model header
+```
+
+### Implementation Details
+
+**Backend (Go):**
+- File: `internal/app/i18n_manager.go` (184 lines)
+- Interface: `I18nManager` with `GetMessage()` method
+- Cache: sync.RWMutex-protected map for O(1) lookups
+- SQLite: `chat_language` table stores per-chat preferences
+- Fallback: Default to `zh-TW` if language not set
+
+**Frontend (React):**
+- File: `frontend/src/store/languageStore.ts`
+- State management: Zustand store with localStorage persistence
+- Component: `LanguageSwitcher` in sidebar for user selection
+- API: `/api/language` endpoint for sync with backend
+
+### Audit Checklist for Code Review
+
+Before merging any PR that adds user-facing text:
+
+- [ ] No hardcoded strings in Go code (`telegram.go`, `web.go`, etc.)
+- [ ] All messages use `t.getLocalizedMessage(chatID, messageKey, vars)`
+- [ ] Message keys added to both `zh-TW.json` and `en.json`
+- [ ] Template variables use consistent naming (`{variable}` format)
+- [ ] New keys follow naming convention (snake_case, descriptive)
+- [ ] No formatting logic in message files (keep in Go code)
+
+### Common Mistakes to Avoid
+
+| Mistake | Problem | Solution |
+|---------|---------|----------|
+| `fmt.Sprintf("Total: %d", count)` | Hardcoded English | Use message key with template |
+| Mixing Chinese/English in one string | Inconsistent UX | Separate into message keys |
+| `strings.ReplaceAll(msg, "old", "new")` | Not translatable | Use template variables |
+| Adding only English translation | Incomplete support | Add to both language files |
+| Dynamic count logic in message file | Logic in data layer | Put logic in Go, pass to template |
+
 ## Critical Safety Rules
 
 **These rules protect runtime secrets and shared state:**
