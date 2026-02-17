@@ -280,14 +280,21 @@ func (t *TelegramBot) setUserModelPreference(key chatKey, mode string) {
 }
 
 // handleSavingsCommand 處理 /savings 指令 - 顯示本週路由統計和節省金額
-func (t *TelegramBot) handleSavingsCommand(key chatKey) {
+// 支持 /savings 或 /savings <project_path>
+func (t *TelegramBot) handleSavingsCommand(key chatKey, projectPath string) {
 	if globalStorage == nil {
 		t.send(key, t.getLocalizedMessage(key.chatID, "no_storage", nil))
 		return
 	}
 
 	// 默認查詢最近 7 天的數據
-	report, err := globalStorage.GetCostSavings(168)
+	var report CostSavingsReport
+	var err error
+	if projectPath != "" {
+		report, err = globalStorage.GetCostSavingsByProject(projectPath, 168)
+	} else {
+		report, err = globalStorage.GetCostSavings(168)
+	}
 	if err != nil {
 		log.Printf("[telegram] failed to get cost savings: %v", err)
 		msg := t.getLocalizedMessage(key.chatID, "error_get_cost", map[string]string{"error": err.Error()})
@@ -912,7 +919,19 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 
 		// 按模型分類顯示（從資料庫查詢最近 7 天）
 		if globalStorage != nil {
-			report, err := globalStorage.GetCostSavings(168)
+			// 支持按項目篩選：/usage 或 /usage <project_path>
+			var projectPath string
+			if len(parts) > 1 {
+				projectPath = strings.Join(parts[1:], " ")
+			}
+
+			var report CostSavingsReport
+			var err error
+			if projectPath != "" {
+				report, err = globalStorage.GetCostSavingsByProject(projectPath, 168)
+			} else {
+				report, err = globalStorage.GetCostSavings(168)
+			}
 			if err == nil && report.TotalRequests > 0 {
 				byModelMsg := t.getLocalizedMessage(key.chatID, "usage_stats_by_model", nil)
 				msg.WriteString(byModelMsg)
@@ -1033,7 +1052,11 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		t.send(key, t.getLocalizedMessage(key.chatID, "mode_switched_auto", nil))
 
 	case "/savings":
-		t.handleSavingsCommand(key)
+		var projectPath string
+		if len(parts) > 1 {
+			projectPath = strings.Join(parts[1:], " ")
+		}
+		t.handleSavingsCommand(key, projectPath)
 
 	case "/lang":
 		t.handleLangCommand(key, text)

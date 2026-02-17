@@ -49,6 +49,7 @@ type PerformanceMetrics struct {
 	MemoryUsage       uint64         `json:"memory_usage"`
 	ErrorType         string         `json:"error_type,omitempty"`
 	ChatID            int64          `json:"chat_id"`
+	ProjectPath       string         `json:"project_path,omitempty"`
 	AgentType         string         `json:"agent_type,omitempty"`
 	Model             string         `json:"model,omitempty"` // NEW: "haiku", "sonnet", "opus"
 }
@@ -475,7 +476,7 @@ func GetUptimeSeconds() int64 {
 }
 
 // RecordAPICall 記錄 API 呼叫效能
-func RecordAPICall(latency time.Duration, success bool, tokensUsed int, cost float64, chatID int64, errorType string, model string) {
+func RecordAPICall(latency time.Duration, success bool, tokensUsed int, cost float64, chatID int64, projectPath string, errorType string, model string) {
 	if performanceMonitor != nil {
 		metric := PerformanceMetrics{
 			APICallLatency: latency,
@@ -483,6 +484,7 @@ func RecordAPICall(latency time.Duration, success bool, tokensUsed int, cost flo
 			TokensUsed:     tokensUsed,
 			EstimatedCost:  cost,
 			ChatID:         chatID,
+			ProjectPath:    projectPath,
 			ErrorType:      errorType,
 			Model:          model, // NEW: 模型資訊
 		}
@@ -491,13 +493,14 @@ func RecordAPICall(latency time.Duration, success bool, tokensUsed int, cost flo
 }
 
 // RecordToolExecution 記錄工具執行效能
-func RecordToolExecution(toolType string, executionTime time.Duration, chatID int64, success bool) {
+func RecordToolExecution(toolType string, executionTime time.Duration, chatID int64, projectPath string, success bool) {
 	if performanceMonitor != nil {
 		metric := PerformanceMetrics{
 			ToolExecutionTime: executionTime,
 			ToolExecutionType: toolType,
 			APICallSuccess:    success, // 重複使用此欄位表示工具執行成功
-			ChatID:           chatID,
+			ChatID:            chatID,
+			ProjectPath:       projectPath,
 		}
 		performanceMonitor.RecordMetric(metric)
 	}

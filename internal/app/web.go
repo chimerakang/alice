@@ -1147,8 +1147,15 @@ func (wi *WebInterface) handleCostSavings(w http.ResponseWriter, r *http.Request
 			hours = h
 		}
 
-		// Get cost savings report
-		report, err := globalStorage.GetCostSavings(hours)
+		// Get cost savings report (support projectPath parameter for filtering)
+		projectPath := r.URL.Query().Get("projectPath")
+		var report CostSavingsReport
+		var err error
+		if projectPath != "" {
+			report, err = globalStorage.GetCostSavingsByProject(projectPath, hours)
+		} else {
+			report, err = globalStorage.GetCostSavings(hours)
+		}
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]interface{}{

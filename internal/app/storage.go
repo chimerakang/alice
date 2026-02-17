@@ -32,10 +32,12 @@ type Storage interface {
 	InsertPerformanceMetric(metric PerformanceMetrics) error
 	GetPerformanceMetrics(limit int, offset int) ([]PerformanceMetrics, error)
 	GetPerformanceMetricsByTimeRange(start, end time.Time, limit int) ([]PerformanceMetrics, error)
+	GetPerformanceMetricsByProject(projectPath string, limit int, offset int) ([]PerformanceMetrics, error)
 	GetPerformanceAnalytics(hours int) (PerformanceAnalytics, error)
 	GetToolExecutionStats() (map[string]map[string]interface{}, error)
 	GetToolExecutionStatsByTimeRange(start, end time.Time) (map[string]map[string]interface{}, error)
 	GetCostSavings(hours int) (CostSavingsReport, error)
+	GetCostSavingsByProject(projectPath string, hours int) (CostSavingsReport, error)
 
 	// Security Events
 	InsertSecurityEvent(event SecurityEvent) error
@@ -324,9 +326,16 @@ func (s *SQLiteStorage) initTables() error {
 		log.Printf("Migration warning (performance_metrics.model): %v", err)
 	}
 
+	// Migration: add project_path column to performance_metrics
+	_, err = s.db.Exec(`ALTER TABLE performance_metrics ADD COLUMN project_path TEXT DEFAULT ''`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		log.Printf("Migration warning (performance_metrics.project_path): %v", err)
+	}
+
 	// Create indexes for new columns if they don't exist
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_decision_logs_model ON decision_logs(model)`)
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_performance_metrics_model ON performance_metrics(model)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_performance_metrics_project_path ON performance_metrics(project_path)`)
 
 	log.Printf("Database initialized successfully at: %s", s.path)
 	return nil
@@ -617,12 +626,12 @@ func (s *SQLiteStorage) InsertPerformanceMetric(metric PerformanceMetrics) error
 		INSERT INTO performance_metrics
 		(timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
 		 tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
-		 chat_id, agent_type, model)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 chat_id, project_path, agent_type, model)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		metric.Timestamp, metric.APICallLatency.Milliseconds(), metric.APICallSuccess,
 		metric.ToolExecutionTime.Milliseconds(), metric.ToolExecutionType,
 		metric.TokensUsed, metric.EstimatedCost, metric.MemoryUsage,
-		metric.ErrorType, metric.ChatID, metric.AgentType, metric.Model)
+		metric.ErrorType, metric.ChatID, metric.ProjectPath, metric.AgentType, metric.Model)
 
 	return err
 }
@@ -632,7 +641,7 @@ func (s *SQLiteStorage) GetPerformanceMetrics(limit int, offset int) ([]Performa
 	rows, err := s.db.Query(`
 		SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
 			   tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
-			   chat_id, agent_type, COALESCE(model, '') as model
+			   chat_id, COALESCE(project_path, '') as project_path, agent_type, COALESCE(model, '') as model
 		FROM performance_metrics
 		ORDER BY timestamp DESC
 		LIMIT ? OFFSET ?`, limit, offset)
@@ -651,7 +660,7 @@ func (s *SQLiteStorage) GetPerformanceMetricsByTimeRange(start, end time.Time, l
 	rows, err := s.db.Query(`
 		SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
 			   tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
-			   chat_id, agent_type, COALESCE(model, '') as model
+			   chat_id, COALESCE(project_path, '') as project_path, agent_type, COALESCE(model, '') as model
 		FROM performance_metrics
 		WHERE timestamp BETWEEN ? AND ?
 		ORDER BY timestamp DESC
@@ -661,6 +670,23 @@ func (s *SQLiteStorage) GetPerformanceMetricsByTimeRange(start, end time.Time, l
 	}
 	defer rows.Close()
 
+	return s.scanPerformanceMetrics(rows)
+}
+
+// GetPerformanceMetricsByProject 按項目路徑獲取效能指標
+func (s *SQLiteStorage) GetPerformanceMetricsByProject(projectPath string, limit int, offset int) ([]PerformanceMetrics, error) {
+	rows, err := s.db.Query(`
+		SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
+			   tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
+			   chat_id, COALESCE(project_path, '') as project_path, agent_type, COALESCE(model, '') as model
+		FROM performance_metrics
+		WHERE project_path = ?
+		ORDER BY timestamp DESC
+		LIMIT ? OFFSET ?`, projectPath, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 	return s.scanPerformanceMetrics(rows)
 }
 
@@ -944,6 +970,116 @@ func (s *SQLiteStorage) GetCostSavings(hours int) (CostSavingsReport, error) {
 	return report, nil
 }
 
+// GetCostSavingsByProject 計算指定項目的成本節省報告
+func (s *SQLiteStorage) GetCostSavingsByProject(projectPath string, hours int) (CostSavingsReport, error) {
+	startTime := time.Now().Add(-time.Duration(hours) * time.Hour)
+	endTime := time.Now()
+	report := CostSavingsReport{
+		PeriodHours:       hours,
+		StartTime:         startTime,
+		EndTime:           endTime,
+		ByModel:           make(map[string]ModelCostBreakdown),
+		RoutingMethodStat: make(map[string]int),
+	}
+
+	// 查詢 decision_logs 按項目和模型分類 - 規範化模型名稱為簡稱
+	rows, err := s.db.Query(`
+		SELECT
+			CASE
+				WHEN model LIKE '%haiku%' THEN 'haiku'
+				WHEN model LIKE '%opus%' THEN 'opus'
+				WHEN model LIKE '%sonnet%' OR model = '' OR model IS NULL THEN 'sonnet'
+				ELSE 'sonnet'
+			END as model,
+			COALESCE(NULLIF(routing_reason, ''), 'default') as routing_reason,
+			COUNT(*) as calls,
+			SUM(CASE WHEN tokens_input IS NOT NULL THEN tokens_input ELSE 0 END) as total_input_tokens,
+			SUM(CASE WHEN tokens_output IS NOT NULL THEN tokens_output ELSE 0 END) as total_output_tokens,
+			SUM(CASE WHEN cost_usd IS NOT NULL THEN cost_usd ELSE 0.0 END) as total_cost
+		FROM decision_logs
+		WHERE project_path = ?
+		  AND timestamp BETWEEN ? AND ?
+		  AND (cost_usd > 0 OR tokens_input > 0 OR tokens_output > 0)
+		GROUP BY
+			CASE
+				WHEN model LIKE '%haiku%' THEN 'haiku'
+				WHEN model LIKE '%opus%' THEN 'opus'
+				WHEN model LIKE '%sonnet%' OR model = '' OR model IS NULL THEN 'sonnet'
+				ELSE 'sonnet'
+			END,
+			routing_reason
+		ORDER BY total_cost DESC`,
+		projectPath, startTime.Format(time.RFC3339), endTime.Format(time.RFC3339))
+
+	if err != nil {
+		return report, fmt.Errorf("failed to query decision_logs by project: %w", err)
+	}
+	defer rows.Close()
+
+	actualCostByModel := make(map[string]float64)
+	callsByModel := make(map[string]int)
+	tokensByModel := make(map[string][2]int)
+
+	for rows.Next() {
+		var model, routingReason string
+		var calls int
+		var inputTokens, outputTokens int64
+		var cost float64
+
+		if err := rows.Scan(&model, &routingReason, &calls, &inputTokens, &outputTokens, &cost); err != nil {
+			continue
+		}
+
+		report.TotalRequests += calls
+		report.ActualCost += cost
+		actualCostByModel[model] += cost
+		callsByModel[model] += calls
+		report.RoutingMethodStat[routingReason] += calls
+
+		tokens := tokensByModel[model]
+		tokens[0] += int(inputTokens)
+		tokens[1] += int(outputTokens)
+		tokensByModel[model] = tokens
+	}
+
+	if err = rows.Err(); err != nil {
+		return report, fmt.Errorf("error scanning decision_logs by project: %w", err)
+	}
+
+	// 計算假設全用預設模型（Sonnet）的成本
+	defaultModel := "sonnet"
+	defaultPricing := ModelPricing[defaultModel]
+
+	for model, cost := range actualCostByModel {
+		tokens := tokensByModel[model]
+		inputTokens := tokens[0]
+		outputTokens := tokens[1]
+		calls := callsByModel[model]
+
+		wouldHaveCost := (float64(inputTokens) * defaultPricing.InputPerMTok / 1_000_000) +
+			(float64(outputTokens) * defaultPricing.OutputPerMTok / 1_000_000)
+
+		saved := wouldHaveCost - cost
+		report.DefaultModelCost += wouldHaveCost
+
+		report.ByModel[model] = ModelCostBreakdown{
+			Calls:         calls,
+			ActualCost:    cost,
+			WouldHaveCost: wouldHaveCost,
+			Saved:         saved,
+			InputTokens:   inputTokens,
+			OutputTokens:  outputTokens,
+		}
+	}
+
+	report.SavingsCost = report.DefaultModelCost - report.ActualCost
+	if report.DefaultModelCost > 0 {
+		report.SavingsPercent = (report.SavingsCost / report.DefaultModelCost) * 100
+	}
+
+	return report, nil
+}
+
 // scanPerformanceMetrics 掃描效能指標結果
 func (s *SQLiteStorage) scanPerformanceMetrics(rows *sql.Rows) ([]PerformanceMetrics, error) {
 	var metrics []PerformanceMetrics
@@ -954,7 +1090,7 @@ func (s *SQLiteStorage) scanPerformanceMetrics(rows *sql.Rows) ([]PerformanceMet
 		err := rows.Scan(&metric.Timestamp, &apiLatencyMs, &metric.APICallSuccess,
 			&toolExecutionMs, &metric.ToolExecutionType, &metric.TokensUsed,
 			&metric.EstimatedCost, &metric.MemoryUsage, &metric.ErrorType,
-			&metric.ChatID, &metric.AgentType, &metric.Model)
+			&metric.ChatID, &metric.ProjectPath, &metric.AgentType, &metric.Model)
 		if err != nil {
 			return nil, err
 		}

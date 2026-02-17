@@ -180,7 +180,7 @@ func (tl *ToolLogger) LogToolComplete(toolName string, status string, duration t
 	}
 
 	// Record performance metrics for tool execution
-	RecordToolExecution(toolName, duration, chatID, success)
+	RecordToolExecution(toolName, duration, chatID, "", success)
 }
 
 // GetRecentExecutions returns the most recent tool executions

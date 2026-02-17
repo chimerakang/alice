@@ -103,7 +103,7 @@ func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID, mo
 		}
 	}
 
-	RecordAPICall(latency, !resp.IsError, totalTokens, resp.TotalCostUSD, chatID, errorType, ExtractModelShortName(model))
+	RecordAPICall(latency, !resp.IsError, totalTokens, resp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(model))
 
 	if resp.IsError {
 		return &resp, fmt.Errorf("CLI returned error: %s", resp.Result)
@@ -277,7 +277,7 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 		}
 	}
 
-	RecordAPICall(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, chatID, errorType, ExtractModelShortName(model))
+	RecordAPICall(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(model))
 
 	if finalResp.IsError {
 		return finalResp, fmt.Errorf("CLI returned error: %s", finalResp.Result)
