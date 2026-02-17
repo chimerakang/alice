@@ -32,6 +32,7 @@ type MediaBatch struct {
 	MediaGroupID string
 	UserID       int64
 	ChatKey      chatKey
+	MessageID    int // 第一條消息的 message ID，用於 PII 檢測上下文
 	FirstSeen    time.Time
 	LastSeen     time.Time
 	timer        *time.Timer // 用於延遲處理的計時器
@@ -451,7 +452,7 @@ func (t *TelegramBot) Start() {
 			if update.Message != nil && update.Message.Chat != nil && update.Message.From != nil {
 				msg := update.Message
 				key := chatKey{chatID: msg.Chat.ID, threadID: msg.MessageThreadID}
-				go t.handleMessage(key, msg.From.ID, msg.Text, msg.Caption, msg.Photo, msg.Voice, msg.Document, msg.MediaGroupID)
+				go t.handleMessage(key, msg.From.ID, msg.Text, msg.Caption, msg.Photo, msg.Voice, msg.Document, msg.MediaGroupID, msg.MessageID)
 			}
 
 			// Handle callback queries (inline keyboard button clicks)
@@ -464,7 +465,7 @@ func (t *TelegramBot) Start() {
 	}
 }
 
-func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, caption string, photo []PhotoSize, voice *Voice, document *Document, mediaGroupID string) {
+func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, caption string, photo []PhotoSize, voice *Voice, document *Document, mediaGroupID string, messageID int) {
 	// 調試日誌
 	var voiceInfo string = "none"
 	if voice != nil {
@@ -490,21 +491,21 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	// Handle photo messages - 支援批次處理
 	if len(photo) > 0 {
 		log.Printf("[telegram] handling photo message with %d photos, mediaGroupID=%s", len(photo), mediaGroupID)
-		t.handlePhotoMessageBatch(key, userID, photo, caption, mediaGroupID)
+		t.handlePhotoMessageBatch(key, userID, photo, caption, mediaGroupID, messageID)
 		return
 	}
 
 	// Handle voice messages
 	if voice != nil {
 		log.Printf("[telegram] handling voice message: duration=%ds, size=%d bytes", voice.Duration, voice.FileSize)
-		t.handleVoiceMessage(key, userID, voice, caption)
+		t.handleVoiceMessage(key, userID, voice, caption, messageID)
 		return
 	}
 
 	// Handle document messages
 	if document != nil {
 		log.Printf("[telegram] handling document message: name=%s, size=%d bytes, type=%s", document.FileName, document.FileSize, document.MimeType)
-		t.handleDocumentMessage(key, userID, document, caption)
+		t.handleDocumentMessage(key, userID, document, caption, messageID)
 		return
 	}
 
@@ -533,6 +534,8 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			UserID:      userID,
 			MessageType: "text",
 			SourceType:  "telegram",
+			ProjectPath: t.config.DefaultProjectDir,
+			MessageID:   messageID,
 		})
 		if len(detected) > 0 {
 			// PII 事件已由 DetectAndFilterPII 自動記錄
@@ -1842,7 +1845,7 @@ func (t *TelegramBot) handleTasks(key chatKey) {
 
 
 // handlePhotoMessageBatch 處理圖片訊息，支援多張圖片批次處理
-func (t *TelegramBot) handlePhotoMessageBatch(key chatKey, userID int64, photo []PhotoSize, caption string, mediaGroupID string) {
+func (t *TelegramBot) handlePhotoMessageBatch(key chatKey, userID int64, photo []PhotoSize, caption string, mediaGroupID string, messageID int) {
 	// 檢查多媒體支援是否開啟
 	if !t.config.Multimedia.EnablePhotoSupport {
 		t.send(key, t.getLocalizedMessage(key.chatID, "photo_disabled", nil))
@@ -1852,7 +1855,7 @@ func (t *TelegramBot) handlePhotoMessageBatch(key chatKey, userID int64, photo [
 	// 如果沒有 mediaGroupID，這是單張圖片的多個尺寸，直接處理單張圖片
 	if mediaGroupID == "" {
 		log.Printf("[telegram] single photo with %d size variants, processing as single image", len(photo))
-		t.handleSinglePhoto(key, userID, photo, caption)
+		t.handleSinglePhoto(key, userID, photo, caption, messageID)
 		return
 	}
 
@@ -1873,6 +1876,7 @@ func (t *TelegramBot) handlePhotoMessageBatch(key chatKey, userID int64, photo [
 			MediaGroupID: mediaGroupID,
 			UserID:       userID,
 			ChatKey:      key,
+			MessageID:    messageID,
 			FirstSeen:    now,
 			LastSeen:     now,
 		}
@@ -1925,18 +1929,18 @@ func (t *TelegramBot) processBatch(batchKey string) {
 	if len(batch.Photos) == 1 {
 		// 單張圖片，使用原有邏輯
 		t.send(batch.ChatKey, t.getLocalizedMessage(batch.ChatKey.chatID, "photo_analyzing_single", nil))
-		t.handleSinglePhoto(batch.ChatKey, batch.UserID, []PhotoSize{batch.Photos[0]}, batch.Caption)
+		t.handleSinglePhoto(batch.ChatKey, batch.UserID, []PhotoSize{batch.Photos[0]}, batch.Caption, batch.MessageID)
 	} else {
 		// 多張圖片，批次處理
 		msg := t.getLocalizedMessage(batch.ChatKey.chatID, "photo_analyzing_batch", nil)
 		msg = strings.ReplaceAll(msg, "{count}", fmt.Sprintf("%d", len(batch.Photos)))
 		t.send(batch.ChatKey, msg)
-		t.handleMultiplePhotos(batch.ChatKey, batch.UserID, batch.Photos, batch.Caption)
+		t.handleMultiplePhotos(batch.ChatKey, batch.UserID, batch.Photos, batch.Caption, batch.MessageID)
 	}
 }
 
 // handleMultiplePhotos 處理多張圖片的批次分析
-func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []PhotoSize, caption string) {
+func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []PhotoSize, caption string, messageID int) {
 	// 取得 Agent 和專案目錄
 	agent := t.getAgent(key)
 	projectDir := agent.ProjectDir()
@@ -2062,6 +2066,8 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 			UserID:      userID,
 			MessageType: "photo",
 			SourceType:  "telegram",
+			ProjectPath: t.config.DefaultProjectDir,
+			MessageID:   messageID,
 		})
 			if len(detected) > 0 {
 				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
@@ -2121,7 +2127,7 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 }
 
 // handleSinglePhoto 處理單張圖片（保留原有邏輯但提取為獨立函數）
-func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []PhotoSize, caption string) {
+func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []PhotoSize, caption string, messageID int) {
 	// 取得最高解析度的圖片（通常是陣列最後一個）
 	if len(photo) == 0 {
 		return
@@ -2223,6 +2229,8 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 			UserID:      userID,
 			MessageType: "photo",
 			SourceType:  "telegram",
+			ProjectPath: t.config.DefaultProjectDir,
+			MessageID:   messageID,
 		})
 			if len(detected) > 0 {
 				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
@@ -2282,7 +2290,7 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 }
 
 // handlePhotoMessage 處理圖片訊息（原有函數，保留用於向後相容）
-func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []PhotoSize, caption string) {
+func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []PhotoSize, caption string, messageID int) {
 	// 檢查多媒體支援是否開啟
 	if !t.config.Multimedia.EnablePhotoSupport {
 		t.send(key, t.getLocalizedMessage(key.chatID, "photo_disabled", nil))
@@ -2353,6 +2361,8 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 			UserID:      userID,
 			MessageType: "photo",
 			SourceType:  "telegram",
+			ProjectPath: t.config.DefaultProjectDir,
+			MessageID:   messageID,
 		})
 			if len(detected) > 0 {
 				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
@@ -2577,7 +2587,7 @@ func (t *TelegramBot) DownloadTelegramFile(fileID, fileType string) (string, err
 }
 
 // handleVoiceMessage 處理語音訊息
-func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice, caption string) {
+func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice, caption string, messageID int) {
 	// 檢查語音支援是否開啟
 	if !t.config.Multimedia.EnableVoiceSupport {
 		msg := t.getLocalizedMessage(key.chatID, "voice_disabled", nil)
@@ -2650,8 +2660,10 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true, &PIIDetectionContext{
 			ChatID:      key.chatID,
 			UserID:      userID,
-			MessageType: "photo",
+			MessageType: "voice",
 			SourceType:  "telegram",
+			ProjectPath: t.config.DefaultProjectDir,
+			MessageID:   messageID,
 		})
 			if len(detected) > 0 {
 				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
@@ -3031,7 +3043,7 @@ func (t *TelegramBot) transcribeVoiceWithWhisper(audioPath string) (string, erro
 }
 
 // handleDocumentMessage 處理文件訊息
-func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document *Document, caption string) {
+func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document *Document, caption string, messageID int) {
 	// 檢查檔案大小限制
 	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
 	if document.FileSize > maxSizeBytes {

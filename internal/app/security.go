@@ -434,10 +434,12 @@ func (rl *RateLimiter) cleanupExpired() {
 // DetectAndFilterPII 偵測和過濾 PII
 // PIIDetectionContext provides context information for PII detection logging
 type PIIDetectionContext struct {
-	ChatID        int64  // Telegram chat ID
-	UserID        int64  // User ID if available
-	MessageType   string // "text", "voice", "photo", "batch", etc.
-	SourceType    string // "telegram", "agent", "api", etc.
+	ChatID          int64  // Telegram chat ID
+	UserID          int64  // User ID if available
+	MessageType     string // "text", "voice", "photo", "batch", etc.
+	SourceType      string // "telegram", "agent", "api", etc.
+	ProjectPath     string // Project directory path for context tracking
+	MessageID       int    // Telegram message ID for conversation tracking
 	RedactedSnippet string // First 100 chars of filtered text for reference
 }
 
@@ -490,6 +492,12 @@ func (sm *SecurityManager) DetectAndFilterPII(text string, logEvent bool, ctx *P
 					}
 					if ctx.SourceType != "" {
 						details["source_type"] = ctx.SourceType
+					}
+					if ctx.ProjectPath != "" {
+						details["project_path"] = ctx.ProjectPath
+					}
+					if ctx.MessageID > 0 {
+						details["message_id"] = fmt.Sprintf("%d", ctx.MessageID)
 					}
 				}
 

@@ -771,6 +771,20 @@ export default function Security() {
                     </div>
                   )}
 
+                  {selectedEvent.details.project_path && (
+                    <div>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">Project</label>
+                      <p className="text-white text-sm mt-1 font-mono break-all">{selectedEvent.details.project_path}</p>
+                    </div>
+                  )}
+
+                  {selectedEvent.details.message_id && (
+                    <div>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">Message Info</label>
+                      <p className="text-white text-sm mt-1 font-mono">Message ID: <span className="text-cyan-400">{selectedEvent.details.message_id}</span></p>
+                    </div>
+                  )}
+
                   {selectedEvent.details.redacted_snippet && (
                     <div className="bg-gray-800/50 border border-gray-700 rounded p-3">
                       <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">
