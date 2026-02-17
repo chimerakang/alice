@@ -592,6 +592,15 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	var err error
 	var statusMessageID int
 
+	// Add language preference hint to message for Claude
+	userLang := t.getChatLanguage(key.chatID)
+	userMessage := text
+	if userLang == "en" {
+		userMessage = "Please respond in English.\n\n" + text
+	} else if userLang == "zh-TW" {
+		userMessage = "請用繁體中文回應。\n\n" + text
+	}
+
 	// Create enhanced update callback with stop button support
 	createUpdateCallback := func() func(string, bool) {
 		var firstUpdate = true
@@ -617,12 +626,12 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	}
 
 	// Check if multi-agent coordination should be used
-	if globalAgentCoordinator.IsEnabled() && globalAgentCoordinator.ShouldUseMultiAgent(text) {
+	if globalAgentCoordinator.IsEnabled() && globalAgentCoordinator.ShouldUseMultiAgent(userMessage) {
 		// Use coordinated multi-agent execution
-		response, err = globalAgentCoordinator.ExecuteCoordinatedTask(text, agent, createUpdateCallback())
+		response, err = globalAgentCoordinator.ExecuteCoordinatedTask(userMessage, agent, createUpdateCallback())
 	} else if globalAgentCoordinator.IsEnabled() {
 		// Use single specialized agent based on task routing
-		agentType := globalAgentCoordinator.RouteTask(text)
+		agentType := globalAgentCoordinator.RouteTask(userMessage)
 		if agentType != GeneralAgent {
 			specializedAgent := globalAgentCoordinator.GetOrCreateAgent(agentType, agent)
 			msg := t.getLocalizedMessage(key.chatID, "using_agent", nil)
@@ -631,17 +640,17 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 
 			response, err = specializedAgent.ExecuteSubTask(SubTask{
 				ID:          fmt.Sprintf("single_%d", time.Now().Unix()),
-				Description: text,
+				Description: userMessage,
 				AgentType:   agentType,
 				Status:      TaskStatusInProgress,
 			}, createUpdateCallback())
 		} else {
 			// Fall back to regular agent
-			response, err = agent.Run(text, createUpdateCallback())
+			response, err = agent.Run(userMessage, createUpdateCallback())
 		}
 	} else {
 		// Regular single agent execution
-		response, err = agent.Run(text, createUpdateCallback())
+		response, err = agent.Run(userMessage, createUpdateCallback())
 	}
 
 	// Remove stop button after completion
@@ -2086,7 +2095,16 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 	// 發送給 Agent 處理 (使用現有會話，就像語音處理一樣)
 	agent = t.getAgent(key)
 
-	response, err := agent.Run(prompt, func(update string, silent bool) {
+	// Add language preference hint
+	userLang := t.getChatLanguage(key.chatID)
+	promptWithLang := prompt
+	if userLang == "en" {
+		promptWithLang = "Please respond in English.\n\n" + prompt
+	} else if userLang == "zh-TW" {
+		promptWithLang = "請用繁體中文回應。\n\n" + prompt
+	}
+
+	response, err := agent.Run(promptWithLang, func(update string, silent bool) {
 		if silent {
 			t.sendSilent(key, update)
 		} else {
@@ -2233,7 +2251,16 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 	msg := t.getLocalizedMessage(key.chatID, "photo_analyzing_single", nil)
 	t.send(key, msg)
 
-	response, err := agent.Run(prompt, func(update string, silent bool) {
+	// Add language preference hint
+	userLang := t.getChatLanguage(key.chatID)
+	promptWithLang := prompt
+	if userLang == "en" {
+		promptWithLang = "Please respond in English.\n\n" + prompt
+	} else if userLang == "zh-TW" {
+		promptWithLang = "請用繁體中文回應。\n\n" + prompt
+	}
+
+	response, err := agent.Run(promptWithLang, func(update string, silent bool) {
 		if silent {
 			t.sendSilent(key, update)
 		} else {
@@ -2347,7 +2374,16 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 	msg := t.getLocalizedMessage(key.chatID, "photo_analyzing_single", nil)
 	t.send(key, msg)
 
-	response, err := agent.Run(prompt, func(update string, silent bool) {
+	// Add language preference hint
+	userLang := t.getChatLanguage(key.chatID)
+	promptWithLang := prompt
+	if userLang == "en" {
+		promptWithLang = "Please respond in English.\n\n" + prompt
+	} else if userLang == "zh-TW" {
+		promptWithLang = "請用繁體中文回應。\n\n" + prompt
+	}
+
+	response, err := agent.Run(promptWithLang, func(update string, silent bool) {
 		if silent {
 			t.sendSilent(key, update)
 		} else {
@@ -2656,7 +2692,17 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 
 	// 發送給 Agent 處理
 	agent := t.getAgent(key)
-	response, err := agent.Run(prompt, func(update string, silent bool) {
+
+	// Add language preference hint
+	userLang := t.getChatLanguage(key.chatID)
+	promptWithLang := prompt
+	if userLang == "en" {
+		promptWithLang = "Please respond in English.\n\n" + prompt
+	} else if userLang == "zh-TW" {
+		promptWithLang = "請用繁體中文回應。\n\n" + prompt
+	}
+
+	response, err := agent.Run(promptWithLang, func(update string, silent bool) {
 		if silent {
 			t.sendSilent(key, update)
 		} else {
@@ -3077,7 +3123,17 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 	// 發送分析訊息
 	analyzeMsg := t.getLocalizedMessage(key.chatID, "document_analyzing", nil)
 	t.send(key, analyzeMsg)
-	response, err := agent.Run(prompt, func(update string, silent bool) {
+
+	// Add language preference hint
+	userLang := t.getChatLanguage(key.chatID)
+	promptWithLang := prompt
+	if userLang == "en" {
+		promptWithLang = "Please respond in English.\n\n" + prompt
+	} else if userLang == "zh-TW" {
+		promptWithLang = "請用繁體中文回應。\n\n" + prompt
+	}
+
+	response, err := agent.Run(promptWithLang, func(update string, silent bool) {
 		if silent {
 			t.sendSilent(key, update)
 		} else {
