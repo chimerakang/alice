@@ -83,7 +83,8 @@ func GetDefaultModelRoutes() []ModelRoute {
 
 // SecurityEvent 安全事件記錄
 type SecurityEvent struct {
-	ID          string                 `json:"id"`
+	ID          string                 `json:"id,omitempty"`
+	EventID     string                 `json:"event_id"`  // Primary ID field for frontend
 	Timestamp   time.Time              `json:"timestamp"`
 	EventType   string                 `json:"event_type"`
 	Severity    string                 `json:"severity"` // low, medium, high, critical
@@ -570,6 +571,7 @@ func (sm *SecurityManager) LogSecurityEvent(event SecurityEvent) {
 	defer sm.auditMu.Unlock()
 
 	event.ID = fmt.Sprintf("sec_%d", time.Now().UnixNano())
+	event.EventID = event.ID // Set EventID same as ID for frontend compatibility
 	event.Timestamp = time.Now()
 
 	sm.auditLog = append(sm.auditLog, event)

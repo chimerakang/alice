@@ -166,15 +166,16 @@ export interface PerformanceAnalytics {
 // ========== Security ==========
 
 export interface SecurityEvent {
-  event_id: string;
+  event_id?: string;  // Optional because API might return `id` instead
+  id?: string;        // Alternative name from backend
   event_type: string;
   severity: Severity;
   description: string;
-  user_id: string;
-  ip: string;
-  mitigated: boolean;
+  user_id?: string;
+  ip?: string;
+  mitigated?: boolean;
   timestamp: string;
-  details?: Record<string, string>;
+  details?: Record<string, any>;
 }
 
 export interface SecurityStats {
