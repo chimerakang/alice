@@ -529,11 +529,11 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 
 		// PII 檢測和過濾 (自動記錄事件)
 		filteredText, detected := globalSecurityManager.DetectAndFilterPII(text, true, &PIIDetectionContext{
-		ChatID:      key.chatID,
-		UserID:      userID,
-		MessageType: "text",
-		SourceType:  "telegram",
-	})
+			ChatID:      key.chatID,
+			UserID:      userID,
+			MessageType: "text",
+			SourceType:  "telegram",
+		})
 		if len(detected) > 0 {
 			// PII 事件已由 DetectAndFilterPII 自動記錄
 			// 警告用戶並使用過濾後的文字

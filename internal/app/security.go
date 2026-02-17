@@ -209,7 +209,9 @@ func getDefaultPIIPatterns() []PIIPattern {
 		},
 		{
 			Name:        "phone",
-			Pattern:     `(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}`,
+			// More strict: require word boundary before the pattern, and exclude leading minus sign
+			// Matches: 123-456-7890, (123) 456-7890, +1-234-567-8901, etc.
+			Pattern:     `(?:^|[\s,;])(?:\+?\d{1,3}[-.\s]?)?\(?(\d{3})\)?[-.\s]?(\d{3})[-.\s]?(\d{4})(?:[\s,;]|$)`,
 			Severity:    "medium",
 			Replacement: "[PHONE_REDACTED]",
 		},
