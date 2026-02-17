@@ -123,6 +123,9 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	// Cost Savings APIs (Issue #74)
 	mux.HandleFunc("/api/costs/savings", wi.handleCostSavings)
 
+	// Internationalization APIs (Issue #76)
+	mux.HandleFunc("/api/language", wi.handleLanguage)
+
 	// Security APIs
 	mux.HandleFunc("/api/security/events", wi.handleSecurityEventsProto)
 	mux.HandleFunc("/api/security/stats", wi.handleSecurityStatsProto)
@@ -2004,6 +2007,59 @@ func (wi *WebInterface) handleModelRoutingSet(w http.ResponseWriter, r *http.Req
 			"mode":      req.Mode,
 			"model":     modelName,
 			"message":   fmt.Sprintf("Model routing mode set to %s (%s)", req.Mode, modelName),
+			"timestamp": time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// handleLanguage handles language preference updates (Issue #76)
+func (wi *WebInterface) handleLanguage(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse request body
+		var req struct {
+			Language string `json:"language"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		// Validate language code
+		if req.Language != "en" && req.Language != "zh-TW" {
+			http.Error(w, "Unsupported language", http.StatusBadRequest)
+			return
+		}
+
+		// Get chat ID from query parameter or use default (0 for anonymous users)
+		var chatID int64 = 0
+		if chatIDStr := r.URL.Query().Get("chat_id"); chatIDStr != "" {
+			var err error
+			if chatID, err = strconv.ParseInt(chatIDStr, 10, 64); err != nil {
+				// If chat_id is not valid, use 0 (frontend-only storage)
+				chatID = 0
+			}
+		}
+
+		// If we have a valid chat_id, persist it in the bot's language manager
+		if chatID != 0 {
+			wi.bot.setChatlanguage(chatID, req.Language)
+		}
+
+		response := map[string]interface{}{
+			"success":   true,
+			"language":  req.Language,
+			"chat_id":   chatID,
+			"message":   "Language preference updated",
 			"timestamp": time.Now(),
 		}
 
