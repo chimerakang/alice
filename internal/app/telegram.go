@@ -726,55 +726,28 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 
 	switch cmd {
 	case "/start", "/help":
-		lang := t.getChatLanguage(key.chatID)
-		var help string
-		if lang == "zh-TW" {
-			help = "🤖 *Claude Code Agent*\n\n"
-			help += t.getLocalizedMessage(key.chatID, "help_intro", nil) + "\n\n"
-			help += t.getLocalizedMessage(key.chatID, "help_forum_topics", nil) + "\n\n"
-			help += t.getLocalizedMessage(key.chatID, "help_basic_commands", nil) + "\n"
-			help += t.getLocalizedMessage(key.chatID, "help_project_desc", nil) + "\n"
-			help += t.getLocalizedMessage(key.chatID, "help_reset_desc", nil) + "\n"
-			help += t.getLocalizedMessage(key.chatID, "help_status_desc", nil) + "\n"
-			help += t.getLocalizedMessage(key.chatID, "help_usage_desc", nil) + "\n\n"
-			help += t.getLocalizedMessage(key.chatID, "help_routing_commands", nil) + "\n"
-			help += t.getLocalizedMessage(key.chatID, "help_fast_desc", nil) + "\n"
-			help += t.getLocalizedMessage(key.chatID, "help_deep_desc", nil) + "\n"
-			help += t.getLocalizedMessage(key.chatID, "help_auto_desc", nil) + "\n"
-			help += t.getLocalizedMessage(key.chatID, "help_savings_desc", nil) + "\n\n"
-			help += t.getLocalizedMessage(key.chatID, "help_advanced_commands", nil) + "\n"
-			help += t.getLocalizedMessage(key.chatID, "help_dashboard_desc", nil) + "\n"
-			help += t.getLocalizedMessage(key.chatID, "help_checkpoints_desc", nil) + "\n"
-			help += t.getLocalizedMessage(key.chatID, "help_abort_desc", nil) + "\n"
-			help += t.getLocalizedMessage(key.chatID, "help_multiagent_desc", nil) + "\n"
-			help += t.getLocalizedMessage(key.chatID, "help_agents_desc", nil) + "\n"
-			help += t.getLocalizedMessage(key.chatID, "help_tasks_desc", nil) + "\n"
-			help += t.getLocalizedMessage(key.chatID, "help_lang_desc", nil)
-		} else {
-			help = "🤖 *Claude Code Agent*\n\n"
-			help += "Send me messages directly and I'll work in your project.\n"
-			help += "Using Claude Code CLI (Max subscription, no extra cost).\n\n"
-			help += "*Support Forum Topics:*\n"
-			help += "Enable Topics in groups, each Topic binds to one project with completely isolated conversations.\n\n"
-			help += "*Basic Commands:*\n"
-			help += "/project <path> — Switch project directory\n"
-			help += "/reset — Clear conversation history\n"
-			help += "/status — View current status\n"
-			help += "/usage — View token usage\n\n"
-			help += "*Model Routing Commands:*\n"
-			help += "/fast — Switch to fast mode ⚡ (Haiku)\n"
-			help += "/deep — Switch to deep mode 🧠 (Opus)\n"
-			help += "/auto — Auto routing mode 🤖\n"
-			help += "/savings — View weekly routing savings 💰\n\n"
-			help += "*Advanced Commands:*\n"
-			help += "/dashboard — View system monitoring dashboard\n"
-			help += "/checkpoints — View checkpoint status\n"
-			help += "/abort — Abort running task\n"
-			help += "/multiagent [enable|disable|status|stats] — Multi-agent coordination\n"
-			help += "/agents — View specialized agent list\n"
-			help += "/tasks — View to-do list\n"
-			help += "/lang — Switch bot language"
-		}
+		// Build help text using localized messages for both languages
+		help := "🤖 *Claude Code Agent*\n\n"
+		help += t.getLocalizedMessage(key.chatID, "help_intro", nil) + "\n\n"
+		help += t.getLocalizedMessage(key.chatID, "help_forum_topics", nil) + "\n\n"
+		help += t.getLocalizedMessage(key.chatID, "help_basic_commands", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_project_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_reset_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_status_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_usage_desc", nil) + "\n\n"
+		help += t.getLocalizedMessage(key.chatID, "help_routing_commands", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_fast_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_deep_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_auto_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_savings_desc", nil) + "\n\n"
+		help += t.getLocalizedMessage(key.chatID, "help_advanced_commands", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_dashboard_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_checkpoints_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_abort_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_multiagent_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_agents_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_tasks_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_lang_desc", nil)
 		t.sendMarkdown(key, help)
 
 	case "/project":
