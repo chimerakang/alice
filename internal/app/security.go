@@ -464,7 +464,7 @@ func (sm *SecurityManager) DetectAndFilterPII(text string, logEvent bool, ctx *P
 			if logEvent {
 				details := map[string]interface{}{
 					"pii_type":     pattern.Name,
-					"matches":      len(matches),
+					"matches":      fmt.Sprintf("%d", len(matches)),
 					"source_type":  "text_processing",
 				}
 
@@ -480,10 +480,10 @@ func (sm *SecurityManager) DetectAndFilterPII(text string, logEvent bool, ctx *P
 				// Add context information if provided
 				if ctx != nil {
 					if ctx.ChatID > 0 {
-						details["chat_id"] = ctx.ChatID
+						details["chat_id"] = fmt.Sprintf("%d", ctx.ChatID)
 					}
 					if ctx.UserID > 0 {
-						details["user_id"] = ctx.UserID
+						details["user_id"] = fmt.Sprintf("%d", ctx.UserID)
 					}
 					if ctx.MessageType != "" {
 						details["message_type"] = ctx.MessageType
