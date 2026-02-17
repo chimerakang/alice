@@ -23,6 +23,7 @@
     "session_id": "`{session_id}`",
     "model_fast": "`{model}` (⚡ 快速模式)",
     "model_deep": "`{model}` (🧠 深度模式)",
+    "model_auto": "`{model}` (🤖 自動模式)",
     "model_default": "`{model}`",
     "checkpoints_usage": "用法: /checkpoints [list|stats]",
     "multiagent_enabled": "✅ 多代理協調已啟用",

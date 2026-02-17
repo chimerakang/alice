@@ -23,6 +23,7 @@
     "session_id": "`{session_id}`",
     "model_fast": "`{model}` (⚡ Fast Mode)",
     "model_deep": "`{model}` (🧠 Deep Mode)",
+    "model_auto": "`{model}` (🤖 Auto Mode)",
     "model_default": "`{model}`",
     "checkpoints_usage": "Usage: /checkpoints [list|stats]",
     "multiagent_enabled": "✅ Multi-agent coordination enabled",
