@@ -131,33 +131,110 @@ export default function Security() {
     },
   ].filter(item => item.value > 0);
 
+  // Determine time range and bucket granularity
+  const getTimeRangeInfo = () => {
+    const now = new Date();
+    let startTime = dateRange.startTime ? new Date(dateRange.startTime) : undefined;
+    let endTime = dateRange.endTime ? new Date(dateRange.endTime) : undefined;
+    let label = "Last 12 Hours";
+    let bucketMs = 60 * 60 * 1000; // 1 hour default
+
+    if (!startTime && !endTime) {
+      // Default: last 12 hours
+      startTime = new Date(now.getTime() - 12 * 60 * 60 * 1000);
+      endTime = now;
+      label = "Last 12 Hours";
+      bucketMs = 60 * 60 * 1000; // 1 hour
+    } else if (startTime && endTime) {
+      const spanMs = endTime.getTime() - startTime.getTime();
+      const spanHours = spanMs / (60 * 60 * 1000);
+      const spanDays = spanMs / (24 * 60 * 60 * 1000);
+
+      if (spanHours <= 1) {
+        label = "Last 1 Hour";
+        bucketMs = 5 * 60 * 1000; // 5 minutes
+      } else if (spanHours <= 6) {
+        label = "Last 6 Hours";
+        bucketMs = 30 * 60 * 1000; // 30 minutes
+      } else if (spanHours <= 24) {
+        label = "Last 24 Hours";
+        bucketMs = 60 * 60 * 1000; // 1 hour
+      } else if (spanDays <= 7) {
+        label = "Last 7 Days";
+        bucketMs = 4 * 60 * 60 * 1000; // 4 hours
+      } else if (spanDays <= 30) {
+        label = "Last 30 Days";
+        bucketMs = 24 * 60 * 60 * 1000; // 1 day
+      } else {
+        // Custom range
+        const startStr = startTime.toLocaleDateString();
+        const endStr = endTime.toLocaleDateString();
+        label = `${startStr} - ${endStr}`;
+        bucketMs = 24 * 60 * 60 * 1000; // 1 day
+      }
+    }
+
+    return { startTime, endTime, label, bucketMs };
+  };
+
+  const { endTime: rangeEnd, label: timeRangeLabel } = getTimeRangeInfo();
+
   // Event trends over time (from real data)
   const eventTrends: EventTrend[] = useMemo(() => {
     if (allEvents.length === 0) return [];
 
-    // Group events by hour
-    const hourBuckets: Record<string, EventTrend> = {};
-    const now = new Date();
+    const buckets: Record<number, EventTrend> = {};
+    const { startTime, bucketMs: bucketSize } = getTimeRangeInfo();
 
-    // Initialize last 12 hours
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getTime() - i * 60 * 60 * 1000);
-      const key = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:00`;
-      hourBuckets[key] = { timestamp: key, low: 0, medium: 0, high: 0, critical: 0 };
+    // Initialize buckets based on time range
+    if (startTime && rangeEnd) {
+      let currentTime = new Date(startTime.getTime());
+      const endTime = new Date(rangeEnd.getTime());
+
+      while (currentTime.getTime() <= endTime.getTime()) {
+        const bucketKey = Math.floor(currentTime.getTime() / bucketSize) * bucketSize;
+
+        if (!buckets[bucketKey]) {
+          const d = new Date(bucketKey);
+          let timestamp = "";
+
+          if (bucketSize === 5 * 60 * 1000) {
+            // 5 min: HH:MM
+            timestamp = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+          } else if (bucketSize === 30 * 60 * 1000) {
+            // 30 min: HH:MM
+            timestamp = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+          } else if (bucketSize === 60 * 60 * 1000) {
+            // 1 hour: M/D HH:00
+            timestamp = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:00`;
+          } else if (bucketSize === 4 * 60 * 60 * 1000) {
+            // 4 hours: M/D HH:00
+            timestamp = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:00`;
+          } else {
+            // 1 day: M/D
+            timestamp = `${d.getMonth() + 1}/${d.getDate()}`;
+          }
+
+          buckets[bucketKey] = { timestamp, low: 0, medium: 0, high: 0, critical: 0 };
+        }
+
+        currentTime = new Date(currentTime.getTime() + bucketSize);
+      }
     }
 
     allEvents.forEach(event => {
       const d = new Date(event.timestamp);
       if (isNaN(d.getTime())) return;
-      const key = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:00`;
-      if (hourBuckets[key]) {
+
+      const bucketKey = Math.floor(d.getTime() / bucketSize) * bucketSize;
+      if (buckets[bucketKey]) {
         const sev = getSeverityLevel(event.severity);
-        hourBuckets[key][sev as keyof Omit<EventTrend, 'timestamp'>]++;
+        buckets[bucketKey][sev as keyof Omit<EventTrend, 'timestamp'>]++;
       }
     });
 
-    return Object.values(hourBuckets);
-  }, [allEvents]);
+    return Object.values(buckets);
+  }, [allEvents, dateRange]);
 
   // Extract real PII detection records from security events
   const piiRecords: PIIRecord[] = useMemo(() => {
@@ -381,7 +458,7 @@ export default function Security() {
         <div className="card p-6">
           <h3 className="text-sm font-semibold text-gray-300 mb-4 flex items-center gap-2">
             <Calendar className="w-4 h-4" />
-            Security Events Trend (Last 12 Hours)
+            Security Events Trend ({timeRangeLabel})
           </h3>
           <ResponsiveContainer width="100%" height={200}>
             <AreaChart data={eventTrends}>
