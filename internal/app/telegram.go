@@ -535,18 +535,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		SourceType:  "telegram",
 	})
 		if len(detected) > 0 {
-			// PII 事件已由 DetectAndFilterPII 自動記錄，這裡添加額外的 Telegram 特定資訊
-			globalSecurityManager.LogSecurityEvent(SecurityEvent{
-				EventType:   "pii_detected_telegram",
-				Severity:    "medium", // 降低嚴重性，避免重複高優先級警告
-				Description: fmt.Sprintf("Telegram message contained PII (filtered): %v", detected),
-				UserID:      userID,
-				Details: map[string]interface{}{
-					"detected_types": detected,
-					"chat_id":        key.chatID,
-				},
-			})
-
+			// PII 事件已由 DetectAndFilterPII 自動記錄
 			// 警告用戶並使用過濾後的文字
 			t.send(key, t.getLocalizedMessage(key.chatID, "pii_detected", nil))
 			text = filteredText

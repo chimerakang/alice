@@ -249,9 +249,10 @@ export default function Security() {
     return allEvents
       .filter(e => e.event_type?.includes("pii"))
       .map((e, i) => {
-        // Extract PII type from description (e.g. "PII detected: Email")
+        // Extract PII type from details first (most reliable), fallback to description
+        const piiTypeFromDetails = e.details?.pii_type as string | undefined;
         const typeMatch = e.description?.match(/PII detected(?:\s+in\s+\w+\s+\w+)?:\s*(.+)/);
-        const piiType = typeMatch ? typeMatch[1] : e.event_type || "Unknown";
+        const piiType = piiTypeFromDetails || (typeMatch ? typeMatch[1] : e.event_type || "Unknown");
 
         // Derive location from message_type and source_type
         let location = "System";

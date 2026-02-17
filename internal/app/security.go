@@ -461,9 +461,18 @@ func (sm *SecurityManager) DetectAndFilterPII(text string, logEvent bool, ctx *P
 			// Only log PII detection event if requested
 			if logEvent {
 				details := map[string]interface{}{
-					"pattern":      pattern.Name,
+					"pii_type":     pattern.Name,
 					"matches":      len(matches),
 					"source_type":  "text_processing",
+				}
+
+				// Always create redacted snippet from filtered text
+				snippet := filtered
+				if len(snippet) > 100 {
+					snippet = snippet[:100]
+				}
+				if snippet != "" {
+					details["redacted_snippet"] = snippet
 				}
 
 				// Add context information if provided
@@ -480,14 +489,11 @@ func (sm *SecurityManager) DetectAndFilterPII(text string, logEvent bool, ctx *P
 					if ctx.SourceType != "" {
 						details["source_type"] = ctx.SourceType
 					}
-					// Create redacted snippet from filtered text
-					snippet := filtered
-					if len(snippet) > 100 {
-						snippet = snippet[:100]
-					}
-					if snippet != "" {
-						details["redacted_snippet"] = snippet
-					}
+				}
+
+				userID := int64(0)
+				if ctx != nil {
+					userID = ctx.UserID
 				}
 
 				sm.LogSecurityEvent(SecurityEvent{
@@ -495,7 +501,7 @@ func (sm *SecurityManager) DetectAndFilterPII(text string, logEvent bool, ctx *P
 					Severity:    pattern.Severity,
 					Description: fmt.Sprintf("PII detected: %s", pattern.Name),
 					Details:     details,
-					UserID:      ctx.UserID,
+					UserID:      userID,
 				})
 			}
 		}
