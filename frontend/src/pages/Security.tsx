@@ -555,10 +555,10 @@ export default function Security() {
                   key={record.id}
                   className="border-b border-gray-800/50 hover:bg-gray-800/20 cursor-pointer transition-colors"
                   onClick={() => {
-                    // Find the original SecurityEvent by event_id or id
+                    // Find the original SecurityEvent by event_id or id from allEvents (includes WebSocket events)
                     const recordId = record.event_id;
                     if (recordId) {
-                      const sourceEvent = events.find(e => (e.event_id === recordId) || (e.id === recordId));
+                      const sourceEvent = allEvents.find(e => (e.event_id === recordId) || (e.id === recordId));
                       if (sourceEvent) {
                         setSelectedEvent(sourceEvent);
                       }
