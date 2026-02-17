@@ -3236,7 +3236,8 @@ func (t *TelegramBot) detectProjectType(chatID int64, projectPath string) string
 // handleLangCommand 處理 /lang 指令 - 切換 Bot 語言
 func (t *TelegramBot) handleLangCommand(key chatKey, text string) {
 	if t.i18n == nil {
-		t.send(key, "❌ i18n 系統未初始化")
+		msg := t.getLocalizedMessage(key.chatID, "i18n_system_not_init", nil)
+		t.send(key, msg)
 		return
 	}
 

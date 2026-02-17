@@ -418,7 +418,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	}()
 
 	if onUpdate != nil {
-		onUpdate("🔧 Claude Code 處理中...", false)
+		onUpdate("🔧 Claude Code processing...", false)
 	}
 
 	ps := a.current()
@@ -561,19 +561,19 @@ func formatToolUpdate(name string, input map[string]interface{}) string {
 	switch name {
 	case "Read":
 		if path, ok := input["file_path"].(string); ok {
-			return fmt.Sprintf("📖 讀取 %s", filepath.Base(path))
+			return fmt.Sprintf("📖 Read %s", filepath.Base(path))
 		}
-		return "📖 讀取檔案"
+		return "📖 Read file"
 	case "Write":
 		if path, ok := input["file_path"].(string); ok {
-			return fmt.Sprintf("✏️ 寫入 %s", filepath.Base(path))
+			return fmt.Sprintf("✍️ Write %s", filepath.Base(path))
 		}
-		return "✏️ 寫入檔案"
+		return "✍️ Write file"
 	case "Edit":
 		if path, ok := input["file_path"].(string); ok {
-			return fmt.Sprintf("✏️ 編輯 %s", filepath.Base(path))
+			return fmt.Sprintf("✏️ Edit %s", filepath.Base(path))
 		}
-		return "✏️ 編輯檔案"
+		return "✏️ Edit file"
 	case "Bash":
 		if cmd, ok := input["command"].(string); ok {
 			if len(cmd) > 60 {
@@ -581,17 +581,17 @@ func formatToolUpdate(name string, input map[string]interface{}) string {
 			}
 			return fmt.Sprintf("💻 %s", cmd)
 		}
-		return "💻 執行指令"
+		return "💻 Execute command"
 	case "Glob":
 		if pattern, ok := input["pattern"].(string); ok {
-			return fmt.Sprintf("🔍 搜尋 %s", pattern)
+			return fmt.Sprintf("🔍 Find %s", pattern)
 		}
-		return "🔍 搜尋檔案"
+		return "🔍 Find files"
 	case "Grep":
 		if pattern, ok := input["pattern"].(string); ok {
-			return fmt.Sprintf("🔍 搜尋 %s", pattern)
+			return fmt.Sprintf("🔎 Search %s", pattern)
 		}
-		return "🔍 搜尋程式碼"
+		return "🔎 Search content"
 	default:
 		return fmt.Sprintf("🔧 %s", name)
 	}
