@@ -2191,8 +2191,11 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 	// 檢查檔案大小限制
 	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
 	if targetPhoto.FileSize > maxSizeBytes {
-		t.send(key, fmt.Sprintf("📷 圖片檔案過大（%s），限制為 %dMB。",
-			formatFileSize(targetPhoto.FileSize), t.config.Multimedia.MaxFileSizeMB))
+		msg := t.getLocalizedMessage(key.chatID, "photo_file_too_large", nil)
+		msg = strings.ReplaceAll(msg, "{size}", formatFileSize(targetPhoto.FileSize))
+		msg = strings.ReplaceAll(msg, "{limit}", fmt.Sprintf("%d", t.config.Multimedia.MaxFileSizeMB))
+		msg = strings.ReplaceAll(msg, "{index}", "")
+		t.send(key, msg)
 		return
 	}
 
@@ -2200,7 +2203,9 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 	imagePath, err := t.DownloadTelegramFile(targetPhoto.FileID, "photo")
 	if err != nil {
 		log.Printf("[telegram] download photo error: %v", err)
-		t.send(key, "📷 下載圖片失敗，請稍後再試。")
+		msg := t.getLocalizedMessage(key.chatID, "photo_download_failed", nil)
+		msg = strings.ReplaceAll(msg, "{index}", "")
+		t.send(key, msg)
 		return
 	}
 
@@ -2259,7 +2264,8 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 
 	// 發送給 Agent 處理
 	agent := t.getAgent(key)
-	t.send(key, "📷 正在分析圖片...")
+	msg := t.getLocalizedMessage(key.chatID, "photo_analyzing_single", nil)
+	t.send(key, msg)
 
 	response, err := agent.Run(prompt, func(update string, silent bool) {
 		if silent {
@@ -2270,7 +2276,8 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 	})
 	if err != nil {
 		log.Printf("[telegram] photo analysis error: %v", err)
-		t.send(key, "📷 圖片分析失敗，請稍後再試。")
+		msg := t.getLocalizedMessage(key.chatID, "photo_analysis_failed", nil)
+		t.send(key, msg)
 		return
 	}
 
