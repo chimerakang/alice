@@ -65,6 +65,7 @@ export default function Security() {
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const { securityEvents } = useAppStore();
   const [dateRange, setDateRange] = useState<DateRange>({});
+  const [selectedEvent, setSelectedEvent] = useState<SecurityEvent | null>(null);
 
   const handleDateRangeChange = useCallback((range: DateRange) => {
     setDateRange(range);
@@ -650,7 +651,11 @@ export default function Security() {
             </thead>
             <tbody>
               {filteredEvents.map((event, i) => (
-                <tr key={event.event_id || i} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                <tr
+                  key={event.event_id || i}
+                  className="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer transition-colors"
+                  onClick={() => setSelectedEvent(event)}
+                >
                   <td className="py-2 text-gray-300 font-mono">
                     {event.timestamp ? new Date(event.timestamp).toLocaleString() : "N/A"}
                   </td>
@@ -690,6 +695,102 @@ export default function Security() {
           </table>
         </div>
       </div>
+
+      {/* Event Details Modal */}
+      {selectedEvent && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-gray-900 border border-gray-700 rounded-lg max-w-2xl w-full max-h-96 overflow-y-auto">
+            <div className="sticky top-0 bg-gray-900 border-b border-gray-700 p-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white">Security Event Details</h3>
+              <button
+                onClick={() => setSelectedEvent(null)}
+                className="text-gray-400 hover:text-white text-xl"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-gray-400 uppercase">Timestamp</label>
+                <p className="text-white font-mono text-sm mt-1">
+                  {selectedEvent.timestamp ? new Date(selectedEvent.timestamp).toLocaleString() : "N/A"}
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-400 uppercase">Event Type</label>
+                <p className="text-white font-mono text-sm mt-1">{selectedEvent.event_type || "Unknown"}</p>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-400 uppercase">Severity</label>
+                <p className="text-white font-mono text-sm mt-1">
+                  {getSeverityLevel(selectedEvent.severity).toUpperCase()}
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-400 uppercase">Description</label>
+                <p className="text-gray-300 text-sm mt-1">{selectedEvent.description || "No description"}</p>
+              </div>
+
+              {selectedEvent.details && (
+                <>
+                  {(selectedEvent.details.chat_id || selectedEvent.details.user_id) && (
+                    <div className="bg-gray-800/50 border border-gray-700 rounded p-3">
+                      <label className="text-xs font-semibold text-gray-400 uppercase">Affected Chat/User</label>
+                      <div className="text-white text-sm mt-2 space-y-1 font-mono">
+                        {selectedEvent.details.chat_id && (
+                          <p>Chat ID: <span className="text-cyan-400">{selectedEvent.details.chat_id}</span></p>
+                        )}
+                        {selectedEvent.details.user_id && (
+                          <p>User ID: <span className="text-cyan-400">{selectedEvent.details.user_id}</span></p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedEvent.details.message_type && (
+                    <div>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">Message Type</label>
+                      <p className="text-white text-sm mt-1">{selectedEvent.details.message_type}</p>
+                    </div>
+                  )}
+
+                  {selectedEvent.details.redacted_snippet && (
+                    <div className="bg-gray-800/50 border border-gray-700 rounded p-3">
+                      <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">
+                        Redacted Content Preview (Sensitive Data Filtered)
+                      </label>
+                      <p className="text-gray-300 text-sm font-mono whitespace-pre-wrap break-words">
+                        {selectedEvent.details.redacted_snippet}
+                      </p>
+                      <p className="text-gray-500 text-xs mt-2">
+                        ℹ️ To view the full conversation, please check the original Telegram chat ID listed above.
+                      </p>
+                    </div>
+                  )}
+
+                  {selectedEvent.details.matches && (
+                    <div>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">PII Matches Found</label>
+                      <p className="text-orange-400 font-mono text-sm mt-1">{selectedEvent.details.matches} instances</p>
+                    </div>
+                  )}
+
+                  {selectedEvent.details.pattern && (
+                    <div>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">PII Pattern Detected</label>
+                      <p className="text-white text-sm mt-1">{selectedEvent.details.pattern}</p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

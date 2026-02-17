@@ -2,7 +2,7 @@
 
 > Alice 是一個 Go-based Telegram bot，通過 Claude Code CLI 進行代碼輔助，搭配 React 儀表板監控 AI 決策、工具執行和專案活動。
 >
-> **Last updated:** 2026-02-17
+> **Last updated:** 2026-02-17 08:24 UTC
 >
 > **Auto-generated from GitHub Issues** — Run `/task-sync` to regenerate.
 
@@ -27,7 +27,7 @@
 | P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 100% (1/1) | ✅ |
 | P11 - User Experience | 指令健全性和用戶體驗改善 | 100% (1/1) | ✅ |
 | P12 - Dashboard Analytics | Claude Code Hooks UI 增強：統計圖表 + 用戶指南 | 100% (1/1) | ✅ |
-| P13 - Future Enhancements | 未來功能增強與優化 | 45% (11/24) | 🔄 |
+| P13 - Future Enhancements | 未來功能增強與優化 | 54% (14/26) | 🔄 |
 | P14 - Commercialization Strategy | Alice AI Agent 商業化發展策略與產品定位 | 0% (0/6) | 🔄 |
 | P2 - Monitoring | Web Dashboard + API + 監控系統 | 100% (7/7) | ✅ |
 | P3 - Data Layer | 持久化 + Git 整合 + Checkpoint | 100% (5/5) | ✅ |
@@ -65,7 +65,7 @@
 |---|------|-------|--------|
 | P12.1 | **📊 Claude Code Hooks UI 增強：Dashboard 統計圖表 + 用戶指南** | [#36](https://github.com/chimerakang/alice/issues/36) | ✅ |
 
-## P13 - Future Enhancements (🔄 45%)
+## P13 - Future Enhancements (🔄 54%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
@@ -93,6 +93,7 @@
 | P13.22 | **/usage 指令增加按模型分類的 token 用量與費用顯示** | [#77](https://github.com/chimerakang/alice/issues/77) | ✅ |
 | P13.23 | **Add project_path field to performance_metrics table for per-project token cost tracking** | [#78](https://github.com/chimerakang/alice/issues/78) | 🔄 |
 | P13.24 | **🐛 Smart Routing 導致對話上下文丟失：Model 切換時強制清空 Session** | [#79](https://github.com/chimerakang/alice/issues/79) | ✅ |
+| P13.25 | **🎨 Cost Trend 頁面 UI 修正：標籤更新 + 卡片橫向排列** | [#80](https://github.com/chimerakang/alice/issues/80) | 🔄 |
 
 ## P14 - Commercialization Strategy (🔄 0%)
 
@@ -222,6 +223,7 @@
 | [#77](https://github.com/chimerakang/alice/issues/77) | /usage 指令增加按模型分類的 token 用量與費用顯示 | P13 - Future Enhancements | ✅ |
 | [#78](https://github.com/chimerakang/alice/issues/78) | Add project_path field to performance_metrics table for per-project token cost tracking | P13 - Future Enhancements | 🔄 |
 | [#79](https://github.com/chimerakang/alice/issues/79) | 🐛 Smart Routing 導致對話上下文丟失：Model 切換時強制清空 Session | P13 - Future Enhancements | ✅ |
+| [#80](https://github.com/chimerakang/alice/issues/80) | 🎨 Cost Trend 頁面 UI 修正：標籤更新 + 卡片橫向排列 | P13 - Future Enhancements | 🔄 |
 | [#49](https://github.com/chimerakang/alice/issues/49) | Alice 商業化：單機版隱私優先定位策略 | P14 - Commercialization Strategy | 🔄 |
 | [#51](https://github.com/chimerakang/alice/issues/51) | 多人版架構設計：從單機到團隊協作 | P14 - Commercialization Strategy | 🔄 |
 | [#53](https://github.com/chimerakang/alice/issues/53) | 競品分析深化：Entire Checkpoints vs Alice 差異化策略 | P14 - Commercialization Strategy | 🔄 |
@@ -267,9 +269,9 @@
 
 ## Summary
 
-**Total Issues:** 67
-**Completed:** 48 ✅
-**In Progress:** 19 🔄
+**Total Issues:** 80
+**Completed:** 63 ✅
+**In Progress:** 17 🔄
 
-**Last sync:** 2026-02-16 17:22 UTC
+**Last sync:** 2026-02-17 08:24 UTC
 
