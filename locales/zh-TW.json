@@ -135,6 +135,7 @@
     "dashboard_timeline": "  📈 Timeline: http://localhost:{port}/timeline.html\n",
     "dashboard_test": "  🧪 測試頁面: http://localhost:{port}/test-timeline.html\n",
     "dashboard_database": "  📁 資料庫: {path}\n",
-    "i18n_not_initialized": "❌ i18n 系統未初始化"
+    "i18n_not_initialized": "❌ i18n 系統未初始化",
+    "status_format": "📊 *狀態*\n專案: `{project}`\n模型: {model}\nSession: {session}\nCLI 呼叫: {calls} 次\n累計: {tokens_in}K in / {tokens_out}K out"
   }
 }

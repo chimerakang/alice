@@ -667,10 +667,14 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		if response != "" {
 			// Partial success: send accumulated content, then show error
 			t.sendLong(key, response)
-			t.send(key, fmt.Sprintf("⚠️ 過程中發生錯誤: %s", extractErrorReason(err.Error())))
+			msg := t.getLocalizedMessage(key.chatID, "error_occurred", nil)
+			msg = strings.ReplaceAll(msg, "{error}", extractErrorReason(err.Error()))
+			t.send(key, msg)
 			return
 		}
-		t.send(key, fmt.Sprintf("❌ 錯誤: %s", extractErrorReason(err.Error())))
+		msg := t.getLocalizedMessage(key.chatID, "error_prefix", nil)
+		msg = strings.ReplaceAll(msg, "{error}", extractErrorReason(err.Error()))
+		t.send(key, msg)
 		return
 	}
 
@@ -788,9 +792,14 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		projectName := filepath.Base(dir)
 
 		// 建構成功訊息
-		successMsg := fmt.Sprintf("✅ 專案已設定為：%s", projectName)
-		successMsg += fmt.Sprintf("\n📂 路徑：`%s`", dir)
-		successMsg += fmt.Sprintf("\n🔧 類型：%s", projectType)
+		successMsg := t.getLocalizedMessage(key.chatID, "project_set", nil)
+		successMsg = strings.ReplaceAll(successMsg, "{name}", projectName)
+		pathMsg := t.getLocalizedMessage(key.chatID, "project_path", nil)
+		pathMsg = strings.ReplaceAll(pathMsg, "{path}", dir)
+		successMsg += "\n" + pathMsg
+		typeMsg := t.getLocalizedMessage(key.chatID, "project_type", nil)
+		typeMsg = strings.ReplaceAll(typeMsg, "{type}", projectType)
+		successMsg += "\n" + typeMsg
 
 		// 檢查是否有 MASTER_TASKS.md (用於 /tasks 功能)
 		tasksFile := filepath.Join(dir, "docs", "MASTER_TASKS.md")
@@ -806,10 +815,13 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		agent := t.getAgent(key)
 		stats := agent.Stats()
 		if stats.APICallCount > 0 {
-			t.send(key, fmt.Sprintf("🔄 對話已清除\n本次用量: %dK in / %dK out (%d 次呼叫)",
-				stats.TotalInputTokens/1000, stats.TotalOutputTokens/1000, stats.APICallCount))
+			msg := t.getLocalizedMessage(key.chatID, "conversation_cleared", nil)
+			msg = strings.ReplaceAll(msg, "{tokens_in}", fmt.Sprintf("%d", stats.TotalInputTokens/1000))
+			msg = strings.ReplaceAll(msg, "{tokens_out}", fmt.Sprintf("%d", stats.TotalOutputTokens/1000))
+			msg = strings.ReplaceAll(msg, "{calls}", fmt.Sprintf("%d", stats.APICallCount))
+			t.send(key, msg)
 		} else {
-			t.send(key, t.getLocalizedMessage(key.chatID, "conversation_history_cleared", nil))
+			t.send(key, t.getLocalizedMessage(key.chatID, "conversation_cleared", nil))
 		}
 		agent.Reset()
 
@@ -825,27 +837,22 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		modelMode := t.getUserModelPreference(key)
 		var modelDisplay string
 		if modelMode == "fast" {
-			modelDisplay = fmt.Sprintf("`%s` (⚡ 快速模式)", t.config.ModelRouting.FastModel)
+			modelDisplay = t.getLocalizedMessage(key.chatID, "model_fast", nil)
+			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.config.ModelRouting.FastModel)
 		} else if modelMode == "deep" {
-			modelDisplay = fmt.Sprintf("`%s` (🧠 深度模式)", t.config.ModelRouting.DeepModel)
+			modelDisplay = t.getLocalizedMessage(key.chatID, "model_deep", nil)
+			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.config.ModelRouting.DeepModel)
 		} else {
 			modelDisplay = fmt.Sprintf("`%s`", t.client.Model)
 		}
 
-		status := fmt.Sprintf(
-			"📊 *狀態*\n"+
-				"專案: `%s`\n"+
-				"模型: %s\n"+
-				"Session: %s\n"+
-				"CLI 呼叫: %d 次\n"+
-				"累計: %dK in / %dK out",
-			agent.projectDir,
-			modelDisplay,
-			sessionInfo,
-			stats.APICallCount,
-			stats.TotalInputTokens/1000,
-			stats.TotalOutputTokens/1000,
-		)
+		status := t.getLocalizedMessage(key.chatID, "status_format", nil)
+		status = strings.ReplaceAll(status, "{project}", agent.projectDir)
+		status = strings.ReplaceAll(status, "{model}", modelDisplay)
+		status = strings.ReplaceAll(status, "{session}", sessionInfo)
+		status = strings.ReplaceAll(status, "{calls}", fmt.Sprintf("%d", stats.APICallCount))
+		status = strings.ReplaceAll(status, "{tokens_in}", fmt.Sprintf("%d", stats.TotalInputTokens/1000))
+		status = strings.ReplaceAll(status, "{tokens_out}", fmt.Sprintf("%d", stats.TotalOutputTokens/1000))
 		t.sendMarkdown(key, status)
 
 	case "/usage":

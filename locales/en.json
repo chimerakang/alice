@@ -135,6 +135,7 @@
     "dashboard_timeline": "  📈 Timeline: http://localhost:{port}/timeline.html\n",
     "dashboard_test": "  🧪 Test Page: http://localhost:{port}/test-timeline.html\n",
     "dashboard_database": "  📁 Database: {path}\n",
-    "i18n_not_initialized": "❌ i18n system is not initialized"
+    "i18n_not_initialized": "❌ i18n system is not initialized",
+    "status_format": "📊 *Status*\nProject: `{project}`\nModel: {model}\nSession: {session}\nCLI Calls: {calls} times\nTotal: {tokens_in}K in / {tokens_out}K out"
   }
 }
