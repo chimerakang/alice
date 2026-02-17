@@ -2070,18 +2070,7 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 			MessageID:   messageID,
 		})
 			if len(detected) > 0 {
-				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
-				globalSecurityManager.LogSecurityEvent(SecurityEvent{
-					EventType:   "pii_detected_batch_caption",
-					Severity:    "low", // 降低嚴重性，主要事件已由 DetectAndFilterPII 記錄
-					Description: fmt.Sprintf("Batch photo caption contained PII (filtered): %v", detected),
-					UserID:      userID,
-					Details: map[string]interface{}{
-						"detected_types": detected,
-						"chat_id":        key.chatID,
-						"context":        "telegram_batch_photo",
-					},
-				})
+				// PII 事件已由 DetectAndFilterPII 自動記錄
 				msg := t.getLocalizedMessage(key.chatID, "photo_caption_pii", nil)
 				t.send(key, msg)
 				caption = filteredCaption
@@ -2233,18 +2222,6 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 			MessageID:   messageID,
 		})
 			if len(detected) > 0 {
-				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
-				globalSecurityManager.LogSecurityEvent(SecurityEvent{
-					EventType:   "pii_detected_photo_caption",
-					Severity:    "low", // 降低嚴重性，主要事件已記錄
-					Description: fmt.Sprintf("Photo caption contained PII (filtered): %v", detected),
-					UserID:      userID,
-					Details: map[string]interface{}{
-						"detected_types": detected,
-						"chat_id":        key.chatID,
-						"context":        "telegram_photo",
-					},
-				})
 				msg := t.getLocalizedMessage(key.chatID, "photo_caption_pii", nil)
 				t.send(key, msg)
 				caption = filteredCaption
@@ -2365,18 +2342,6 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 			MessageID:   messageID,
 		})
 			if len(detected) > 0 {
-				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
-				globalSecurityManager.LogSecurityEvent(SecurityEvent{
-					EventType:   "pii_detected_photo_caption",
-					Severity:    "low", // 降低嚴重性，主要事件已記錄
-					Description: fmt.Sprintf("Single photo caption contained PII (filtered): %v", detected),
-					UserID:      userID,
-					Details: map[string]interface{}{
-						"detected_types": detected,
-						"chat_id":        key.chatID,
-						"context":        "telegram_single_photo",
-					},
-				})
 				piiMsg := t.getLocalizedMessage(key.chatID, "photo_caption_pii", nil)
 				t.send(key, piiMsg)
 				caption = filteredCaption
