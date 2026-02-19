@@ -92,14 +92,19 @@ export const api = {
   /** Get decisions within a specific time range from database */
   getDecisionsByRange: (params: TimeRangeQuery) => {
     const { limit = 2000, offset = 0, startTime, endTime, source } = params;
-    if (!startTime || !endTime) {
-      throw new Error("startTime and endTime are required for getDecisionsByRange");
-    }
+
+    // If date range not provided, default to last 7 days
+    const now = new Date();
+    const defaultStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const finalStartTime = startTime || defaultStart.toISOString();
+    const finalEndTime = endTime || now.toISOString();
+
     const qs = buildQuery({
       limit,
       offset,
-      start_time: startTime,
-      end_time: endTime,
+      start_time: finalStartTime,
+      end_time: finalEndTime,
       source,
     });
     return fetchJson<{ decisions?: DecisionLog[]; total?: number; timestamp: string }>(
