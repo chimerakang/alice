@@ -45,8 +45,20 @@ export function CostTrendChart({ hours = 168 }: CostTrendChartProps) {
         ? await savingsResponse.json()
         : null;
 
+      // 調試日誌
+      console.log("[CostTrendChart] analyticsData:", analyticsData);
+      console.log("[CostTrendChart] savingsData:", savingsData);
+      console.log("[CostTrendChart] analyticsData.analytics?.total_cost:", analyticsData.analytics?.total_cost);
+      console.log("[CostTrendChart] savingsData truthy:", !!savingsData);
+
       // 生成圖表數據
-      if (analyticsData.analytics?.total_cost > 0 && savingsData) {
+      const hasAnalytics = analyticsData?.analytics?.total_cost > 0;
+      const hasSavings = savingsData && savingsData.actual_cost !== undefined;
+
+      console.log("[CostTrendChart] hasAnalytics:", hasAnalytics);
+      console.log("[CostTrendChart] hasSavings:", hasSavings);
+
+      if (hasAnalytics && hasSavings) {
         const trendData = [
           {
             time: `Last ${hours}h`,
@@ -57,8 +69,10 @@ export function CostTrendChart({ hours = 168 }: CostTrendChartProps) {
             savings: parseFloat(savingsData.savings_cost.toFixed(2)),
           },
         ];
+        console.log("[CostTrendChart] trendData:", trendData);
         setData(trendData);
       } else {
+        console.log("[CostTrendChart] Condition failed, setting empty data");
         setData([]);
       }
 
