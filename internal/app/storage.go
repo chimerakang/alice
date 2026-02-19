@@ -529,9 +529,11 @@ func (s *SQLiteStorage) GetDecisionLogsByTimeRange(start, end time.Time, limit i
 }
 
 // GetDecisionLogsByTimeRangeWithOffset 按時間範圍和偏移量獲取決策記錄，支持可選的source過濾
+// Uses datetime function to parse timestamps and compare them reliably
 func (s *SQLiteStorage) GetDecisionLogsByTimeRangeWithOffset(start, end time.Time, limit int, offset int, source string) ([]DecisionLog, error) {
-	startStr := formatTimeForSQLite(start)
-	endStr := formatTimeForSQLite(end)
+	// Convert times to ISO8601 format for SQLite datetime() function to parse
+	startISO := start.UTC().Format("2006-01-02T15:04:05Z")
+	endISO := end.UTC().Format("2006-01-02T15:04:05Z")
 
 	query := `
 		SELECT timestamp, session_id, project_path, chat_id, thread_id, user_prompt,
@@ -543,10 +545,10 @@ func (s *SQLiteStorage) GetDecisionLogsByTimeRangeWithOffset(start, end time.Tim
 			   COALESCE(model, '') as model, COALESCE(routing_reason, '') as routing_reason,
 			   COALESCE(routing_latency_ms, 0) as routing_latency_ms
 		FROM decision_logs
-		WHERE timestamp BETWEEN ? AND ?`
+		WHERE datetime(substr(timestamp, 1, 19)) BETWEEN datetime(?) AND datetime(?)`
 
 	var args []interface{}
-	args = append(args, startStr, endStr)
+	args = append(args, startISO, endISO)
 
 	// Add source filter if provided (non-empty)
 	if source != "" {
