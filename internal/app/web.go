@@ -595,20 +595,58 @@ func (wi *WebInterface) handleRecentDecisions(w http.ResponseWriter, r *http.Req
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Parse limit parameter
+		// Parse limit and offset parameters
 		limitStr := r.URL.Query().Get("limit")
-		limit := 10 // default limit
+		limit := 2000 // default limit
 		if limitStr != "" {
 			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
 				limit = parsedLimit
 			}
 		}
 
-		decisions := globalDecisionLogger.GetRecentDecisions(limit)
+		offsetStr := r.URL.Query().Get("offset")
+		offset := 0
+		if offsetStr != "" {
+			if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+				offset = parsedOffset
+			}
+		}
+
+		// Parse time range parameters (from frontend date picker)
+		startTimeStr := r.URL.Query().Get("start_time")
+		endTimeStr := r.URL.Query().Get("end_time")
+
+		var decisions []DecisionLog
+		var err error
+
+		// If time range is provided, query database; otherwise use in-memory recent decisions
+		if startTimeStr != "" && endTimeStr != "" && globalStorage != nil {
+			startTime, err1 := time.Parse(time.RFC3339, startTimeStr)
+			endTime, err2 := time.Parse(time.RFC3339, endTimeStr)
+
+			if err1 == nil && err2 == nil {
+				// Query database for historical data
+				decisions, err = globalStorage.GetDecisionLogsByTimeRangeWithOffset(startTime, endTime, limit, offset)
+				if err != nil {
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"error": fmt.Sprintf("Database query failed: %v", err),
+					})
+					return
+				}
+			} else {
+				// Fallback to recent decisions if time parsing fails
+				decisions = globalDecisionLogger.GetRecentDecisions(limit)
+			}
+		} else {
+			// Use in-memory recent decisions if no time range specified
+			decisions = globalDecisionLogger.GetRecentDecisions(limit)
+		}
+
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"decisions": decisions,
 			"total":     len(decisions),
 			"limit":     limit,
+			"offset":    offset,
 			"timestamp": time.Now(),
 		})
 	})(w, r)
