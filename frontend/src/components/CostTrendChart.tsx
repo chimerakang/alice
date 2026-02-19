@@ -46,7 +46,7 @@ export function CostTrendChart({ hours = 168 }: CostTrendChartProps) {
         : null;
 
       // 生成圖表數據
-      if (analyticsData.total_cost > 0 && savingsData) {
+      if (analyticsData.analytics?.total_cost > 0 && savingsData) {
         const trendData = [
           {
             time: `Last ${hours}h`,
