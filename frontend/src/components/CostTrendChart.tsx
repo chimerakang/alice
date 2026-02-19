@@ -172,25 +172,28 @@ export function CostTrendChart({ hours = 168 }: CostTrendChartProps) {
       </ResponsiveContainer>
 
       {/* 統計摘要 */}
-      <div className="flex flex-row gap-3 mt-4 pt-4 border-t border-gray-700/30">
+      <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-gray-700/30">
         {data.map((point, idx) => (
-          <div key={idx} className="flex flex-row gap-3 w-full">
+          <>
             <SummaryCard
+              key={`${idx}-actual`}
               icon="💚"
               label="Actual Cost"
               value={`$${point.actualCost.toFixed(2)}`}
             />
             <SummaryCard
+              key={`${idx}-expected`}
               icon="❌"
               label="Standard Model"
               value={`$${point.expectedCost.toFixed(2)}`}
             />
             <SummaryCard
+              key={`${idx}-savings`}
               icon="✅"
               label="Savings"
               value={`$${point.savings.toFixed(2)}`}
             />
-          </div>
+          </>
         ))}
       </div>
     </div>
@@ -207,14 +210,12 @@ function SummaryCard({
   value: string;
 }) {
   return (
-    <div className="bg-gray-800/40 rounded p-2 border border-gray-700/20">
-      <div className="flex items-center gap-2">
+    <div className="bg-gray-800/40 rounded p-3 border border-gray-700/20">
+      <div className="flex items-center gap-2 mb-1">
         <span className="text-sm">{icon}</span>
-        <div className="min-w-0">
-          <div className="text-xs text-gray-500">{label}</div>
-          <div className="text-sm font-semibold text-white truncate">{value}</div>
-        </div>
+        <span className="text-xs text-gray-400">{label}</span>
       </div>
+      <div className="text-sm font-semibold text-white">{value}</div>
     </div>
   );
 }
