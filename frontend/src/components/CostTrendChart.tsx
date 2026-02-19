@@ -158,9 +158,9 @@ export function CostTrendChart({ hours = 168 }: CostTrendChartProps) {
       </ResponsiveContainer>
 
       {/* 統計摘要 */}
-      <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-gray-700/30">
+      <div className="flex flex-row gap-3 mt-4 pt-4 border-t border-gray-700/30">
         {data.map((point, idx) => (
-          <div key={idx} className="space-y-2">
+          <div key={idx} className="flex flex-row gap-3 w-full">
             <SummaryCard
               icon="💚"
               label="Actual Cost"
@@ -168,7 +168,7 @@ export function CostTrendChart({ hours = 168 }: CostTrendChartProps) {
             />
             <SummaryCard
               icon="❌"
-              label="Default Model"
+              label="Standard Model"
               value={`$${point.expectedCost.toFixed(2)}`}
             />
             <SummaryCard

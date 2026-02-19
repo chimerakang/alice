@@ -537,7 +537,9 @@ func (s *SQLiteStorage) GetDecisionLogsByTimeRangeWithOffset(start, end time.Tim
 			   tokens_input, tokens_output, COALESCE(cost_usd, 0) as cost_usd,
 			   COALESCE(thinking_content, '') as thinking_content,
 			   COALESCE(git_commit_hash, '') as git_commit_hash, COALESCE(git_branch, '') as git_branch,
-			   COALESCE(source, 'telegram') as source
+			   COALESCE(source, 'telegram') as source,
+			   COALESCE(model, '') as model, COALESCE(routing_reason, '') as routing_reason,
+			   COALESCE(routing_latency_ms, 0) as routing_latency_ms
 		FROM decision_logs
 		WHERE timestamp BETWEEN ? AND ?
 		ORDER BY timestamp DESC
