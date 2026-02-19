@@ -140,7 +140,8 @@ func (s *SQLiteStorage) execWithRetry(operation func() error) error {
 // Timestamps are stored via time.Time.String() in local timezone (e.g. "2026-02-14 19:58:43 +0800 CST").
 // SQLite BETWEEN does lexicographic comparison, so query params must use matching local timezone format.
 func formatTimeForSQLite(t time.Time) string {
-	return t.Local().Format("2006-01-02 15:04:05")
+	// Match the format stored in database: "2006-01-02 15:04:05 -0700 MST"
+	return t.Local().Format("2006-01-02 15:04:05 -0700 MST")
 }
 
 // initTables 初始化資料庫表格
