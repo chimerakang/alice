@@ -559,7 +559,7 @@ export default function Dashboard() {
     const load = async () => {
       const results = await Promise.allSettled([
         api.getStats(),
-        api.getRecentDecisions({
+        api.getDecisionsByRange({
           limit: 2000,
           startTime: dateRange.startTime,
           endTime: dateRange.endTime,
@@ -603,7 +603,7 @@ export default function Dashboard() {
       const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
       try {
-        const response = await api.getRecentDecisions({
+        const response = await api.getDecisionsByRange({
           limit: 2000,
           startTime: sevenDaysAgo.toISOString(),
           endTime: now.toISOString(),

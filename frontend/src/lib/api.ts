@@ -80,11 +80,30 @@ export const api = {
     }>("/api/tools/executions"),
 
   // ========== Decisions ==========
-  getRecentDecisions: (params: TimeRangeQuery = {}) => {
-    const { limit = 50, offset, startTime, endTime, source } = params;
-    const qs = buildQuery({ limit, offset, start_time: startTime, end_time: endTime, source });
-    return fetchJson<{ decisions?: DecisionLog[]; pagination: Pagination }>(
+  /** Get recent decisions from in-memory logger (no time range) */
+  getRecentDecisions: (params?: { limit?: number }) => {
+    const { limit = 50 } = params || {};
+    const qs = buildQuery({ limit });
+    return fetchJson<{ decisions?: DecisionLog[]; total?: number; timestamp: string }>(
       `/api/decisions/recent${qs}`
+    );
+  },
+
+  /** Get decisions within a specific time range from database */
+  getDecisionsByRange: (params: TimeRangeQuery) => {
+    const { limit = 2000, offset = 0, startTime, endTime, source } = params;
+    if (!startTime || !endTime) {
+      throw new Error("startTime and endTime are required for getDecisionsByRange");
+    }
+    const qs = buildQuery({
+      limit,
+      offset,
+      start_time: startTime,
+      end_time: endTime,
+      source,
+    });
+    return fetchJson<{ decisions?: DecisionLog[]; total?: number; timestamp: string }>(
+      `/api/decisions/range${qs}`
     );
   },
 

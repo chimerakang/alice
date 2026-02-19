@@ -25,7 +25,7 @@ type Storage interface {
 	InsertDecisionLog(log DecisionLog) error
 	GetDecisionLogs(limit int, offset int) ([]DecisionLog, error)
 	GetDecisionLogsByTimeRange(start, end time.Time, limit int) ([]DecisionLog, error)
-	GetDecisionLogsByTimeRangeWithOffset(start, end time.Time, limit int, offset int) ([]DecisionLog, error)
+	GetDecisionLogsByTimeRangeWithOffset(start, end time.Time, limit int, offset int, source string) ([]DecisionLog, error)
 	GetDecisionLogsByProject(projectPath string, limit int) ([]DecisionLog, error)
 
 	// Performance Metrics
@@ -527,11 +527,12 @@ func (s *SQLiteStorage) GetDecisionLogsByTimeRange(start, end time.Time, limit i
 	return s.scanDecisionLogs(rows)
 }
 
-// GetDecisionLogsByTimeRangeWithOffset 按時間範圍和偏移量獲取決策記錄
-func (s *SQLiteStorage) GetDecisionLogsByTimeRangeWithOffset(start, end time.Time, limit int, offset int) ([]DecisionLog, error) {
+// GetDecisionLogsByTimeRangeWithOffset 按時間範圍和偏移量獲取決策記錄，支持可選的source過濾
+func (s *SQLiteStorage) GetDecisionLogsByTimeRangeWithOffset(start, end time.Time, limit int, offset int, source string) ([]DecisionLog, error) {
 	startStr := formatTimeForSQLite(start)
 	endStr := formatTimeForSQLite(end)
-	rows, err := s.db.Query(`
+
+	query := `
 		SELECT timestamp, session_id, project_path, chat_id, thread_id, user_prompt,
 			   agent_response, tool_calls_json, context_json, outcome_json, duration_ms,
 			   tokens_input, tokens_output, COALESCE(cost_usd, 0) as cost_usd,
@@ -541,9 +542,21 @@ func (s *SQLiteStorage) GetDecisionLogsByTimeRangeWithOffset(start, end time.Tim
 			   COALESCE(model, '') as model, COALESCE(routing_reason, '') as routing_reason,
 			   COALESCE(routing_latency_ms, 0) as routing_latency_ms
 		FROM decision_logs
-		WHERE timestamp BETWEEN ? AND ?
-		ORDER BY timestamp DESC
-		LIMIT ? OFFSET ?`, startStr, endStr, limit, offset)
+		WHERE timestamp BETWEEN ? AND ?`
+
+	var args []interface{}
+	args = append(args, startStr, endStr)
+
+	// Add source filter if provided (non-empty)
+	if source != "" {
+		query += ` AND source = ?`
+		args = append(args, source)
+	}
+
+	query += ` ORDER BY timestamp DESC LIMIT ? OFFSET ?`
+	args = append(args, limit, offset)
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

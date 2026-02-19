@@ -96,6 +96,7 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/tools/executions", wi.handleToolExecutions)
 	mux.HandleFunc("/api/decisions", wi.handleDecisions)
 	mux.HandleFunc("/api/decisions/recent", wi.handleRecentDecisions)
+	mux.HandleFunc("/api/decisions/range", wi.handleDecisionsRange)
 	mux.HandleFunc("/api/decisions/search", wi.handleSearchDecisions)
 	mux.HandleFunc("/api/decisions/export", wi.handleExportDecisions)
 	mux.HandleFunc("/api/decisions/sources/stats", wi.handleSourceStats)
@@ -610,6 +611,102 @@ func (wi *WebInterface) handleRecentDecisions(w http.ResponseWriter, r *http.Req
 			"total":     len(decisions),
 			"limit":     limit,
 			"timestamp": time.Now(),
+		})
+	})(w, r)
+}
+
+// handleDecisionsRange returns decision logs within a specified time range
+// Supports time-based filtering from frontend date picker components
+func (wi *WebInterface) handleDecisionsRange(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalStorage == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Storage is unavailable",
+			})
+			return
+		}
+
+		// Parse time range parameters (from frontend date picker)
+		startTimeStr := r.URL.Query().Get("start_time")
+		endTimeStr := r.URL.Query().Get("end_time")
+
+		if startTimeStr == "" || endTimeStr == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "start_time and end_time parameters are required",
+			})
+			return
+		}
+
+		// Parse timestamps (support both RFC3339 and ISO8601 formats)
+		startTime, err := time.Parse(time.RFC3339, startTimeStr)
+		if err != nil {
+			// Try ISO8601 format
+			startTime, err = time.Parse("2006-01-02T15:04:05Z", startTimeStr)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": fmt.Sprintf("Invalid start_time format: %v", err),
+				})
+				return
+			}
+		}
+
+		endTime, err := time.Parse(time.RFC3339, endTimeStr)
+		if err != nil {
+			// Try ISO8601 format
+			endTime, err = time.Parse("2006-01-02T15:04:05Z", endTimeStr)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": fmt.Sprintf("Invalid end_time format: %v", err),
+				})
+				return
+			}
+		}
+
+		// Parse pagination parameters
+		limitStr := r.URL.Query().Get("limit")
+		limit := 2000 // default limit
+		if limitStr != "" {
+			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+				limit = parsedLimit
+			}
+		}
+
+		offsetStr := r.URL.Query().Get("offset")
+		offset := 0
+		if offsetStr != "" {
+			if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+				offset = parsedOffset
+			}
+		}
+
+		// Parse optional source filter
+		source := r.URL.Query().Get("source")
+
+		// Query database for decisions within time range
+		decisions, err := globalStorage.GetDecisionLogsByTimeRangeWithOffset(startTime, endTime, limit, offset, source)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": fmt.Sprintf("Database query failed: %v", err),
+			})
+			return
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"decisions":  decisions,
+			"total":      len(decisions),
+			"limit":      limit,
+			"offset":     offset,
+			"start_time": startTime,
+			"end_time":   endTime,
+			"source":     source, // "" means all sources
+			"timestamp":  time.Now(),
 		})
 	})(w, r)
 }
