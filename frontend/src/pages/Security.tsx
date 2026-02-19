@@ -75,15 +75,20 @@ export default function Security() {
   useEffect(() => {
     const loadData = async () => {
       try {
+        // Get time range to use for API calls (includes default logic)
+        const timeRange = getTimeRangeInfo();
+        const startTime = timeRange.startTime?.toISOString();
+        const endTime = timeRange.endTime?.toISOString();
+
         const [statsData, eventsData] = await Promise.allSettled([
           api.getSecurityStats({
-            startTime: dateRange.startTime,
-            endTime: dateRange.endTime,
+            startTime,
+            endTime,
           }),
           api.getSecurityEvents({
             limit: 200,
-            startTime: dateRange.startTime,
-            endTime: dateRange.endTime,
+            startTime,
+            endTime,
           }),
         ]);
 

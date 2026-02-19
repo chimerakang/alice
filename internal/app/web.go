@@ -1282,7 +1282,8 @@ func (wi *WebInterface) handleSecurityEvents(w http.ResponseWriter, r *http.Requ
 		}
 
 		// Parse query parameters
-		limitStr := r.URL.Query().Get("limit")
+		query := r.URL.Query()
+		limitStr := query.Get("limit")
 		limit := 50 // default limit
 		if limitStr != "" {
 			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
@@ -1290,10 +1291,52 @@ func (wi *WebInterface) handleSecurityEvents(w http.ResponseWriter, r *http.Requ
 			}
 		}
 
-		severity := r.URL.Query().Get("severity")
+		severity := query.Get("severity")
+		startTimeStr := query.Get("start_time")
+		endTimeStr := query.Get("end_time")
 
-		// Get events using the manager (which queries database first, then falls back to audit log)
-		events := globalSecurityManager.GetSecurityEvents(limit, severity)
+		var events []SecurityEvent
+		var err error
+
+		// Check if time range is provided
+		if startTimeStr != "" && endTimeStr != "" && globalStorage != nil {
+			// Parse time parameters
+			startTime, err1 := time.Parse(time.RFC3339, startTimeStr)
+			endTime, err2 := time.Parse(time.RFC3339, endTimeStr)
+
+			if err1 == nil && err2 == nil {
+				// Query by time range
+				events, err = globalStorage.GetSecurityEventsByTimeRange(startTime, endTime, limit)
+				if err != nil {
+					log.Printf("Failed to get events by time range: %v", err)
+					events = []SecurityEvent{}
+				}
+			} else {
+				// Fall back to manager if time parsing fails
+				events = globalSecurityManager.GetSecurityEvents(limit, severity)
+			}
+		} else if globalStorage != nil {
+			// Query all events from database (no time filter)
+			events, err = globalStorage.GetSecurityEvents(limit, 0)
+			if err != nil {
+				log.Printf("Failed to get events from database: %v", err)
+				events = globalSecurityManager.GetSecurityEvents(limit, severity)
+			}
+		} else {
+			// Fallback to manager
+			events = globalSecurityManager.GetSecurityEvents(limit, severity)
+		}
+
+		// Filter by severity if specified
+		if severity != "" && events != nil {
+			var filtered []SecurityEvent
+			for _, e := range events {
+				if e.Severity == severity {
+					filtered = append(filtered, e)
+				}
+			}
+			events = filtered
+		}
 
 		response := map[string]interface{}{
 			"enabled":   true,
@@ -1321,6 +1364,92 @@ func (wi *WebInterface) handleSecurityStats(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
+		// Parse time range parameters
+		query := r.URL.Query()
+		startTimeStr := query.Get("start_time")
+		endTimeStr := query.Get("end_time")
+
+		totalEvents := 0
+		blockedAttempts := 0
+		piiDetections := 0
+		threatLevel := "low"
+
+		// Check if time range is provided and storage is available
+		if startTimeStr != "" && endTimeStr != "" && globalStorage != nil {
+			var startTime, endTime time.Time
+			var err error
+
+			// Parse time parameters if provided
+			if startTimeStr != "" {
+				startTime, err = time.Parse(time.RFC3339, startTimeStr)
+				if err != nil {
+					log.Printf("Invalid start_time format: %v", err)
+					startTime = time.Now().Add(-24 * time.Hour)
+				}
+			} else {
+				startTime = time.Now().Add(-24 * time.Hour)
+			}
+
+			if endTimeStr != "" {
+				endTime, err = time.Parse(time.RFC3339, endTimeStr)
+				if err != nil {
+					log.Printf("Invalid end_time format: %v", err)
+					endTime = time.Now()
+				}
+			} else {
+				endTime = time.Now()
+			}
+
+			// Query by time range
+			events, err := globalStorage.GetSecurityEventsByTimeRange(startTime, endTime, 10000)
+			if err != nil {
+				log.Printf("Failed to get events by time range: %v", err)
+			} else {
+				totalEvents = len(events)
+
+				// Count event types from results
+				eventTypes := make(map[string]int)
+				severities := make(map[string]int)
+
+				for _, event := range events {
+					eventTypes[event.EventType]++
+					severities[event.Severity]++
+
+					// Count blocked attempts and PII detections
+					if event.EventType == "rate_limit_exceeded" || event.EventType == "blocked_ip_access" || event.EventType == "unauthorized_ip_access" {
+						blockedAttempts++
+					}
+					if len(event.EventType) >= 3 && event.EventType[:3] == "pii" {
+						piiDetections++
+					}
+				}
+
+				// Determine threat level
+				if severities["critical"] > 0 {
+					threatLevel = "critical"
+				} else if severities["high"] > 5 {
+					threatLevel = "high"
+				} else if severities["medium"] > 0 {
+					threatLevel = "medium"
+				}
+
+				stats := map[string]interface{}{
+					"enabled":          true,
+					"total_events":     totalEvents,
+					"blocked_attempts": blockedAttempts,
+					"pii_detections":   piiDetections,
+					"threat_level":     threatLevel,
+					"event_types":      eventTypes,
+					"severities":       severities,
+					"timestamp":        time.Now(),
+				}
+
+				json.NewEncoder(w).Encode(stats)
+				return
+			}
+		}
+
+		// Fallback to manager stats (no time filter)
 		stats := globalSecurityManager.GetSecurityStats()
 		stats["enabled"] = true
 		stats["timestamp"] = time.Now()
