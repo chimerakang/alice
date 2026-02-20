@@ -131,6 +131,15 @@ export interface DecisionLog {
   task_type: string;
   outcome: ExecutionOutcome;
   duration_ms: number;
+  // Backend returns nested tokens_used object (Go struct without json tags)
+  // Normalized to flat fields by api.ts normalizeDecision()
+  tokens_used?: {
+    TotalInputTokens: number;
+    TotalOutputTokens: number;
+    TotalCostUSD: number;
+    APICallCount: number;
+    Model: string;
+  };
   tokens_input: number;
   tokens_output: number;
   cost_usd: number;
@@ -138,6 +147,9 @@ export interface DecisionLog {
   thread_id: number;
   git_state?: GitState;
   source?: string; // "telegram" | "terminal" | "vscode" | "unknown"
+  model?: string;
+  routing_reason?: string;
+  routing_latency_ms?: number;
 }
 
 // ========== Performance ==========

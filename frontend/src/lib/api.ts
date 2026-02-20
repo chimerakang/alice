@@ -17,6 +17,20 @@ import type {
 
 const BASE = "";
 
+/** Normalize a DecisionLog: map nested tokens_used to flat fields for backward compat */
+function normalizeDecision(d: DecisionLog): DecisionLog {
+  if (d.tokens_used) {
+    d.tokens_input = d.tokens_used.TotalInputTokens || 0;
+    d.tokens_output = d.tokens_used.TotalOutputTokens || 0;
+    d.cost_usd = d.tokens_used.TotalCostUSD || 0;
+  }
+  return d;
+}
+
+function normalizeDecisions(list?: DecisionLog[]): DecisionLog[] {
+  return (list || []).map(normalizeDecision);
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(`${BASE}${url}`);
   if (!res.ok) throw new Error(`API error ${res.status}: ${url}`);
@@ -81,16 +95,18 @@ export const api = {
 
   // ========== Decisions ==========
   /** Get recent decisions from in-memory logger (no time range) */
-  getRecentDecisions: (params?: { limit?: number }) => {
+  getRecentDecisions: async (params?: { limit?: number }) => {
     const { limit = 50 } = params || {};
     const qs = buildQuery({ limit });
-    return fetchJson<{ decisions?: DecisionLog[]; total?: number; timestamp: string }>(
+    const res = await fetchJson<{ decisions?: DecisionLog[]; total?: number; timestamp: string }>(
       `/api/decisions/recent${qs}`
     );
+    res.decisions = normalizeDecisions(res.decisions);
+    return res;
   },
 
   /** Get decisions within a specific time range from database */
-  getDecisionsByRange: (params: TimeRangeQuery) => {
+  getDecisionsByRange: async (params: TimeRangeQuery) => {
     const { limit = 2000, offset = 0, startTime, endTime, source } = params;
 
     // If date range not provided, default to last 7 days
@@ -107,9 +123,11 @@ export const api = {
       end_time: finalEndTime,
       source,
     });
-    return fetchJson<{ decisions?: DecisionLog[]; total?: number; timestamp: string }>(
+    const res = await fetchJson<{ decisions?: DecisionLog[]; total?: number; timestamp: string }>(
       `/api/decisions/range${qs}`
     );
+    res.decisions = normalizeDecisions(res.decisions);
+    return res;
   },
 
   // ========== Multi-Agent ==========
