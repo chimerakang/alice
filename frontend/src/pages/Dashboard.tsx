@@ -546,7 +546,7 @@ export default function Dashboard() {
   // Calculate hours from dateRange for cost/savings charts
   const chartHours = useMemo(() => {
     if (!dateRange.startTime || !dateRange.endTime) {
-      return 168; // Default to 7 days if no range selected
+      return 8760; // "All" = 1 year of history (365 * 24h)
     }
     const start = new Date(dateRange.startTime);
     const end = new Date(dateRange.endTime);
@@ -557,10 +557,10 @@ export default function Dashboard() {
   // Fetch decisions + basic stats to discover project paths
   useEffect(() => {
     const load = async () => {
-      // Use provided date range, or default to last 7 days if not set
+      // Use provided date range; when "All" is selected (empty dateRange), query all history
       const now = new Date();
-      const defaultStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      const startTime = dateRange.startTime || defaultStart.toISOString();
+      const isAllTime = !dateRange.startTime && !dateRange.endTime;
+      const startTime = dateRange.startTime || (isAllTime ? '2020-01-01T00:00:00Z' : new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString());
       const endTime = dateRange.endTime || now.toISOString();
 
       const results = await Promise.allSettled([

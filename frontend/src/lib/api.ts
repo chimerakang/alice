@@ -17,8 +17,13 @@ import type {
 
 const BASE = "";
 
-/** Normalize a DecisionLog: map nested tokens_used to flat fields for backward compat */
+/** Normalize a DecisionLog: generate id if missing, map nested tokens_used to flat fields */
 function normalizeDecision(d: DecisionLog): DecisionLog {
+  // BUG #1 fix: API doesn't return 'id' field, causing dedup to collapse all decisions to 1
+  if (!d.id) {
+    d.id = `${d.session_id || ''}_${d.chat_id || 0}_${d.thread_id || 0}_${d.timestamp || ''}`;
+  }
+  // Map nested tokens_used (Go struct without json tags) to flat fields
   if (d.tokens_used) {
     d.tokens_input = d.tokens_used.TotalInputTokens || 0;
     d.tokens_output = d.tokens_used.TotalOutputTokens || 0;
@@ -109,11 +114,9 @@ export const api = {
   getDecisionsByRange: async (params: TimeRangeQuery) => {
     const { limit = 2000, offset = 0, startTime, endTime, source } = params;
 
-    // If date range not provided, default to last 7 days
+    // If date range not provided, query all history
     const now = new Date();
-    const defaultStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-    const finalStartTime = startTime || defaultStart.toISOString();
+    const finalStartTime = startTime || '2020-01-01T00:00:00Z';
     const finalEndTime = endTime || now.toISOString();
 
     const qs = buildQuery({
