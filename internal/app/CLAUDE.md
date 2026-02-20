@@ -1,32 +1,6 @@
 <claude-mem-context>
 # Recent Activity
 
-### Feb 13, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #1596 | 7:16 PM | ✅ | Stop button text updated to use more appropriate Chinese terminology | ~308 |
-| #1593 | " | 🔵 | Multi-agent task routing and execution flow with stop button lifecycle | ~443 |
-| #1591 | " | 🔵 | Dynamic stop button implementation using Telegram inline keyboards | ~351 |
-| #1589 | " | 🔵 | Stop button implementation across Alice bot interfaces | ~324 |
-| #1587 | " | 🔵 | Alice bot multi-agent system architecture | ~350 |
-| #1350 | 3:48 PM | 🔵 | handleSinglePhoto() Image Download and Project Path Handling Implementation | ~439 |
-| #1349 | " | 🔵 | Single Photo Processing Includes PII Detection and Agent Analysis | ~412 |
-| #1348 | 3:47 PM | 🔵 | Image Handling Logic Split Between Single and Multiple Photo Processing | ~357 |
-| #1342 | 3:30 PM | 🔵 | Alice Configuration Uses ANTHROPIC_API_KEY Not Session Token | ~306 |
-| #1334 | 3:28 PM | 🔵 | File Parameter Format for Claude CLI | ~327 |
-| #1333 | " | 🔵 | EnhancedCLIClient File Handling Implementation | ~300 |
-| #1332 | 3:27 PM | 🔵 | Multimodal Message Processing Architecture | ~367 |
-| #1331 | " | 🔵 | CreateImageMessageContent Function Structure | ~326 |
-| #1330 | " | 🔵 | Multimodal Agent Processing for Photo Analysis | ~342 |
-| #1329 | " | 🔵 | Photo Analysis Prompt Construction and Security Logging | ~326 |
-| #1328 | " | 🔵 | Photo Download and File Management Implementation | ~306 |
-| #1327 | 3:26 PM | 🔵 | Single Photo Processing Implementation Details | ~324 |
-| #1326 | " | 🔵 | Photo Processing Functions Identified in Telegram Handler | ~302 |
-| #1325 | " | 🔵 | Voice Transcription Implementation Using OpenAI Whisper | ~294 |
-| #1321 | 3:23 PM | 🔵 | Telegram Message Structure Missing Sticker Field | ~303 |
-| #1150 | 12:43 AM | 🔴 | Added Retry Logic to InsertSecurityEvent Function | ~249 |
-
 ### Feb 14, 2026
 
 | ID | Time | T | Title | Read |
@@ -34,9 +8,6 @@
 | #2046 | 4:56 PM | 🔵 | Storage initialization requires InitStorage call with database path | ~477 |
 | #2045 | " | 🔴 | Dashboard data display issues root causes identified: Git integration not initialized, token chart hardcoded 7-day filter, tool executions from WebSocket only | ~759 |
 | #2044 | " | 🔵 | Storage stats handler returns minimal response when globalStorage uninitialized | ~441 |
-| #2037 | 4:54 PM | 🔵 | Git API handlers fully implemented with gitManager dependency check | ~421 |
-| #2026 | 4:51 PM | 🔵 | Git integration implementation with state caching and event logging | ~416 |
-| #2024 | " | 🔵 | Web interface API routing and Git status endpoint identified | ~368 |
 
 ### Feb 15, 2026
 
@@ -65,4 +36,33 @@
 | #2789 | " | 🔵 | Agent PII Filtering Context: Decision Logging Protection | ~409 |
 | #2782 | 4:15 PM | 🔵 | Agent Tool Execution Logging System Structure | ~354 |
 | #2779 | 4:14 PM | 🔵 | PII Detection System Implementation Analysis | ~507 |
+
+### Feb 16, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #3477 | 10:47 PM | 🔵 | Session Cleared on Model Change Causing Context Loss | ~373 |
+| #3474 | " | 🔵 | Agent Instances Created Once Per ChatKey and Persist Across Model Changes | ~443 |
+| #3472 | " | 🔵 | Model Switching Commands Only Update Preferences Without Agent Recreation | ~396 |
+| #3470 | " | 🔵 | Telegram Bot Architecture Uses Per-Chat Agent Instances | ~408 |
+| #3446 | 9:36 PM | 🔵 | CLI Response Includes Total Cost from Claude Code, Not Calculated Locally | ~446 |
+| #3436 | 9:34 PM | 🔵 | Three-Tier Model Routing System Determines Haiku Usage | ~400 |
+| #3435 | 9:33 PM | 🔵 | Database Schema Tracks Model-Specific Cost Data | ~379 |
+| #3434 | " | 🔵 | Haiku Token Cost Configuration Located | ~300 |
+| #3140 | 2:40 AM | 🔵 | Performance Monitoring API Call Recording Infrastructure | ~440 |
+| #3139 | " | 🔵 | Keyword-Based Task Routing Implementation in AgentCoordinator | ~575 |
+| #3138 | " | 🔵 | Task Routing Methods in AgentCoordinator | ~458 |
+| #3137 | 2:39 AM | 🔵 | Multi-Agent Specialization System with Agent Type Enumeration | ~509 |
+| #3136 | " | 🔵 | Comprehensive Model Selection Architecture Analysis Completed | ~656 |
+| #3134 | 2:38 AM | 🔵 | NewAgent Constructor Signature with CLIClient Dependency | ~422 |
+| #3133 | " | 🔵 | Single CLIClient Instantiation in Main Application Initialization | ~471 |
+| #3132 | " | 🔵 | Model Parameter Usage in CLI Command Construction | ~457 |
+| #3131 | " | 🔵 | Claude CLI Command Execution with Model Parameter Injection | ~502 |
+| #3130 | " | 🔵 | Agent Instantiation Points in Codebase | ~425 |
+| #3128 | 2:37 AM | 🔵 | CLIClient Injection Pattern in TelegramBot | ~431 |
+| #3127 | " | 🔵 | Model Reference Points in Telegram Bot Layer | ~410 |
+| #3126 | 2:36 AM | 🔵 | Telegram Message Handler Entry Point for User Requests | ~615 |
+| #3125 | " | 🔵 | Agent Execution Layer with Request Processing and Session Management | ~589 |
+| #3124 | " | 🔵 | Claude CLI Client Architecture with Fixed Model Parameter | ~473 |
+| #3123 | 2:35 AM | 🔵 | Alice Configuration System Supporting Single Model Selection | ~438 |
 </claude-mem-context>

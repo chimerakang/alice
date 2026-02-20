@@ -87,35 +87,49 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	// API endpoints
 	mux.HandleFunc("/api/health", wi.handleHealth)
 	mux.HandleFunc("/api/stats", wi.handleStats)
-	mux.HandleFunc("/api/agents", wi.handleAgentsProto)
+	mux.HandleFunc("/api/agents", wi.handleAgents)
 	mux.HandleFunc("/api/agents/abort", wi.handleAgentAbort)
 	mux.HandleFunc("/api/agents/reset", wi.handleAgentReset)
 	mux.HandleFunc("/api/agents/project", wi.handleAgentSetProject)
-	mux.HandleFunc("/api/agents/", wi.handleAgentDetailProto)
-	mux.HandleFunc("/api/tools/recent", wi.handleRecentToolsProto)
-	mux.HandleFunc("/api/tools/executions", wi.handleToolExecutionsProto)
-	mux.HandleFunc("/api/decisions", wi.handleDecisionsProto)
-	mux.HandleFunc("/api/decisions/recent", wi.handleRecentDecisionsProto)
+	mux.HandleFunc("/api/agents/", wi.handleAgentDetail)
+	mux.HandleFunc("/api/tools/recent", wi.handleRecentTools)
+	mux.HandleFunc("/api/tools/executions", wi.handleToolExecutions)
+	mux.HandleFunc("/api/decisions", wi.handleDecisions)
+	mux.HandleFunc("/api/decisions/recent", wi.handleRecentDecisions)
+	mux.HandleFunc("/api/decisions/range", wi.handleDecisionsRange)
 	mux.HandleFunc("/api/decisions/search", wi.handleSearchDecisions)
 	mux.HandleFunc("/api/decisions/export", wi.handleExportDecisions)
 	mux.HandleFunc("/api/decisions/sources/stats", wi.handleSourceStats)
 	mux.HandleFunc("/api/decisions/sources/performance", wi.handleSourcePerformance)
-	mux.HandleFunc("/api/multiagent/status", wi.handleMultiAgentStatusProto)
-	mux.HandleFunc("/api/multiagent/stats", wi.handleMultiAgentStatsProto)
-	mux.HandleFunc("/api/multiagent/agents", wi.handleMultiAgentAgentsProto)
+	mux.HandleFunc("/api/multiagent/status", wi.handleMultiAgentStatus)
+	mux.HandleFunc("/api/multiagent/stats", wi.handleMultiAgentStats)
+	mux.HandleFunc("/api/multiagent/agents", wi.handleMultiAgentAgents)
 
 	// Performance Monitoring APIs
-	mux.HandleFunc("/api/performance/analytics", wi.handlePerformanceAnalyticsProto)
-	mux.HandleFunc("/api/performance/metrics", wi.handlePerformanceMetricsProto)
-	mux.HandleFunc("/api/performance/trends", wi.handlePerformanceTrendsProto)
-	mux.HandleFunc("/api/performance/recommendations", wi.handlePerformanceRecommendationsProto)
-	mux.HandleFunc("/api/performance/tool-distribution", wi.handleToolDistributionProto)
-	mux.HandleFunc("/api/performance/export", wi.handlePerformanceExportProto)
+	mux.HandleFunc("/api/performance/analytics", wi.handlePerformanceAnalytics)
+	mux.HandleFunc("/api/performance/metrics", wi.handlePerformanceMetrics)
+	mux.HandleFunc("/api/performance/trends", wi.handlePerformanceTrends)
+	mux.HandleFunc("/api/performance/recommendations", wi.handlePerformanceRecommendations)
+	mux.HandleFunc("/api/performance/export", wi.handlePerformanceExport)
+
+	// Model Routing APIs (Issue #72)
+	mux.HandleFunc("/api/model-routing/status", wi.handleModelRoutingStatus)
+	mux.HandleFunc("/api/model-routing/set", wi.handleModelRoutingSet)
+
+	// Cost Tracking APIs (Issue #73)
+	mux.HandleFunc("/api/costs/by-model", wi.handleCostsByModel)
+	mux.HandleFunc("/api/costs/summary", wi.handleCostsSummary)
+
+	// Cost Savings APIs (Issue #74)
+	mux.HandleFunc("/api/costs/savings", wi.handleCostSavings)
+
+	// Internationalization APIs (Issue #76)
+	mux.HandleFunc("/api/language", wi.handleLanguage)
 
 	// Security APIs
-	mux.HandleFunc("/api/security/events", wi.handleSecurityEventsProto)
-	mux.HandleFunc("/api/security/stats", wi.handleSecurityStatsProto)
-	mux.HandleFunc("/api/security/audit", wi.handleSecurityAuditProto)
+	mux.HandleFunc("/api/security/events", wi.handleSecurityEvents)
+	mux.HandleFunc("/api/security/stats", wi.handleSecurityStats)
+	mux.HandleFunc("/api/security/audit", wi.handleSecurityAudit)
 
 	// Git Integration APIs
 	mux.HandleFunc("/api/git/status", wi.handleGitStatus)
@@ -601,6 +615,102 @@ func (wi *WebInterface) handleRecentDecisions(w http.ResponseWriter, r *http.Req
 	})(w, r)
 }
 
+// handleDecisionsRange returns decision logs within a specified time range
+// Supports time-based filtering from frontend date picker components
+func (wi *WebInterface) handleDecisionsRange(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalStorage == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Storage is unavailable",
+			})
+			return
+		}
+
+		// Parse time range parameters (from frontend date picker)
+		startTimeStr := r.URL.Query().Get("start_time")
+		endTimeStr := r.URL.Query().Get("end_time")
+
+		if startTimeStr == "" || endTimeStr == "" {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "start_time and end_time parameters are required",
+			})
+			return
+		}
+
+		// Parse timestamps (support both RFC3339 and ISO8601 formats)
+		startTime, err := time.Parse(time.RFC3339, startTimeStr)
+		if err != nil {
+			// Try ISO8601 format
+			startTime, err = time.Parse("2006-01-02T15:04:05Z", startTimeStr)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": fmt.Sprintf("Invalid start_time format: %v", err),
+				})
+				return
+			}
+		}
+
+		endTime, err := time.Parse(time.RFC3339, endTimeStr)
+		if err != nil {
+			// Try ISO8601 format
+			endTime, err = time.Parse("2006-01-02T15:04:05Z", endTimeStr)
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"error": fmt.Sprintf("Invalid end_time format: %v", err),
+				})
+				return
+			}
+		}
+
+		// Parse pagination parameters
+		limitStr := r.URL.Query().Get("limit")
+		limit := 2000 // default limit
+		if limitStr != "" {
+			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+				limit = parsedLimit
+			}
+		}
+
+		offsetStr := r.URL.Query().Get("offset")
+		offset := 0
+		if offsetStr != "" {
+			if parsedOffset, err := strconv.Atoi(offsetStr); err == nil && parsedOffset >= 0 {
+				offset = parsedOffset
+			}
+		}
+
+		// Parse optional source filter
+		source := r.URL.Query().Get("source")
+
+		// Query database for decisions within time range
+		decisions, err := globalStorage.GetDecisionLogsByTimeRangeWithOffset(startTime, endTime, limit, offset, source)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": fmt.Sprintf("Database query failed: %v", err),
+			})
+			return
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"decisions":  decisions,
+			"total":      len(decisions),
+			"limit":      limit,
+			"offset":     offset,
+			"start_time": startTime,
+			"end_time":   endTime,
+			"source":     source, // "" means all sources
+			"timestamp":  time.Now(),
+		})
+	})(w, r)
+}
+
 // handleSearchDecisions searches decisions based on criteria
 func (wi *WebInterface) handleSearchDecisions(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
@@ -969,9 +1079,196 @@ func (wi *WebInterface) handlePerformanceExport(w http.ResponseWriter, r *http.R
 	})(w, r)
 }
 
+// === Cost Tracking API Handlers (Issue #73) ===
+
+// handleCostsByModel returns cost breakdown by model
+func (wi *WebInterface) handleCostsByModel(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalStorage == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Storage is unavailable",
+			})
+			return
+		}
+
+		// Parse query parameters (hours to look back)
+		hoursStr := r.URL.Query().Get("hours")
+		hours := 168 // default 1 week
+		if h, err := strconv.Atoi(hoursStr); err == nil && h > 0 {
+			hours = h
+		}
+
+		// Query performance metrics for the time range
+		startTime := time.Now().Add(-time.Duration(hours) * time.Hour)
+		endTime := time.Now()
+		metrics, err := globalStorage.GetPerformanceMetricsByTimeRange(startTime, endTime, 10000)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": fmt.Sprintf("Query failed: %v", err),
+			})
+			return
+		}
+
+		// Aggregate by model
+		costsByModel := make(map[string]struct {
+			Calls       int     `json:"calls"`
+			Tokens      int     `json:"tokens"`
+			Cost        float64 `json:"cost"`
+			InputTokens int     `json:"input_tokens"`
+		})
+
+		for _, metric := range metrics {
+			model := metric.Model
+			if model == "" {
+				model = "unknown"
+			}
+			stats := costsByModel[model]
+			stats.Calls++
+			stats.Tokens += metric.TokensUsed
+			stats.Cost += metric.EstimatedCost
+			costsByModel[model] = stats
+		}
+
+		// Return response
+		response := map[string]interface{}{
+			"period_hours": hours,
+			"start_time":   startTime.Format(time.RFC3339),
+			"end_time":     endTime.Format(time.RFC3339),
+			"by_model":     costsByModel,
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// handleCostsSummary returns overall cost summary
+func (wi *WebInterface) handleCostsSummary(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalStorage == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Storage is unavailable",
+			})
+			return
+		}
+
+		// Parse query parameters (hours to look back)
+		hoursStr := r.URL.Query().Get("hours")
+		hours := 168 // default 1 week
+		if h, err := strconv.Atoi(hoursStr); err == nil && h > 0 {
+			hours = h
+		}
+
+		// Query performance metrics for the time range
+		startTime := time.Now().Add(-time.Duration(hours) * time.Hour)
+		endTime := time.Now()
+		metrics, err := globalStorage.GetPerformanceMetricsByTimeRange(startTime, endTime, 10000)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": fmt.Sprintf("Query failed: %v", err),
+			})
+			return
+		}
+
+		// Calculate totals and by-model breakdown
+		totalCost := 0.0
+		totalCalls := 0
+		totalTokens := 0
+		costsByModel := make(map[string]struct {
+			Calls int     `json:"calls"`
+			Cost  float64 `json:"cost"`
+		})
+
+		for _, metric := range metrics {
+			totalCost += metric.EstimatedCost
+			totalCalls += 1
+			totalTokens += metric.TokensUsed
+
+			model := metric.Model
+			if model == "" {
+				model = "unknown"
+			}
+			stats := costsByModel[model]
+			stats.Calls++
+			stats.Cost += metric.EstimatedCost
+			costsByModel[model] = stats
+		}
+
+		// Calculate average cost per call
+		avgCostPerCall := 0.0
+		if totalCalls > 0 {
+			avgCostPerCall = totalCost / float64(totalCalls)
+		}
+
+		// Return response
+		response := map[string]interface{}{
+			"period_hours":        hours,
+			"start_time":          startTime.Format(time.RFC3339),
+			"end_time":            endTime.Format(time.RFC3339),
+			"total_cost":          totalCost,
+			"total_calls":         totalCalls,
+			"total_tokens":        totalTokens,
+			"avg_cost_per_call":   avgCostPerCall,
+			"by_model":            costsByModel,
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// handleCostSavings returns cost savings report (Issue #74)
+func (wi *WebInterface) handleCostSavings(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalStorage == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Storage is unavailable",
+			})
+			return
+		}
+
+		// Parse query parameters (hours to look back)
+		hoursStr := r.URL.Query().Get("hours")
+		hours := 168 // default 1 week
+		if h, err := strconv.Atoi(hoursStr); err == nil && h > 0 {
+			hours = h
+		}
+
+		// Get cost savings report (support projectPath parameter for filtering)
+		projectPath := r.URL.Query().Get("projectPath")
+		var report CostSavingsReport
+		var err error
+		if projectPath != "" {
+			report, err = globalStorage.GetCostSavingsByProject(projectPath, hours)
+		} else {
+			report, err = globalStorage.GetCostSavings(hours)
+		}
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": fmt.Sprintf("Query failed: %v", err),
+			})
+			return
+		}
+
+		// Return response
+		w.Header().Set("Cache-Control", "public, max-age=60") // Cache for 1 minute
+		json.NewEncoder(w).Encode(report)
+	})(w, r)
+}
+
 // === Security API Handlers ===
 
-// handleSecurityEvents returns recent security events
+// handleSecurityEvents returns recent security events with optional time range filtering
 func (wi *WebInterface) handleSecurityEvents(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -985,7 +1282,8 @@ func (wi *WebInterface) handleSecurityEvents(w http.ResponseWriter, r *http.Requ
 		}
 
 		// Parse query parameters
-		limitStr := r.URL.Query().Get("limit")
+		query := r.URL.Query()
+		limitStr := query.Get("limit")
 		limit := 50 // default limit
 		if limitStr != "" {
 			if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
@@ -993,8 +1291,52 @@ func (wi *WebInterface) handleSecurityEvents(w http.ResponseWriter, r *http.Requ
 			}
 		}
 
-		severity := r.URL.Query().Get("severity")
-		events := globalSecurityManager.GetSecurityEvents(limit, severity)
+		severity := query.Get("severity")
+		startTimeStr := query.Get("start_time")
+		endTimeStr := query.Get("end_time")
+
+		var events []SecurityEvent
+		var err error
+
+		// Check if time range is provided
+		if startTimeStr != "" && endTimeStr != "" && globalStorage != nil {
+			// Parse time parameters
+			startTime, err1 := time.Parse(time.RFC3339, startTimeStr)
+			endTime, err2 := time.Parse(time.RFC3339, endTimeStr)
+
+			if err1 == nil && err2 == nil {
+				// Query by time range
+				events, err = globalStorage.GetSecurityEventsByTimeRange(startTime, endTime, limit)
+				if err != nil {
+					log.Printf("Failed to get events by time range: %v", err)
+					events = []SecurityEvent{}
+				}
+			} else {
+				// Fall back to manager if time parsing fails
+				events = globalSecurityManager.GetSecurityEvents(limit, severity)
+			}
+		} else if globalStorage != nil {
+			// Query all events from database (no time filter)
+			events, err = globalStorage.GetSecurityEvents(limit, 0)
+			if err != nil {
+				log.Printf("Failed to get events from database: %v", err)
+				events = globalSecurityManager.GetSecurityEvents(limit, severity)
+			}
+		} else {
+			// Fallback to manager
+			events = globalSecurityManager.GetSecurityEvents(limit, severity)
+		}
+
+		// Filter by severity if specified
+		if severity != "" && events != nil {
+			var filtered []SecurityEvent
+			for _, e := range events {
+				if e.Severity == severity {
+					filtered = append(filtered, e)
+				}
+			}
+			events = filtered
+		}
 
 		response := map[string]interface{}{
 			"enabled":   true,
@@ -1022,6 +1364,92 @@ func (wi *WebInterface) handleSecurityStats(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
+		// Parse time range parameters
+		query := r.URL.Query()
+		startTimeStr := query.Get("start_time")
+		endTimeStr := query.Get("end_time")
+
+		totalEvents := 0
+		blockedAttempts := 0
+		piiDetections := 0
+		threatLevel := "low"
+
+		// Check if time range is provided and storage is available
+		if startTimeStr != "" && endTimeStr != "" && globalStorage != nil {
+			var startTime, endTime time.Time
+			var err error
+
+			// Parse time parameters if provided
+			if startTimeStr != "" {
+				startTime, err = time.Parse(time.RFC3339, startTimeStr)
+				if err != nil {
+					log.Printf("Invalid start_time format: %v", err)
+					startTime = time.Now().Add(-24 * time.Hour)
+				}
+			} else {
+				startTime = time.Now().Add(-24 * time.Hour)
+			}
+
+			if endTimeStr != "" {
+				endTime, err = time.Parse(time.RFC3339, endTimeStr)
+				if err != nil {
+					log.Printf("Invalid end_time format: %v", err)
+					endTime = time.Now()
+				}
+			} else {
+				endTime = time.Now()
+			}
+
+			// Query by time range
+			events, err := globalStorage.GetSecurityEventsByTimeRange(startTime, endTime, 10000)
+			if err != nil {
+				log.Printf("Failed to get events by time range: %v", err)
+			} else {
+				totalEvents = len(events)
+
+				// Count event types from results
+				eventTypes := make(map[string]int)
+				severities := make(map[string]int)
+
+				for _, event := range events {
+					eventTypes[event.EventType]++
+					severities[event.Severity]++
+
+					// Count blocked attempts and PII detections
+					if event.EventType == "rate_limit_exceeded" || event.EventType == "blocked_ip_access" || event.EventType == "unauthorized_ip_access" {
+						blockedAttempts++
+					}
+					if len(event.EventType) >= 3 && event.EventType[:3] == "pii" {
+						piiDetections++
+					}
+				}
+
+				// Determine threat level
+				if severities["critical"] > 0 {
+					threatLevel = "critical"
+				} else if severities["high"] > 5 {
+					threatLevel = "high"
+				} else if severities["medium"] > 0 {
+					threatLevel = "medium"
+				}
+
+				stats := map[string]interface{}{
+					"enabled":          true,
+					"total_events":     totalEvents,
+					"blocked_attempts": blockedAttempts,
+					"pii_detections":   piiDetections,
+					"threat_level":     threatLevel,
+					"event_types":      eventTypes,
+					"severities":       severities,
+					"timestamp":        time.Now(),
+				}
+
+				json.NewEncoder(w).Encode(stats)
+				return
+			}
+		}
+
+		// Fallback to manager stats (no time filter)
 		stats := globalSecurityManager.GetSecurityStats()
 		stats["enabled"] = true
 		stats["timestamp"] = time.Now()
@@ -1693,6 +2121,180 @@ func (wi *WebInterface) handleAgentSetProject(w http.ResponseWriter, r *http.Req
 			"new_project_dir":      req.ProjectDir,
 			"message":              fmt.Sprintf("Agent project directory changed from %s to %s", previousProjectDir, req.ProjectDir),
 			"timestamp":            time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// handleModelRoutingStatus returns the current model routing configuration and preferences
+func (wi *WebInterface) handleModelRoutingStatus(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		// Get all agents and their model preferences
+		agents := wi.bot.GetAgentsSafely()
+		preferences := make(map[string]interface{})
+
+		for key := range agents {
+			chatKey := fmt.Sprintf("chat_%d_thread_%d", key.chatID, key.threadID)
+			pref := wi.bot.getUserModelPreference(key)
+
+			// Determine display mode
+			var mode string
+			var modelName string
+			switch pref {
+			case "fast":
+				mode = "fast"
+				modelName = wi.bot.config.ModelRouting.FastModel
+			case "deep":
+				mode = "deep"
+				modelName = wi.bot.config.ModelRouting.DeepModel
+			default:
+				mode = "auto"
+				modelName = wi.bot.config.Model // Default model
+			}
+
+			preferences[chatKey] = map[string]interface{}{
+				"mode":  mode,
+				"model": modelName,
+			}
+		}
+
+		status := map[string]interface{}{
+			"enabled":                   wi.bot.config.ModelRouting.EnableDynamicRouting,
+			"fast_model":                wi.bot.config.ModelRouting.FastModel,
+			"deep_model":                wi.bot.config.ModelRouting.DeepModel,
+			"default_model":             wi.bot.config.Model,
+			"use_gpt4o_mini_for_triage": wi.bot.config.ModelRouting.UseGPT4oMini,
+			"total_chats":               len(agents),
+			"preferences":               preferences,
+			"timestamp":                 time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(status)
+	})(w, r)
+}
+
+// handleModelRoutingSet sets the model routing preference for a specific chat
+func (wi *WebInterface) handleModelRoutingSet(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		// Check authentication token if configured
+		if wi.apiToken != "" && r.Header.Get("Authorization") != "Bearer "+wi.apiToken {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+
+		var req struct {
+			ChatID   int64  `json:"chat_id"`
+			ThreadID int    `json:"thread_id"`
+			Mode     string `json:"mode"` // "fast", "deep", or "auto"
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
+			return
+		}
+
+		// Validate mode
+		if req.Mode != "fast" && req.Mode != "deep" && req.Mode != "auto" {
+			http.Error(w, "Invalid mode. Must be 'fast', 'deep', or 'auto'", http.StatusBadRequest)
+			return
+		}
+
+		// Check if dynamic routing is enabled
+		if !wi.bot.config.ModelRouting.EnableDynamicRouting {
+			http.Error(w, "Dynamic model routing is not enabled", http.StatusBadRequest)
+			return
+		}
+
+		key := chatKey{chatID: req.ChatID, threadID: req.ThreadID}
+
+		// Determine what to set
+		var modeValue string
+		var modelName string
+		switch req.Mode {
+		case "fast":
+			modeValue = "fast"
+			modelName = wi.bot.config.ModelRouting.FastModel
+		case "deep":
+			modeValue = "deep"
+			modelName = wi.bot.config.ModelRouting.DeepModel
+		case "auto":
+			modeValue = "" // Empty string means auto mode
+			modelName = wi.bot.config.Model
+		}
+
+		wi.bot.setUserModelPreference(key, modeValue)
+
+		response := map[string]interface{}{
+			"success":   true,
+			"chat_id":   req.ChatID,
+			"thread_id": req.ThreadID,
+			"mode":      req.Mode,
+			"model":     modelName,
+			"message":   fmt.Sprintf("Model routing mode set to %s (%s)", req.Mode, modelName),
+			"timestamp": time.Now(),
+		}
+
+		json.NewEncoder(w).Encode(response)
+	})(w, r)
+}
+
+// handleLanguage handles language preference updates (Issue #76)
+func (wi *WebInterface) handleLanguage(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse request body
+		var req struct {
+			Language string `json:"language"`
+		}
+
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		// Validate language code
+		if req.Language != "en" && req.Language != "zh-TW" {
+			http.Error(w, "Unsupported language", http.StatusBadRequest)
+			return
+		}
+
+		// Get chat ID from query parameter or use default (0 for anonymous users)
+		var chatID int64 = 0
+		if chatIDStr := r.URL.Query().Get("chat_id"); chatIDStr != "" {
+			var err error
+			if chatID, err = strconv.ParseInt(chatIDStr, 10, 64); err != nil {
+				// If chat_id is not valid, use 0 (frontend-only storage)
+				chatID = 0
+			}
+		}
+
+		// If we have a valid chat_id, persist it in the bot's language manager
+		if chatID != 0 {
+			wi.bot.setChatlanguage(chatID, req.Language)
+		}
+
+		response := map[string]interface{}{
+			"success":   true,
+			"language":  req.Language,
+			"chat_id":   chatID,
+			"message":   "Language preference updated",
+			"timestamp": time.Now(),
 		}
 
 		json.NewEncoder(w).Encode(response)

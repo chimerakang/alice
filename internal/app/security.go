@@ -44,9 +44,47 @@ type MultimediaConfig struct {
 	VoiceToTextProvider   string `json:"voice_to_text_provider"` // "openai_whisper"
 }
 
+// ModelRoutingConfig 動態模型路由設定
+type ModelRoutingConfig struct {
+	EnableDynamicRouting bool   `json:"enable_dynamic_routing"`
+	FastModel            string `json:"fast_model"`
+	DeepModel            string `json:"deep_model"`
+	UseGPT4oMini         bool   `json:"use_gpt4o_mini_for_triage"`
+}
+
+// ModelRoute 單一路由規則
+type ModelRoute struct {
+	Pattern  string // 關鍵字或正則表達式
+	Model    string // 目標模型: "haiku", "sonnet", "opus"
+	Priority int    // 優先順序（越低越優先）
+}
+
+// GetDefaultModelRoutes 返回預設的模型路由規則
+func GetDefaultModelRoutes() []ModelRoute {
+	return []ModelRoute{
+		// Haiku - 簡單任務（優先級 1-10）
+		{Pattern: `(?i)(翻譯|translat)`, Model: "haiku", Priority: 1},
+		{Pattern: `(?i)(總結|summariz|摘要)`, Model: "haiku", Priority: 1},
+		{Pattern: `(?i)(解釋|explain)`, Model: "haiku", Priority: 1},
+		{Pattern: `(?i)(轉換格式|format|json|csv|xml)`, Model: "haiku", Priority: 2},
+		{Pattern: `(?i)(讀取|查看|view|show|read|list|ls)`, Model: "haiku", Priority: 2},
+		{Pattern: `(?i)(狀態|status)`, Model: "haiku", Priority: 2},
+		{Pattern: `(?i)(改寫|改進|polish)`, Model: "haiku", Priority: 3},
+
+		// Opus - 複雜任務（優先級 20-30）
+		{Pattern: `(?i)(重構|refactor|架構|architecture)`, Model: "opus", Priority: 20},
+		{Pattern: `(?i)(系統設計|design system)`, Model: "opus", Priority: 20},
+		{Pattern: `(?i)(跨檔案|multiple files)`, Model: "opus", Priority: 21},
+		{Pattern: `(?i)(bug修復|debug|診斷|troubleshoot)`, Model: "opus", Priority: 22},
+		{Pattern: `(?i)(演算法|algorithm|邏輯設計)`, Model: "opus", Priority: 23},
+		{Pattern: `(?i)(性能最佳化|optimiz|performance)`, Model: "opus", Priority: 24},
+	}
+}
+
 // SecurityEvent 安全事件記錄
 type SecurityEvent struct {
-	ID          string                 `json:"id"`
+	ID          string                 `json:"id,omitempty"`
+	EventID     string                 `json:"event_id"`  // Primary ID field for frontend
 	Timestamp   time.Time              `json:"timestamp"`
 	EventType   string                 `json:"event_type"`
 	Severity    string                 `json:"severity"` // low, medium, high, critical
@@ -172,7 +210,9 @@ func getDefaultPIIPatterns() []PIIPattern {
 		},
 		{
 			Name:        "phone",
-			Pattern:     `(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}`,
+			// More strict: require word boundary before the pattern, and exclude leading minus sign
+			// Matches: 123-456-7890, (123) 456-7890, +1-234-567-8901, etc.
+			Pattern:     `(?:^|[\s,;])(?:\+?\d{1,3}[-.\s]?)?\(?(\d{3})\)?[-.\s]?(\d{3})[-.\s]?(\d{4})(?:[\s,;]|$)`,
 			Severity:    "medium",
 			Replacement: "[PHONE_REDACTED]",
 		},
@@ -393,7 +433,18 @@ func (rl *RateLimiter) cleanupExpired() {
 }
 
 // DetectAndFilterPII 偵測和過濾 PII
-func (sm *SecurityManager) DetectAndFilterPII(text string, logEvent bool) (filtered string, detected []string) {
+// PIIDetectionContext provides context information for PII detection logging
+type PIIDetectionContext struct {
+	ChatID          int64  // Telegram chat ID
+	UserID          int64  // User ID if available
+	MessageType     string // "text", "voice", "photo", "batch", etc.
+	SourceType      string // "telegram", "agent", "api", etc.
+	ProjectPath     string // Project directory path for context tracking
+	MessageID       int    // Telegram message ID for conversation tracking
+	RedactedSnippet string // First 100 chars of filtered text for reference
+}
+
+func (sm *SecurityManager) DetectAndFilterPII(text string, logEvent bool, ctx *PIIDetectionContext) (filtered string, detected []string) {
 	if !sm.config.EnablePIIDetection {
 		return text, nil
 	}
@@ -412,19 +463,56 @@ func (sm *SecurityManager) DetectAndFilterPII(text string, logEvent bool) (filte
 			detected = append(detected, pattern.Name)
 			filtered = regex.ReplaceAllString(filtered, pattern.Replacement)
 
-			// 只在需要時記錄 PII 偵測事件
+			// Only log PII detection event if requested
 			if logEvent {
+				details := map[string]interface{}{
+					"pii_type":     pattern.Name,
+					"matches":      fmt.Sprintf("%d", len(matches)),
+					"source_type":  "text_processing",
+				}
+
+				// Always create redacted snippet from filtered text
+				snippet := filtered
+				if len(snippet) > 100 {
+					snippet = snippet[:100]
+				}
+				if snippet != "" {
+					details["redacted_snippet"] = snippet
+				}
+
+				// Add context information if provided
+				if ctx != nil {
+					if ctx.ChatID > 0 {
+						details["chat_id"] = fmt.Sprintf("%d", ctx.ChatID)
+					}
+					if ctx.UserID > 0 {
+						details["user_id"] = fmt.Sprintf("%d", ctx.UserID)
+					}
+					if ctx.MessageType != "" {
+						details["message_type"] = ctx.MessageType
+					}
+					if ctx.SourceType != "" {
+						details["source_type"] = ctx.SourceType
+					}
+					if ctx.ProjectPath != "" {
+						details["project_path"] = ctx.ProjectPath
+					}
+					if ctx.MessageID > 0 {
+						details["message_id"] = fmt.Sprintf("%d", ctx.MessageID)
+					}
+				}
+
+				userID := int64(0)
+				if ctx != nil {
+					userID = ctx.UserID
+				}
+
 				sm.LogSecurityEvent(SecurityEvent{
 					EventType:   "pii_detected",
 					Severity:    pattern.Severity,
 					Description: fmt.Sprintf("PII detected: %s", pattern.Name),
-					Details: map[string]interface{}{
-						"pattern":     pattern.Name,
-						"matches":     len(matches),
-						"context":     "generic",
-						"location":    "System",
-						"source_type": "text_processing",
-					},
+					Details:     details,
+					UserID:      userID,
 				})
 			}
 		}
@@ -483,6 +571,7 @@ func (sm *SecurityManager) LogSecurityEvent(event SecurityEvent) {
 	defer sm.auditMu.Unlock()
 
 	event.ID = fmt.Sprintf("sec_%d", time.Now().UnixNano())
+	event.EventID = event.ID // Set EventID same as ID for frontend compatibility
 	event.Timestamp = time.Now()
 
 	sm.auditLog = append(sm.auditLog, event)
@@ -507,6 +596,28 @@ func (sm *SecurityManager) LogSecurityEvent(event SecurityEvent) {
 
 // GetSecurityEvents 獲取安全事件
 func (sm *SecurityManager) GetSecurityEvents(limit int, severity string) []SecurityEvent {
+	// Try to get events from database first (persistent storage)
+	if globalStorage != nil {
+		events, err := globalStorage.GetSecurityEvents(limit, 0)
+		if err == nil && len(events) > 0 {
+			// Filter by severity if needed
+			if severity != "" {
+				var filtered []SecurityEvent
+				for _, e := range events {
+					if e.Severity == severity {
+						filtered = append(filtered, e)
+						if limit > 0 && len(filtered) >= limit {
+							break
+						}
+					}
+				}
+				return filtered
+			}
+			return events
+		}
+	}
+
+	// Fallback to in-memory audit log if database is unavailable
 	sm.auditMu.RLock()
 	defer sm.auditMu.RUnlock()
 

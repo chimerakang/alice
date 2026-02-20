@@ -422,9 +422,9 @@ export default function Timeline() {
         endTime: range.endTime,
         source: src !== "all" ? src : undefined,
       };
-      const res = await api.getRecentDecisions(params);
+      const res = await api.getDecisionsByRange(params);
       setApiDecisions(res.decisions || []);
-      setTotalCount(res.pagination?.total_count ?? (res.decisions?.length || 0));
+      setTotalCount(res.total ?? (res.decisions?.length || 0));
     } catch {
       // API not available — keep what we have
     } finally {

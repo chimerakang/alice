@@ -697,7 +697,7 @@ func (wi *WebInterface) handleRecentDecisionsProto(w http.ResponseWriter, r *htt
 				if startTime, err1 := time.Parse(time.RFC3339, startTimeStr); err1 == nil {
 					if endTime, err2 := time.Parse(time.RFC3339, endTimeStr); err2 == nil {
 						// Use the new method that supports offset for time range queries
-						decisions, err = globalStorage.GetDecisionLogsByTimeRangeWithOffset(startTime, endTime, limit, offset)
+						decisions, err = globalStorage.GetDecisionLogsByTimeRangeWithOffset(startTime, endTime, limit, offset, "")
 						// Get accurate total count for the time range
 						if totalCount, countErr := globalStorage.GetDecisionLogsCountByTimeRange(startTime, endTime); countErr == nil {
 							totalCount = totalCount
@@ -846,11 +846,18 @@ func (wi *WebInterface) handlePerformanceAnalyticsProto(w http.ResponseWriter, r
 			errorRate = (100.0 - analytics.SuccessRate) / 100.0
 		}
 
+		// 獲取成本數據用於 Cost Trend 圖表
+		totalCost := 0.0
+		if costReport, err := globalStorage.GetCostSavings(hours); err == nil {
+			totalCost = costReport.ActualCost
+		}
+
 		response := map[string]interface{}{
 			"total_operations":    analytics.TotalRequests,
 			"avg_response_time":   analytics.AvgAPILatency.Milliseconds(),
 			"error_rate":          errorRate,
 			"throughput":          analytics.RequestsPerHour,
+			"total_cost":          totalCost, // 新增：用於 Cost Trend 圖表
 			"resource_usage":      map[string]interface{}{
 				"peak_memory_mb":    analytics.PeakMemoryUsage / 1024 / 1024,
 				"current_memory_mb": analytics.CurrentMemoryUsage / 1024 / 1024,

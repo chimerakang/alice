@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,31 @@ type TokenStats struct {
 	TotalOutputTokens int64   // 累計 output tokens
 	TotalCostUSD      float64 // 累計費用（Max 訂閱下為 0）
 	APICallCount      int     // CLI 呼叫次數
+	Model             string  // NEW: 使用的模型（haiku, sonnet, opus）
+}
+
+// CostSavingsReport 成本節省報告（用於 Dashboard 展示）
+type CostSavingsReport struct {
+	PeriodHours       int                            `json:"period_hours"`
+	StartTime         time.Time                      `json:"start_time"`
+	EndTime           time.Time                      `json:"end_time"`
+	ActualCost        float64                        `json:"actual_cost"`        // 實際花費
+	DefaultModelCost  float64                        `json:"default_model_cost"` // 假設全用預設模型花費
+	SavingsCost       float64                        `json:"savings_cost"`       // 節省金額
+	SavingsPercent    float64                        `json:"savings_percent"`    // 節省百分比
+	TotalRequests     int                            `json:"total_requests"`
+	ByModel           map[string]ModelCostBreakdown  `json:"by_model"`
+	RoutingMethodStat map[string]int                 `json:"routing_method_stat"`
+}
+
+// ModelCostBreakdown 按模型的成本分解
+type ModelCostBreakdown struct {
+	Calls           int     `json:"calls"`
+	ActualCost      float64 `json:"actual_cost"`
+	WouldHaveCost   float64 `json:"would_have_cost"`   // 假設用預設模型的成本
+	Saved           float64 `json:"saved"`             // 節省金額
+	InputTokens     int     `json:"input_tokens"`
+	OutputTokens    int     `json:"output_tokens"`
 }
 
 // ToolExecution represents a single tool execution event
@@ -48,6 +74,9 @@ type DecisionLog struct {
 	GitCommitHash   string                 `json:"git_commit_hash,omitempty"`
 	GitBranch       string                 `json:"git_branch,omitempty"`
 	Source          string                 `json:"source"` // "telegram", "terminal", "vscode", "unknown"
+	Model           string                 `json:"model"` // NEW: "haiku", "sonnet", "opus"
+	RoutingReason   string                 `json:"routing_reason"` // NEW: "user_command", "ai_router", "static_rule", "default"
+	RoutingLatency  int                    `json:"routing_latency_ms"` // NEW: 路由判斷耗時 (ms)
 }
 
 // ExecutionOutcome represents the result of an AI interaction
@@ -151,7 +180,7 @@ func (tl *ToolLogger) LogToolComplete(toolName string, status string, duration t
 	}
 
 	// Record performance metrics for tool execution
-	RecordToolExecution(toolName, duration, chatID, success)
+	RecordToolExecution(toolName, duration, chatID, "", success)
 }
 
 // GetRecentExecutions returns the most recent tool executions
@@ -271,18 +300,21 @@ func (dl *DecisionLogger) SearchDecisions(projectPath string, taskType string, s
 
 // projectState 保存單一專案的對話狀態
 type projectState struct {
-	sessionID    string
-	stats        TokenStats
-	lastActivity time.Time
-	createdAt    time.Time
+	sessionID         string
+	stats             TokenStats
+	lastActivity      time.Time
+	createdAt         time.Time
+	lastTotalCostUSD  float64 // CLI's cumulative cost from last call (for delta calculation)
 }
 
 type Agent struct {
-	client     *CLIClient
-	projectDir string
-	projects   map[string]*projectState // projectDir → state
-	chatID     int64                    // Telegram chat ID
-	threadID   int                      // Telegram thread ID (for forum topics)
+	client                *CLIClient
+	projectDir            string
+	projects              map[string]*projectState // projectDir → state
+	chatID                int64                    // Telegram chat ID
+	threadID              int                      // Telegram thread ID (for forum topics)
+	currentModelOverride  string                   // Current model override for this agent (for dynamic routing)
+	lastUsedModel         string                   // Last model used (for session continuity)
 	// Abort control
 	cancelFunc context.CancelFunc // 取消正在執行的 CLI 子程序
 	cancelMu   sync.Mutex         // 保護 cancelFunc 的併發存取
@@ -316,6 +348,40 @@ func (a *Agent) IsProcessing() bool {
 	a.cancelMu.Lock()
 	defer a.cancelMu.Unlock()
 	return a.processing
+}
+
+// SetModelOverride 設定此 agent 的模型覆蓋（用於動態路由）
+func (a *Agent) SetModelOverride(model string) {
+	a.currentModelOverride = model
+}
+
+// selectModel 根據使用者訊息和靜態規則選擇最合適的模型
+// 返回選擇的模型名稱和路由原因
+func (a *Agent) selectModel(userMessage string) (model string, routingReason string) {
+	routes := GetDefaultModelRoutes()
+	var bestMatch *ModelRoute
+
+	// 遍歷所有規則，找到最優先（最低優先級數字）的匹配
+	for i := range routes {
+		route := &routes[i]
+		// 嘗試編譯和匹配正則表達式
+		if re, err := regexp.Compile(route.Pattern); err == nil {
+			if re.MatchString(userMessage) {
+				// 如果尚未有匹配或此規則優先級更高
+				if bestMatch == nil || route.Priority < bestMatch.Priority {
+					bestMatch = route
+				}
+			}
+		}
+	}
+
+	// 如果找到匹配規則，使用該規則
+	if bestMatch != nil {
+		return bestMatch.Model, "static_rule"
+	}
+
+	// 預設為 sonnet
+	return "sonnet", "default"
 }
 
 // current 取得目前專案的狀態，不存在則建立
@@ -352,11 +418,44 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	}()
 
 	if onUpdate != nil {
-		onUpdate("🔧 Claude Code 處理中...", false)
+		onUpdate("🔧 Claude Code processing...", false)
 	}
 
 	ps := a.current()
-	log.Printf("[agent] calling CLI (stream), session=%s, project=%s", ps.sessionID, a.projectDir)
+
+	// Handle model selection with three-tier routing priority
+	var routingReason string
+	var routingLatency int
+	selectedModel := ""
+
+	// Priority 1: User command override
+	if a.currentModelOverride != "" {
+		selectedModel = a.currentModelOverride
+		routingReason = "user_command"
+		routingLatency = 0
+	} else {
+		// Priority 2: Static rules-based routing
+		startRouting := time.Now()
+		selectedModel, routingReason = a.selectModel(userMessage)
+		routingLatency = int(time.Since(startRouting).Milliseconds())
+		msgPreview := userMessage
+		if len(msgPreview) > 50 {
+			msgPreview = msgPreview[:50]
+		}
+		log.Printf("[telegram] model routing: message=%q selected=%s reason=%s latency=%dms", msgPreview, selectedModel, routingReason, routingLatency)
+	}
+
+	// If model changed, clear session to start fresh
+	if selectedModel != "" && selectedModel != a.lastUsedModel {
+		ps.sessionID = ""  // Force new session when model changes
+	}
+	a.lastUsedModel = selectedModel
+	if a.lastUsedModel == "" {
+		a.lastUsedModel = a.client.Model  // Use default if no model selected
+		routingReason = "default"
+	}
+
+	log.Printf("[agent] calling CLI (stream), session=%s, project=%s, model=%s routing_reason=%s", ps.sessionID, a.projectDir, a.lastUsedModel, routingReason)
 
 	// Pre-generate decision ID so checkpoints created during streaming
 	// can reference the decision that will be created after streaming completes.
@@ -365,7 +464,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	// Track tool executions for this decision
 	var toolCallsForDecision []ToolExecution
 
-	resp, err := a.client.CallStream(ctx, userMessage, a.projectDir, ps.sessionID, func(toolName string, toolInput map[string]interface{}) {
+	resp, err := a.client.CallStream(ctx, userMessage, a.projectDir, ps.sessionID, a.lastUsedModel, func(toolName string, toolInput map[string]interface{}) {
 		// Check if we should create a checkpoint before executing this tool
 		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
 
@@ -413,38 +512,47 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	if err != nil {
 		// Even on error, resp may contain partial text content from streaming
 		partialText := ""
+		deltaCost := 0.0
 		if resp != nil {
 			partialText = resp.TextContent
 			// Still save session ID and stats for partial results
 			if resp.SessionID != "" {
 				ps.sessionID = resp.SessionID
 			}
+			// Calculate cost delta (CLI's TotalCostUSD is session-cumulative)
+			deltaCost = resp.TotalCostUSD - ps.lastTotalCostUSD
+			ps.lastTotalCostUSD = resp.TotalCostUSD
+
 			ps.stats.APICallCount++
 			ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
 			ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
-			ps.stats.TotalCostUSD += resp.TotalCostUSD
+			ps.stats.TotalCostUSD += deltaCost
 			ps.lastActivity = time.Now()
 		}
-		a.logDecision(userMessage, partialText, toolCallsForDecision, startTime, resp, err)
+		a.logDecision(userMessage, partialText, toolCallsForDecision, startTime, resp, err, routingReason, routingLatency, deltaCost)
 		return partialText, fmt.Errorf("CLI call failed: %w", err)
 	}
 
 	// 保存 session ID 以便下次 --resume
 	ps.sessionID = resp.SessionID
 
+	// Calculate cost delta (CLI's TotalCostUSD is session-cumulative)
+	deltaCost := resp.TotalCostUSD - ps.lastTotalCostUSD
+	ps.lastTotalCostUSD = resp.TotalCostUSD
+
 	// 更新統計
 	ps.stats.APICallCount++
 	ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
 	ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
-	ps.stats.TotalCostUSD += resp.TotalCostUSD
+	ps.stats.TotalCostUSD += deltaCost
 	ps.lastActivity = time.Now()
 
-	log.Printf("[agent] done: turns=%d tokens_in=%d tokens_out=%d cost=$%.4f session=%s",
+	log.Printf("[agent] done: turns=%d tokens_in=%d tokens_out=%d cost=$%.4f (delta from $%.4f) session=%s",
 		resp.NumTurns, resp.Usage.InputTokens, resp.Usage.OutputTokens,
-		resp.TotalCostUSD, resp.SessionID)
+		deltaCost, resp.TotalCostUSD, resp.SessionID)
 
 	// Log decision for transparency (success case)
-	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil)
+	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil, routingReason, routingLatency, deltaCost)
 
 	return resp.Result, nil
 }
@@ -453,19 +561,19 @@ func formatToolUpdate(name string, input map[string]interface{}) string {
 	switch name {
 	case "Read":
 		if path, ok := input["file_path"].(string); ok {
-			return fmt.Sprintf("📖 讀取 %s", filepath.Base(path))
+			return fmt.Sprintf("📖 Read %s", filepath.Base(path))
 		}
-		return "📖 讀取檔案"
+		return "📖 Read file"
 	case "Write":
 		if path, ok := input["file_path"].(string); ok {
-			return fmt.Sprintf("✏️ 寫入 %s", filepath.Base(path))
+			return fmt.Sprintf("✍️ Write %s", filepath.Base(path))
 		}
-		return "✏️ 寫入檔案"
+		return "✍️ Write file"
 	case "Edit":
 		if path, ok := input["file_path"].(string); ok {
-			return fmt.Sprintf("✏️ 編輯 %s", filepath.Base(path))
+			return fmt.Sprintf("✏️ Edit %s", filepath.Base(path))
 		}
-		return "✏️ 編輯檔案"
+		return "✏️ Edit file"
 	case "Bash":
 		if cmd, ok := input["command"].(string); ok {
 			if len(cmd) > 60 {
@@ -473,17 +581,17 @@ func formatToolUpdate(name string, input map[string]interface{}) string {
 			}
 			return fmt.Sprintf("💻 %s", cmd)
 		}
-		return "💻 執行指令"
+		return "💻 Execute command"
 	case "Glob":
 		if pattern, ok := input["pattern"].(string); ok {
-			return fmt.Sprintf("🔍 搜尋 %s", pattern)
+			return fmt.Sprintf("🔍 Find %s", pattern)
 		}
-		return "🔍 搜尋檔案"
+		return "🔍 Find files"
 	case "Grep":
 		if pattern, ok := input["pattern"].(string); ok {
-			return fmt.Sprintf("🔍 搜尋 %s", pattern)
+			return fmt.Sprintf("🔎 Search %s", pattern)
 		}
-		return "🔍 搜尋程式碼"
+		return "🔎 Search content"
 	default:
 		return fmt.Sprintf("🔧 %s", name)
 	}
@@ -535,7 +643,7 @@ func (a *Agent) ProjectCount() int {
 }
 
 // logDecision records a complete AI decision with full context
-func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolExecution, startTime time.Time, resp *CLIResponse, err error) {
+func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolExecution, startTime time.Time, resp *CLIResponse, err error, routingReason string, routingLatency int, deltaCost float64) {
 	if !globalDecisionLogger.IsEnabled() {
 		return
 	}
@@ -580,11 +688,13 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 	}
 
 	// Create token stats for this interaction
-	tokenStats := TokenStats{}
+	tokenStats := TokenStats{
+		Model: ExtractModelShortName(a.client.Model), // NEW: 記錄使用的模型
+	}
 	if resp != nil {
 		tokenStats.TotalInputTokens = int64(resp.Usage.InputTokens)
 		tokenStats.TotalOutputTokens = int64(resp.Usage.OutputTokens)
-		tokenStats.TotalCostUSD = resp.TotalCostUSD
+		tokenStats.TotalCostUSD = deltaCost // Use delta cost instead of cumulative session cost
 		tokenStats.APICallCount = 1
 	}
 
@@ -610,6 +720,9 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 		DurationMs:      int(duration.Milliseconds()),
 		TokensUsed:      tokenStats,
 		Source:          "telegram",
+		Model:           ExtractModelShortName(a.lastUsedModel), // 使用的模型
+		RoutingReason:   routingReason,                         // 路由原因
+		RoutingLatency:  routingLatency,                         // 路由延遲 (ms)
 	}
 
 	// Log the decision
@@ -712,7 +825,7 @@ func (a *Agent) filterSensitiveData(text string) string {
 	// Use security manager's PII detection if available
 	if globalSecurityManager != nil {
 		// Don't log events here to avoid double-logging (the original detection point should log)
-		filtered, _ := globalSecurityManager.DetectAndFilterPII(text, false)
+		filtered, _ := globalSecurityManager.DetectAndFilterPII(text, false, nil)
 		return filtered
 	}
 

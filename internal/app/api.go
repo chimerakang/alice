@@ -41,12 +41,20 @@ func NewClient(model string) *CLIClient {
 
 // Call invokes the Claude Code CLI in print mode.
 // If sessionID is non-empty, it resumes that session for conversation continuity.
-func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID string) (*CLIResponse, error) {
+// modelOverride: if non-empty, use this model instead of c.Model (for dynamic routing)
+func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error) {
 	startTime := time.Now()
+
+	// Select model: use override if provided, otherwise use client's default
+	model := c.Model
+	if modelOverride != "" {
+		model = modelOverride
+	}
+
 	args := []string{
 		"-p",
 		"--output-format", "json",
-		"--model", c.Model,
+		"--model", model,
 		"--dangerously-skip-permissions",
 		"--max-turns", "25",
 	}
@@ -95,7 +103,7 @@ func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID str
 		}
 	}
 
-	RecordAPICall(latency, !resp.IsError, totalTokens, resp.TotalCostUSD, chatID, errorType)
+	RecordAPICall(latency, !resp.IsError, totalTokens, resp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(model))
 
 	if resp.IsError {
 		return &resp, fmt.Errorf("CLI returned error: %s", resp.Result)
@@ -107,13 +115,21 @@ func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID str
 // CallStream invokes Claude Code CLI with stream-json output.
 // onToolUse is called for each tool_use event during processing.
 // onContent is called for thinking/text content blocks (contentType: "thinking" or "text").
-func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, sessionID string, onToolUse func(toolName string, toolInput map[string]interface{}), onContent func(contentType, text string)) (*CLIResponse, error) {
+// modelOverride: if non-empty, use this model instead of c.Model (for dynamic routing)
+func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, sessionID, modelOverride string, onToolUse func(toolName string, toolInput map[string]interface{}), onContent func(contentType, text string)) (*CLIResponse, error) {
 	startTime := time.Now()
+
+	// Select model: use override if provided, otherwise use client's default
+	model := c.Model
+	if modelOverride != "" {
+		model = modelOverride
+	}
+
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
-		"--model", c.Model,
+		"--model", model,
 		"--dangerously-skip-permissions",
 		"--max-turns", "25",
 	}
@@ -261,7 +277,7 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 		}
 	}
 
-	RecordAPICall(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, chatID, errorType)
+	RecordAPICall(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(model))
 
 	if finalResp.IsError {
 		return finalResp, fmt.Errorf("CLI returned error: %s", finalResp.Result)

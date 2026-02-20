@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useAppStore } from "@/stores/appStore";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import Dashboard from "@/pages/Dashboard";
 import Timeline from "@/pages/Timeline";
 import Checkpoints from "@/pages/Checkpoints";
@@ -69,9 +70,10 @@ function AppLayout() {
           ))}
         </nav>
 
-        {/* Connection Status */}
-        <div className="p-4 border-t border-gray-800/60">
-          <div className="flex items-center gap-2 text-xs">
+        {/* Language Switcher & Connection Status */}
+        <div className="space-y-2 p-3 border-t border-gray-800/60">
+          <LanguageSwitcher />
+          <div className="flex items-center gap-2 text-xs px-3 py-2">
             {wsConnected ? (
               <>
                 <Wifi className="w-3.5 h-3.5 text-success" />

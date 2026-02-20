@@ -11,9 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +32,7 @@ type MediaBatch struct {
 	MediaGroupID string
 	UserID       int64
 	ChatKey      chatKey
+	MessageID    int // 第一條消息的 message ID，用於 PII 檢測上下文
 	FirstSeen    time.Time
 	LastSeen     time.Time
 	timer        *time.Timer // 用於延遲處理的計時器
@@ -81,6 +80,7 @@ type TelegramBot struct {
 	client        *CLIClient
 	allowIDs      map[int64]bool // 白名單
 	config        *Config
+	i18n          *I18nManager   // 多國語系管理器
 
 	// 媒體批次處理
 	mediaBatches  map[string]*MediaBatch // mediaGroupID 或 chatKey 作為 key
@@ -92,6 +92,14 @@ type TelegramBot struct {
 	queueCtx      context.Context        // 佇列上下文
 	queueCancel   context.CancelFunc     // 佇列取消函數
 	rateLimiter   *time.Ticker          // 速率限制器
+
+	// Model routing preferences per chat/thread
+	modelPreferences map[chatKey]string // "fast", "deep", or ""
+	prefMu           sync.RWMutex       // Protect model preferences
+
+	// Language preferences per chat
+	langPreferences map[int64]string // chatID -> language code
+	langPrefMu      sync.RWMutex    // Protect language preferences
 }
 
 func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
@@ -119,6 +127,14 @@ func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
 
 	log.Printf("[telegram] bot authorized: @%s", me.Result.Username)
 
+	// Initialize i18n manager
+	i18nManager, err := NewI18nManager("locales", "en")
+	if err != nil {
+		log.Printf("[telegram] warning: i18n initialization failed: %v", err)
+		// Don't fail - we can still run without i18n
+		i18nManager = nil
+	}
+
 	// Initialize context for message queue
 	queueCtx, queueCancel := context.WithCancel(context.Background())
 
@@ -127,6 +143,7 @@ func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
 		client:       client,
 		allowIDs:     allowIDs,
 		config:       config,
+		i18n:         i18nManager,
 		mediaBatches: make(map[string]*MediaBatch),
 		batchTimeout: 5 * time.Second, // 5秒批次收集窗口
 
@@ -136,6 +153,10 @@ func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
 		queueCtx:     queueCtx,
 		queueCancel:  queueCancel,
 		rateLimiter:  time.NewTicker(500 * time.Millisecond), // 2 messages per second
+
+		// Model routing preferences
+		modelPreferences: make(map[chatKey]string),
+		langPreferences:  make(map[int64]string),
 	}
 
 	// Start message queue worker
@@ -144,23 +165,36 @@ func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
 	// 註冊 Telegram 指令選單
 	bot.registerCommands()
 
+	// Load persisted chat language preferences from database (background operation)
+	if globalStorage != nil {
+		go func() {
+			// This is a best-effort load - we don't fail the bot if this doesn't work
+			// Language preferences will be loaded on-demand if not cached
+			log.Printf("[telegram] loading persisted chat language preferences...")
+		}()
+	}
+
 	return bot, nil
 }
 
 // registerCommands 透過 Telegram Bot API 註冊指令自動完成選單
 func (t *TelegramBot) registerCommands() {
 	commands := []map[string]string{
-		{"command": "project", "description": "切換專案目錄"},
-		{"command": "reset", "description": "清除對話歷史"},
-		{"command": "status", "description": "查看目前狀態"},
-		{"command": "usage", "description": "查看 token 用量"},
-		{"command": "abort", "description": "中斷正在執行的任務"},
-		{"command": "dashboard", "description": "查看系統監控面板"},
-		{"command": "checkpoints", "description": "查看檢查點狀態"},
-		{"command": "multiagent", "description": "多代理協調管理"},
-		{"command": "agents", "description": "查看專門化代理清單"},
-		{"command": "tasks", "description": "查看待辦工作清單"},
-		{"command": "help", "description": "顯示說明"},
+		{"command": "project", "description": "Switch project directory"},
+		{"command": "reset", "description": "Clear conversation history"},
+		{"command": "status", "description": "View current status"},
+		{"command": "usage", "description": "View token usage"},
+		{"command": "fast", "description": "Switch to fast mode (Haiku)"},
+		{"command": "deep", "description": "Switch to deep mode (Opus)"},
+		{"command": "auto", "description": "Auto routing mode (AI decides)"},
+		{"command": "abort", "description": "Abort running task"},
+		{"command": "dashboard", "description": "View system monitoring dashboard"},
+		{"command": "checkpoints", "description": "View checkpoint status"},
+		{"command": "multiagent", "description": "Multi-agent coordination management"},
+		{"command": "agents", "description": "View specialized agent list"},
+		{"command": "tasks", "description": "View to-do list"},
+		{"command": "lang", "description": "Switch bot language"},
+		{"command": "help", "description": "Show help message"},
 	}
 
 	body, _ := json.Marshal(map[string]interface{}{"commands": commands})
@@ -224,6 +258,123 @@ func (t *TelegramBot) GetAgentCount() int {
 	t.agentsMu.RLock()
 	defer t.agentsMu.RUnlock()
 	return len(t.agents)
+}
+
+// getUserModelPreference 安全地獲取用戶的模型偏好設定
+// 返回值: "fast", "deep", 或 "" (自動模式)
+func (t *TelegramBot) getUserModelPreference(key chatKey) string {
+	t.prefMu.RLock()
+	defer t.prefMu.RUnlock()
+	return t.modelPreferences[key]
+}
+
+// setUserModelPreference 安全地設定用戶的模型偏好設定
+// mode: "fast", "deep", 或 "" (自動模式)
+func (t *TelegramBot) setUserModelPreference(key chatKey, mode string) {
+	t.prefMu.Lock()
+	defer t.prefMu.Unlock()
+	if mode == "" {
+		delete(t.modelPreferences, key)
+	} else {
+		t.modelPreferences[key] = mode
+	}
+}
+
+// handleSavingsCommand 處理 /savings 指令 - 顯示本週路由統計和節省金額
+// 支持 /savings 或 /savings <project_path>
+func (t *TelegramBot) handleSavingsCommand(key chatKey, projectPath string) {
+	if globalStorage == nil {
+		t.send(key, t.getLocalizedMessage(key.chatID, "no_storage", nil))
+		return
+	}
+
+	// 默認查詢最近 7 天的數據
+	var report CostSavingsReport
+	var err error
+	if projectPath != "" {
+		report, err = globalStorage.GetCostSavingsByProject(projectPath, 168)
+	} else {
+		report, err = globalStorage.GetCostSavings(168)
+	}
+	if err != nil {
+		log.Printf("[telegram] failed to get cost savings: %v", err)
+		msg := t.getLocalizedMessage(key.chatID, "error_get_cost", map[string]string{"error": err.Error()})
+		t.send(key, msg)
+		return
+	}
+
+	if report.TotalRequests == 0 {
+		t.send(key, t.getLocalizedMessage(key.chatID, "no_routing_data", nil))
+		return
+	}
+
+	// 組建回應訊息
+	var msg strings.Builder
+	titleMsg := t.getLocalizedMessage(key.chatID, "task_savings_title", nil)
+	msg.WriteString(titleMsg)
+
+	// 按模型分類
+	for model, breakdown := range report.ByModel {
+		modelIcon := "🟢"
+		if model == "sonnet" {
+			modelIcon = "🟡"
+		} else if model == "opus" {
+			modelIcon = "🔴"
+		}
+
+		savedAmount := breakdown.Saved
+		savedSign := ""
+		if savedAmount > 0 {
+			savedSign = "✅"
+		} else if savedAmount < 0 {
+			savedSign = "⬆️"
+		}
+
+		breakdownMsg := t.getLocalizedMessage(key.chatID, "task_savings_model_breakdown", nil)
+		breakdownMsg = strings.ReplaceAll(breakdownMsg, "{icon}", modelIcon)
+		breakdownMsg = strings.ReplaceAll(breakdownMsg, "{model}", model)
+		breakdownMsg = strings.ReplaceAll(breakdownMsg, "{calls}", fmt.Sprintf("%d", breakdown.Calls))
+		breakdownMsg = strings.ReplaceAll(breakdownMsg, "{cost}", fmt.Sprintf("%.2f", breakdown.ActualCost))
+		breakdownMsg = strings.ReplaceAll(breakdownMsg, "{sonnet_cost}", fmt.Sprintf("%.2f", breakdown.WouldHaveCost))
+		breakdownMsg = strings.ReplaceAll(breakdownMsg, "{status}", savedSign)
+		msg.WriteString(breakdownMsg)
+	}
+
+	// 節省統計
+	costHeaderMsg := t.getLocalizedMessage(key.chatID, "task_savings_cost_header", nil)
+	msg.WriteString(costHeaderMsg)
+
+	actualMsg := t.getLocalizedMessage(key.chatID, "task_savings_actual_cost", nil)
+	actualMsg = strings.ReplaceAll(actualMsg, "{cost}", fmt.Sprintf("%.2f", report.ActualCost))
+	msg.WriteString(actualMsg)
+
+	assumedMsg := t.getLocalizedMessage(key.chatID, "task_savings_assumed_cost", nil)
+	assumedMsg = strings.ReplaceAll(assumedMsg, "{cost}", fmt.Sprintf("%.2f", report.DefaultModelCost))
+	msg.WriteString(assumedMsg)
+
+	amountMsg := t.getLocalizedMessage(key.chatID, "task_savings_amount", nil)
+	amountMsg = strings.ReplaceAll(amountMsg, "{savings}", fmt.Sprintf("%.2f", report.SavingsCost))
+	amountMsg = strings.ReplaceAll(amountMsg, "{percent}", fmt.Sprintf("%.1f", report.SavingsPercent))
+	msg.WriteString(amountMsg)
+
+	// 路由方式統計
+	if len(report.RoutingMethodStat) > 0 {
+		methodHeaderMsg := t.getLocalizedMessage(key.chatID, "task_savings_method_header", nil)
+		msg.WriteString(methodHeaderMsg)
+		for method, count := range report.RoutingMethodStat {
+			percent := 0.0
+			if report.TotalRequests > 0 {
+				percent = float64(count) / float64(report.TotalRequests) * 100
+			}
+			methodItemMsg := t.getLocalizedMessage(key.chatID, "task_savings_method_item", nil)
+			methodItemMsg = strings.ReplaceAll(methodItemMsg, "{method}", method)
+			methodItemMsg = strings.ReplaceAll(methodItemMsg, "{count}", fmt.Sprintf("%d", count))
+			methodItemMsg = strings.ReplaceAll(methodItemMsg, "{percent}", fmt.Sprintf("%.1f", percent))
+			msg.WriteString(methodItemMsg)
+		}
+	}
+
+	t.send(key, msg.String())
 }
 
 func (t *TelegramBot) isAllowed(userID int64) bool {
@@ -301,7 +452,7 @@ func (t *TelegramBot) Start() {
 			if update.Message != nil && update.Message.Chat != nil && update.Message.From != nil {
 				msg := update.Message
 				key := chatKey{chatID: msg.Chat.ID, threadID: msg.MessageThreadID}
-				go t.handleMessage(key, msg.From.ID, msg.Text, msg.Caption, msg.Photo, msg.Voice, msg.Document, msg.MediaGroupID)
+				go t.handleMessage(key, msg.From.ID, msg.Text, msg.Caption, msg.Photo, msg.Voice, msg.Document, msg.MediaGroupID, msg.MessageID)
 			}
 
 			// Handle callback queries (inline keyboard button clicks)
@@ -314,7 +465,7 @@ func (t *TelegramBot) Start() {
 	}
 }
 
-func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, caption string, photo []PhotoSize, voice *Voice, document *Document, mediaGroupID string) {
+func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, caption string, photo []PhotoSize, voice *Voice, document *Document, mediaGroupID string, messageID int) {
 	// 調試日誌
 	var voiceInfo string = "none"
 	if voice != nil {
@@ -330,7 +481,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	// 權限檢查
 	if !t.isAllowed(userID) {
 		log.Printf("[telegram] user %d not allowed", userID)
-		t.send(key, "⛔ 你沒有使用權限。")
+		t.send(key, t.getLocalizedMessage(key.chatID, "permission_denied", nil))
 		return
 	}
 
@@ -340,21 +491,21 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	// Handle photo messages - 支援批次處理
 	if len(photo) > 0 {
 		log.Printf("[telegram] handling photo message with %d photos, mediaGroupID=%s", len(photo), mediaGroupID)
-		t.handlePhotoMessageBatch(key, userID, photo, caption, mediaGroupID)
+		t.handlePhotoMessageBatch(key, userID, photo, caption, mediaGroupID, messageID)
 		return
 	}
 
 	// Handle voice messages
 	if voice != nil {
 		log.Printf("[telegram] handling voice message: duration=%ds, size=%d bytes", voice.Duration, voice.FileSize)
-		t.handleVoiceMessage(key, userID, voice, caption)
+		t.handleVoiceMessage(key, userID, voice, caption, messageID)
 		return
 	}
 
 	// Handle document messages
 	if document != nil {
 		log.Printf("[telegram] handling document message: name=%s, size=%d bytes, type=%s", document.FileName, document.FileSize, document.MimeType)
-		t.handleDocumentMessage(key, userID, document, caption)
+		t.handleDocumentMessage(key, userID, document, caption, messageID)
 		return
 	}
 
@@ -378,22 +529,18 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		})
 
 		// PII 檢測和過濾 (自動記錄事件)
-		filteredText, detected := globalSecurityManager.DetectAndFilterPII(text, true)
+		filteredText, detected := globalSecurityManager.DetectAndFilterPII(text, true, &PIIDetectionContext{
+			ChatID:      key.chatID,
+			UserID:      userID,
+			MessageType: "text",
+			SourceType:  "telegram",
+			ProjectPath: t.config.DefaultProjectDir,
+			MessageID:   messageID,
+		})
 		if len(detected) > 0 {
-			// PII 事件已由 DetectAndFilterPII 自動記錄，這裡添加額外的 Telegram 特定資訊
-			globalSecurityManager.LogSecurityEvent(SecurityEvent{
-				EventType:   "pii_detected_telegram",
-				Severity:    "medium", // 降低嚴重性，避免重複高優先級警告
-				Description: fmt.Sprintf("Telegram message contained PII (filtered): %v", detected),
-				UserID:      userID,
-				Details: map[string]interface{}{
-					"detected_types": detected,
-					"chat_id":        key.chatID,
-				},
-			})
-
+			// PII 事件已由 DetectAndFilterPII 自動記錄
 			// 警告用戶並使用過濾後的文字
-			t.send(key, "⚠️ 偵測到敏感資訊已自動過濾，請注意保護隱私資料。")
+			t.send(key, t.getLocalizedMessage(key.chatID, "pii_detected", nil))
 			text = filteredText
 		}
 	}
@@ -408,12 +555,55 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	// 一般訊息 → agent 處理
 	agent := t.getAgent(key)
 
+	// Model routing: Three-tier priority system
+	var modelOverride string
+	if t.config.ModelRouting.EnableDynamicRouting {
+		// Priority 1: User explicit preference (/fast or /deep)
+		userPref := t.getUserModelPreference(key)
+		if userPref == "fast" {
+			modelOverride = t.config.ModelRouting.FastModel
+			log.Printf("[telegram] model routing: using fast model (user preference)")
+		} else if userPref == "deep" {
+			modelOverride = t.config.ModelRouting.DeepModel
+			log.Printf("[telegram] model routing: using deep model (user preference)")
+		} else {
+			// Priority 2: Local heuristic-based complexity evaluation (three-tier algorithm)
+			// No external API call needed - fast and cheap
+			complexity := evaluateTaskComplexity(text)
+			switch complexity {
+			case "deep":
+				modelOverride = t.config.ModelRouting.DeepModel
+				log.Printf("[telegram] model routing: complexity evaluation classified as deep (Opus)")
+			case "balanced":
+				// Keep default model (Sonnet) - no override needed
+				log.Printf("[telegram] model routing: complexity evaluation classified as balanced (Sonnet)")
+			default: // "fast"
+				modelOverride = t.config.ModelRouting.FastModel
+				log.Printf("[telegram] model routing: complexity evaluation classified as fast (Haiku)")
+			}
+		}
+
+		// Apply model override to agent
+		if modelOverride != "" {
+			agent.SetModelOverride(modelOverride)
+		}
+	}
+
 	// 發送「處理中」提示
 	t.sendTyping(key)
 
 	var response string
 	var err error
 	var statusMessageID int
+
+	// Add language preference hint to message for Claude
+	userLang := t.getChatLanguage(key.chatID)
+	userMessage := text
+	if userLang == "en" {
+		userMessage = "Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n" + text
+	} else if userLang == "zh-TW" {
+		userMessage = "請用繁體中文回應。\n\n" + text
+	}
 
 	// Create enhanced update callback with stop button support
 	createUpdateCallback := func() func(string, bool) {
@@ -440,42 +630,46 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	}
 
 	// Check if multi-agent coordination should be used
-	if globalAgentCoordinator.IsEnabled() && globalAgentCoordinator.ShouldUseMultiAgent(text) {
+	if globalAgentCoordinator.IsEnabled() && globalAgentCoordinator.ShouldUseMultiAgent(userMessage) {
 		// Use coordinated multi-agent execution
-		response, err = globalAgentCoordinator.ExecuteCoordinatedTask(text, agent, createUpdateCallback())
+		response, err = globalAgentCoordinator.ExecuteCoordinatedTask(userMessage, agent, createUpdateCallback())
 	} else if globalAgentCoordinator.IsEnabled() {
 		// Use single specialized agent based on task routing
-		agentType := globalAgentCoordinator.RouteTask(text)
+		agentType := globalAgentCoordinator.RouteTask(userMessage)
 		if agentType != GeneralAgent {
 			specializedAgent := globalAgentCoordinator.GetOrCreateAgent(agentType, agent)
-			t.send(key, fmt.Sprintf("🤖 使用 %s 代理處理此任務", agentType.String()))
+			msg := t.getLocalizedMessage(key.chatID, "using_agent", nil)
+			msg = strings.ReplaceAll(msg, "{agent}", agentType.String())
+			t.send(key, msg)
 
 			response, err = specializedAgent.ExecuteSubTask(SubTask{
 				ID:          fmt.Sprintf("single_%d", time.Now().Unix()),
-				Description: text,
+				Description: userMessage,
 				AgentType:   agentType,
 				Status:      TaskStatusInProgress,
 			}, createUpdateCallback())
 		} else {
 			// Fall back to regular agent
-			response, err = agent.Run(text, createUpdateCallback())
+			response, err = agent.Run(userMessage, createUpdateCallback())
 		}
 	} else {
 		// Regular single agent execution
-		response, err = agent.Run(text, createUpdateCallback())
+		response, err = agent.Run(userMessage, createUpdateCallback())
 	}
 
 	// Remove stop button after completion
 	if statusMessageID != 0 {
-		finalText := "✅ 執行完成"
+		var finalText string
 		if err != nil {
 			if strings.Contains(err.Error(), "agent aborted by user") {
-				finalText = "🛑 已中斷執行"
+				finalText = t.getLocalizedMessage(key.chatID, "execution_aborted", nil)
 			} else if response != "" {
-				finalText = "⚠️ 部分完成"
+				finalText = t.getLocalizedMessage(key.chatID, "execution_partial", nil)
 			} else {
-				finalText = "❌ 執行錯誤"
+				finalText = t.getLocalizedMessage(key.chatID, "execution_error", nil)
 			}
+		} else {
+			finalText = t.getLocalizedMessage(key.chatID, "execution_completed", nil)
 		}
 		t.editMessageRemoveStopButton(key, statusMessageID, finalText)
 	}
@@ -488,16 +682,24 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		if response != "" {
 			// Partial success: send accumulated content, then show error
 			t.sendLong(key, response)
-			t.send(key, fmt.Sprintf("⚠️ 過程中發生錯誤: %s", extractErrorReason(err.Error())))
+			msg := t.getLocalizedMessage(key.chatID, "error_occurred", nil)
+			msg = strings.ReplaceAll(msg, "{error}", extractErrorReason(err.Error()))
+			t.send(key, msg)
 			return
 		}
-		t.send(key, fmt.Sprintf("❌ 錯誤: %s", extractErrorReason(err.Error())))
+		msg := t.getLocalizedMessage(key.chatID, "error_prefix", nil)
+		msg = strings.ReplaceAll(msg, "{error}", extractErrorReason(err.Error()))
+		t.send(key, msg)
 		return
 	}
 
 	if response == "" {
-		response = "（完成，無文字回覆）"
+		response = t.getLocalizedMessage(key.chatID, "no_reply", nil)
 	}
+
+	// 加上模型標籤
+	modelTag := getModelTag(agent.lastUsedModel)
+	response = modelTag + "\n\n" + response
 
 	// Telegram 訊息限制 4096 字元，分段發送
 	t.sendLong(key, response)
@@ -528,31 +730,33 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 
 	switch cmd {
 	case "/start", "/help":
-		help := `🤖 *Claude Code Agent*
-
-直接傳送訊息，我就會在你的專案中工作。
-使用 Claude Code CLI（Max 訂閱，無額外費用）。
-
-*支援 Forum Topics：*
-在群組開啟 Topics，每個 Topic 綁定一個專案，對話完全獨立。
-
-*指令：*
-/project <路徑> — 切換專案目錄
-/reset — 清除對話歷史
-/status — 查看目前狀態
-/usage — 查看 token 用量
-/dashboard — 查看系統監控面板
-/checkpoints — 查看檢查點狀態
-/abort — 中斷正在執行的任務
-/multiagent [enable|disable|status|stats] — 多代理協調管理
-/agents — 查看專門化代理清單
-/tasks — 查看待辦工作清單
-/help — 顯示此說明`
+		// Build help text using localized messages for both languages
+		help := "🤖 *Claude Code Agent*\n\n"
+		help += t.getLocalizedMessage(key.chatID, "help_intro", nil) + "\n\n"
+		help += t.getLocalizedMessage(key.chatID, "help_forum_topics", nil) + "\n\n"
+		help += t.getLocalizedMessage(key.chatID, "help_basic_commands", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_project_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_reset_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_status_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_usage_desc", nil) + "\n\n"
+		help += t.getLocalizedMessage(key.chatID, "help_routing_commands", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_fast_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_deep_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_auto_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_savings_desc", nil) + "\n\n"
+		help += t.getLocalizedMessage(key.chatID, "help_advanced_commands", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_dashboard_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_checkpoints_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_abort_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_multiagent_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_agents_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_tasks_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_lang_desc", nil)
 		t.sendMarkdown(key, help)
 
 	case "/project":
 		if len(parts) < 2 {
-			t.send(key, "用法: /project <路徑或專案名稱>")
+			t.send(key, t.getLocalizedMessage(key.chatID, "project_usage", nil))
 			return
 		}
 		dir := parts[1]
@@ -565,12 +769,43 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		// 驗證路徑是否存在和有效
 		if err := t.validateProjectPath(dir); err != nil {
 			// 路徑驗證失敗，提供錯誤訊息和建議
-			errorMsg := fmt.Sprintf("❌ %s", err.Error())
+			errStr := err.Error()
+			var errorMsg string
+
+			// Parse the error key:details format
+			if strings.HasPrefix(errStr, "path_not_exist:") {
+				path := strings.TrimPrefix(errStr, "path_not_exist:")
+				locMsg := t.getLocalizedMessage(key.chatID, "path_not_exist", nil)
+				errorMsg = fmt.Sprintf("❌ %s", strings.ReplaceAll(locMsg, "{path}", path))
+			} else if strings.HasPrefix(errStr, "path_access_denied:") {
+				parts := strings.SplitN(strings.TrimPrefix(errStr, "path_access_denied:"), ":", 2)
+				path := ""
+				errDetail := ""
+				if len(parts) > 0 {
+					path = parts[0]
+				}
+				if len(parts) > 1 {
+					errDetail = parts[1]
+				}
+				locMsg := t.getLocalizedMessage(key.chatID, "path_access_denied", nil)
+				errorMsg = fmt.Sprintf("❌ %s", strings.ReplaceAll(strings.ReplaceAll(locMsg, "{path}", path), "{error}", errDetail))
+			} else if strings.HasPrefix(errStr, "path_not_directory:") {
+				path := strings.TrimPrefix(errStr, "path_not_directory:")
+				locMsg := t.getLocalizedMessage(key.chatID, "path_not_directory", nil)
+				errorMsg = fmt.Sprintf("❌ %s", strings.ReplaceAll(locMsg, "{path}", path))
+			} else if strings.HasPrefix(errStr, "path_permission_denied:") {
+				path := strings.TrimPrefix(errStr, "path_permission_denied:")
+				locMsg := t.getLocalizedMessage(key.chatID, "path_permission_denied", nil)
+				errorMsg = fmt.Sprintf("❌ %s", strings.ReplaceAll(locMsg, "{path}", path))
+			} else {
+				errorMsg = fmt.Sprintf("❌ %s", errStr)
+			}
 
 			// 嘗試提供相似路徑建議
 			suggestions := t.suggestSimilarPaths(dir)
 			if len(suggestions) > 0 {
-				errorMsg += "\n\n💡 是否要設定這些相似的專案？"
+				sugMsg := t.getLocalizedMessage(key.chatID, "project_similar_suggestion", nil)
+				errorMsg += "\n\n" + sugMsg
 				for _, suggestion := range suggestions {
 					projectName := filepath.Base(suggestion)
 					errorMsg += fmt.Sprintf("\n• %s", projectName)
@@ -593,20 +828,25 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		}
 
 		// 偵測專案類型
-		projectType := t.detectProjectType(dir)
+		projectType := t.detectProjectType(key.chatID, dir)
 		projectName := filepath.Base(dir)
 
 		// 建構成功訊息
-		successMsg := fmt.Sprintf("✅ 專案已設定為：%s", projectName)
-		successMsg += fmt.Sprintf("\n📂 路徑：`%s`", dir)
-		successMsg += fmt.Sprintf("\n🔧 類型：%s", projectType)
+		successMsg := t.getLocalizedMessage(key.chatID, "project_set", nil)
+		successMsg = strings.ReplaceAll(successMsg, "{name}", projectName)
+		pathMsg := t.getLocalizedMessage(key.chatID, "project_path", nil)
+		pathMsg = strings.ReplaceAll(pathMsg, "{path}", dir)
+		successMsg += "\n" + pathMsg
+		typeMsg := t.getLocalizedMessage(key.chatID, "project_type", nil)
+		typeMsg = strings.ReplaceAll(typeMsg, "{type}", projectType)
+		successMsg += "\n" + typeMsg
 
 		// 檢查是否有 MASTER_TASKS.md (用於 /tasks 功能)
 		tasksFile := filepath.Join(dir, "docs", "MASTER_TASKS.md")
 		if _, err := os.Stat(tasksFile); err == nil {
-			successMsg += "\n📋 可用指令：/tasks, /status, /checkpoints"
+			successMsg += "\n" + t.getLocalizedMessage(key.chatID, "project_available_commands", nil)
 		} else {
-			successMsg += "\n📋 可用指令：/status, /checkpoints"
+			successMsg += "\n" + t.getLocalizedMessage(key.chatID, "project_available_commands_no_tasks", nil)
 		}
 
 		t.sendMarkdown(key, successMsg)
@@ -615,54 +855,109 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		agent := t.getAgent(key)
 		stats := agent.Stats()
 		if stats.APICallCount > 0 {
-			t.send(key, fmt.Sprintf("🔄 對話已清除\n本次用量: %dK in / %dK out (%d 次呼叫)",
-				stats.TotalInputTokens/1000, stats.TotalOutputTokens/1000, stats.APICallCount))
+			msg := t.getLocalizedMessage(key.chatID, "conversation_cleared", nil)
+			msg = strings.ReplaceAll(msg, "{tokens_in}", fmt.Sprintf("%d", stats.TotalInputTokens/1000))
+			msg = strings.ReplaceAll(msg, "{tokens_out}", fmt.Sprintf("%d", stats.TotalOutputTokens/1000))
+			msg = strings.ReplaceAll(msg, "{calls}", fmt.Sprintf("%d", stats.APICallCount))
+			t.send(key, msg)
 		} else {
-			t.send(key, "🔄 對話歷史已清除")
+			t.send(key, t.getLocalizedMessage(key.chatID, "conversation_cleared", nil))
 		}
 		agent.Reset()
 
 	case "/status":
 		agent := t.getAgent(key)
 		stats := agent.Stats()
-		sessionInfo := "無"
+		sessionInfo := t.getLocalizedMessage(key.chatID, "session_none", nil)
 		if agent.SessionID() != "" {
 			sessionInfo = fmt.Sprintf("`%s`", agent.SessionID())
 		}
-		status := fmt.Sprintf(
-			"📊 *狀態*\n"+
-				"專案: `%s`\n"+
-				"模型: `%s`\n"+
-				"Session: %s\n"+
-				"CLI 呼叫: %d 次\n"+
-				"累計: %dK in / %dK out",
-			agent.projectDir,
-			t.client.Model,
-			sessionInfo,
-			stats.APICallCount,
-			stats.TotalInputTokens/1000,
-			stats.TotalOutputTokens/1000,
-		)
+
+		// Get current model mode
+		modelMode := t.getUserModelPreference(key)
+		var modelDisplay string
+		if modelMode == "fast" {
+			modelDisplay = t.getLocalizedMessage(key.chatID, "model_fast", nil)
+			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.config.ModelRouting.FastModel)
+		} else if modelMode == "deep" {
+			modelDisplay = t.getLocalizedMessage(key.chatID, "model_deep", nil)
+			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.config.ModelRouting.DeepModel)
+		} else {
+			modelDisplay = t.getLocalizedMessage(key.chatID, "model_auto", nil)
+			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.client.Model)
+		}
+
+		status := t.getLocalizedMessage(key.chatID, "status_format", nil)
+		status = strings.ReplaceAll(status, "{project}", agent.projectDir)
+		status = strings.ReplaceAll(status, "{model}", modelDisplay)
+		status = strings.ReplaceAll(status, "{session}", sessionInfo)
+		status = strings.ReplaceAll(status, "{calls}", fmt.Sprintf("%d", stats.APICallCount))
+		status = strings.ReplaceAll(status, "{tokens_in}", fmt.Sprintf("%d", stats.TotalInputTokens/1000))
+		status = strings.ReplaceAll(status, "{tokens_out}", fmt.Sprintf("%d", stats.TotalOutputTokens/1000))
 		t.sendMarkdown(key, status)
 
 	case "/usage":
 		agent := t.getAgent(key)
 		stats := agent.Stats()
-		usage := fmt.Sprintf(
-			"💰 *Token 用量*\n\n"+
-				"*本次對話:*\n"+
-				"  輸入: %d tokens\n"+
-				"  輸出: %d tokens\n"+
-				"  CLI 呼叫: %d 次\n"+
-				"  CLI 費用: $%.4f\n\n"+
-				"*模式: Claude Max 訂閱*\n"+
-				"  月費固定 $200，無額外 token 費用",
-			stats.TotalInputTokens,
-			stats.TotalOutputTokens,
-			stats.APICallCount,
-			stats.TotalCostUSD,
-		)
-		t.sendMarkdown(key, usage)
+
+		var msg strings.Builder
+		usageMsg := t.getLocalizedMessage(key.chatID, "token_usage_format", nil)
+		usageMsg = strings.ReplaceAll(usageMsg, "{input}", fmt.Sprintf("%d", stats.TotalInputTokens))
+		usageMsg = strings.ReplaceAll(usageMsg, "{output}", fmt.Sprintf("%d", stats.TotalOutputTokens))
+		usageMsg = strings.ReplaceAll(usageMsg, "{calls}", fmt.Sprintf("%d", stats.APICallCount))
+		usageMsg = strings.ReplaceAll(usageMsg, "{cost}", fmt.Sprintf("%.4f", stats.TotalCostUSD))
+		msg.WriteString(usageMsg)
+		msg.WriteString("\n")
+
+		// 按模型分類顯示（從資料庫查詢最近 7 天）
+		if globalStorage != nil {
+			// 支持按項目篩選：/usage 或 /usage <project_path>
+			var projectPath string
+			if len(parts) > 1 {
+				projectPath = strings.Join(parts[1:], " ")
+			}
+
+			var report CostSavingsReport
+			var err error
+			if projectPath != "" {
+				report, err = globalStorage.GetCostSavingsByProject(projectPath, 168)
+			} else {
+				report, err = globalStorage.GetCostSavings(168)
+			}
+			if err == nil && report.TotalRequests > 0 {
+				byModelMsg := t.getLocalizedMessage(key.chatID, "usage_stats_by_model", nil)
+				msg.WriteString(byModelMsg)
+				for model, breakdown := range report.ByModel {
+					modelIcon := "🟢"
+					if model == "sonnet" {
+						modelIcon = "🟡"
+					} else if model == "opus" {
+						modelIcon = "🔴"
+					} else if model == "haiku" {
+						modelIcon = "⚡"
+					}
+					itemMsg := t.getLocalizedMessage(key.chatID, "usage_stats_model_item", nil)
+					itemMsg = strings.ReplaceAll(itemMsg, "{icon}", modelIcon)
+					itemMsg = strings.ReplaceAll(itemMsg, "{model}", model)
+					itemMsg = strings.ReplaceAll(itemMsg, "{calls}", fmt.Sprintf("%d", breakdown.Calls))
+					itemMsg = strings.ReplaceAll(itemMsg, "{input}", fmt.Sprintf("%d", breakdown.InputTokens/1000))
+					itemMsg = strings.ReplaceAll(itemMsg, "{output}", fmt.Sprintf("%d", breakdown.OutputTokens/1000))
+					itemMsg = strings.ReplaceAll(itemMsg, "{cost}", fmt.Sprintf("%.4f", breakdown.ActualCost))
+					msg.WriteString(itemMsg)
+				}
+				if report.SavingsPercent != 0 {
+					savingsMsg := t.getLocalizedMessage(key.chatID, "usage_stats_routing_savings", nil)
+					savingsMsg = strings.ReplaceAll(savingsMsg, "{percent}", fmt.Sprintf("%.1f", report.SavingsPercent))
+					savingsMsg = strings.ReplaceAll(savingsMsg, "{actual}", fmt.Sprintf("%.4f", report.ActualCost))
+					savingsMsg = strings.ReplaceAll(savingsMsg, "{default}", fmt.Sprintf("%.4f", report.DefaultModelCost))
+					msg.WriteString(savingsMsg)
+				}
+			}
+		}
+
+		modeMsg := t.getLocalizedMessage(key.chatID, "usage_stats_mode", nil)
+		msg.WriteString(modeMsg)
+		t.sendMarkdown(key, msg.String())
 
 	case "/dashboard":
 		t.handleDashboard(key)
@@ -678,7 +973,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			case "stats":
 				t.handleCheckpointsStats(key)
 			default:
-				t.send(key, "用法: /checkpoints [list|stats]")
+				t.send(key, t.getLocalizedMessage(key.chatID, "checkpoints_usage", nil))
 			}
 		}
 
@@ -691,16 +986,16 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			switch action {
 			case "enable":
 				globalAgentCoordinator.SetEnabled(true)
-				t.send(key, "✅ 多代理協調已啟用")
+				t.send(key, t.getLocalizedMessage(key.chatID, "multiagent_enabled", nil))
 			case "disable":
 				globalAgentCoordinator.SetEnabled(false)
-				t.send(key, "❌ 多代理協調已停用")
+				t.send(key, t.getLocalizedMessage(key.chatID, "multiagent_disabled", nil))
 			case "status":
 				t.handleMultiAgentStatus(key)
 			case "stats":
 				t.handleMultiAgentStats(key)
 			default:
-				t.send(key, "用法: /multiagent [enable|disable|status|stats]")
+				t.send(key, t.getLocalizedMessage(key.chatID, "multiagent_usage", nil))
 			}
 		}
 
@@ -708,12 +1003,12 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		agent := t.getAgent(key)
 		if agent.IsProcessing() {
 			if agent.Abort() {
-				t.send(key, "🛑 已中斷正在執行的任務")
+				t.send(key, t.getLocalizedMessage(key.chatID, "task_aborted", nil))
 			} else {
-				t.send(key, "⚠️ 任務已結束，無需中斷")
+				t.send(key, t.getLocalizedMessage(key.chatID, "task_finished", nil))
 			}
 		} else {
-			t.send(key, "ℹ️ 目前沒有正在執行的任務")
+			t.send(key, t.getLocalizedMessage(key.chatID, "no_running_task", nil))
 		}
 
 	case "/agents":
@@ -722,8 +1017,44 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 	case "/tasks":
 		t.handleTasks(key)
 
+	case "/fast":
+		if !t.config.ModelRouting.EnableDynamicRouting {
+			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
+			return
+		}
+		t.setUserModelPreference(key, "fast")
+		msg := t.getLocalizedMessage(key.chatID, "mode_switched_fast", map[string]string{"model": t.config.ModelRouting.FastModel})
+		t.send(key, msg)
+
+	case "/deep":
+		if !t.config.ModelRouting.EnableDynamicRouting {
+			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
+			return
+		}
+		t.setUserModelPreference(key, "deep")
+		msg := t.getLocalizedMessage(key.chatID, "mode_switched_deep", map[string]string{"model": t.config.ModelRouting.DeepModel})
+		t.send(key, msg)
+
+	case "/auto":
+		if !t.config.ModelRouting.EnableDynamicRouting {
+			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
+			return
+		}
+		t.setUserModelPreference(key, "")
+		t.send(key, t.getLocalizedMessage(key.chatID, "mode_switched_auto", nil))
+
+	case "/savings":
+		var projectPath string
+		if len(parts) > 1 {
+			projectPath = strings.Join(parts[1:], " ")
+		}
+		t.handleSavingsCommand(key, projectPath)
+
+	case "/lang":
+		t.handleLangCommand(key, text)
+
 	default:
-		t.send(key, "未知指令，輸入 /help 查看可用指令")
+		t.send(key, t.getLocalizedMessage(key.chatID, "unknown_command", nil))
 	}
 }
 
@@ -1033,30 +1364,35 @@ func splitMessage(text string, maxLen int) []string {
 func (t *TelegramBot) handleMultiAgentStatus(key chatKey) {
 	stats := globalAgentCoordinator.GetAgentStats()
 
-	status := fmt.Sprintf("🤖 *多代理系統狀態*\n\n")
+	statusMsg := t.getLocalizedMessage(key.chatID, "multiagent_status_title", nil)
+	status := statusMsg
 
 	if globalAgentCoordinator.IsEnabled() {
-		status += "✅ *狀態*: 已啟用\n\n"
+		status += t.getLocalizedMessage(key.chatID, "multiagent_status_enabled", nil) + "\n\n"
 	} else {
-		status += "❌ *狀態*: 已停用\n\n"
+		status += t.getLocalizedMessage(key.chatID, "multiagent_status_disabled", nil) + "\n\n"
 	}
 
 	totalAgents := stats["total_agents"].(int)
-	status += fmt.Sprintf("📊 *統計*:\n  總代理數: %d\n\n", totalAgents)
+	statsMsg := t.getLocalizedMessage(key.chatID, "multiagent_status_stats", nil)
+	statsMsg = strings.ReplaceAll(statsMsg, "{count}", fmt.Sprintf("%d", totalAgents))
+	status += statsMsg
 
 	if activeTask, hasTask := stats["active_task"]; hasTask && activeTask != nil {
 		taskInfo := activeTask.(map[string]interface{})
-		status += fmt.Sprintf("🔄 *執行中任務*:\n  ID: %s\n  狀態: %s\n\n",
-			taskInfo["id"].(string), taskInfo["status"].(string))
+		runningMsg := t.getLocalizedMessage(key.chatID, "multiagent_status_running", nil)
+		runningMsg = strings.ReplaceAll(runningMsg, "{id}", taskInfo["id"].(string))
+		runningMsg = strings.ReplaceAll(runningMsg, "{status}", taskInfo["status"].(string))
+		status += runningMsg
 	}
 
-	status += "*可用代理類型*:\n"
-	status += "• General - 通用代理\n"
-	status += "• CodeReview - 程式碼審查\n"
-	status += "• Testing - 測試專家\n"
-	status += "• Documentation - 文件撰寫\n"
-	status += "• Deployment - 部署專家\n"
-	status += "• Debug - 除錯專家\n"
+	status += t.getLocalizedMessage(key.chatID, "multiagent_available_types", nil) + "\n"
+	status += "• General - " + t.getLocalizedMessage(key.chatID, "agent_general", nil) + "\n"
+	status += "• CodeReview - " + t.getLocalizedMessage(key.chatID, "agent_code_review", nil) + "\n"
+	status += "• Testing - " + t.getLocalizedMessage(key.chatID, "agent_testing", nil) + "\n"
+	status += "• Documentation - " + t.getLocalizedMessage(key.chatID, "agent_documentation", nil) + "\n"
+	status += "• Deployment - " + t.getLocalizedMessage(key.chatID, "agent_deployment", nil) + "\n"
+	status += "• Debug - " + t.getLocalizedMessage(key.chatID, "agent_debug", nil) + "\n"
 
 	t.sendMarkdown(key, status)
 }
@@ -1065,23 +1401,31 @@ func (t *TelegramBot) handleMultiAgentStatus(key chatKey) {
 func (t *TelegramBot) handleMultiAgentStats(key chatKey) {
 	stats := globalAgentCoordinator.GetAgentStats()
 
-	response := fmt.Sprintf("📊 *多代理使用統計*\n\n")
+	titleMsg := t.getLocalizedMessage(key.chatID, "multiagent_usage_stats_title", nil)
+	response := titleMsg
 
 	if agents, hasAgents := stats["agents"]; hasAgents {
 		agentStats := agents.(map[string]interface{})
 
 		if len(agentStats) == 0 {
-			response += "目前沒有活躍的專門化代理。\n"
+			response += t.getLocalizedMessage(key.chatID, "multiagent_no_active", nil) + "\n"
 		} else {
 			for agentType, agentInfo := range agentStats {
 				info := agentInfo.(map[string]interface{})
 				taskCount := info["task_count"].(int)
 				lastUsed := info["last_used"].(time.Time)
 
-				response += fmt.Sprintf("🤖 *%s*\n", agentType)
-				response += fmt.Sprintf("  任務數: %d\n", taskCount)
-				response += fmt.Sprintf("  最後使用: %s\n\n",
-					lastUsed.Format("2006-01-02 15:04:05"))
+				headerMsg := t.getLocalizedMessage(key.chatID, "multiagent_agent_header", nil)
+				headerMsg = strings.ReplaceAll(headerMsg, "{agent_type}", agentType)
+				response += headerMsg
+
+				taskCountMsg := t.getLocalizedMessage(key.chatID, "multiagent_agent_task_count", nil)
+				taskCountMsg = strings.ReplaceAll(taskCountMsg, "{count}", fmt.Sprintf("%d", taskCount))
+				response += taskCountMsg
+
+				lastUsedMsg := t.getLocalizedMessage(key.chatID, "multiagent_agent_last_used", nil)
+				lastUsedMsg = strings.ReplaceAll(lastUsedMsg, "{time}", lastUsed.Format("2006-01-02 15:04:05"))
+				response += lastUsedMsg
 			}
 		}
 	}
@@ -1091,31 +1435,31 @@ func (t *TelegramBot) handleMultiAgentStats(key chatKey) {
 
 // handleAgentsList shows available agent types and their capabilities
 func (t *TelegramBot) handleAgentsList(key chatKey) {
-	response := "🤖 *可用代理類型*\n\n"
+	response := t.getLocalizedMessage(key.chatID, "multiagent_list_response", nil) + "\n\n"
 
-	agentTypes := []struct {
-		name        string
-		description string
-		skills      []string
+	agents := []struct {
+		name  string
+		key   string
+		descKey string
 	}{
-		{"General", "通用代理", []string{"一般協助", "程式碼生成", "檔案操作"}},
-		{"CodeReview", "程式碼審查專家", []string{"程式碼分析", "安全審查", "效能審查", "最佳實務"}},
-		{"Testing", "測試專家", []string{"單元測試", "整合測試", "測試自動化", "覆蓋率分析"}},
-		{"Documentation", "文件專家", []string{"API 文件", "README 撰寫", "程式碼註解", "使用指南"}},
-		{"Deployment", "部署專家", []string{"CI/CD", "Docker", "Kubernetes", "雲端部署", "監控"}},
-		{"Debug", "除錯專家", []string{"錯誤分析", "日誌分析", "效能除錯", "問題排解"}},
+		{"General", "agent_general", "agent_general_desc"},
+		{"CodeReview", "agent_code_review", "agent_code_review_desc"},
+		{"Testing", "agent_testing", "agent_testing_desc"},
+		{"Documentation", "agent_documentation", "agent_documentation_desc"},
+		{"Deployment", "agent_deployment", "agent_deployment_desc"},
+		{"Debug", "agent_debug", "agent_debug_desc"},
 	}
 
-	for _, agent := range agentTypes {
+	for _, agent := range agents {
 		response += fmt.Sprintf("**%s**\n", agent.name)
-		response += fmt.Sprintf("描述: %s\n", agent.description)
-		response += fmt.Sprintf("技能: %s\n\n", strings.Join(agent.skills, ", "))
+		desc := t.getLocalizedMessage(key.chatID, agent.descKey, nil)
+		response += fmt.Sprintf("Description: %s\n\n", desc)
 	}
 
-	response += "*使用方式*:\n"
-	response += "• 直接描述任務，系統會自動選擇最適合的代理\n"
-	response += "• 使用 `/multiagent enable` 啟用智慧路由\n"
-	response += "• 複雜任務會自動協調多個代理協作\n"
+	response += t.getLocalizedMessage(key.chatID, "agent_usage_title", nil) + "\n"
+	response += t.getLocalizedMessage(key.chatID, "agent_usage_auto", nil) + "\n"
+	response += t.getLocalizedMessage(key.chatID, "agent_usage_enable", nil) + "\n"
+	response += t.getLocalizedMessage(key.chatID, "agent_usage_complex", nil) + "\n"
 
 	t.sendMarkdown(key, response)
 }
@@ -1126,46 +1470,69 @@ func (t *TelegramBot) handleDashboard(key chatKey) {
 	dashboard := "📊 *Alice AI Agent Dashboard*\n\n"
 
 	// System Health
-	dashboard += "🏥 *系統健康狀態*:\n"
+	healthTitle := t.getLocalizedMessage(key.chatID, "dashboard_health_title", nil)
+	dashboard += healthTitle + "\n"
 	if globalWebSocketHub != nil {
-		dashboard += "  ✅ WebSocket Hub: 運行中\n"
+		websocketMsg := t.getLocalizedMessage(key.chatID, "dashboard_websocket_running", nil)
+		dashboard += websocketMsg + "\n"
 		connectedClients := globalWebSocketHub.GetConnectedClients()
-		dashboard += fmt.Sprintf("  🔌 連接數: %d\n", connectedClients)
+		connMsg := t.getLocalizedMessage(key.chatID, "dashboard_status_connections", nil)
+		connMsg = strings.ReplaceAll(connMsg, "{count}", fmt.Sprintf("%d", connectedClients))
+		dashboard += connMsg
 	}
 
 	if globalCheckpointManager != nil && globalCheckpointManager.IsEnabled() {
-		dashboard += "  ✅ 檢查點系統: 已啟用\n"
+		checkpointEnabledMsg := t.getLocalizedMessage(key.chatID, "dashboard_checkpoint_enabled", nil)
+		dashboard += checkpointEnabledMsg + "\n"
 	} else {
-		dashboard += "  ❌ 檢查點系統: 已停用\n"
+		checkpointDisabledMsg := t.getLocalizedMessage(key.chatID, "dashboard_checkpoint_disabled", nil)
+		dashboard += checkpointDisabledMsg + "\n"
 	}
 
 	if globalAgentCoordinator != nil && globalAgentCoordinator.IsEnabled() {
-		dashboard += "  ✅ 多代理協調: 已啟用\n"
+		multiagentEnabledMsg := t.getLocalizedMessage(key.chatID, "dashboard_multiagent_enabled", nil)
+		dashboard += multiagentEnabledMsg + "\n"
 	} else {
-		dashboard += "  ❌ 多代理協調: 已停用\n"
+		multiagentDisabledMsg := t.getLocalizedMessage(key.chatID, "dashboard_multiagent_disabled", nil)
+		dashboard += multiagentDisabledMsg + "\n"
 	}
 
 	// Web Interface
 	if t.config.EnableWebInterface {
-		dashboard += fmt.Sprintf("\n🌐 *Web 監控介面*:\n")
-		dashboard += fmt.Sprintf("  📊 主面板: http://localhost:%s/\n", t.config.WebPort)
-		dashboard += fmt.Sprintf("  📈 Timeline: http://localhost:%s/timeline.html\n", t.config.WebPort)
-		dashboard += fmt.Sprintf("  🧪 測試頁面: http://localhost:%s/test-timeline.html\n", t.config.WebPort)
+		titleMsg := t.getLocalizedMessage(key.chatID, "dashboard_title", nil)
+		dashboard += titleMsg
+
+		mainMsg := t.getLocalizedMessage(key.chatID, "dashboard_main", nil)
+		mainMsg = strings.ReplaceAll(mainMsg, "{port}", t.config.WebPort)
+		dashboard += mainMsg
+
+		timelineMsg := t.getLocalizedMessage(key.chatID, "dashboard_timeline", nil)
+		timelineMsg = strings.ReplaceAll(timelineMsg, "{port}", t.config.WebPort)
+		dashboard += timelineMsg
+
+		testMsg := t.getLocalizedMessage(key.chatID, "dashboard_test", nil)
+		testMsg = strings.ReplaceAll(testMsg, "{port}", t.config.WebPort)
+		dashboard += testMsg
 	}
 
 	// Storage Info
 	if globalStorage != nil {
-		dashboard += "\n💾 *資料存儲狀態*:\n"
-		dashboard += fmt.Sprintf("  📁 資料庫: %s\n", t.config.DatabasePath)
-		dashboard += "  ✅ SQLite: 運行中\n"
+		storageTitle := t.getLocalizedMessage(key.chatID, "dashboard_storage_title", nil)
+		dashboard += storageTitle + "\n"
+		dbMsg := t.getLocalizedMessage(key.chatID, "dashboard_database", nil)
+		dbMsg = strings.ReplaceAll(dbMsg, "{path}", t.config.DatabasePath)
+		dashboard += dbMsg
+		sqliteMsg := t.getLocalizedMessage(key.chatID, "dashboard_sqlite_running", nil)
+		dashboard += sqliteMsg + "\n"
 	}
 
 	// Quick Actions
-	dashboard += "\n🚀 *快速操作*:\n"
-	dashboard += "• `/checkpoints` - 查看檢查點狀態\n"
-	dashboard += "• `/status` - 查看代理狀態\n"
-	dashboard += "• `/multiagent status` - 查看多代理系統\n"
-	dashboard += "• 使用下方按鈕快速刷新或查看檢查點\n"
+	quickActionsTitle := t.getLocalizedMessage(key.chatID, "dashboard_quick_actions", nil)
+	dashboard += quickActionsTitle + "\n"
+	dashboard += t.getLocalizedMessage(key.chatID, "dashboard_quick_checkpoints", nil) + "\n"
+	dashboard += t.getLocalizedMessage(key.chatID, "dashboard_quick_status", nil) + "\n"
+	dashboard += t.getLocalizedMessage(key.chatID, "dashboard_quick_multiagent", nil) + "\n"
+	dashboard += t.getLocalizedMessage(key.chatID, "dashboard_quick_button", nil) + "\n"
 
 	// Send dashboard with Web App button
 	t.sendDashboardWithWebApp(key, dashboard)
@@ -1174,7 +1541,7 @@ func (t *TelegramBot) handleDashboard(key chatKey) {
 // handleCheckpointsList shows checkpoint information
 func (t *TelegramBot) handleCheckpointsList(key chatKey) {
 	if globalCheckpointManager == nil {
-		t.send(key, "❌ 檢查點系統未啟用")
+		t.send(key, t.getLocalizedMessage(key.chatID, "checkpoint_disabled", nil))
 		return
 	}
 
@@ -1183,27 +1550,43 @@ func (t *TelegramBot) handleCheckpointsList(key chatKey) {
 
 	checkpoints, err := globalCheckpointManager.ListCheckpoints(projectDir, 10)
 	if err != nil {
-		t.send(key, fmt.Sprintf("❌ 獲取檢查點列表失敗: %v", err))
+		msg := t.getLocalizedMessage(key.chatID, "checkpoint_list_failed", map[string]string{"error": err.Error()})
+		t.send(key, msg)
 		return
 	}
 
-	response := "📸 *檢查點狀態*\n\n"
-	response += fmt.Sprintf("📂 專案: `%s`\n", projectDir)
-	response += fmt.Sprintf("📊 總數: %d 個檢查點\n\n", len(checkpoints))
+	titleMsg := t.getLocalizedMessage(key.chatID, "checkpoint_list_title", nil)
+	titleMsg = strings.ReplaceAll(titleMsg, "{path}", projectDir)
+	response := titleMsg
+
+	countMsg := t.getLocalizedMessage(key.chatID, "checkpoint_list_count", nil)
+	countMsg = strings.ReplaceAll(countMsg, "{count}", fmt.Sprintf("%d", len(checkpoints)))
+	response += countMsg
 
 	if len(checkpoints) == 0 {
-		response += "🔍 目前沒有檢查點\n\n"
-		response += "*提示*: 檢查點會在危險操作前自動創建"
+		response += t.getLocalizedMessage(key.chatID, "dashboard_no_checkpoints", nil) + "\n\n"
+		response += t.getLocalizedMessage(key.chatID, "dashboard_checkpoint_tip", nil)
 	} else {
-		response += "*最近的檢查點*:\n"
+		response += t.getLocalizedMessage(key.chatID, "dashboard_recent_checkpoints", nil) + "\n"
 		for i, cp := range checkpoints {
 			if i >= 5 { // 最多顯示 5 個
 				break
 			}
-			response += fmt.Sprintf("• `%s`\n", cp.ID[:12])
-			response += fmt.Sprintf("  📝 %s\n", cp.Description)
-			response += fmt.Sprintf("  📅 %s\n", cp.Timestamp.Format("01/02 15:04"))
-			response += fmt.Sprintf("  💾 %d bytes\n\n", cp.Size)
+			itemMsg := t.getLocalizedMessage(key.chatID, "checkpoint_list_item", nil)
+			itemMsg = strings.ReplaceAll(itemMsg, "{id}", cp.ID[:12])
+			response += itemMsg
+
+			descMsg := t.getLocalizedMessage(key.chatID, "checkpoint_list_description", nil)
+			descMsg = strings.ReplaceAll(descMsg, "{description}", cp.Description)
+			response += descMsg
+
+			timeMsg := t.getLocalizedMessage(key.chatID, "checkpoint_list_timestamp", nil)
+			timeMsg = strings.ReplaceAll(timeMsg, "{timestamp}", cp.Timestamp.Format("01/02 15:04"))
+			response += timeMsg
+
+			sizeMsg := t.getLocalizedMessage(key.chatID, "checkpoint_list_size", nil)
+			sizeMsg = strings.ReplaceAll(sizeMsg, "{size}", fmt.Sprintf("%d", cp.Size))
+			response += sizeMsg
 		}
 	}
 
@@ -1213,7 +1596,7 @@ func (t *TelegramBot) handleCheckpointsList(key chatKey) {
 // handleCheckpointsStats shows checkpoint statistics
 func (t *TelegramBot) handleCheckpointsStats(key chatKey) {
 	if globalCheckpointManager == nil {
-		t.send(key, "❌ 檢查點系統未啟用")
+		t.send(key, t.getLocalizedMessage(key.chatID, "checkpoint_disabled", nil))
 		return
 	}
 
@@ -1222,29 +1605,42 @@ func (t *TelegramBot) handleCheckpointsStats(key chatKey) {
 
 	stats, err := globalCheckpointManager.GetCheckpointStats(projectDir)
 	if err != nil {
-		t.send(key, fmt.Sprintf("❌ 獲取檢查點統計失敗: %v", err))
+		errMsg := t.getLocalizedMessage(key.chatID, "checkpoint_stats_error", nil)
+		errMsg = strings.ReplaceAll(errMsg, "{error}", err.Error())
+		t.send(key, errMsg)
 		return
 	}
 
-	response := "📈 *檢查點統計*\n\n"
-	response += fmt.Sprintf("📂 專案: `%s`\n\n", projectDir)
+	statsTitle := t.getLocalizedMessage(key.chatID, "checkpoint_stats_title", nil)
+	statsTitle = strings.ReplaceAll(statsTitle, "{path}", projectDir)
+	response := statsTitle
 
 	if totalCheckpoints, ok := stats["total_checkpoints"].(int64); ok {
-		response += fmt.Sprintf("📊 總檢查點: %d\n", totalCheckpoints)
+		totalMsg := t.getLocalizedMessage(key.chatID, "checkpoint_stats_total", nil)
+		totalMsg = strings.ReplaceAll(totalMsg, "{count}", fmt.Sprintf("%d", totalCheckpoints))
+		response += totalMsg
 	}
 
 	if totalSize, ok := stats["total_size"].(int64); ok {
-		response += fmt.Sprintf("💾 總大小: %d bytes\n", totalSize)
+		sizeMsg := t.getLocalizedMessage(key.chatID, "checkpoint_stats_size", nil)
+		sizeMsg = strings.ReplaceAll(sizeMsg, "{size}", fmt.Sprintf("%d", totalSize))
+		response += sizeMsg
 	}
 
 	if avgSize, ok := stats["average_size"].(float64); ok {
-		response += fmt.Sprintf("📏 平均大小: %.1f bytes\n", avgSize)
+		avgMsg := t.getLocalizedMessage(key.chatID, "checkpoint_stats_avg_size", nil)
+		avgMsg = strings.ReplaceAll(avgMsg, "{size}", fmt.Sprintf("%.1f", avgSize))
+		response += avgMsg
 	}
 
-	response += "\n🔄 *自動檢查點觸發*:\n"
-	response += "• 檔案寫入/修改操作\n"
-	response += "• 危險命令執行 (rm, mv 等)\n"
-	response += "• 重要配置變更\n"
+	autoCheckpointTitle := t.getLocalizedMessage(key.chatID, "dashboard_auto_checkpoint_title", nil)
+	autoCheckpointWrite := t.getLocalizedMessage(key.chatID, "dashboard_auto_checkpoint_write", nil)
+	autoCheckpointDangerous := t.getLocalizedMessage(key.chatID, "dashboard_auto_checkpoint_dangerous", nil)
+	autoCheckpointConfig := t.getLocalizedMessage(key.chatID, "dashboard_auto_checkpoint_config", nil)
+	response += "\n" + autoCheckpointTitle + "\n"
+	response += autoCheckpointWrite + "\n"
+	response += autoCheckpointDangerous + "\n"
+	response += autoCheckpointConfig + "\n"
 
 	t.sendMarkdown(key, response)
 }
@@ -1255,15 +1651,17 @@ func (t *TelegramBot) sendDashboardWithWebApp(key chatKey, text string) {
 	cleanText := sanitizeUTF8(text)
 
 	// Create inline keyboard with refresh button only (Web App requires HTTPS)
+	refreshText := t.getLocalizedMessage(key.chatID, "button_refresh_status", nil)
+	checkpointText := t.getLocalizedMessage(key.chatID, "button_view_checkpoints", nil)
 	keyboard := map[string]interface{}{
 		"inline_keyboard": [][]map[string]interface{}{
 			{
 				{
-					"text": "🔄 刷新狀態",
+					"text": refreshText,
 					"callback_data": "refresh_dashboard",
 				},
 				{
-					"text": "📸 檢查檢查點",
+					"text": checkpointText,
 					"callback_data": "show_checkpoints",
 				},
 			},
@@ -1288,7 +1686,8 @@ func (t *TelegramBot) sendDashboardWithWebApp(key chatKey, text string) {
 func (t *TelegramBot) handleCallbackQuery(key chatKey, userID int64, queryID, data string) {
 	// Check permissions
 	if !t.isAllowed(userID) {
-		t.answerCallbackQuery(queryID, "⛔ 你沒有使用權限。")
+		noPermMsg := t.getLocalizedMessage(key.chatID, "callback_no_permission", nil)
+		t.answerCallbackQuery(queryID, noPermMsg)
 		return
 	}
 
@@ -1297,26 +1696,32 @@ func (t *TelegramBot) handleCallbackQuery(key chatKey, userID int64, queryID, da
 	case data == "refresh_dashboard":
 		// Send updated dashboard
 		t.handleDashboard(key)
-		t.answerCallbackQuery(queryID, "✅ 狀態已刷新")
+		refreshMsg := t.getLocalizedMessage(key.chatID, "callback_refresh_success", nil)
+		t.answerCallbackQuery(queryID, refreshMsg)
 	case data == "show_checkpoints":
 		// Show checkpoints for current project
 		t.handleCheckpointsList(key)
-		t.answerCallbackQuery(queryID, "📸 檢查點信息已更新")
+		checkpointMsg := t.getLocalizedMessage(key.chatID, "callback_checkpoint_updated", nil)
+		t.answerCallbackQuery(queryID, checkpointMsg)
 	case strings.HasPrefix(data, "stop_agent_"):
 		// Handle stop button click
 		agent := t.getAgent(key)
 		if agent.IsProcessing() {
 			if agent.Abort() {
-				t.answerCallbackQuery(queryID, "🛑 已中斷正在執行的任務")
+				abortMsg := t.getLocalizedMessage(key.chatID, "callback_task_aborted", nil)
+				t.answerCallbackQuery(queryID, abortMsg)
 				log.Printf("Agent task stopped by user via callback button (chat: %d, thread: %d)", key.chatID, key.threadID)
 			} else {
-				t.answerCallbackQuery(queryID, "❌ 無法中斷任務")
+				failMsg := t.getLocalizedMessage(key.chatID, "callback_abort_failed", nil)
+				t.answerCallbackQuery(queryID, failMsg)
 			}
 		} else {
-			t.answerCallbackQuery(queryID, "ℹ️ 沒有正在執行的任務")
+			noTaskMsg := t.getLocalizedMessage(key.chatID, "callback_no_running_task", nil)
+			t.answerCallbackQuery(queryID, noTaskMsg)
 		}
 	default:
-		t.answerCallbackQuery(queryID, "❓ 未知操作")
+		unknownMsg := t.getLocalizedMessage(key.chatID, "callback_unknown_operation", nil)
+		t.answerCallbackQuery(queryID, unknownMsg)
 	}
 }
 
@@ -1334,11 +1739,12 @@ func (t *TelegramBot) sendMessageWithStopButton(key chatKey, text string) (int, 
 	// Clean invalid UTF-8 characters to prevent API errors
 	cleanText := sanitizeUTF8(text)
 
+	abortText := t.getLocalizedMessage(key.chatID, "button_abort", nil)
 	keyboard := map[string]interface{}{
 		"inline_keyboard": [][]map[string]interface{}{
 			{
 				{
-					"text":          "🛑 中斷",
+					"text":          abortText,
 					"callback_data": fmt.Sprintf("stop_agent_%d_%d", key.chatID, key.threadID),
 				},
 			},
@@ -1404,580 +1810,52 @@ func (t *TelegramBot) sendTelegram(method string, params map[string]interface{})
 func (t *TelegramBot) handleTasks(key chatKey) {
 	agent := t.getAgent(key)
 	projectDir := agent.ProjectDir()
-	projectName := filepath.Base(strings.TrimRight(projectDir, "/"))
 
-	// 嘗試從 GitHub Issues API 取得任務（優先）
-	repo, err := detectGitHubRepo(projectDir)
-	if err == nil {
-		milestones, fetchErr := fetchGitHubMilestones(repo)
-		if fetchErr == nil && len(milestones) > 0 {
-			t.handleTasksFromGitHub(key, projectName, repo, milestones)
-			return
-		}
-		// 記錄 GitHub API 失敗原因，但不直接顯示給用戶
-		log.Printf("[telegram] GitHub API failed for %s: %v", repo, fetchErr)
-	} else {
-		log.Printf("[telegram] Not a GitHub repo or detection failed: %v", err)
-	}
-
-	// Fallback: 從 MASTER_TASKS.md 解析
-	t.handleTasksFromFile(key, projectDir, projectName)
-}
-
-// escapeTgMarkdown escapes Telegram legacy Markdown special characters in dynamic text
-func escapeTgMarkdown(s string) string {
-	r := strings.NewReplacer(
-		"*", "\\*",
-		"_", "\\_",
-		"`", "\\`",
-		"[", "\\[",
-	)
-	return r.Replace(s)
-}
-
-// handleTasksFromGitHub 從 GitHub Issues + Milestones 顯示任務進度
-func (t *TelegramBot) handleTasksFromGitHub(key chatKey, projectName, repo string, milestones []ghMilestone) {
-	var response strings.Builder
-	response.WriteString(fmt.Sprintf("📊 *%s 專案進度*\n", escapeTgMarkdown(projectName)))
-	response.WriteString(fmt.Sprintf("_(via GitHub Issues: %s)_\n\n", escapeTgMarkdown(repo)))
-
-	var totalOpen, totalClosed int
-
-	// 分類 milestones
-	type phaseEntry struct {
-		ms       ghMilestone
-		progress int
-		status   string
-	}
-	var completedPhases, activePhases, pendingPhases []phaseEntry
-
-	for _, ms := range milestones {
-		total := ms.OpenIssues + ms.ClosedIssues
-		progress := 0
-		if total > 0 {
-			progress = ms.ClosedIssues * 100 / total
-		}
-		totalOpen += ms.OpenIssues
-		totalClosed += ms.ClosedIssues
-
-		entry := phaseEntry{ms: ms, progress: progress}
-		if total == 0 {
-			entry.status = "—"
-		} else if progress == 100 {
-			entry.status = "✅"
-			completedPhases = append(completedPhases, entry)
-			continue
-		} else if ms.ClosedIssues > 0 {
-			entry.status = "🔄"
-			activePhases = append(activePhases, entry)
-			continue
-		} else {
-			entry.status = "📋"
-			pendingPhases = append(pendingPhases, entry)
-			continue
-		}
-		// 空 milestone
-		pendingPhases = append(pendingPhases, entry)
-	}
-
-	totalAll := totalOpen + totalClosed
-	overallProgress := 0
-	if totalAll > 0 {
-		overallProgress = totalClosed * 100 / totalAll
-	}
-	response.WriteString(fmt.Sprintf("📈 整體進度: %d%% (%d/%d)\n\n", overallProgress, totalClosed, totalAll))
-
-	// 已完成階段
-	if len(completedPhases) > 0 {
-		response.WriteString(fmt.Sprintf("*✅ 已完成 (%d 階段)*\n", len(completedPhases)))
-		for _, p := range completedPhases {
-			response.WriteString(fmt.Sprintf("  ✅ %s (%d/%d)\n", escapeTgMarkdown(p.ms.Title), p.ms.ClosedIssues, p.ms.OpenIssues+p.ms.ClosedIssues))
-		}
-		response.WriteString("\n")
-	}
-
-	// 進行中階段 — 顯示 open issues 細節
-	if len(activePhases) > 0 {
-		response.WriteString(fmt.Sprintf("*🔄 進行中 (%d 階段)*\n", len(activePhases)))
-		for _, p := range activePhases {
-			total := p.ms.OpenIssues + p.ms.ClosedIssues
-			response.WriteString(fmt.Sprintf("\n*%s* (%d%%, %d/%d)\n", escapeTgMarkdown(p.ms.Title), p.progress, p.ms.ClosedIssues, total))
-
-			// 取得該 milestone 的 open issues
-			issues := fetchMilestoneOpenIssues(repo, p.ms.Number)
-			for _, iss := range issues {
-				priority := ""
-				for _, l := range iss.Labels {
-					if strings.HasPrefix(l, "priority:") {
-						priority = " [" + strings.TrimPrefix(l, "priority:") + "]"
-						break
-					}
-				}
-				response.WriteString(fmt.Sprintf("  📋 #%d %s%s\n", iss.Number, escapeTgMarkdown(iss.Title), priority))
-			}
-		}
-		response.WriteString("\n")
-	}
-
-	// 待開始階段
-	if len(pendingPhases) > 0 {
-		response.WriteString(fmt.Sprintf("*📋 待開始 (%d 階段)*\n", len(pendingPhases)))
-		for _, p := range pendingPhases {
-			total := p.ms.OpenIssues + p.ms.ClosedIssues
-			if total > 0 {
-				response.WriteString(fmt.Sprintf("  📋 %s (%d issues)\n", escapeTgMarkdown(p.ms.Title), total))
-			} else {
-				response.WriteString(fmt.Sprintf("  — %s\n", escapeTgMarkdown(p.ms.Title)))
-			}
-		}
-	}
-
-	t.sendMarkdown(key, response.String())
-}
-
-// ghIssue represents a GitHub issue (lightweight)
-type ghIssue struct {
-	Number int      `json:"number"`
-	Title  string   `json:"title"`
-	Labels []string `json:"-"` // parsed from nested JSON
-}
-
-// ghIssueRaw is the raw JSON structure from GitHub API
-type ghIssueRaw struct {
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	Labels []struct {
-		Name string `json:"name"`
-	} `json:"labels"`
-}
-
-// fetchMilestoneOpenIssues returns open issues for a milestone using gh CLI
-func fetchMilestoneOpenIssues(repo string, milestoneNumber int) []ghIssue {
-	apiURL := fmt.Sprintf("repos/%s/issues?milestone=%d&state=open&per_page=30&sort=created&direction=asc", repo, milestoneNumber)
-	cmd := exec.Command("gh", "api", apiURL)
-	output, err := cmd.Output()
-	if err != nil {
-		return nil
-	}
-
-	var rawIssues []ghIssueRaw
-	if err := json.Unmarshal(output, &rawIssues); err != nil {
-		return nil
-	}
-
-	issues := make([]ghIssue, 0, len(rawIssues))
-	for _, raw := range rawIssues {
-		iss := ghIssue{Number: raw.Number, Title: raw.Title}
-		for _, l := range raw.Labels {
-			iss.Labels = append(iss.Labels, l.Name)
-		}
-		issues = append(issues, iss)
-	}
-	return issues
-}
-
-// handleTasksFromFile 從 MASTER_TASKS.md 解析任務（fallback）
-func (t *TelegramBot) handleTasksFromFile(key chatKey, projectDir, projectName string) {
 	tasksFile := filepath.Join(projectDir, "docs", "MASTER_TASKS.md")
-	phases, err := t.parseMasterTasks(tasksFile)
+	data, err := os.ReadFile(tasksFile)
 	if err != nil {
-		// 檢查是否是 GitHub repo
-		if _, repoErr := detectGitHubRepo(projectDir); repoErr == nil {
-			// 是 GitHub repo 但讀取失敗，建議檢查 gh CLI 認證
-			t.send(key, fmt.Sprintf("❌ 無法取得任務資料\n\n可能原因：\n• GitHub API 認證問題 - 請檢查 `gh auth status`\n• MASTER_TASKS.md 不存在 - 請執行 /task-sync\n\n詳細錯誤: %v", err))
-		} else {
-			// 不是 GitHub repo，建議初始化
-			t.send(key, fmt.Sprintf("❌ 無法讀取任務清單: %v\n\n💡 請先執行 /task-init 設定 GitHub Milestones", err))
-		}
+		errMsg := t.getLocalizedMessage(key.chatID, "tasks_read_failed", nil)
+		errMsg = strings.ReplaceAll(errMsg, "{error}", err.Error())
+		t.send(key, errMsg)
 		return
 	}
 
-	var pendingTasks []string
-	var totalPendingCount int
-
-	for _, phase := range phases {
-		if len(phase.Tasks) > 0 {
-			phaseHeader := fmt.Sprintf("📋 *%s* (%d%%, %s)",
-				phase.Name, phase.Progress, phase.Status)
-			var phaseTasks []string
-
-			for _, task := range phase.Tasks {
-				taskStatus := ""
-				switch task.Status {
-				case "📋":
-					taskStatus = "📋 規劃中"
-				case "🔄":
-					taskStatus = "🔄 開發中"
-				case "🧪":
-					taskStatus = "🧪 測試中"
-				default:
-					continue
-				}
-				taskLine := fmt.Sprintf("  %s %s", taskStatus, task.Description)
-				if task.IssueLink != "" {
-					taskLine += fmt.Sprintf(" %s", task.IssueLink)
-				}
-				phaseTasks = append(phaseTasks, taskLine)
-				totalPendingCount++
-			}
-
-			if len(phaseTasks) > 0 {
-				pendingTasks = append(pendingTasks, phaseHeader)
-				pendingTasks = append(pendingTasks, phaseTasks...)
-				pendingTasks = append(pendingTasks, "")
-			}
+	// 提取 Phase Overview 部分（簡潔摘要）
+	content := string(data)
+	if idx := strings.Index(content, "## Phase Overview"); idx >= 0 {
+		// 找出 Phase Overview 區塊的結尾（下一個 ## 或 --- 分隔符）
+		rest := content[idx:]
+		endIdx := strings.Index(rest[20:], "\n## ")
+		if endIdx < 0 {
+			endIdx = strings.Index(rest[20:], "\n---")
 		}
-	}
+		if endIdx < 0 {
+			endIdx = len(rest)
+		} else {
+			endIdx += 20
+		}
 
-	var response string
-	if totalPendingCount == 0 {
-		completedPhases := 0
-		for _, phase := range phases {
-			if phase.Progress >= 100 {
-				completedPhases++
-			}
-		}
-		response = fmt.Sprintf("🎉 *%s - 專案完成！*\n\n", projectName)
-		response += fmt.Sprintf("✅ 所有 %d 個開發階段已 100%% 完成\n\n", completedPhases)
-		response += "📊 完成項目摘要:\n"
-		for _, phase := range phases {
-			response += fmt.Sprintf("• %s %s\n", phase.Name, phase.Status)
-		}
-		response += "\n📚 查看完整任務詳情: `docs/MASTER_TASKS.md`"
+		extracted := rest[:endIdx]
+		t.send(key, extracted)
 	} else {
-		response = fmt.Sprintf("📋 *%s 待辦清單* _(from MD)_\n\n", projectName)
-		response += fmt.Sprintf("📊 總計: %d 個待辦任務\n\n", totalPendingCount)
-		response += strings.Join(pendingTasks, "\n")
-		response += "\n💡 使用 /task-init 設定 GitHub Milestones 以啟用 Issues 同步"
+		errMsg := t.getLocalizedMessage(key.chatID, "tasks_format_invalid", nil)
+		t.send(key, errMsg)
 	}
-
-	t.sendMarkdown(key, response)
 }
 
-// --- GitHub API helpers ---
-
-// ghMilestone represents a GitHub milestone
-type ghMilestone struct {
-	Number       int    `json:"number"`
-	Title        string `json:"title"`
-	Description  string `json:"description"`
-	State        string `json:"state"`
-	OpenIssues   int    `json:"open_issues"`
-	ClosedIssues int    `json:"closed_issues"`
-}
-
-// detectGitHubRepo extracts "owner/repo" from git remote origin URL
-func detectGitHubRepo(projectDir string) (string, error) {
-	cmd := exec.Command("git", "remote", "get-url", "origin")
-	cmd.Dir = projectDir
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("not a git repo or no remote: %w", err)
-	}
-
-	remote := strings.TrimSpace(string(output))
-
-	// git@github.com:owner/repo.git
-	if strings.HasPrefix(remote, "git@github.com:") {
-		repo := strings.TrimPrefix(remote, "git@github.com:")
-		repo = strings.TrimSuffix(repo, ".git")
-		return repo, nil
-	}
-
-	// https://github.com/owner/repo.git
-	if strings.Contains(remote, "github.com/") {
-		idx := strings.Index(remote, "github.com/")
-		repo := remote[idx+len("github.com/"):]
-		repo = strings.TrimSuffix(repo, ".git")
-		return repo, nil
-	}
-
-	return "", fmt.Errorf("not a GitHub repo: %s", remote)
-}
-
-// fetchGitHubMilestones queries GitHub API for all milestones using gh CLI
-func fetchGitHubMilestones(repo string) ([]ghMilestone, error) {
-	// 使用 gh api CLI 命令，利用已有的認證
-	// 參數作為 URL 查詢參數傳遞
-	apiURL := fmt.Sprintf("repos/%s/milestones?state=all&sort=title&direction=asc&per_page=100", repo)
-	cmd := exec.Command("gh", "api", apiURL)
-
-	output, err := cmd.Output()
-	if err != nil {
-		// 檢查是否是 gh CLI 認證問題
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("gh CLI error (status %d): %s", exitErr.ExitCode(), string(exitErr.Stderr))
-		}
-		return nil, fmt.Errorf("gh CLI execution error: %w", err)
-	}
-
-	var milestones []ghMilestone
-	if err := json.Unmarshal(output, &milestones); err != nil {
-		return nil, fmt.Errorf("JSON decode error: %w", err)
-	}
-
-	return milestones, nil
-}
-
-// TaskInfo 表示單個任務資訊
-type TaskInfo struct {
-	Number      string // 任務編號 (如 "8.6")
-	Description string // 任務描述
-	IssueLink   string // GitHub Issue 連結
-	Status      string // 狀態符號 (📋/🔄/🧪/✅)
-}
-
-// PhaseInfo 表示階段資訊
-type PhaseInfo struct {
-	Name     string     // 階段名稱
-	Progress int        // 進度百分比
-	Status   string     // 狀態符號
-	Tasks    []TaskInfo // 任務列表
-}
-
-// parseMasterTasks 解析 MASTER_TASKS.md 檔案，支援多種格式
-// 回傳所有 phase（含已完成的），caller 自行過濾待辦任務
-func (t *TelegramBot) parseMasterTasks(filePath string) ([]PhaseInfo, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("無法開啟檔案 %s: %w", filePath, err)
-	}
-
-	lines := strings.Split(string(data), "\n")
-	var phases []PhaseInfo
-	var currentPhase *PhaseInfo
-	isInOverview := false
-
-	// 通用正規表達式
-	// 進度表格行：任何包含 N% 的表格行
-	progressInTable := regexp.MustCompile(`(\d+)%`)
-	// Phase 標題格式1 (Alice): ## P1 - Core Backend (✅ 100%)
-	phaseHeaderA := regexp.MustCompile(`^##\s+(P\d+(?:\.\d+)?\s*-\s*.+?)\s*\(([^)]+)\)`)
-	// Phase 標題格式2 (通用): ## Phase 0: 專案初始化 ✅ (40h)
-	phaseHeaderB := regexp.MustCompile(`^##\s+Phase\s+\d+.*?:\s*(.+)`)
-	// Checkbox 任務: - [ ] 或 - [x]
-	checkboxTask := regexp.MustCompile(`^-\s+\[([ x])\]\s+(.+)`)
-	// Issue 連結
-	issueLink := regexp.MustCompile(`\[#(\d+)\]\([^)]+\)`)
-	// 表格任務行 (Alice): | 1.1 | desc | issue | status |
-	tableTask := regexp.MustCompile(`^\|\s*(\d+\.\d+|)\s*\|\s*(.+?)\s*\|\s*(\[#\d+\]\([^)]+\)|—|TBD)\s*\|\s*([📋🔄🧪✅⏸️])\s*\|`)
-	// 通用表格任務行: 最後一欄為狀態 emoji 的任何表格行
-	genericTableTask := regexp.MustCompile(`^\|[^|]+\|\s*(.+?)\s*\|[^|]+\|\s*([📋🔄🧪✅⏸️❌])\s*\|`)
-
-	for _, rawLine := range lines {
-		line := strings.TrimSpace(rawLine)
-
-		// 偵測總覽表格開始（支援多種格式）
-		// "## Phase Overview" / "## 總覽" / "## 快速導覽"
-		if strings.HasPrefix(line, "## ") && (strings.Contains(line, "Phase Overview") ||
-			strings.Contains(line, "總覽") || strings.Contains(line, "快速導覽")) {
-			isInOverview = true
-			continue
-		}
-
-		// 解析總覽表格
-		if isInOverview {
-			if line == "---" || (strings.HasPrefix(line, "## ") && !strings.Contains(line, "---")) {
-				isInOverview = false
-				// 不 continue，讓下面的 phase header 邏輯也能處理
-				if !strings.HasPrefix(line, "## ") {
-					continue
-				}
-			} else if strings.HasPrefix(line, "|") && !strings.Contains(line, "---") {
-				// 跳過表頭行
-				cells := splitTableCells(line)
-				if len(cells) < 3 {
-					continue
-				}
-				// 嘗試找到進度百分比
-				progressMatch := progressInTable.FindStringSubmatch(line)
-				if len(progressMatch) < 2 {
-					continue
-				}
-				progress, _ := strconv.Atoi(progressMatch[1])
-
-				// 第一欄通常是 phase code
-				phaseName := strings.TrimSpace(cells[0])
-				// 如果有第二欄是名稱，合併顯示
-				if len(cells) >= 2 {
-					desc := strings.TrimSpace(cells[1])
-					if desc != "" && desc != phaseName {
-						phaseName = phaseName + " " + desc
-					}
-				}
-
-				// 偵測狀態
-				status := detectStatus(line)
-
-				phases = append(phases, PhaseInfo{
-					Name:     phaseName,
-					Progress: progress,
-					Status:   status,
-				})
-				continue
-			}
-		}
-
-		// Phase 標題（進入某個 phase 的詳細區域）
-		if strings.HasPrefix(line, "## ") {
-			// 格式 A: ## P1 - Core Backend (✅ 100%)
-			if m := phaseHeaderA.FindStringSubmatch(line); len(m) == 3 {
-				phaseName := strings.TrimSpace(m[1])
-				currentPhase = findPhaseByPrefix(&phases, phaseName)
-				continue
-			}
-			// 格式 B: ## Phase 0: 專案初始化 ✅ (40h)
-			if m := phaseHeaderB.FindStringSubmatch(line); len(m) == 2 {
-				currentPhase = findPhaseByOverviewLine(&phases, line)
-				continue
-			}
-			// 格式 C: 通用 fallback (例如 ## PHASE1 — 後端基礎設施層 ✅)
-			currentPhase = findPhaseByOverviewLine(&phases, line)
-			continue
-		}
-
-		if currentPhase == nil {
-			continue
-		}
-
-		// 解析 checkbox 任務: - [ ] / - [x]
-		if m := checkboxTask.FindStringSubmatch(line); len(m) == 3 {
-			isDone := m[1] == "x"
-			desc := strings.TrimSpace(m[2])
-
-			// 提取 issue link
-			link := ""
-			if il := issueLink.FindString(desc); il != "" {
-				link = il
-				// 從描述中移除 issue link 讓顯示更乾淨
-				desc = strings.TrimSpace(issueLink.ReplaceAllString(desc, ""))
-			}
-
-			status := "✅"
-			if !isDone {
-				status = "📋"
-			}
-			currentPhase.Tasks = append(currentPhase.Tasks, TaskInfo{
-				Description: desc,
-				IssueLink:   link,
-				Status:      status,
-			})
-			continue
-		}
-
-		// 解析表格任務行
-		if strings.HasPrefix(line, "|") && !strings.Contains(line, "Task") && !strings.Contains(line, "任務") && !strings.Contains(line, "---") {
-			// 格式 A (Alice): | 1.1 | desc | issue | status |
-			if m := tableTask.FindStringSubmatch(line); len(m) == 5 {
-				currentPhase.Tasks = append(currentPhase.Tasks, TaskInfo{
-					Number:      strings.TrimSpace(m[1]),
-					Description: strings.TrimSpace(m[2]),
-					IssueLink:   strings.TrimSpace(m[3]),
-					Status:      strings.TrimSpace(m[4]),
-				})
-			} else if m := genericTableTask.FindStringSubmatch(line); len(m) == 3 {
-				// 通用格式: 第二欄為描述，最後欄為狀態
-				currentPhase.Tasks = append(currentPhase.Tasks, TaskInfo{
-					Description: strings.TrimSpace(m[1]),
-					Status:      strings.TrimSpace(m[2]),
-				})
-			}
-		}
-	}
-
-	return phases, nil
-}
-
-// splitTableCells 分割 markdown 表格的一行為各欄
-func splitTableCells(line string) []string {
-	line = strings.Trim(line, "|")
-	parts := strings.Split(line, "|")
-	var cells []string
-	for _, p := range parts {
-		cells = append(cells, strings.TrimSpace(p))
-	}
-	return cells
-}
-
-// detectStatus 從一行文字偵測狀態 emoji
-func detectStatus(line string) string {
-	if strings.Contains(line, "✅") {
-		return "✅"
-	}
-	if strings.Contains(line, "🔄") {
-		return "🔄"
-	}
-	if strings.Contains(line, "🧪") {
-		return "🧪"
-	}
-	if strings.Contains(line, "📋") {
-		return "📋"
-	}
-	if strings.Contains(line, "⏸") {
-		return "⏸️"
-	}
-	return "📋"
-}
-
-// findPhaseByPrefix 從 phases 中找到 name 前綴匹配的 phase
-func findPhaseByPrefix(phases *[]PhaseInfo, name string) *PhaseInfo {
-	prefix := strings.Split(name, " - ")[0]
-	prefix = strings.Split(prefix, " ")[0] // 取 "P1" 部分
-	// 精確匹配: prefix 後必須接空格、連字號或行尾，避免 "P1" 匹配 "P13"
-	for i := range *phases {
-		pName := (*phases)[i].Name
-		if strings.HasPrefix(pName, prefix) {
-			rest := pName[len(prefix):]
-			if rest == "" || rest[0] == ' ' || rest[0] == '-' {
-				return &(*phases)[i]
-			}
-		}
-	}
-	return nil
-}
-
-// findPhaseByOverviewLine 從 phase header line 找到對應的總覽 phase
-// 使用計分制：匹配越多關鍵字的 phase 優先
-func findPhaseByOverviewLine(phases *[]PhaseInfo, headerLine string) *PhaseInfo {
-	headerLower := strings.ToLower(headerLine)
-	bestIdx := -1
-	bestScore := 0
-	// 跳過常見的分隔符和狀態 emoji
-	skipWords := map[string]bool{"—": true, "-": true, "|": true, "✅": true, "🔄": true, "🧪": true, "📋": true, "⏸️": true, "❌": true}
-	for i := range *phases {
-		nameParts := strings.Fields((*phases)[i].Name)
-		score := 0
-		for _, part := range nameParts {
-			if len(part) <= 2 || skipWords[part] {
-				continue
-			}
-			if strings.Contains(headerLower, strings.ToLower(part)) {
-				score++
-			}
-		}
-		if score > bestScore {
-			bestScore = score
-			bestIdx = i
-		}
-	}
-	if bestIdx >= 0 {
-		return &(*phases)[bestIdx]
-	}
-	return nil
-}
 
 // handlePhotoMessageBatch 處理圖片訊息，支援多張圖片批次處理
-func (t *TelegramBot) handlePhotoMessageBatch(key chatKey, userID int64, photo []PhotoSize, caption string, mediaGroupID string) {
+func (t *TelegramBot) handlePhotoMessageBatch(key chatKey, userID int64, photo []PhotoSize, caption string, mediaGroupID string, messageID int) {
 	// 檢查多媒體支援是否開啟
 	if !t.config.Multimedia.EnablePhotoSupport {
-		t.send(key, "📷 圖片分析功能目前未啟用。請聯繫管理員開啟 `enable_photo_support` 設定。")
+		t.send(key, t.getLocalizedMessage(key.chatID, "photo_disabled", nil))
 		return
 	}
 
 	// 如果沒有 mediaGroupID，這是單張圖片的多個尺寸，直接處理單張圖片
 	if mediaGroupID == "" {
 		log.Printf("[telegram] single photo with %d size variants, processing as single image", len(photo))
-		t.handleSinglePhoto(key, userID, photo, caption)
+		t.handleSinglePhoto(key, userID, photo, caption, messageID)
 		return
 	}
 
@@ -1998,6 +1876,7 @@ func (t *TelegramBot) handlePhotoMessageBatch(key chatKey, userID int64, photo [
 			MediaGroupID: mediaGroupID,
 			UserID:       userID,
 			ChatKey:      key,
+			MessageID:    messageID,
 			FirstSeen:    now,
 			LastSeen:     now,
 		}
@@ -2049,17 +1928,19 @@ func (t *TelegramBot) processBatch(batchKey string) {
 
 	if len(batch.Photos) == 1 {
 		// 單張圖片，使用原有邏輯
-		t.send(batch.ChatKey, "📷 正在分析圖片...")
-		t.handleSinglePhoto(batch.ChatKey, batch.UserID, []PhotoSize{batch.Photos[0]}, batch.Caption)
+		t.send(batch.ChatKey, t.getLocalizedMessage(batch.ChatKey.chatID, "photo_analyzing_single", nil))
+		t.handleSinglePhoto(batch.ChatKey, batch.UserID, []PhotoSize{batch.Photos[0]}, batch.Caption, batch.MessageID)
 	} else {
 		// 多張圖片，批次處理
-		t.send(batch.ChatKey, fmt.Sprintf("📷 正在分析 %d 張圖片...", len(batch.Photos)))
-		t.handleMultiplePhotos(batch.ChatKey, batch.UserID, batch.Photos, batch.Caption)
+		msg := t.getLocalizedMessage(batch.ChatKey.chatID, "photo_analyzing_batch", nil)
+		msg = strings.ReplaceAll(msg, "{count}", fmt.Sprintf("%d", len(batch.Photos)))
+		t.send(batch.ChatKey, msg)
+		t.handleMultiplePhotos(batch.ChatKey, batch.UserID, batch.Photos, batch.Caption, batch.MessageID)
 	}
 }
 
 // handleMultiplePhotos 處理多張圖片的批次分析
-func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []PhotoSize, caption string) {
+func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []PhotoSize, caption string, messageID int) {
 	// 取得 Agent 和專案目錄
 	agent := t.getAgent(key)
 	projectDir := agent.ProjectDir()
@@ -2068,7 +1949,7 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 	projectTempDir := filepath.Join(projectDir, "temp")
 	if err := os.MkdirAll(projectTempDir, 0755); err != nil {
 		log.Printf("[telegram] create project temp dir error: %v", err)
-		t.send(key, "📷 建立專案臨時目錄失敗。")
+		t.send(key, t.getLocalizedMessage(key.chatID, "photo_mkdir_failed", nil))
 		return
 	}
 
@@ -2099,8 +1980,11 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 		// 檢查檔案大小
 		maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
 		if targetPhoto.FileSize > maxSizeBytes {
-			t.send(key, fmt.Sprintf("📷 第 %d 張圖片檔案過大（%s），限制為 %dMB。",
-				i+1, formatFileSize(targetPhoto.FileSize), t.config.Multimedia.MaxFileSizeMB))
+			msg := t.getLocalizedMessage(key.chatID, "photo_file_too_large", nil)
+			msg = strings.ReplaceAll(msg, "{index}", fmt.Sprintf("%d", i+1))
+			msg = strings.ReplaceAll(msg, "{size}", formatFileSize(targetPhoto.FileSize))
+			msg = strings.ReplaceAll(msg, "{limit}", fmt.Sprintf("%d", t.config.Multimedia.MaxFileSizeMB))
+			t.send(key, msg)
 			continue
 		}
 
@@ -2108,7 +1992,9 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 		aliceImagePath, err := t.DownloadTelegramFile(targetPhoto.FileID, "photo")
 		if err != nil {
 			log.Printf("[telegram] download photo %d error: %v", i+1, err)
-			t.send(key, fmt.Sprintf("📷 第 %d 張圖片下載失敗", i+1))
+			msg := t.getLocalizedMessage(key.chatID, "photo_download_failed", nil)
+			msg = strings.ReplaceAll(msg, "{index}", fmt.Sprintf("%d", i+1))
+			t.send(key, msg)
 			continue
 		}
 		aliceImagePaths = append(aliceImagePaths, aliceImagePath)
@@ -2118,7 +2004,9 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 		projectImagePath := filepath.Join(projectTempDir, fileName)
 		if err := copyFile(aliceImagePath, projectImagePath); err != nil {
 			log.Printf("[telegram] copy photo %d to project error: %v", i+1, err)
-			t.send(key, fmt.Sprintf("📷 第 %d 張圖片複製失敗", i+1))
+			msg := t.getLocalizedMessage(key.chatID, "photo_copy_failed", nil)
+			msg = strings.ReplaceAll(msg, "{index}", fmt.Sprintf("%d", i+1))
+			t.send(key, msg)
 			continue
 		}
 		projectImagePaths = append(projectImagePaths, projectImagePath)
@@ -2129,21 +2017,31 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 	}
 
 	if len(relativeImagePaths) == 0 {
-		t.send(key, "📷 所有圖片處理失敗，請稍後再試。")
+		msg := t.getLocalizedMessage(key.chatID, "photo_all_failed", nil)
+		t.send(key, msg)
 		return
 	}
 
 	// 組合多張圖片的 prompt，caption 為主指令時優先
 	imageList := ""
 	for i, relativePath := range relativeImagePaths {
-		imageList += fmt.Sprintf("圖片 %d: %s\n", i+1, relativePath)
+		item := t.getLocalizedMessage(key.chatID, "photo_list_item", nil)
+		item = strings.ReplaceAll(item, "{index}", fmt.Sprintf("%d", i+1))
+		item = strings.ReplaceAll(item, "{path}", relativePath)
+		imageList += item
 	}
 
 	var prompt string
 	if caption != "" {
-		prompt = fmt.Sprintf("%s\n\n（參考附件 %d 張圖片：\n%s）", caption, len(relativeImagePaths), imageList)
+		refBatch := t.getLocalizedMessage(key.chatID, "photo_reference_batch", nil)
+		refBatch = strings.ReplaceAll(refBatch, "{count}", fmt.Sprintf("%d", len(relativeImagePaths)))
+		refBatch = strings.ReplaceAll(refBatch, "{list}", imageList)
+		prompt = fmt.Sprintf("%s%s", caption, refBatch)
 	} else {
-		prompt = fmt.Sprintf("請分析這 %d 張圖片，並進行比較分析：\n%s", len(relativeImagePaths), imageList)
+		analyzePrompt := t.getLocalizedMessage(key.chatID, "photo_analyze_batch_prompt", nil)
+		analyzePrompt = strings.ReplaceAll(analyzePrompt, "{count}", fmt.Sprintf("%d", len(relativeImagePaths)))
+		analyzePrompt = strings.ReplaceAll(analyzePrompt, "{list}", imageList)
+		prompt = analyzePrompt
 	}
 
 	// 安全檢查和事件記錄
@@ -2163,24 +2061,24 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 
 		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
-			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true)
+			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true, &PIIDetectionContext{
+			ChatID:      key.chatID,
+			UserID:      userID,
+			MessageType: "photo",
+			SourceType:  "telegram",
+			ProjectPath: t.config.DefaultProjectDir,
+			MessageID:   messageID,
+		})
 			if len(detected) > 0 {
-				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
-				globalSecurityManager.LogSecurityEvent(SecurityEvent{
-					EventType:   "pii_detected_batch_caption",
-					Severity:    "low", // 降低嚴重性，主要事件已由 DetectAndFilterPII 記錄
-					Description: fmt.Sprintf("Batch photo caption contained PII (filtered): %v", detected),
-					UserID:      userID,
-					Details: map[string]interface{}{
-						"detected_types": detected,
-						"chat_id":        key.chatID,
-						"context":        "telegram_batch_photo",
-					},
-				})
-				t.send(key, "⚠️ 圖片說明中偵測到敏感資訊已自動過濾。")
+				// PII 事件已由 DetectAndFilterPII 自動記錄
+				msg := t.getLocalizedMessage(key.chatID, "photo_caption_pii", nil)
+				t.send(key, msg)
 				caption = filteredCaption
 				// 重新組合 prompt
-				prompt = fmt.Sprintf("%s\n\n（參考附件 %d 張圖片：\n%s）", caption, len(relativeImagePaths), imageList)
+				refBatch := t.getLocalizedMessage(key.chatID, "photo_reference_batch", nil)
+				refBatch = strings.ReplaceAll(refBatch, "{count}", fmt.Sprintf("%d", len(relativeImagePaths)))
+				refBatch = strings.ReplaceAll(refBatch, "{list}", imageList)
+				prompt = fmt.Sprintf("%s%s", caption, refBatch)
 			}
 		}
 	}
@@ -2188,7 +2086,16 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 	// 發送給 Agent 處理 (使用現有會話，就像語音處理一樣)
 	agent = t.getAgent(key)
 
-	response, err := agent.Run(prompt, func(update string, silent bool) {
+	// Add language preference hint
+	userLang := t.getChatLanguage(key.chatID)
+	promptWithLang := prompt
+	if userLang == "en" {
+		promptWithLang = "Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n" + prompt
+	} else if userLang == "zh-TW" {
+		promptWithLang = "請用繁體中文回應。\n\n" + prompt
+	}
+
+	response, err := agent.Run(promptWithLang, func(update string, silent bool) {
 		if silent {
 			t.sendSilent(key, update)
 		} else {
@@ -2198,7 +2105,8 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 
 	if err != nil {
 		log.Printf("[telegram] batch photo analysis error: %v", err)
-		t.send(key, "❌ 圖片批次分析失敗，請稍後再試。")
+		msg := t.getLocalizedMessage(key.chatID, "photo_analysis_failed", nil)
+		t.send(key, msg)
 		return
 	}
 
@@ -2208,7 +2116,7 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 }
 
 // handleSinglePhoto 處理單張圖片（保留原有邏輯但提取為獨立函數）
-func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []PhotoSize, caption string) {
+func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []PhotoSize, caption string, messageID int) {
 	// 取得最高解析度的圖片（通常是陣列最後一個）
 	if len(photo) == 0 {
 		return
@@ -2218,8 +2126,11 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 	// 檢查檔案大小限制
 	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
 	if targetPhoto.FileSize > maxSizeBytes {
-		t.send(key, fmt.Sprintf("📷 圖片檔案過大（%s），限制為 %dMB。",
-			formatFileSize(targetPhoto.FileSize), t.config.Multimedia.MaxFileSizeMB))
+		msg := t.getLocalizedMessage(key.chatID, "photo_file_too_large", nil)
+		msg = strings.ReplaceAll(msg, "{index}", "1")
+		msg = strings.ReplaceAll(msg, "{size}", formatFileSize(targetPhoto.FileSize))
+		msg = strings.ReplaceAll(msg, "{limit}", fmt.Sprintf("%d", t.config.Multimedia.MaxFileSizeMB))
+		t.send(key, msg)
 		return
 	}
 
@@ -2227,7 +2138,9 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 	aliceImagePath, err := t.DownloadTelegramFile(targetPhoto.FileID, "photo")
 	if err != nil {
 		log.Printf("[telegram] download photo error: %v", err)
-		t.send(key, "📷 下載圖片失敗，請稍後再試。")
+		msg := t.getLocalizedMessage(key.chatID, "photo_download_failed", nil)
+		msg = strings.ReplaceAll(msg, "{index}", "1")
+		t.send(key, msg)
 		return
 	}
 
@@ -2239,7 +2152,8 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 	projectTempDir := filepath.Join(projectDir, "temp")
 	if err := os.MkdirAll(projectTempDir, 0755); err != nil {
 		log.Printf("[telegram] create project temp dir error: %v", err)
-		t.send(key, "📷 建立專案臨時目錄失敗。")
+		msg := t.getLocalizedMessage(key.chatID, "photo_mkdir_failed", nil)
+		t.send(key, msg)
 		os.Remove(aliceImagePath) // 清理 Alice 臨時檔案
 		return
 	}
@@ -2250,7 +2164,9 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 
 	if err := copyFile(aliceImagePath, projectImagePath); err != nil {
 		log.Printf("[telegram] copy photo to project error: %v", err)
-		t.send(key, "📷 複製圖片到專案目錄失敗。")
+		msg := t.getLocalizedMessage(key.chatID, "photo_copy_failed", nil)
+		msg = strings.ReplaceAll(msg, "{index}", "1")
+		t.send(key, msg)
 		os.Remove(aliceImagePath) // 清理 Alice 臨時檔案
 		return
 	}
@@ -2269,9 +2185,13 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 	relativePath := filepath.Join("temp", fileName)
 	var prompt string
 	if caption != "" {
-		prompt = fmt.Sprintf("%s\n\n（參考附件圖片: %s）", caption, relativePath)
+		refSingle := t.getLocalizedMessage(key.chatID, "photo_reference_single", nil)
+		refSingle = strings.ReplaceAll(refSingle, "{path}", relativePath)
+		prompt = fmt.Sprintf("%s%s", caption, refSingle)
 	} else {
-		prompt = fmt.Sprintf("請分析這張圖片: %s", relativePath)
+		analyzePrompt := t.getLocalizedMessage(key.chatID, "photo_analyze_single_prompt", nil)
+		analyzePrompt = strings.ReplaceAll(analyzePrompt, "{path}", relativePath)
+		prompt = analyzePrompt
 	}
 
 	// 安全檢查和 PII 檢測（與原有邏輯相同）
@@ -2293,32 +2213,40 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 
 		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
-			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true)
+			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true, &PIIDetectionContext{
+			ChatID:      key.chatID,
+			UserID:      userID,
+			MessageType: "photo",
+			SourceType:  "telegram",
+			ProjectPath: t.config.DefaultProjectDir,
+			MessageID:   messageID,
+		})
 			if len(detected) > 0 {
-				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
-				globalSecurityManager.LogSecurityEvent(SecurityEvent{
-					EventType:   "pii_detected_photo_caption",
-					Severity:    "low", // 降低嚴重性，主要事件已記錄
-					Description: fmt.Sprintf("Photo caption contained PII (filtered): %v", detected),
-					UserID:      userID,
-					Details: map[string]interface{}{
-						"detected_types": detected,
-						"chat_id":        key.chatID,
-						"context":        "telegram_photo",
-					},
-				})
-				t.send(key, "⚠️ 圖片說明中偵測到敏感資訊已自動過濾。")
+				msg := t.getLocalizedMessage(key.chatID, "photo_caption_pii", nil)
+				t.send(key, msg)
 				caption = filteredCaption
-				prompt = fmt.Sprintf("%s\n\n（參考附件圖片: %s）", caption, relativePath)
+				refSingle := t.getLocalizedMessage(key.chatID, "photo_reference_single", nil)
+				refSingle = strings.ReplaceAll(refSingle, "{path}", relativePath)
+				prompt = fmt.Sprintf("%s%s", caption, refSingle)
 			}
 		}
 	}
 
 	// 發送給 Agent 處理 (使用現有會話，就像語音處理一樣)
 	agent = t.getAgent(key)
-	t.send(key, "📷 正在分析圖片...")
+	msg := t.getLocalizedMessage(key.chatID, "photo_analyzing_single", nil)
+	t.send(key, msg)
 
-	response, err := agent.Run(prompt, func(update string, silent bool) {
+	// Add language preference hint
+	userLang := t.getChatLanguage(key.chatID)
+	promptWithLang := prompt
+	if userLang == "en" {
+		promptWithLang = "Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n" + prompt
+	} else if userLang == "zh-TW" {
+		promptWithLang = "請用繁體中文回應。\n\n" + prompt
+	}
+
+	response, err := agent.Run(promptWithLang, func(update string, silent bool) {
 		if silent {
 			t.sendSilent(key, update)
 		} else {
@@ -2328,7 +2256,8 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 
 	if err != nil {
 		log.Printf("[telegram] single photo analysis error: %v", err)
-		t.send(key, "❌ 圖片分析失敗，請稍後再試。")
+		errMsg := t.getLocalizedMessage(key.chatID, "photo_analysis_failed", nil)
+		t.send(key, errMsg)
 		return
 	}
 
@@ -2338,10 +2267,10 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 }
 
 // handlePhotoMessage 處理圖片訊息（原有函數，保留用於向後相容）
-func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []PhotoSize, caption string) {
+func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []PhotoSize, caption string, messageID int) {
 	// 檢查多媒體支援是否開啟
 	if !t.config.Multimedia.EnablePhotoSupport {
-		t.send(key, "📷 圖片分析功能目前未啟用。請聯繫管理員開啟 `enable_photo_support` 設定。")
+		t.send(key, t.getLocalizedMessage(key.chatID, "photo_disabled", nil))
 		return
 	}
 
@@ -2354,8 +2283,11 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 	// 檢查檔案大小限制
 	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
 	if targetPhoto.FileSize > maxSizeBytes {
-		t.send(key, fmt.Sprintf("📷 圖片檔案過大（%s），限制為 %dMB。",
-			formatFileSize(targetPhoto.FileSize), t.config.Multimedia.MaxFileSizeMB))
+		msg := t.getLocalizedMessage(key.chatID, "photo_file_too_large", nil)
+		msg = strings.ReplaceAll(msg, "{size}", formatFileSize(targetPhoto.FileSize))
+		msg = strings.ReplaceAll(msg, "{limit}", fmt.Sprintf("%d", t.config.Multimedia.MaxFileSizeMB))
+		msg = strings.ReplaceAll(msg, "{index}", "")
+		t.send(key, msg)
 		return
 	}
 
@@ -2363,7 +2295,9 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 	imagePath, err := t.DownloadTelegramFile(targetPhoto.FileID, "photo")
 	if err != nil {
 		log.Printf("[telegram] download photo error: %v", err)
-		t.send(key, "📷 下載圖片失敗，請稍後再試。")
+		msg := t.getLocalizedMessage(key.chatID, "photo_download_failed", nil)
+		msg = strings.ReplaceAll(msg, "{index}", "")
+		t.send(key, msg)
 		return
 	}
 
@@ -2375,9 +2309,9 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 	}()
 
 	// 組合 prompt 讓 Claude 分析圖片
-	prompt := fmt.Sprintf("請分析這張圖片: %s", imagePath)
+	prompt := fmt.Sprintf("Analyze this photo: %s", imagePath)
 	if caption != "" {
-		prompt = fmt.Sprintf("%s\n\n用戶說明: %s", prompt, caption)
+		prompt = fmt.Sprintf("%s\n\nUser note: %s", prompt, caption)
 	}
 
 	// 安全檢查和 PII 檢測
@@ -2399,32 +2333,38 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 
 		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
-			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true)
+			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true, &PIIDetectionContext{
+			ChatID:      key.chatID,
+			UserID:      userID,
+			MessageType: "photo",
+			SourceType:  "telegram",
+			ProjectPath: t.config.DefaultProjectDir,
+			MessageID:   messageID,
+		})
 			if len(detected) > 0 {
-				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
-				globalSecurityManager.LogSecurityEvent(SecurityEvent{
-					EventType:   "pii_detected_photo_caption",
-					Severity:    "low", // 降低嚴重性，主要事件已記錄
-					Description: fmt.Sprintf("Single photo caption contained PII (filtered): %v", detected),
-					UserID:      userID,
-					Details: map[string]interface{}{
-						"detected_types": detected,
-						"chat_id":        key.chatID,
-						"context":        "telegram_single_photo",
-					},
-				})
-				t.send(key, "⚠️ 圖片說明中偵測到敏感資訊已自動過濾。")
+				piiMsg := t.getLocalizedMessage(key.chatID, "photo_caption_pii", nil)
+				t.send(key, piiMsg)
 				caption = filteredCaption
-				prompt = fmt.Sprintf("請分析這張圖片: %s\n\n用戶說明: %s", imagePath, caption)
+				prompt = fmt.Sprintf("Analyze this photo: %s\n\nUser note: %s", imagePath, caption)
 			}
 		}
 	}
 
 	// 發送給 Agent 處理
 	agent := t.getAgent(key)
-	t.send(key, "📷 正在分析圖片...")
+	msg := t.getLocalizedMessage(key.chatID, "photo_analyzing_single", nil)
+	t.send(key, msg)
 
-	response, err := agent.Run(prompt, func(update string, silent bool) {
+	// Add language preference hint
+	userLang := t.getChatLanguage(key.chatID)
+	promptWithLang := prompt
+	if userLang == "en" {
+		promptWithLang = "Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n" + prompt
+	} else if userLang == "zh-TW" {
+		promptWithLang = "請用繁體中文回應。\n\n" + prompt
+	}
+
+	response, err := agent.Run(promptWithLang, func(update string, silent bool) {
 		if silent {
 			t.sendSilent(key, update)
 		} else {
@@ -2433,7 +2373,8 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 	})
 	if err != nil {
 		log.Printf("[telegram] photo analysis error: %v", err)
-		t.send(key, "📷 圖片分析失敗，請稍後再試。")
+		msg := t.getLocalizedMessage(key.chatID, "photo_analysis_failed", nil)
+		t.send(key, msg)
 		return
 	}
 
@@ -2611,39 +2552,47 @@ func (t *TelegramBot) DownloadTelegramFile(fileID, fileType string) (string, err
 }
 
 // handleVoiceMessage 處理語音訊息
-func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice, caption string) {
+func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice, caption string, messageID int) {
 	// 檢查語音支援是否開啟
 	if !t.config.Multimedia.EnableVoiceSupport {
-		t.send(key, "🎤 語音轉文字功能目前未啟用。請聯繫管理員開啟 `enable_voice_support` 設定。")
+		msg := t.getLocalizedMessage(key.chatID, "voice_disabled", nil)
+		t.send(key, msg)
 		return
 	}
 
 	// 檢查是否有 OpenAI API Key
 	if t.config.Multimedia.OpenAIAPIKey == "" {
-		t.send(key, "🎤 語音轉文字需要 OpenAI API Key，請聯繫管理員設定 `openai_api_key`。")
+		msg := t.getLocalizedMessage(key.chatID, "voice_no_api_key", nil)
+		t.send(key, msg)
 		return
 	}
 
 	// 檢查檔案大小限制
 	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
 	if voice.FileSize > maxSizeBytes {
-		t.send(key, fmt.Sprintf("🎤 語音檔案過大（%s），限制為 %dMB。",
-			formatFileSize(voice.FileSize), t.config.Multimedia.MaxFileSizeMB))
+		msg := t.getLocalizedMessage(key.chatID, "voice_file_too_large", nil)
+		msg = strings.ReplaceAll(msg, "{size}", formatFileSize(voice.FileSize))
+		msg = strings.ReplaceAll(msg, "{limit}", fmt.Sprintf("%d", t.config.Multimedia.MaxFileSizeMB))
+		t.send(key, msg)
 		return
 	}
 
 	// 檢查語音長度限制（Whisper API 限制 25MB 或約 25 分鐘）
 	if voice.Duration > 25*60 { // 25 分鐘
-		t.send(key, fmt.Sprintf("🎤 語音訊息過長（%d 秒），限制為 25 分鐘。", voice.Duration))
+		msg := t.getLocalizedMessage(key.chatID, "voice_too_long", nil)
+		msg = strings.ReplaceAll(msg, "{duration}", fmt.Sprintf("%d", voice.Duration))
+		t.send(key, msg)
 		return
 	}
 
 	// 下載語音檔案
-	t.send(key, "🎤 正在下載語音檔案...")
+	downloadMsg := t.getLocalizedMessage(key.chatID, "voice_downloading", nil)
+	t.send(key, downloadMsg)
 	voicePath, err := t.DownloadTelegramFile(voice.FileID, "voice")
 	if err != nil {
 		log.Printf("[telegram] download voice error: %v", err)
-		t.send(key, "🎤 下載語音檔案失敗，請稍後再試。")
+		failMsg := t.getLocalizedMessage(key.chatID, "voice_download_failed", nil)
+		t.send(key, failMsg)
 		return
 	}
 
@@ -2673,7 +2622,14 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 
 		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
-			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true)
+			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true, &PIIDetectionContext{
+			ChatID:      key.chatID,
+			UserID:      userID,
+			MessageType: "voice",
+			SourceType:  "telegram",
+			ProjectPath: t.config.DefaultProjectDir,
+			MessageID:   messageID,
+		})
 			if len(detected) > 0 {
 				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
 				globalSecurityManager.LogSecurityEvent(SecurityEvent{
@@ -2687,39 +2643,54 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 						"context":        "telegram_voice",
 					},
 				})
-				t.send(key, "⚠️ 語音說明中偵測到敏感資訊已自動過濾。")
+				piiMsg := t.getLocalizedMessage(key.chatID, "voice_caption_pii_detected", nil)
+			t.send(key, piiMsg)
 				caption = filteredCaption
 			}
 		}
 	}
 
 	// 語音轉文字
-	t.send(key, "🎤 正在轉錄語音內容...")
+	transcribingMsg := t.getLocalizedMessage(key.chatID, "voice_transcribing", nil)
+	t.send(key, transcribingMsg)
 	transcribedText, err := t.transcribeVoiceWithWhisper(voicePath)
 	if err != nil {
 		log.Printf("[telegram] voice transcription error: %v", err)
-		t.send(key, "🎤 語音轉錄失敗，請稍後再試。")
+		failMsg := t.getLocalizedMessage(key.chatID, "voice_transcribe_failed", nil)
+		t.send(key, failMsg)
 		return
 	}
 
 	if transcribedText == "" {
-		t.send(key, "🎤 未能識別語音內容，請嘗試重新錄製。")
+		noRecognizeMsg := t.getLocalizedMessage(key.chatID, "voice_not_recognized", nil)
+		t.send(key, noRecognizeMsg)
 		return
 	}
 
 	// 顯示轉錄結果供用戶確認
-	confirmationMsg := fmt.Sprintf("🎤 *語音轉錄結果*：\n\n「%s」\n\n正在傳送給 AI 分析...", transcribedText)
-	t.sendMarkdown(key, confirmationMsg)
+	resultMsg := t.getLocalizedMessage(key.chatID, "voice_transcription_result", nil)
+	resultMsg = strings.ReplaceAll(resultMsg, "{text}", transcribedText)
+	t.sendMarkdown(key, resultMsg)
 
 	// 組合 prompt 讓 Claude 處理轉錄的文字
 	prompt := transcribedText
 	if caption != "" {
-		prompt = fmt.Sprintf("%s\n\n附加說明: %s", transcribedText, caption)
+		prompt = fmt.Sprintf("%s\n\nUser note: %s", transcribedText, caption)
 	}
 
 	// 發送給 Agent 處理
 	agent := t.getAgent(key)
-	response, err := agent.Run(prompt, func(update string, silent bool) {
+
+	// Add language preference hint
+	userLang := t.getChatLanguage(key.chatID)
+	promptWithLang := prompt
+	if userLang == "en" {
+		promptWithLang = "Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n" + prompt
+	} else if userLang == "zh-TW" {
+		promptWithLang = "請用繁體中文回應。\n\n" + prompt
+	}
+
+	response, err := agent.Run(promptWithLang, func(update string, silent bool) {
 		if silent {
 			t.sendSilent(key, update)
 		} else {
@@ -2728,13 +2699,233 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 	})
 	if err != nil {
 		log.Printf("[telegram] voice analysis error: %v", err)
-		t.send(key, "🎤 語音內容分析失敗，請稍後再試。")
+		analysisFailMsg := t.getLocalizedMessage(key.chatID, "voice_analyze_failed", nil)
+		t.send(key, analysisFailMsg)
 		return
 	}
 
 	if response != "" {
 		t.send(key, response)
 	}
+}
+
+// getModelTag 根據模型名稱返回對應的標籤
+func getModelTag(model string) string {
+	switch {
+	case strings.Contains(model, "haiku"):
+		return "⚡ [Haiku]"
+	case strings.Contains(model, "opus"):
+		return "🧠 [Opus]"
+	case strings.Contains(model, "sonnet"):
+		return "🟡 [Sonnet]"
+	default:
+		return "🤖 [Default]"
+	}
+}
+
+// evaluateTaskComplexity 使用本地啟發式算法評估任務複雜度
+// 基於多個信號判斷任務難度，無需外部 API 調用
+// 返回值: "fast" (簡單任務) 或 "deep" (複雜任務)
+func evaluateTaskComplexity(userMessage string) string {
+	score := 0
+
+	// 1. 消息長度 (越長越可能複雜)
+	if len(userMessage) > 800 {
+		score += 3
+	} else if len(userMessage) > 500 {
+		score += 2
+	} else if len(userMessage) > 200 {
+		score += 1
+	}
+
+	// 2. 代碼塊數量 (``` 標記)
+	codeBlocks := strings.Count(userMessage, "```")
+	if codeBlocks >= 6 {
+		score += 4
+	} else if codeBlocks >= 4 {
+		score += 3
+	} else if codeBlocks >= 2 {
+		score += 2
+	} else if codeBlocks >= 1 {
+		score += 1
+	}
+
+	// 3. 深度複雜度關鍵詞 (Opus 層級)
+	deepKeywords := []string{
+		"refactor", "架構", "architecture", "設計", "design",
+		"實現", "implement", "演算法", "algorithm",
+		"性能", "optimize", "效能", "優化",
+		"跨",  // 跨檔案、跨模組
+		"整合", "integration", "aggregate",
+		"系統", "system", "framework",
+		"複雜", "complex", "難度",
+	}
+	for _, kw := range deepKeywords {
+		if strings.Contains(strings.ToLower(userMessage), kw) {
+			score += 1
+		}
+	}
+
+	// 4. 中等難度關鍵詞 (Sonnet 層級)
+	balancedKeywords := []string{
+		"功能", "feature", "添加", "add",
+		"測試", "test", "testing", "改進", "improve",
+		"檢查", "review", "分析", "analyze",
+		"連接", "connect", "統計", "statistics",
+	}
+	for _, kw := range balancedKeywords {
+		if strings.Contains(strings.ToLower(userMessage), kw) {
+			score += 1
+		}
+	}
+
+	// 5. 簡單度關鍵詞 (Haiku 層級)
+	fastKeywords := []string{
+		"翻譯", "translate", "explain", "解釋",
+		"改寫", "rewrite", "轉換", "convert",
+		"查看", "show", "list", "看", "列出",
+		"格式", "format", "json", "csv", "yaml",
+		"簡單", "quick", "快速", "一行",
+	}
+	for _, kw := range fastKeywords {
+		if strings.Contains(strings.ToLower(userMessage), kw) {
+			score -= 1
+		}
+	}
+
+	// 6. 危險操作 (write, delete, modify files) - 很複雜
+	dangerousOps := []string{
+		"file_patch", "write_file", "delete file", "刪除檔案",
+		"修改全部", "modify all", "update all", "所有檔案",
+		"批量", "batch",
+	}
+	for _, op := range dangerousOps {
+		if strings.Contains(strings.ToLower(userMessage), op) {
+			score += 2
+		}
+	}
+
+	// 7. 多檔案操作指標 (中到高複雜度)
+	if strings.Contains(strings.ToLower(userMessage), "多個") ||
+		strings.Contains(strings.ToLower(userMessage), "multiple") ||
+		strings.Contains(strings.ToLower(userMessage), "all files") ||
+		strings.Contains(strings.ToLower(userMessage), "所有") {
+		score += 2
+	}
+
+	// 8. 調試/修復指標 (中複雜度)
+	debugKeywords := []string{
+		"bug", "error", "問題", "修復", "fix", "debug", "為什麼",
+		"不工作", "not working", "失敗", "fail", "錯誤",
+	}
+	for _, kw := range debugKeywords {
+		if strings.Contains(strings.ToLower(userMessage), kw) {
+			score += 1
+		}
+	}
+
+	// 決策門檻 (三層級)
+	//    score <= 1  : Fast (Haiku) - 簡單任務
+	//    2-5         : Balanced (Sonnet) - 中等難度
+	//    >= 6        : Deep (Opus) - 複雜任務
+	if score >= 6 {
+		return "deep"
+	} else if score >= 2 {
+		return "balanced"
+	}
+	return "fast"
+}
+
+// triageWithGPT4oMini 使用 OpenAI GPT-4o-mini 判斷任務複雜度
+// 返回值: "fast" (簡單任務) 或 "deep" (複雜任務)
+func (t *TelegramBot) triageWithGPT4oMini(userMessage string) (string, error) {
+	// 如果未配置 OpenAI API key，返回 fast（保守選擇）
+	if t.config.Multimedia.OpenAIAPIKey == "" {
+		return "fast", fmt.Errorf("OpenAI API key not configured")
+	}
+
+	systemPrompt := `你是任務複雜度分類器。根據用戶的訊息，判斷該任務的複雜度。
+
+快速任務（fast）：
+- 翻譯或語言轉換
+- 簡單解釋或文字改寫
+- 格式轉換（JSON, CSV, XML）
+- 查看或理解現有程式碼
+- 簡單的文字編輯或查詢
+
+深度任務（deep）：
+- 系統設計或架構規劃
+- 跨多個檔案的重構或大規模修改
+- 複雜的 bug 修復或診斷
+- 演算法實現或邏輯設計
+- 性能最佳化分析
+
+只回覆一個詞：fast 或 deep，不要有其他文字。`
+
+	payload := map[string]interface{}{
+		"model": "gpt-4o-mini",
+		"messages": []map[string]string{
+			{"role": "system", "content": systemPrompt},
+			{"role": "user", "content": userMessage},
+		},
+		"max_tokens":   10,
+		"temperature": 0,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "fast", fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", "https://api.openai.com/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "fast", fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+t.config.Multimedia.OpenAIAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "fast", fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "fast", fmt.Errorf("OpenAI API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "fast", fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	if len(result.Choices) == 0 {
+		return "fast", fmt.Errorf("empty choices in response")
+	}
+
+	// 提取並規範化回應
+	response := strings.ToLower(strings.TrimSpace(result.Choices[0].Message.Content))
+
+	// 驗證回應格式
+	if response == "fast" {
+		return "fast", nil
+	} else if response == "deep" {
+		return "deep", nil
+	}
+
+	// 如果回應不清楚，預設為 fast（保守選擇）
+	log.Printf("[telegram] AI router returned unclear response: %q, defaulting to fast", response)
+	return "fast", nil
 }
 
 // transcribeVoiceWithWhisper 使用 OpenAI Whisper API 轉錄語音
@@ -2817,12 +3008,14 @@ func (t *TelegramBot) transcribeVoiceWithWhisper(audioPath string) (string, erro
 }
 
 // handleDocumentMessage 處理文件訊息
-func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document *Document, caption string) {
+func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document *Document, caption string, messageID int) {
 	// 檢查檔案大小限制
 	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
 	if document.FileSize > maxSizeBytes {
-		t.send(key, fmt.Sprintf("📁 文件檔案過大（%s），限制為 %dMB。",
-			formatFileSize(document.FileSize), t.config.Multimedia.MaxFileSizeMB))
+		msg := t.getLocalizedMessage(key.chatID, "document_file_too_large", nil)
+		msg = strings.ReplaceAll(msg, "{size}", formatFileSize(document.FileSize))
+		msg = strings.ReplaceAll(msg, "{limit}", fmt.Sprintf("%d", t.config.Multimedia.MaxFileSizeMB))
+		t.send(key, msg)
 		return
 	}
 
@@ -2845,11 +3038,13 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 	}
 
 	// 下載文件到 Alice 臨時目錄
-	t.send(key, "📁 正在下載文件...")
+	downloadMsg := t.getLocalizedMessage(key.chatID, "document_downloading", nil)
+	t.send(key, downloadMsg)
 	documentPath, err := t.DownloadTelegramFile(document.FileID, "document")
 	if err != nil {
 		log.Printf("[telegram] download document error: %v", err)
-		t.send(key, "📁 下載文件失敗，請稍後再試。")
+		errMsg := t.getLocalizedMessage(key.chatID, "document_download_failed", nil)
+		t.send(key, errMsg)
 		return
 	}
 
@@ -2871,7 +3066,8 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 		tempDir := filepath.Join(projectDir, "temp")
 		if err := os.MkdirAll(tempDir, 0755); err != nil {
 			log.Printf("[telegram] create temp dir error: %v", err)
-			t.send(key, "📁 建立臨時目錄失敗。")
+			mkdirMsg := t.getLocalizedMessage(key.chatID, "document_mkdir_failed", nil)
+			t.send(key, mkdirMsg)
 			return
 		}
 
@@ -2879,7 +3075,8 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 		finalPath = filepath.Join(tempDir, document.FileName)
 		if err := copyFile(documentPath, finalPath); err != nil {
 			log.Printf("[telegram] copy document to project error: %v", err)
-			t.send(key, "📁 複製文件到專案目錄失敗。")
+			copyMsg := t.getLocalizedMessage(key.chatID, "document_copy_failed", nil)
+			t.send(key, copyMsg)
 			return
 		}
 
@@ -2889,24 +3086,42 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 	}
 
 	// 構建 Claude 的輸入提示
-	prompt := fmt.Sprintf("用戶上傳了一個文件：%s", finalPath)
+	promptPrefix := t.getLocalizedMessage(key.chatID, "document_prompt_prefix", nil)
+	promptPrefix = strings.ReplaceAll(promptPrefix, "{path}", finalPath)
+	prompt := promptPrefix
 	if caption != "" {
-		prompt += fmt.Sprintf("\n用戶說：%s", caption)
+		userNote := t.getLocalizedMessage(key.chatID, "document_user_note", nil)
+		userNote = strings.ReplaceAll(userNote, "{caption}", caption)
+		prompt += userNote
 	}
 
 	// 新增文件類型提示
 	if document.MimeType != "" {
-		prompt += fmt.Sprintf("\n文件類型：%s", document.MimeType)
+		fileType := t.getLocalizedMessage(key.chatID, "document_file_type", nil)
+		fileType = strings.ReplaceAll(fileType, "{mime}", document.MimeType)
+		prompt += fileType
 	}
 
-	prompt += "\n\n請分析這個文件並提供適當的協助。"
+	analyzePrompt := t.getLocalizedMessage(key.chatID, "document_analyzing", nil)
+	prompt += analyzePrompt
 
 	log.Printf("[telegram] sending document analysis request: file=%s, size=%d, type=%s, prompt_len=%d",
 		document.FileName, document.FileSize, document.MimeType, len(prompt))
 
 	// 發送分析訊息
-	t.send(key, "📁 正在分析文件...")
-	response, err := agent.Run(prompt, func(update string, silent bool) {
+	analyzeMsg := t.getLocalizedMessage(key.chatID, "document_analyzing", nil)
+	t.send(key, analyzeMsg)
+
+	// Add language preference hint
+	userLang := t.getChatLanguage(key.chatID)
+	promptWithLang := prompt
+	if userLang == "en" {
+		promptWithLang = "Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n" + prompt
+	} else if userLang == "zh-TW" {
+		promptWithLang = "請用繁體中文回應。\n\n" + prompt
+	}
+
+	response, err := agent.Run(promptWithLang, func(update string, silent bool) {
 		if silent {
 			t.sendSilent(key, update)
 		} else {
@@ -2915,7 +3130,8 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 	})
 	if err != nil {
 		log.Printf("[telegram] document analysis error: %v", err)
-		t.send(key, "📁 文件分析失敗，請稍後再試。")
+		errMsg := t.getLocalizedMessage(key.chatID, "document_analysis_failed", nil)
+		t.send(key, errMsg)
 		return
 	}
 
@@ -2929,20 +3145,20 @@ func (t *TelegramBot) validateProjectPath(projectPath string) error {
 	// 1. 檢查路徑是否存在
 	info, err := os.Stat(projectPath)
 	if os.IsNotExist(err) {
-		return fmt.Errorf("路徑不存在：%s", projectPath)
+		return fmt.Errorf("path_not_exist:%s", projectPath)
 	}
 	if err != nil {
-		return fmt.Errorf("無法存取路徑：%s (%v)", projectPath, err)
+		return fmt.Errorf("path_access_denied:%s:%v", projectPath, err)
 	}
 
 	// 2. 檢查是否為目錄
 	if !info.IsDir() {
-		return fmt.Errorf("指定路徑不是目錄：%s", projectPath)
+		return fmt.Errorf("path_not_directory:%s", projectPath)
 	}
 
 	// 3. 檢查讀取權限
 	if _, err := os.ReadDir(projectPath); err != nil {
-		return fmt.Errorf("無法讀取目錄：%s (權限不足)", projectPath)
+		return fmt.Errorf("path_permission_denied:%s", projectPath)
 	}
 
 	return nil
@@ -3021,7 +3237,7 @@ func (t *TelegramBot) isSimilarPath(target, candidate string) bool {
 }
 
 // detectProjectType 偵測專案類型
-func (t *TelegramBot) detectProjectType(projectPath string) string {
+func (t *TelegramBot) detectProjectType(chatID int64, projectPath string) string {
 	projectFiles := map[string]string{
 		"go.mod":        "Go",
 		"package.json":  "Node.js",
@@ -3042,7 +3258,7 @@ func (t *TelegramBot) detectProjectType(projectPath string) string {
 	}
 
 	if len(detectedTypes) == 0 {
-		return "通用專案"
+		return t.getLocalizedMessage(chatID, "generic_project", nil)
 	}
 
 	// 去重並返回
@@ -3059,6 +3275,124 @@ func (t *TelegramBot) detectProjectType(projectPath string) string {
 		return result[0]
 	}
 	return strings.Join(result[:min(2, len(result))], "/") // 最多顯示兩種類型
+}
+
+// handleLangCommand 處理 /lang 指令 - 切換 Bot 語言
+func (t *TelegramBot) handleLangCommand(key chatKey, text string) {
+	if t.i18n == nil {
+		msg := t.getLocalizedMessage(key.chatID, "i18n_system_not_init", nil)
+		t.send(key, msg)
+		return
+	}
+
+	// 解析指令參數
+	parts := strings.Fields(text)
+	if len(parts) == 1 {
+		// 沒有參數，顯示當前語言和可用語言
+		currentLang := t.getChatLanguage(key.chatID)
+		langName := t.i18n.GetLanguageName(currentLang)
+		currentLangMsg := t.getLocalizedMessage(key.chatID, "lang_current", map[string]string{
+			"lang": fmt.Sprintf("%s (%s)", langName, currentLang),
+		})
+
+		msg := fmt.Sprintf("🌐 %s\n\n", currentLangMsg)
+
+		// 根據語言顯示支援語言標題
+		if currentLang == "en" {
+			msg += "Supported languages:\n"
+		} else {
+			msg += "支援語言：\n"
+		}
+
+		for code, name := range t.i18n.GetAvailableLanguages() {
+			icon := " "
+			if code == currentLang {
+				icon = "✓"
+			}
+			msg += fmt.Sprintf("[%s] %s (%s)\n", icon, name, code)
+		}
+
+		usageMsg := t.getLocalizedMessage(key.chatID, "lang_usage", nil)
+		msg += "\n" + usageMsg
+
+		t.sendMarkdown(key, msg)
+		return
+	}
+
+	// 有參數，嘗試切換語言
+	requestedLang := parts[1]
+
+	if !t.i18n.IsLanguageSupported(requestedLang) {
+		errMsg := t.getLocalizedMessage(key.chatID, "lang_not_found", map[string]string{
+			"lang": requestedLang,
+		})
+		t.send(key, errMsg)
+		return
+	}
+
+	// 儲存語言偏好
+	t.setChatlanguage(key.chatID, requestedLang)
+
+	langName := t.i18n.GetLanguageName(requestedLang)
+	msg := t.getLocalizedMessage(key.chatID, "lang_switched", map[string]string{
+		"lang": fmt.Sprintf("%s (%s)", langName, requestedLang),
+	})
+	t.send(key, msg)
+
+	log.Printf("[telegram] chat %d switched language to %s", key.chatID, requestedLang)
+}
+
+// getLocalizedMessage 根據 chat 的語言偏好取得本地化消息
+func (t *TelegramBot) getLocalizedMessage(chatID int64, messageKey string, vars map[string]string) string {
+	if t.i18n == nil {
+		return messageKey // Fallback to key if i18n not initialized
+	}
+	lang := t.getChatLanguage(chatID)
+	return t.i18n.GetMessage(lang, messageKey, vars)
+}
+
+// getChatLanguage 取得指定 chat 的語言偏好
+func (t *TelegramBot) getChatLanguage(chatID int64) string {
+	// First check in-memory cache
+	t.langPrefMu.RLock()
+	if lang, ok := t.langPreferences[chatID]; ok && lang != "" {
+		t.langPrefMu.RUnlock()
+		return lang
+	}
+	t.langPrefMu.RUnlock()
+
+	// If not cached, try loading from database
+	if globalStorage != nil {
+		if lang, err := globalStorage.GetChatLanguage(chatID); err == nil && lang != "" {
+			// Cache it for future use
+			t.langPrefMu.Lock()
+			t.langPreferences[chatID] = lang
+			t.langPrefMu.Unlock()
+			return lang
+		}
+	}
+
+	// Fall back to system default language
+	if t.i18n != nil {
+		return t.i18n.GetDefaultLanguage()
+	}
+
+	return "en"
+}
+
+// setChatlanguage 設定指定 chat 的語言偏好
+func (t *TelegramBot) setChatlanguage(chatID int64, lang string) {
+	t.langPrefMu.Lock()
+	defer t.langPrefMu.Unlock()
+
+	t.langPreferences[chatID] = lang
+
+	// 持久化到 SQLite
+	if globalStorage != nil {
+		if err := globalStorage.SaveChatLanguage(chatID, lang); err != nil {
+			log.Printf("[telegram] failed to save chat language preference: %v", err)
+		}
+	}
 }
 
 // abs 計算絕對值

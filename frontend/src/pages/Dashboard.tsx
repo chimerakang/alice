@@ -24,6 +24,7 @@ import {
   FileCode2,
   AlertTriangle,
   Loader2,
+  TrendingDown,
 } from "lucide-react";
 import {
   AreaChart,
@@ -41,6 +42,9 @@ import {
 } from "recharts";
 import SourceDistributionChart from "@/components/SourceDistributionChart";
 import SourcePerformanceChart from "@/components/SourcePerformanceChart";
+import { SavingsBanner } from "@/components/SavingsBanner";
+import { ModelDistributionChart } from "@/components/ModelDistributionChart";
+import { CostTrendChart } from "@/components/CostTrendChart";
 
 // ─── Storage Stats Type ──────────────────────────────
 interface StorageStats {
@@ -539,22 +543,39 @@ export default function Dashboard() {
     setDateRange(range);
   }, []);
 
+  // Calculate hours from dateRange for cost/savings charts
+  const chartHours = useMemo(() => {
+    if (!dateRange.startTime || !dateRange.endTime) {
+      return 8760; // "All" = 1 year of history (365 * 24h)
+    }
+    const start = new Date(dateRange.startTime);
+    const end = new Date(dateRange.endTime);
+    const hours = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60));
+    return Math.max(1, hours); // Minimum 1 hour
+  }, [dateRange]);
+
   // Fetch decisions + basic stats to discover project paths
   useEffect(() => {
     const load = async () => {
+      // Use provided date range; when "All" is selected (empty dateRange), query all history
+      const now = new Date();
+      const isAllTime = !dateRange.startTime && !dateRange.endTime;
+      const startTime = dateRange.startTime || (isAllTime ? '2020-01-01T00:00:00Z' : new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString());
+      const endTime = dateRange.endTime || now.toISOString();
+
       const results = await Promise.allSettled([
         api.getStats(),
-        api.getRecentDecisions({
+        api.getDecisionsByRange({
           limit: 2000,
-          startTime: dateRange.startTime,
-          endTime: dateRange.endTime,
+          startTime,
+          endTime,
         }),
         api.getStorageStats(),
         // Load tool execution history for ToolSuccessChart
         api.getRecentTools({
           limit: 500,
-          startTime: dateRange.startTime,
-          endTime: dateRange.endTime,
+          startTime,
+          endTime,
         }),
       ]);
 
@@ -588,7 +609,7 @@ export default function Dashboard() {
       const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
       try {
-        const response = await api.getRecentDecisions({
+        const response = await api.getDecisionsByRange({
           limit: 2000,
           startTime: sevenDaysAgo.toISOString(),
           endTime: now.toISOString(),
@@ -792,7 +813,29 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ── Row 4: Recent Decisions + Recent Tools ── */}
+      {/* ── Row 4: Smart Routing Savings (Issue #74) ── */}
+      <div className="space-y-4">
+        <SavingsBanner hours={chartHours} />
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="card p-5">
+            <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
+              <Zap className="w-4 h-4 text-warning" />
+              Model Distribution
+            </h3>
+            <ModelDistributionChart hours={chartHours} />
+          </div>
+          <div className="card p-5">
+            <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
+              <TrendingDown className="w-4 h-4 text-success" />
+              Cost Trend
+            </h3>
+            <CostTrendChart hours={chartHours} />
+          </div>
+        </div>
+      </div>
+
+      {/* ── Row 6: Recent Decisions + Recent Tools ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <RecentDecisionsCard decisions={allDecisions} />
 

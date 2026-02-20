@@ -47,6 +47,13 @@ interface PIIRecord {
   type: string;
   location: string;
   masked_value: string;
+  chat_id?: number;
+  user_id?: number;
+  message_type?: string;
+  match_count?: number;
+  redacted_snippet?: string;
+  severity?: string;
+  event_id?: string; // Reference to original SecurityEvent for modal
 }
 
 export default function Security() {
@@ -59,6 +66,7 @@ export default function Security() {
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc");
   const { securityEvents } = useAppStore();
   const [dateRange, setDateRange] = useState<DateRange>({});
+  const [selectedEvent, setSelectedEvent] = useState<SecurityEvent | null>(null);
 
   const handleDateRangeChange = useCallback((range: DateRange) => {
     setDateRange(range);
@@ -67,15 +75,20 @@ export default function Security() {
   useEffect(() => {
     const loadData = async () => {
       try {
+        // Get time range to use for API calls (includes default logic)
+        const timeRange = getTimeRangeInfo();
+        const startTime = timeRange.startTime?.toISOString();
+        const endTime = timeRange.endTime?.toISOString();
+
         const [statsData, eventsData] = await Promise.allSettled([
           api.getSecurityStats({
-            startTime: dateRange.startTime,
-            endTime: dateRange.endTime,
+            startTime,
+            endTime,
           }),
           api.getSecurityEvents({
             limit: 200,
-            startTime: dateRange.startTime,
-            endTime: dateRange.endTime,
+            startTime,
+            endTime,
           }),
         ]);
 
@@ -131,76 +144,157 @@ export default function Security() {
     },
   ].filter(item => item.value > 0);
 
+  // Determine time range and bucket granularity
+  const getTimeRangeInfo = () => {
+    const now = new Date();
+    let startTime = dateRange.startTime ? new Date(dateRange.startTime) : undefined;
+    let endTime = dateRange.endTime ? new Date(dateRange.endTime) : undefined;
+    let label = "Last 12 Hours";
+    let bucketMs = 60 * 60 * 1000; // 1 hour default
+
+    if (!startTime && !endTime) {
+      // Default: last 12 hours
+      startTime = new Date(now.getTime() - 12 * 60 * 60 * 1000);
+      endTime = now;
+      label = "Last 12 Hours";
+      bucketMs = 60 * 60 * 1000; // 1 hour
+    } else if (startTime && endTime) {
+      const spanMs = endTime.getTime() - startTime.getTime();
+      const spanHours = spanMs / (60 * 60 * 1000);
+      const spanDays = spanMs / (24 * 60 * 60 * 1000);
+
+      if (spanHours <= 1) {
+        label = "Last 1 Hour";
+        bucketMs = 5 * 60 * 1000; // 5 minutes
+      } else if (spanHours <= 6) {
+        label = "Last 6 Hours";
+        bucketMs = 30 * 60 * 1000; // 30 minutes
+      } else if (spanHours <= 24) {
+        label = "Last 24 Hours";
+        bucketMs = 60 * 60 * 1000; // 1 hour
+      } else if (spanDays <= 7) {
+        label = "Last 7 Days";
+        bucketMs = 4 * 60 * 60 * 1000; // 4 hours
+      } else if (spanDays <= 30) {
+        label = "Last 30 Days";
+        bucketMs = 24 * 60 * 60 * 1000; // 1 day
+      } else {
+        // Custom range
+        const startStr = startTime.toLocaleDateString();
+        const endStr = endTime.toLocaleDateString();
+        label = `${startStr} - ${endStr}`;
+        bucketMs = 24 * 60 * 60 * 1000; // 1 day
+      }
+    }
+
+    return { startTime, endTime, label, bucketMs };
+  };
+
+  const { endTime: rangeEnd, label: timeRangeLabel } = getTimeRangeInfo();
+
   // Event trends over time (from real data)
   const eventTrends: EventTrend[] = useMemo(() => {
     if (allEvents.length === 0) return [];
 
-    // Group events by hour
-    const hourBuckets: Record<string, EventTrend> = {};
-    const now = new Date();
+    const buckets: Record<number, EventTrend> = {};
+    const { startTime, bucketMs: bucketSize } = getTimeRangeInfo();
 
-    // Initialize last 12 hours
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getTime() - i * 60 * 60 * 1000);
-      const key = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:00`;
-      hourBuckets[key] = { timestamp: key, low: 0, medium: 0, high: 0, critical: 0 };
+    // Initialize buckets based on time range
+    if (startTime && rangeEnd) {
+      let currentTime = new Date(startTime.getTime());
+      const endTime = new Date(rangeEnd.getTime());
+
+      while (currentTime.getTime() <= endTime.getTime()) {
+        const bucketKey = Math.floor(currentTime.getTime() / bucketSize) * bucketSize;
+
+        if (!buckets[bucketKey]) {
+          const d = new Date(bucketKey);
+          let timestamp = "";
+
+          if (bucketSize === 5 * 60 * 1000) {
+            // 5 min: HH:MM
+            timestamp = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+          } else if (bucketSize === 30 * 60 * 1000) {
+            // 30 min: HH:MM
+            timestamp = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+          } else if (bucketSize === 60 * 60 * 1000) {
+            // 1 hour: M/D HH:00
+            timestamp = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:00`;
+          } else if (bucketSize === 4 * 60 * 60 * 1000) {
+            // 4 hours: M/D HH:00
+            timestamp = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:00`;
+          } else {
+            // 1 day: M/D
+            timestamp = `${d.getMonth() + 1}/${d.getDate()}`;
+          }
+
+          buckets[bucketKey] = { timestamp, low: 0, medium: 0, high: 0, critical: 0 };
+        }
+
+        currentTime = new Date(currentTime.getTime() + bucketSize);
+      }
     }
 
     allEvents.forEach(event => {
       const d = new Date(event.timestamp);
       if (isNaN(d.getTime())) return;
-      const key = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:00`;
-      if (hourBuckets[key]) {
+
+      const bucketKey = Math.floor(d.getTime() / bucketSize) * bucketSize;
+      if (buckets[bucketKey]) {
         const sev = getSeverityLevel(event.severity);
-        hourBuckets[key][sev as keyof Omit<EventTrend, 'timestamp'>]++;
+        buckets[bucketKey][sev as keyof Omit<EventTrend, 'timestamp'>]++;
       }
     });
 
-    return Object.values(hourBuckets);
-  }, [allEvents]);
+    return Object.values(buckets);
+  }, [allEvents, dateRange]);
 
   // Extract real PII detection records from security events
   const piiRecords: PIIRecord[] = useMemo(() => {
     return allEvents
       .filter(e => e.event_type?.includes("pii"))
       .map((e, i) => {
-        // Extract PII type from description (e.g. "PII detected: Email")
+        // Extract PII type from details first (most reliable), fallback to description
+        const piiTypeFromDetails = e.details?.pii_type as string | undefined;
         const typeMatch = e.description?.match(/PII detected(?:\s+in\s+\w+\s+\w+)?:\s*(.+)/);
-        const piiType = typeMatch ? typeMatch[1] : e.event_type || "Unknown";
+        const piiType = piiTypeFromDetails || (typeMatch ? typeMatch[1] : e.event_type || "Unknown");
 
-        // Derive location from event_type and details
+        // Derive location from message_type and source_type
         let location = "System";
+        const messageType = e.details?.message_type as string | undefined;
+        const sourceType = e.details?.source_type as string | undefined;
 
-        // Check details first for more specific context
-        const context = e.details?.context;
-        if (context) {
-          switch (context) {
-            case "telegram_photo": location = "Telegram Photo"; break;
-            case "telegram_batch_photo": location = "Batch Photos"; break;
-            case "telegram_voice": location = "Voice Message"; break;
-            case "telegram_single_photo": location = "Single Photo"; break;
-            default: location = context.replace(/_/g, " ");
-          }
-        }
-        // Fallback to event_type parsing
-        else if (e.event_type?.includes("telegram")) {
+        if (messageType === "text" && sourceType === "telegram") {
           location = "Telegram Message";
-        } else if (e.event_type?.includes("voice_caption")) {
-          location = "Voice Caption";
-        } else if (e.event_type?.includes("photo_caption")) {
-          location = "Photo Caption";
-        } else if (e.event_type?.includes("batch_caption")) {
-          location = "Batch Upload Caption";
-        } else if (e.event_type?.includes("filtered_in_logs")) {
+        } else if (messageType === "photo") {
+          location = "Telegram Photo";
+        } else if (messageType === "voice") {
+          location = "Voice Message";
+        } else if (messageType === "batch") {
+          location = "Batch Photos";
+        } else if (sourceType === "agent") {
           location = "Agent Logs";
         }
 
+        // Get match count and snippet from details
+        const matchCount = e.details?.matches as number | undefined;
+        const redactedSnippet = e.details?.redacted_snippet as string | undefined;
+        const chatId = e.details?.chat_id as number | undefined;
+        const userId = e.details?.user_id as number | undefined;
+
         return {
           id: e.event_id || `pii_${i}`,
+          event_id: e.event_id, // Reference to original event for modal
           timestamp: e.timestamp ? new Date(e.timestamp).toLocaleString() : "N/A",
           type: piiType,
           location,
-          masked_value: "[redacted]",
+          masked_value: redactedSnippet || "[redacted]",
+          chat_id: chatId,
+          user_id: userId,
+          message_type: messageType,
+          match_count: matchCount,
+          redacted_snippet: redactedSnippet,
+          severity: e.severity,
         };
       })
       .slice(0, 20); // Show last 20
@@ -381,7 +475,7 @@ export default function Security() {
         <div className="card p-6">
           <h3 className="text-sm font-semibold text-gray-300 mb-4 flex items-center gap-2">
             <Calendar className="w-4 h-4" />
-            Security Events Trend (Last 12 Hours)
+            Security Events Trend ({timeRangeLabel})
           </h3>
           <ResponsiveContainer width="100%" height={200}>
             <AreaChart data={eventTrends}>
@@ -455,29 +549,53 @@ export default function Security() {
                 <th className="text-left py-2 text-gray-400 font-medium">Timestamp</th>
                 <th className="text-left py-2 text-gray-400 font-medium">PII Type</th>
                 <th className="text-left py-2 text-gray-400 font-medium">Location</th>
-                <th className="text-left py-2 text-gray-400 font-medium">Masked Value</th>
+                <th className="text-left py-2 text-gray-400 font-medium">Source</th>
+                <th className="text-left py-2 text-gray-400 font-medium">Matches</th>
+                <th className="text-left py-2 text-gray-400 font-medium">Preview</th>
               </tr>
             </thead>
             <tbody>
               {piiRecords.map((record) => (
-                <tr key={record.id} className="border-b border-gray-800/50">
-                  <td className="py-2 text-gray-300 font-mono">{record.timestamp}</td>
+                <tr
+                  key={record.id}
+                  className="border-b border-gray-800/50 hover:bg-gray-800/20 cursor-pointer transition-colors"
+                  onClick={() => {
+                    // Find the original SecurityEvent by event_id or id from allEvents (includes WebSocket events)
+                    const recordId = record.event_id;
+                    if (recordId) {
+                      const sourceEvent = allEvents.find(e => (e.event_id === recordId) || (e.id === recordId));
+                      if (sourceEvent) {
+                        setSelectedEvent(sourceEvent);
+                      }
+                    }
+                  }}
+                >
+                  <td className="py-2 text-gray-300 font-mono text-xs">{record.timestamp}</td>
                   <td className="py-2">
-                    <span className={`px-2 py-1 rounded-full text-xs ${
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                       record.type === "Credit Card" ? "bg-red-500/20 text-red-300" :
                       record.type === "SSN" ? "bg-orange-500/20 text-orange-300" :
+                      record.type === "Email" ? "bg-purple-500/20 text-purple-300" :
                       "bg-blue-500/20 text-blue-300"
                     }`}>
                       {record.type}
                     </span>
                   </td>
-                  <td className="py-2 text-gray-300">{record.location}</td>
-                  <td className="py-2 text-gray-400 font-mono">{record.masked_value}</td>
+                  <td className="py-2 text-gray-300 text-xs">{record.location}</td>
+                  <td className="py-2 text-gray-400 text-xs">
+                    {record.chat_id ? `Chat ${record.chat_id}` : "Unknown"}
+                  </td>
+                  <td className="py-2 text-gray-300 text-xs font-mono">
+                    {record.match_count ? `${record.match_count} found` : "-"}
+                  </td>
+                  <td className="py-2 text-gray-400 text-xs font-mono max-w-xs truncate">
+                    {record.redacted_snippet ? `"${record.redacted_snippet.substring(0, 50)}..."` : "[redacted]"}
+                  </td>
                 </tr>
               ))}
               {piiRecords.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="py-4 text-center text-gray-500">
+                  <td colSpan={6} className="py-4 text-center text-gray-500">
                     No PII detections recorded.
                   </td>
                 </tr>
@@ -554,7 +672,11 @@ export default function Security() {
             </thead>
             <tbody>
               {filteredEvents.map((event, i) => (
-                <tr key={event.event_id || i} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                <tr
+                  key={event.event_id || i}
+                  className="border-b border-gray-800/50 hover:bg-gray-800/30 cursor-pointer transition-colors"
+                  onClick={() => setSelectedEvent(event)}
+                >
                   <td className="py-2 text-gray-300 font-mono">
                     {event.timestamp ? new Date(event.timestamp).toLocaleString() : "N/A"}
                   </td>
@@ -594,6 +716,116 @@ export default function Security() {
           </table>
         </div>
       </div>
+
+      {/* Event Details Modal */}
+      {selectedEvent && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+          <div className="bg-gray-900 border border-gray-700 rounded-lg max-w-2xl w-full max-h-96 overflow-y-auto">
+            <div className="sticky top-0 bg-gray-900 border-b border-gray-700 p-4 flex items-center justify-between">
+              <h3 className="text-lg font-semibold text-white">Security Event Details</h3>
+              <button
+                onClick={() => setSelectedEvent(null)}
+                className="text-gray-400 hover:text-white text-xl"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-gray-400 uppercase">Timestamp</label>
+                <p className="text-white font-mono text-sm mt-1">
+                  {selectedEvent.timestamp ? new Date(selectedEvent.timestamp).toLocaleString() : "N/A"}
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-400 uppercase">Event Type</label>
+                <p className="text-white font-mono text-sm mt-1">{selectedEvent.event_type || "Unknown"}</p>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-400 uppercase">Severity</label>
+                <p className="text-white font-mono text-sm mt-1">
+                  {getSeverityLevel(selectedEvent.severity).toUpperCase()}
+                </p>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-gray-400 uppercase">Description</label>
+                <p className="text-gray-300 text-sm mt-1">{selectedEvent.description || "No description"}</p>
+              </div>
+
+              {selectedEvent.details && (
+                <>
+                  {(selectedEvent.details.chat_id || selectedEvent.details.user_id) && (
+                    <div className="bg-gray-800/50 border border-gray-700 rounded p-3">
+                      <label className="text-xs font-semibold text-gray-400 uppercase">Affected Chat/User</label>
+                      <div className="text-white text-sm mt-2 space-y-1 font-mono">
+                        {selectedEvent.details.chat_id && (
+                          <p>Chat ID: <span className="text-cyan-400">{selectedEvent.details.chat_id}</span></p>
+                        )}
+                        {selectedEvent.details.user_id && (
+                          <p>User ID: <span className="text-cyan-400">{selectedEvent.details.user_id}</span></p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedEvent.details.message_type && (
+                    <div>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">Message Type</label>
+                      <p className="text-white text-sm mt-1">{selectedEvent.details.message_type}</p>
+                    </div>
+                  )}
+
+                  {selectedEvent.details.project_path && (
+                    <div>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">Project</label>
+                      <p className="text-white text-sm mt-1 font-mono break-all">{selectedEvent.details.project_path}</p>
+                    </div>
+                  )}
+
+                  {selectedEvent.details.message_id && (
+                    <div>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">Message Info</label>
+                      <p className="text-white text-sm mt-1 font-mono">Message ID: <span className="text-cyan-400">{selectedEvent.details.message_id}</span></p>
+                    </div>
+                  )}
+
+                  {selectedEvent.details.redacted_snippet && (
+                    <div className="bg-gray-800/50 border border-gray-700 rounded p-3">
+                      <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">
+                        Redacted Content Preview (Sensitive Data Filtered)
+                      </label>
+                      <p className="text-gray-300 text-sm font-mono whitespace-pre-wrap break-words">
+                        {selectedEvent.details.redacted_snippet}
+                      </p>
+                      <p className="text-gray-500 text-xs mt-2">
+                        ℹ️ To view the full conversation, please check the original Telegram chat ID listed above.
+                      </p>
+                    </div>
+                  )}
+
+                  {selectedEvent.details.matches && (
+                    <div>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">PII Matches Found</label>
+                      <p className="text-orange-400 font-mono text-sm mt-1">{selectedEvent.details.matches} instances</p>
+                    </div>
+                  )}
+
+                  {selectedEvent.details.pattern && (
+                    <div>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">PII Pattern Detected</label>
+                      <p className="text-white text-sm mt-1">{selectedEvent.details.pattern}</p>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

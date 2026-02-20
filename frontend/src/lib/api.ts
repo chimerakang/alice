@@ -17,6 +17,25 @@ import type {
 
 const BASE = "";
 
+/** Normalize a DecisionLog: generate id if missing, map nested tokens_used to flat fields */
+function normalizeDecision(d: DecisionLog): DecisionLog {
+  // BUG #1 fix: API doesn't return 'id' field, causing dedup to collapse all decisions to 1
+  if (!d.id) {
+    d.id = `${d.session_id || ''}_${d.chat_id || 0}_${d.thread_id || 0}_${d.timestamp || ''}`;
+  }
+  // Map nested tokens_used (Go struct without json tags) to flat fields
+  if (d.tokens_used) {
+    d.tokens_input = d.tokens_used.TotalInputTokens || 0;
+    d.tokens_output = d.tokens_used.TotalOutputTokens || 0;
+    d.cost_usd = d.tokens_used.TotalCostUSD || 0;
+  }
+  return d;
+}
+
+function normalizeDecisions(list?: DecisionLog[]): DecisionLog[] {
+  return (list || []).map(normalizeDecision);
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const res = await fetch(`${BASE}${url}`);
   if (!res.ok) throw new Error(`API error ${res.status}: ${url}`);
@@ -80,12 +99,38 @@ export const api = {
     }>("/api/tools/executions"),
 
   // ========== Decisions ==========
-  getRecentDecisions: (params: TimeRangeQuery = {}) => {
-    const { limit = 50, offset, startTime, endTime, source } = params;
-    const qs = buildQuery({ limit, offset, start_time: startTime, end_time: endTime, source });
-    return fetchJson<{ decisions?: DecisionLog[]; pagination: Pagination }>(
+  /** Get recent decisions from in-memory logger (no time range) */
+  getRecentDecisions: async (params?: { limit?: number }) => {
+    const { limit = 50 } = params || {};
+    const qs = buildQuery({ limit });
+    const res = await fetchJson<{ decisions?: DecisionLog[]; total?: number; timestamp: string }>(
       `/api/decisions/recent${qs}`
     );
+    res.decisions = normalizeDecisions(res.decisions);
+    return res;
+  },
+
+  /** Get decisions within a specific time range from database */
+  getDecisionsByRange: async (params: TimeRangeQuery) => {
+    const { limit = 2000, offset = 0, startTime, endTime, source } = params;
+
+    // If date range not provided, query all history
+    const now = new Date();
+    const finalStartTime = startTime || '2020-01-01T00:00:00Z';
+    const finalEndTime = endTime || now.toISOString();
+
+    const qs = buildQuery({
+      limit,
+      offset,
+      start_time: finalStartTime,
+      end_time: finalEndTime,
+      source,
+    });
+    const res = await fetchJson<{ decisions?: DecisionLog[]; total?: number; timestamp: string }>(
+      `/api/decisions/range${qs}`
+    );
+    res.decisions = normalizeDecisions(res.decisions);
+    return res;
   },
 
   // ========== Multi-Agent ==========
