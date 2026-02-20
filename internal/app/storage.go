@@ -333,10 +333,17 @@ func (s *SQLiteStorage) initTables() error {
 		log.Printf("Migration warning (performance_metrics.project_path): %v", err)
 	}
 
+	// Migration: add project_path column to tool_executions
+	_, err = s.db.Exec(`ALTER TABLE tool_executions ADD COLUMN project_path TEXT DEFAULT ''`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		log.Printf("Migration warning (tool_executions.project_path): %v", err)
+	}
+
 	// Create indexes for new columns if they don't exist
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_decision_logs_model ON decision_logs(model)`)
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_performance_metrics_model ON performance_metrics(model)`)
 	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_performance_metrics_project_path ON performance_metrics(project_path)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_tool_executions_project_path ON tool_executions(project_path)`)
 
 	log.Printf("Database initialized successfully at: %s", s.path)
 	return nil
@@ -359,11 +366,11 @@ func (s *SQLiteStorage) InsertToolExecution(exec ToolExecution) error {
 
 	_, err := s.db.Exec(`
 		INSERT INTO tool_executions
-		(timestamp, tool_name, input_json, status, duration_ms, chat_id, thread_id, error, git_commit_hash, git_branch)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		(timestamp, tool_name, input_json, status, duration_ms, chat_id, thread_id, error, git_commit_hash, git_branch, project_path)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		exec.Timestamp, exec.ToolName, string(inputJSON), exec.Status,
 		exec.Duration.Milliseconds(), exec.ChatID, exec.ThreadID, exec.Error,
-		gitCommitHash, gitBranch)
+		gitCommitHash, gitBranch, exec.ProjectPath)
 
 	return err
 }
@@ -371,7 +378,7 @@ func (s *SQLiteStorage) InsertToolExecution(exec ToolExecution) error {
 // GetToolExecutions 獲取工具執行記錄（分頁）
 func (s *SQLiteStorage) GetToolExecutions(limit int, offset int) ([]ToolExecution, error) {
 	rows, err := s.db.Query(`
-		SELECT timestamp, tool_name, input_json, status, duration_ms, chat_id, thread_id, error
+		SELECT timestamp, tool_name, input_json, status, duration_ms, chat_id, thread_id, error, project_path
 		FROM tool_executions
 		ORDER BY timestamp DESC
 		LIMIT ? OFFSET ?`, limit, offset)
@@ -388,7 +395,7 @@ func (s *SQLiteStorage) GetToolExecutionsByTimeRange(start, end time.Time, limit
 	startStr := formatTimeForSQLite(start)
 	endStr := formatTimeForSQLite(end)
 	rows, err := s.db.Query(`
-		SELECT timestamp, tool_name, input_json, status, duration_ms, chat_id, thread_id, error
+		SELECT timestamp, tool_name, input_json, status, duration_ms, chat_id, thread_id, error, project_path
 		FROM tool_executions
 		WHERE timestamp BETWEEN ? AND ?
 		ORDER BY timestamp DESC
@@ -424,9 +431,10 @@ func (s *SQLiteStorage) scanToolExecutions(rows *sql.Rows) ([]ToolExecution, err
 		var exec ToolExecution
 		var inputJSON string
 		var durationMs int64
+		var projectPath sql.NullString
 
 		err := rows.Scan(&exec.Timestamp, &exec.ToolName, &inputJSON, &exec.Status,
-			&durationMs, &exec.ChatID, &exec.ThreadID, &exec.Error)
+			&durationMs, &exec.ChatID, &exec.ThreadID, &exec.Error, &projectPath)
 		if err != nil {
 			return nil, err
 		}
@@ -434,6 +442,9 @@ func (s *SQLiteStorage) scanToolExecutions(rows *sql.Rows) ([]ToolExecution, err
 		// 解析 JSON 輸入
 		json.Unmarshal([]byte(inputJSON), &exec.Input)
 		exec.Duration = time.Duration(durationMs) * time.Millisecond
+		if projectPath.Valid {
+			exec.ProjectPath = projectPath.String
+		}
 
 		executions = append(executions, exec)
 	}

@@ -46,14 +46,15 @@ type ModelCostBreakdown struct {
 
 // ToolExecution represents a single tool execution event
 type ToolExecution struct {
-	Timestamp time.Time              `json:"timestamp"`
-	ToolName  string                 `json:"tool_name"`
-	Input     map[string]interface{} `json:"input"`
-	Status    string                 `json:"status"` // "running", "success", "error"
-	Duration  time.Duration          `json:"duration_ms"`
-	ChatID    int64                  `json:"chat_id"`
-	ThreadID  int                    `json:"thread_id"`
-	Error     string                 `json:"error,omitempty"`
+	Timestamp   time.Time              `json:"timestamp"`
+	ToolName    string                 `json:"tool_name"`
+	Input       map[string]interface{} `json:"input"`
+	Status      string                 `json:"status"` // "running", "success", "error"
+	Duration    time.Duration          `json:"duration_ms"`
+	ChatID      int64                  `json:"chat_id"`
+	ThreadID    int                    `json:"thread_id"`
+	Error       string                 `json:"error,omitempty"`
+	ProjectPath string                 `json:"project_path,omitempty"`
 }
 
 // DecisionLog captures the full context behind AI-generated decisions
@@ -117,17 +118,18 @@ var globalDecisionLogger = &DecisionLogger{
 }
 
 // LogToolStart logs the beginning of a tool execution
-func (tl *ToolLogger) LogToolStart(toolName string, input map[string]interface{}, chatID int64, threadID int) {
+func (tl *ToolLogger) LogToolStart(toolName string, input map[string]interface{}, chatID int64, threadID int, projectPath string) {
 	tl.mu.Lock()
 	defer tl.mu.Unlock()
 
 	execution := ToolExecution{
-		Timestamp: time.Now(),
-		ToolName:  toolName,
-		Input:     input,
-		Status:    "running",
-		ChatID:    chatID,
-		ThreadID:  threadID,
+		Timestamp:   time.Now(),
+		ToolName:    toolName,
+		Input:       input,
+		Status:      "running",
+		ChatID:      chatID,
+		ThreadID:    threadID,
+		ProjectPath: projectPath,
 	}
 
 	// Add to beginning of slice (most recent first)
@@ -148,6 +150,7 @@ func (tl *ToolLogger) LogToolComplete(toolName string, status string, duration t
 	defer tl.mu.Unlock()
 
 	var chatID int64 = 0
+	var projectPath string = ""
 	success := (status == "success" && err == nil)
 	var completedExecution *ToolExecution
 
@@ -157,6 +160,7 @@ func (tl *ToolLogger) LogToolComplete(toolName string, status string, duration t
 			tl.executions[i].Status = status
 			tl.executions[i].Duration = duration
 			chatID = tl.executions[i].ChatID
+			projectPath = tl.executions[i].ProjectPath
 			if err != nil {
 				tl.executions[i].Error = err.Error()
 			}
@@ -179,8 +183,8 @@ func (tl *ToolLogger) LogToolComplete(toolName string, status string, duration t
 		BroadcastToolEvent("tool_execution", *completedExecution)
 	}
 
-	// Record performance metrics for tool execution
-	RecordToolExecution(toolName, duration, chatID, "", success)
+	// Record performance metrics for tool execution (with projectPath now)
+	RecordToolExecution(toolName, duration, chatID, projectPath, success)
 }
 
 // GetRecentExecutions returns the most recent tool executions
@@ -469,16 +473,17 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
 
 		// Log tool execution start
-		globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID)
+		globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID, a.projectDir)
 
 		// Track this tool call for decision logging
 		toolExecution := ToolExecution{
-			Timestamp: time.Now(),
-			ToolName:  toolName,
-			Input:     toolInput,
-			Status:    "executed", // Mark as executed immediately for decision log
-			ChatID:    a.chatID,
-			ThreadID:  a.threadID,
+			Timestamp:   time.Now(),
+			ToolName:    toolName,
+			Input:       toolInput,
+			Status:      "executed", // Mark as executed immediately for decision log
+			ChatID:      a.chatID,
+			ThreadID:    a.threadID,
+			ProjectPath: a.projectDir,
 		}
 		toolCallsForDecision = append(toolCallsForDecision, toolExecution)
 
