@@ -34,18 +34,19 @@ interface ToolDistribution {
 }
 
 // 格式化響應時間為人類可讀格式
-function formatResponseTime(ms: number): string {
-  if (ms >= 60000) {
+function formatResponseTime(ms: number | undefined): string {
+  const milliseconds = ms ?? 0;
+  if (milliseconds >= 60000) {
     // >= 1 minute: show as "2m 35s"
-    const minutes = Math.floor(ms / 60000);
-    const seconds = Math.floor((ms % 60000) / 1000);
+    const minutes = Math.floor(milliseconds / 60000);
+    const seconds = Math.floor((milliseconds % 60000) / 1000);
     return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
-  } else if (ms >= 1000) {
+  } else if (milliseconds >= 1000) {
     // >= 1 second: show as "1.5s"
-    return `${(ms / 1000).toFixed(1)}s`;
+    return `${(milliseconds / 1000).toFixed(1)}s`;
   } else {
     // < 1 second: show as "123ms"
-    return `${Math.round(ms)}ms`;
+    return `${Math.round(milliseconds)}ms`;
   }
 }
 
@@ -113,10 +114,10 @@ export default function Performance() {
         hour: '2-digit',
         minute: '2-digit'
       }),
-      response_time: Math.round(m.api_latency_ms), // Use the correct field name
-      tokens: m.tokens_used,
-      cost: Number(m.estimated_cost.toFixed(4)),
-      memory_mb: Math.round(m.memory_usage / 1024 / 1024),
+      response_time: Math.round(m.api_latency_ms ?? 0),
+      tokens: m.tokens_used ?? 0,
+      cost: Number((m.estimated_cost ?? 0).toFixed(4)),
+      memory_mb: Math.round((m.memory_usage ?? 0) / 1024 / 1024),
       success_rate: m.api_success ? 100 : 0,
     }));
 
@@ -171,7 +172,7 @@ export default function Performance() {
               <span className="text-sm text-gray-400">Error Rate</span>
             </div>
             <div className="text-2xl font-bold font-mono text-white">
-              {(analytics.error_rate * 100).toFixed(1)}%
+              {((analytics.error_rate ?? 0) * 100).toFixed(1)}%
             </div>
           </div>
 
@@ -181,7 +182,7 @@ export default function Performance() {
               <span className="text-sm text-gray-400">Throughput</span>
             </div>
             <div className="text-2xl font-bold font-mono text-white">
-              {analytics.throughput.toFixed(1)}/hr
+              {(analytics.throughput ?? 0).toFixed(1)}/hr
             </div>
           </div>
         </div>

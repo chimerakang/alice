@@ -92,9 +92,17 @@ func (ea *EnhancedAgent) processMultimodalMessage(ctx context.Context, content M
 
 // runWithFiles 使用 Claude Code CLI 的 --file 參數處理檔案
 func (ea *EnhancedAgent) runWithFiles(ctx context.Context, message string, imagePaths []string, onUpdate func(string, bool)) (string, error) {
+	// 類型斷言：確保 client 是 CLIClient
+	cliClient, ok := ea.Agent.client.(*CLIClient)
+	if !ok {
+		// 如果不是 CLIClient（例如 APIClient），回退到普通 Run
+		log.Printf("[enhanced-agent] client is not CLIClient, falling back to regular Run")
+		return ea.Agent.Run(message, onUpdate)
+	}
+
 	// 使用專門的增強 CLI 客戶端
 	enhancedClient := &EnhancedCLIClient{
-		CLIClient: ea.Agent.client,
+		CLIClient: cliClient,
 	}
 
 	ps := ea.Agent.current()

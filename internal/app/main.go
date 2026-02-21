@@ -16,6 +16,7 @@ import (
 type Config struct {
 	TelegramToken     string  `json:"telegram_token"`
 	Model             string  `json:"model"`
+	AnthropicKey      string  `json:"anthropic_key"`
 	DefaultProjectDir string  `json:"default_project_dir"`
 	AllowedUserIDs    []int64 `json:"allowed_user_ids"`
 
@@ -246,6 +247,26 @@ func applyTransparencyConfig(config *Config) {
 	}
 }
 
+// isClaudeCodeEnvironment 檢測是否在 Claude Code 環境中運行
+func isClaudeCodeEnvironment() bool {
+	// Claude Code 環境有這些環境變數標誌
+	if os.Getenv("CLAUDE_CODE_SESSION") != "" {
+		return true
+	}
+	if os.Getenv("CLAUDE_CODE") != "" {
+		return true
+	}
+	if os.Getenv("ANTHROPIC_HOME") != "" {
+		return true
+	}
+	// 檢查是否在特殊進程下
+	if os.Getenv("__CF_USER_TEXT_ENCODING") != "" && os.Getenv("TERM_SESSION_ID") != "" {
+		// 可能在 Claude Code 環境中
+		return true
+	}
+	return false
+}
+
 func Main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
@@ -364,7 +385,25 @@ func Main() {
 		)
 	}
 
-	client := NewClient(config.Model)
+	// 環境自適應：選擇合適的客戶端
+	var client interface {
+		Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error)
+		CallStream(ctx context.Context, message, projectDir, sessionID, modelOverride string, onToolUse func(toolName string, toolInput map[string]interface{}), onContent func(contentType, text string)) (*CLIResponse, error)
+		GetModel() string
+	}
+
+	if isClaudeCodeEnvironment() {
+		log.Printf("[client-routing] Detected Claude Code environment - using Anthropic API")
+		if config.AnthropicKey == "" {
+			log.Fatalf("❌ Anthropic API Key not configured! Please set 'anthropic_key' in config.json")
+		}
+		client = NewAPIClient(config.AnthropicKey, config.Model)
+		log.Printf("[client-routing] Using APIClient (Anthropic API direct)")
+	} else {
+		log.Printf("[client-routing] Normal environment - using Claude Code CLI")
+		client = NewClient(config.Model)
+		log.Printf("[client-routing] Using CLIClient (Claude Code CLI)")
+	}
 
 	tgBot, err := NewTelegramBot(config, client)
 	if err != nil {

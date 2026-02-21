@@ -55,9 +55,9 @@ function CustomTooltip({ active, payload }: any) {
         <span className="text-sm font-medium text-white">{data.label}</span>
       </div>
       <div className="space-y-1 text-xs text-gray-300">
-        <div>Avg Duration: {data.avgDuration.toFixed(0)}ms</div>
-        <div>Success Rate: {data.successRate.toFixed(1)}%</div>
-        <div>Total Decisions: {data.totalDecisions}</div>
+        <div>Avg Duration: {(data.avgDuration ?? 0).toFixed(0)}ms</div>
+        <div>Success Rate: {(data.successRate ?? 0).toFixed(1)}%</div>
+        <div>Total Decisions: {data.totalDecisions ?? 0}</div>
       </div>
     </div>
   );
