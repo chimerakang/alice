@@ -567,20 +567,36 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		} else if userPref == "deep" {
 			modelOverride = t.config.ModelRouting.DeepModel
 			log.Printf("[telegram] model routing: using deep model (user preference)")
+		} else if isContinuationMessage(text) {
+			// Priority 2: Continuation message — inherit current model + session, skip triage
+			log.Printf("[telegram] model routing: continuation message detected, keeping current model + session")
+			// modelOverride stays empty → agent keeps lastUsedModel + sessionID unchanged
 		} else {
-			// Priority 2: Haiku-based complexity evaluation (AI triage, no extra API key needed)
-			// Falls back to local heuristic if Haiku call fails
-			complexity := t.triageWithHaiku(context.Background(), text)
+			// Priority 3: Hybrid triage
+			// Phase A: local heuristic for high-confidence cases (0ms)
+			score := evaluateTaskComplexityScore(text)
+			var complexity string
+			if score <= 0 {
+				complexity = "fast"
+				log.Printf("[telegram] model routing: local score=%d → fast (skip Haiku triage)", score)
+			} else if score >= 6 {
+				complexity = "deep"
+				log.Printf("[telegram] model routing: local score=%d → deep (skip Haiku triage)", score)
+			} else {
+				// Phase B: ambiguous — call Haiku for accurate classification
+				log.Printf("[telegram] model routing: local score=%d → ambiguous, calling Haiku triage", score)
+				complexity = t.triageWithHaiku(context.Background(), text)
+			}
 			switch complexity {
 			case "deep":
 				modelOverride = t.config.ModelRouting.DeepModel
-				log.Printf("[telegram] model routing: haiku triage classified as deep (Opus)")
+				log.Printf("[telegram] model routing: classified as deep (Opus)")
 			case "balanced":
 				// Keep default model (Sonnet) - no override needed
-				log.Printf("[telegram] model routing: haiku triage classified as balanced (Sonnet)")
+				log.Printf("[telegram] model routing: classified as balanced (Sonnet)")
 			default: // "fast"
 				modelOverride = t.config.ModelRouting.FastModel
-				log.Printf("[telegram] model routing: haiku triage classified as fast (Haiku)")
+				log.Printf("[telegram] model routing: classified as fast (Haiku)")
 			}
 		}
 
@@ -2724,10 +2740,36 @@ func getModelTag(model string) string {
 	}
 }
 
-// evaluateTaskComplexity 使用本地啟發式算法評估任務複雜度
-// 基於多個信號判斷任務難度，無需外部 API 調用
-// 返回值: "fast" (簡單任務) 或 "deep" (複雜任務)
-func evaluateTaskComplexity(userMessage string) string {
+// isContinuationMessage 偵測是否為「繼續語」
+// 繼續語是短且無實質新請求的訊息，應繼承當前 model 與 session，不觸發 triage
+func isContinuationMessage(msg string) bool {
+	msg = strings.TrimSpace(msg)
+	// 超過 20 個字元不可能是純繼續語
+	if len([]rune(msg)) > 20 {
+		return false
+	}
+	// 含程式碼區塊代表有實質內容
+	if strings.Contains(msg, "```") {
+		return false
+	}
+	continuationWords := []string{
+		"好", "ok", "好的", "繼續", "continue", "請繼續", "繼續吧",
+		"請修正", "修正", "fix it", "下一步", "next", "繼續做", "做吧",
+		"go", "proceed", "yes", "是", "對", "沒問題", "可以", "好了",
+		"繼續下去", "繼續進行", "繼續啊", "嗯", "行", "好啊", "OK",
+	}
+	msgLower := strings.ToLower(strings.TrimSpace(msg))
+	for _, word := range continuationWords {
+		if strings.ToLower(word) == msgLower {
+			return true
+		}
+	}
+	return false
+}
+
+// evaluateTaskComplexityScore 計算任務複雜度原始分數（供 hybrid triage 使用）
+// 分數區間：score <= 0 → clearly fast, 1-5 → ambiguous, >= 6 → clearly deep
+func evaluateTaskComplexityScore(userMessage string) int {
 	score := 0
 
 	// 1. 消息長度 (越長越可能複雜)
@@ -2756,7 +2798,7 @@ func evaluateTaskComplexity(userMessage string) string {
 		"refactor", "架構", "architecture", "設計", "design",
 		"實現", "implement", "演算法", "algorithm",
 		"性能", "optimize", "效能", "優化",
-		"跨",  // 跨檔案、跨模組
+		"跨", // 跨檔案、跨模組
 		"整合", "integration", "aggregate",
 		"系統", "system", "framework",
 		"複雜", "complex", "難度",
@@ -2825,6 +2867,14 @@ func evaluateTaskComplexity(userMessage string) string {
 		}
 	}
 
+	return score
+}
+
+// evaluateTaskComplexity 使用本地啟發式算法評估任務複雜度
+// 基於多個信號判斷任務難度，無需外部 API 調用
+// 返回值: "fast", "balanced", 或 "deep"
+func evaluateTaskComplexity(userMessage string) string {
+	score := evaluateTaskComplexityScore(userMessage)
 	// 決策門檻 (三層級)
 	//    score <= 1  : Fast (Haiku) - 簡單任務
 	//    2-5         : Balanced (Sonnet) - 中等難度

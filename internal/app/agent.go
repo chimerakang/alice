@@ -302,17 +302,24 @@ func (dl *DecisionLogger) SearchDecisions(projectPath string, taskType string, s
 	return results
 }
 
+// contextMessage 保存單輪對話（用於 context bridge）
+type contextMessage struct {
+	Role    string // "user" or "assistant"
+	Content string // truncated to 500 chars
+}
+
 // projectState 保存單一專案的對話狀態
 type projectState struct {
-	sessionID         string
-	stats             TokenStats
-	lastActivity      time.Time
-	createdAt         time.Time
-	lastTotalCostUSD  float64 // CLI's cumulative cost from last call (for delta calculation)
+	sessionID        string
+	stats            TokenStats
+	lastActivity     time.Time
+	createdAt        time.Time
+	lastTotalCostUSD float64          // CLI's cumulative cost from last call (for delta calculation)
+	recentMessages   []contextMessage // last 5 exchanges for context bridge on model switch
 }
 
 type Agent struct {
-	client                *CLIClient
+	client                Client
 	projectDir            string
 	projects              map[string]*projectState // projectDir → state
 	chatID                int64                    // Telegram chat ID
@@ -325,7 +332,7 @@ type Agent struct {
 	processing bool               // 是否正在處理請求
 }
 
-func NewAgent(client *CLIClient, projectDir string, chatID int64, threadID int) *Agent {
+func NewAgent(client Client, projectDir string, chatID int64, threadID int) *Agent {
 	return &Agent{
 		client:     client,
 		projectDir: projectDir,
@@ -384,8 +391,8 @@ func (a *Agent) selectModel(userMessage string) (model string, routingReason str
 		return bestMatch.Model, "static_rule"
 	}
 
-	// 預設為 sonnet
-	return "sonnet", "default"
+	// 返回空字串，讓呼叫方使用配置中的預設模型
+	return "", "default"
 }
 
 // current 取得目前專案的狀態，不存在則建立
@@ -449,13 +456,18 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		log.Printf("[telegram] model routing: message=%q selected=%s reason=%s latency=%dms", msgPreview, selectedModel, routingReason, routingLatency)
 	}
 
-	// If model changed, clear session to start fresh
-	if selectedModel != "" && selectedModel != a.lastUsedModel {
-		ps.sessionID = ""  // Force new session when model changes
+	// If model changed, inject context bridge then start fresh session
+	if selectedModel != "" && selectedModel != a.lastUsedModel && a.lastUsedModel != "" {
+		bridge := buildContextBridge(ps.recentMessages)
+		if bridge != "" {
+			userMessage = bridge + userMessage
+			log.Printf("[agent] context bridge injected (%d recent messages)", len(ps.recentMessages))
+		}
+		ps.sessionID = "" // Force new session when model changes
 	}
 	a.lastUsedModel = selectedModel
 	if a.lastUsedModel == "" {
-		a.lastUsedModel = a.client.Model  // Use default if no model selected
+		a.lastUsedModel = a.client.GetModel() // Use default if no model selected
 		routingReason = "default"
 	}
 
@@ -559,7 +571,49 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	// Log decision for transparency (success case)
 	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil, routingReason, routingLatency, deltaCost)
 
+	// Save exchange to recentMessages for context bridge on future model switches
+	addToRecentMessages(ps, userMessage, resp.Result)
+
 	return resp.Result, nil
+}
+
+// addToRecentMessages 儲存最近一輪對話（最多保留 5 輪）
+func addToRecentMessages(ps *projectState, userMsg, assistantMsg string) {
+	const maxLen = 500
+	truncate := func(s string) string {
+		runes := []rune(s)
+		if len(runes) > maxLen {
+			return string(runes[:maxLen]) + "..."
+		}
+		return s
+	}
+	ps.recentMessages = append(ps.recentMessages,
+		contextMessage{Role: "user", Content: truncate(userMsg)},
+		contextMessage{Role: "assistant", Content: truncate(assistantMsg)},
+	)
+	// Keep only last 5 exchanges (10 messages)
+	if len(ps.recentMessages) > 10 {
+		ps.recentMessages = ps.recentMessages[len(ps.recentMessages)-10:]
+	}
+}
+
+// buildContextBridge 從最近對話記錄產生上下文摘要
+// 在 model 切換時注入到新 session 的第一條訊息，避免上下文丟失
+func buildContextBridge(messages []contextMessage) string {
+	if len(messages) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("[Context from previous conversation — continuing from where we left off]\n")
+	for _, msg := range messages {
+		role := "User"
+		if msg.Role == "assistant" {
+			role = "Assistant"
+		}
+		sb.WriteString(fmt.Sprintf("%s: %s\n", role, msg.Content))
+	}
+	sb.WriteString("\n---\n\n")
+	return sb.String()
 }
 
 func formatToolUpdate(name string, input map[string]interface{}) string {
@@ -683,7 +737,7 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 	context := map[string]interface{}{
 		"turns":         0,
 		"project_dir":   a.projectDir,
-		"model":         a.client.Model,
+		"model":         a.client.GetModel(),
 		"tool_count":    len(toolCalls),
 		"has_error":     err != nil,
 	}
@@ -694,7 +748,7 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 
 	// Create token stats for this interaction
 	tokenStats := TokenStats{
-		Model: ExtractModelShortName(a.client.Model), // NEW: 記錄使用的模型
+		Model: ExtractModelShortName(a.client.GetModel()), // NEW: 記錄使用的模型
 	}
 	if resp != nil {
 		tokenStats.TotalInputTokens = int64(resp.Usage.InputTokens)
