@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -77,7 +78,7 @@ type TelegramMessage struct {
 type TelegramBot struct {
 	agents        map[chatKey]*Agent // 每個 chat/topic 一個 agent
 	agentsMu      sync.RWMutex       // 保護 agents map 的讀寫鎖
-	client        *CLIClient
+	client        Client
 	allowIDs      map[int64]bool // 白名單
 	config        *Config
 	i18n          *I18nManager   // 多國語系管理器
@@ -102,7 +103,7 @@ type TelegramBot struct {
 	langPrefMu      sync.RWMutex    // Protect language preferences
 }
 
-func NewTelegramBot(config *Config, client *CLIClient) (*TelegramBot, error) {
+func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 	// 驗證 bot token
 	resp, err := http.Get(fmt.Sprintf("https://api.telegram.org/bot%s/getMe", config.TelegramToken))
 	if err != nil {
@@ -567,19 +568,19 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			modelOverride = t.config.ModelRouting.DeepModel
 			log.Printf("[telegram] model routing: using deep model (user preference)")
 		} else {
-			// Priority 2: Local heuristic-based complexity evaluation (three-tier algorithm)
-			// No external API call needed - fast and cheap
-			complexity := evaluateTaskComplexity(text)
+			// Priority 2: Haiku-based complexity evaluation (AI triage, no extra API key needed)
+			// Falls back to local heuristic if Haiku call fails
+			complexity := t.triageWithHaiku(context.Background(), text)
 			switch complexity {
 			case "deep":
 				modelOverride = t.config.ModelRouting.DeepModel
-				log.Printf("[telegram] model routing: complexity evaluation classified as deep (Opus)")
+				log.Printf("[telegram] model routing: haiku triage classified as deep (Opus)")
 			case "balanced":
 				// Keep default model (Sonnet) - no override needed
-				log.Printf("[telegram] model routing: complexity evaluation classified as balanced (Sonnet)")
+				log.Printf("[telegram] model routing: haiku triage classified as balanced (Sonnet)")
 			default: // "fast"
 				modelOverride = t.config.ModelRouting.FastModel
-				log.Printf("[telegram] model routing: complexity evaluation classified as fast (Haiku)")
+				log.Printf("[telegram] model routing: haiku triage classified as fast (Haiku)")
 			}
 		}
 
@@ -884,7 +885,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.config.ModelRouting.DeepModel)
 		} else {
 			modelDisplay = t.getLocalizedMessage(key.chatID, "model_auto", nil)
-			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.client.Model)
+			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.client.GetModel())
 		}
 
 		status := t.getLocalizedMessage(key.chatID, "status_format", nil)
@@ -2834,6 +2835,65 @@ func evaluateTaskComplexity(userMessage string) string {
 		return "balanced"
 	}
 	return "fast"
+}
+
+// triageWithHaiku 使用 Claude Haiku 模型判斷任務複雜度
+// 比本地啟發式算法更準確，且無需額外 API 金鑰（使用已有的 Claude 授權）
+// 返回值: "fast", "balanced", 或 "deep"
+func (t *TelegramBot) triageWithHaiku(ctx context.Context, userMessage string) string {
+	triageCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+
+	prompt := `Classify this task complexity. Reply with EXACTLY ONE WORD only.
+
+"fast" → simple tasks: translate, explain concept, rewrite text, format data, quick questions, lookup, summarize short content
+"balanced" → medium tasks: add a feature, write tests, fix a simple bug, review code, analyze a function
+"deep" → complex tasks: system architecture, large-scale refactoring, complex debugging across multiple files, performance optimization, algorithm design
+
+Task to classify:
+` + userMessage + `
+
+Reply only with: fast / balanced / deep`
+
+	args := []string{
+		"-p",
+		"--output-format", "json",
+		"--model", "claude-haiku-4-5-20251001",
+		"--dangerously-skip-permissions",
+		"--max-turns", "1",
+		prompt,
+	}
+
+	cmd := exec.CommandContext(triageCtx, "claude", args...)
+	cmd.Env = cleanEnvForCLI()
+
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("[telegram] haiku triage failed, falling back to heuristic: %v", err)
+		return evaluateTaskComplexity(userMessage)
+	}
+
+	var resp CLIResponse
+	if err := json.Unmarshal(output, &resp); err != nil {
+		log.Printf("[telegram] haiku triage parse error, falling back to heuristic: %v", err)
+		return evaluateTaskComplexity(userMessage)
+	}
+
+	result := strings.ToLower(strings.TrimSpace(resp.Result))
+	switch {
+	case strings.Contains(result, "deep"):
+		log.Printf("[telegram] haiku triage → deep")
+		return "deep"
+	case strings.Contains(result, "balanced"):
+		log.Printf("[telegram] haiku triage → balanced")
+		return "balanced"
+	case strings.Contains(result, "fast"):
+		log.Printf("[telegram] haiku triage → fast")
+		return "fast"
+	default:
+		log.Printf("[telegram] haiku triage unclear response %q, using heuristic", result)
+		return evaluateTaskComplexity(userMessage)
+	}
 }
 
 // triageWithGPT4oMini 使用 OpenAI GPT-4o-mini 判斷任務複雜度
