@@ -2744,26 +2744,43 @@ func getModelTag(model string) string {
 // 繼續語是短且無實質新請求的訊息，應繼承當前 model 與 session，不觸發 triage
 func isContinuationMessage(msg string) bool {
 	msg = strings.TrimSpace(msg)
-	// 超過 20 個字元不可能是純繼續語
-	if len([]rune(msg)) > 20 {
+	// 超過 100 個字元不可能是純繼續語
+	if len([]rune(msg)) > 100 {
 		return false
 	}
 	// 含程式碼區塊代表有實質內容
 	if strings.Contains(msg, "```") {
 		return false
 	}
+
+	msgLower := strings.ToLower(msg)
+
+	// 確定的繼續語詞彙清單（精確匹配）
+	// 包括：單字確認、簡短繼續詞彙、修正指令
 	continuationWords := []string{
-		"好", "ok", "好的", "繼續", "continue", "請繼續", "繼續吧",
-		"請修正", "修正", "fix it", "下一步", "next", "繼續做", "做吧",
-		"go", "proceed", "yes", "是", "對", "沒問題", "可以", "好了",
-		"繼續下去", "繼續進行", "繼續啊", "嗯", "行", "好啊", "OK",
+		// 單字確認
+		"好", "是", "對", "行", "嗯", "去",
+		// 簡短英文
+		"ok", "yes", "y", "go",
+		// 帶詞綴的確認
+		"好啊", "好的", "好了", "可以", "OK",
+		// 繼續指令
+		"繼續", "繼續吧", "繼續做", "繼續進行",
+		"continue", "請繼續",
+		// 修正指令
+		"修正", "fix", "fix it",
+		// 下一步指令
+		"下一步", "next", "之後",
+		// 允許指令
+		"做吧", "沒問題", "proceed",
 	}
-	msgLower := strings.ToLower(strings.TrimSpace(msg))
+
 	for _, word := range continuationWords {
-		if strings.ToLower(word) == msgLower {
+		if msgLower == strings.ToLower(word) {
 			return true
 		}
 	}
+
 	return false
 }
 
