@@ -518,12 +518,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 			}
 			onUpdate("🧠 "+msg, true)
 		case "text":
-			// Show AI text response as update
-			msg := text
-			if len(msg) > 300 {
-				msg = msg[:300] + "..."
-			}
-			onUpdate("💬 "+msg, true)
+			// Don't send text streaming preview - full response is sent at completion
 		}
 	})
 	if err != nil {
