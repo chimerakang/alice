@@ -546,7 +546,16 @@ func (wi *WebInterface) handleDecisions(w http.ResponseWriter, r *http.Request) 
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		decisions := globalDecisionLogger.GetRecentDecisions(0) // Get all
+		// Load from database first for persistence across restarts
+		var decisions []DecisionLog
+		if globalStorage != nil {
+			if dbDecisions, err := globalStorage.GetDecisionLogs(1000, 0); err == nil {
+				decisions = dbDecisions
+			}
+		}
+		if len(decisions) == 0 {
+			decisions = globalDecisionLogger.GetRecentDecisions(0)
+		}
 
 		// Calculate statistics
 		taskTypeCounts := make(map[string]int)
@@ -578,15 +587,21 @@ func (wi *WebInterface) handleDecisions(w http.ResponseWriter, r *http.Request) 
 			successRate = float64(outcomeStats["success"]) / float64(total) * 100
 		}
 
+		// Recent 5 decisions for preview
+		recentCount := 5
+		if len(decisions) < recentCount {
+			recentCount = len(decisions)
+		}
+
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"total_decisions":     len(decisions),
-			"task_type_counts":    taskTypeCounts,
-			"outcome_stats":       outcomeStats,
-			"success_rate":        successRate,
-			"avg_duration_ms":     avgDuration,
-			"recent_decisions":    globalDecisionLogger.GetRecentDecisions(5),
+			"total_decisions":      len(decisions),
+			"task_type_counts":     taskTypeCounts,
+			"outcome_stats":        outcomeStats,
+			"success_rate":         successRate,
+			"avg_duration_ms":      avgDuration,
+			"recent_decisions":     decisions[:recentCount],
 			"transparency_enabled": globalDecisionLogger.IsEnabled(),
-			"timestamp":           time.Now(),
+			"timestamp":            time.Now(),
 		})
 	})(w, r)
 }
@@ -605,10 +620,23 @@ func (wi *WebInterface) handleRecentDecisions(w http.ResponseWriter, r *http.Req
 			}
 		}
 
-		decisions := globalDecisionLogger.GetRecentDecisions(limit)
+		// Prefer database over in-memory logger so data persists across restarts
+		var decisions interface{}
+		total := 0
+		if globalStorage != nil {
+			if dbDecisions, err := globalStorage.GetDecisionLogs(limit, 0); err == nil {
+				decisions = dbDecisions
+				total = len(dbDecisions)
+			}
+		}
+		if decisions == nil {
+			mem := globalDecisionLogger.GetRecentDecisions(limit)
+			decisions = mem
+			total = len(mem)
+		}
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"decisions": decisions,
-			"total":     len(decisions),
+			"total":     total,
 			"limit":     limit,
 			"timestamp": time.Now(),
 		})
