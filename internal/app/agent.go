@@ -510,15 +510,8 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 			return
 		}
 		switch contentType {
-		case "thinking":
-			// Show truncated thinking as update
-			msg := text
-			if len(msg) > 200 {
-				msg = msg[:200] + "..."
-			}
-			onUpdate("🧠 "+msg, true)
-		case "text":
-			// Don't send text streaming preview - full response is sent at completion
+		case "thinking", "text":
+			// Don't send streaming previews - full response is sent at completion
 		}
 	})
 	if err != nil {
