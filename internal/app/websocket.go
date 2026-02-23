@@ -45,7 +45,7 @@ var globalWebSocketHub *WebSocketHub
 func NewWebSocketHub() *WebSocketHub {
 	return &WebSocketHub{
 		clients:     make(map[*WebSocketClient]bool),
-		broadcast:   make(chan []byte),
+		broadcast:   make(chan []byte, 256),
 		register:    make(chan *WebSocketClient),
 		unregister:  make(chan *WebSocketClient),
 		eventBuffer: make([]WebSocketEvent, 0),
