@@ -1322,6 +1322,9 @@ func (t *TelegramBot) sendMarkdown(key chatKey, text string) {
 	}
 	if key.threadID != 0 {
 		params.Set("message_thread_id", strconv.Itoa(key.threadID))
+		log.Printf("[telegram] sendMarkdown: setting message_thread_id=%d for chat_id=%d", key.threadID, key.chatID)
+	} else {
+		log.Printf("[telegram] sendMarkdown: WARNING - NO message_thread_id (threadID=0) for chat_id=%d", key.chatID)
 	}
 
 	// Use the API call which now goes through the queue

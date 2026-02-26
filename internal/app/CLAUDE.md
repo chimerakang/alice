@@ -1,14 +1,6 @@
 <claude-mem-context>
 # Recent Activity
 
-### Feb 14, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #2046 | 4:56 PM | 🔵 | Storage initialization requires InitStorage call with database path | ~477 |
-| #2045 | " | 🔴 | Dashboard data display issues root causes identified: Git integration not initialized, token chart hardcoded 7-day filter, tool executions from WebSocket only | ~759 |
-| #2044 | " | 🔵 | Storage stats handler returns minimal response when globalStorage uninitialized | ~441 |
-
 ### Feb 15, 2026
 
 | ID | Time | T | Title | Read |
@@ -65,4 +57,12 @@
 | #3125 | " | 🔵 | Agent Execution Layer with Request Processing and Session Management | ~589 |
 | #3124 | " | 🔵 | Claude CLI Client Architecture with Fixed Model Parameter | ~473 |
 | #3123 | 2:35 AM | 🔵 | Alice Configuration System Supporting Single Model Selection | ~438 |
+
+### Feb 23, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #4901 | 3:17 PM | ✅ | CLI invocations now use sanitized environment to bypass nested execution detection | ~338 |
+| #4900 | " | 🔴 | Environment sanitization prevents Claude Code nested execution blocking | ~377 |
+| #4893 | 3:15 PM | 🔄 | Model selection now defers to configuration instead of hardcoded default | ~291 |
 </claude-mem-context>
