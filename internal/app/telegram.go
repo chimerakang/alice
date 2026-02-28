@@ -101,6 +101,10 @@ type TelegramBot struct {
 	// Language preferences per chat
 	langPreferences map[int64]string // chatID -> language code
 	langPrefMu      sync.RWMutex    // Protect language preferences
+
+	// Track last used Topic for each chat (for @mention recovery when threadID=0)
+	lastUsedThreadID map[int64]int // chatID -> last non-zero threadID
+	lastUsedMu       sync.RWMutex  // Protect lastUsedThreadID
 }
 
 func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
@@ -158,6 +162,7 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 		// Model routing preferences
 		modelPreferences: make(map[chatKey]string),
 		langPreferences:  make(map[int64]string),
+		lastUsedThreadID: make(map[int64]int), // Track last used Topic for @mention recovery
 	}
 
 	// Start message queue worker
@@ -403,9 +408,14 @@ func (t *TelegramBot) Start() {
 			Result []struct {
 				UpdateID int `json:"update_id"`
 				Message  *struct {
-					MessageID       int    `json:"message_id"`
-					MessageThreadID int    `json:"message_thread_id"`
-					From            *struct {
+					MessageID       int  `json:"message_id"`
+					MessageThreadID int  `json:"message_thread_id"`
+					IsTopicMessage  bool `json:"is_topic_message"`
+					ReplyToMessage  *struct {
+						MessageID       int `json:"message_id"`
+						MessageThreadID int `json:"message_thread_id"`
+					} `json:"reply_to_message"`
+					From *struct {
 						ID int64 `json:"id"`
 					} `json:"from"`
 					Chat *struct {
@@ -453,6 +463,28 @@ func (t *TelegramBot) Start() {
 			if update.Message != nil && update.Message.Chat != nil && update.Message.From != nil {
 				msg := update.Message
 				key := chatKey{chatID: msg.Chat.ID, threadID: msg.MessageThreadID}
+
+				// Recover threadID from reply_to_message (forum topic root message)
+				// In Telegram forums, messages in topics reply to the topic root, which has the thread ID
+				if key.threadID == 0 && msg.ReplyToMessage != nil {
+					if msg.ReplyToMessage.MessageThreadID != 0 {
+						key.threadID = msg.ReplyToMessage.MessageThreadID
+						log.Printf("[telegram] Recovered threadID=%d from reply_to_message.message_thread_id", key.threadID)
+					} else if msg.ReplyToMessage.MessageID != 0 && msg.IsTopicMessage {
+						key.threadID = msg.ReplyToMessage.MessageID
+						log.Printf("[telegram] Recovered threadID=%d from reply_to_message.message_id (topic message)", key.threadID)
+					}
+				}
+
+				log.Printf("[telegram] Received message: text='%.50s', threadID=%d, chatID=%d, is_topic=%v",
+					msg.Text, key.threadID, msg.Chat.ID, msg.IsTopicMessage)
+
+				// Track last used topic per chat (for recovery when threadID=0)
+				if key.threadID != 0 {
+					t.lastUsedMu.Lock()
+					t.lastUsedThreadID[key.chatID] = key.threadID
+					t.lastUsedMu.Unlock()
+				}
 				go t.handleMessage(key, msg.From.ID, msg.Text, msg.Caption, msg.Photo, msg.Voice, msg.Document, msg.MediaGroupID, msg.MessageID)
 			}
 
@@ -548,7 +580,20 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 
 	// 處理指令
 	if strings.HasPrefix(text, "/") {
-		log.Printf("[telegram] handling command: %s from user %d", text, userID)
+		// Reject @mention commands in forum (Telegram doesn't provide threadID)
+		// Force users to type commands directly in the topic they want to interact with
+		if key.threadID == 0 {
+			log.Printf("[telegram] @mention command rejected (threadID=0): '%s' from user %d", text, userID)
+
+			// Send helpful instruction in General topic
+			msg := "❌ **@mention 命令不支援**\n\n" +
+				"請在您要互動的主題（Topic）中**直接輸入命令**，例如：\n\n" +
+				"```\n/help\n/status\n/usage\n```\n\n" +
+				"這樣 Alice 才能在正確的主題中回應您。"
+			t.send(key, msg)
+			return
+		}
+		log.Printf("[telegram] handling command: %s, threadID=%d, chatID=%d", text, key.threadID, key.chatID)
 		t.handleCommand(key, text)
 		return
 	}
@@ -2936,6 +2981,11 @@ Reply only with: fast / balanced / deep`
 
 	cmd := exec.CommandContext(triageCtx, "claude", args...)
 	cmd.Env = cleanEnvForCLI()
+
+	// Redirect stdin to /dev/null to prevent blocking on stdin reads
+	devNull, _ := os.Open(os.DevNull)
+	defer devNull.Close()
+	cmd.Stdin = devNull
 
 	output, err := cmd.Output()
 	if err != nil {

@@ -26,8 +26,6 @@
 | #2797 | 4:16 PM | 🔵 | Security Events Table Schema Details | ~402 |
 | #2791 | " | 🔵 | Telegram PII Detection Creates Triple-Logging with User Warnings | ~431 |
 | #2789 | " | 🔵 | Agent PII Filtering Context: Decision Logging Protection | ~409 |
-| #2782 | 4:15 PM | 🔵 | Agent Tool Execution Logging System Structure | ~354 |
-| #2779 | 4:14 PM | 🔵 | PII Detection System Implementation Analysis | ~507 |
 
 ### Feb 16, 2026
 
@@ -65,4 +63,11 @@
 | #4901 | 3:17 PM | ✅ | CLI invocations now use sanitized environment to bypass nested execution detection | ~338 |
 | #4900 | " | 🔴 | Environment sanitization prevents Claude Code nested execution blocking | ~377 |
 | #4893 | 3:15 PM | 🔄 | Model selection now defers to configuration instead of hardcoded default | ~291 |
+
+### Feb 28, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #5532 | 8:28 PM | 🔴 | Fixed @mention Commands Not Working in Telegram Forums | ~371 |
+| #5529 | 8:27 PM | 🔵 | /help Command Handler Implementation Found | ~382 |
 </claude-mem-context>
