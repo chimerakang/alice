@@ -24,8 +24,6 @@
 | #2812 | " | 🔵 | Security Events API Handler Implementation | ~402 |
 | #2798 | 4:17 PM | 🔵 | Security Event Storage and Retrieval Methods | ~381 |
 | #2797 | 4:16 PM | 🔵 | Security Events Table Schema Details | ~402 |
-| #2791 | " | 🔵 | Telegram PII Detection Creates Triple-Logging with User Warnings | ~431 |
-| #2789 | " | 🔵 | Agent PII Filtering Context: Decision Logging Protection | ~409 |
 
 ### Feb 16, 2026
 
@@ -68,6 +66,8 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #5537 | 8:37 PM | 🔵 | @mention command rejection logic found in Telegram handler | ~328 |
+| #5535 | 8:30 PM | ✅ | Committed Forum @mention Command Fix | ~293 |
 | #5532 | 8:28 PM | 🔴 | Fixed @mention Commands Not Working in Telegram Forums | ~371 |
 | #5529 | 8:27 PM | 🔵 | /help Command Handler Implementation Found | ~382 |
 </claude-mem-context>

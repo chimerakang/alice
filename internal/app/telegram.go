@@ -580,19 +580,6 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 
 	// 處理指令
 	if strings.HasPrefix(text, "/") {
-		// Reject @mention commands in forum (Telegram doesn't provide threadID)
-		// Force users to type commands directly in the topic they want to interact with
-		if key.threadID == 0 {
-			log.Printf("[telegram] @mention command rejected (threadID=0): '%s' from user %d", text, userID)
-
-			// Send helpful instruction in General topic
-			msg := "❌ **@mention 命令不支援**\n\n" +
-				"請在您要互動的主題（Topic）中**直接輸入命令**，例如：\n\n" +
-				"```\n/help\n/status\n/usage\n```\n\n" +
-				"這樣 Alice 才能在正確的主題中回應您。"
-			t.send(key, msg)
-			return
-		}
 		log.Printf("[telegram] handling command: %s, threadID=%d, chatID=%d", text, key.threadID, key.chatID)
 		t.handleCommand(key, text)
 		return
