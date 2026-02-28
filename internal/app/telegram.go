@@ -580,6 +580,15 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 
 	// 處理指令
 	if strings.HasPrefix(text, "/") {
+		// 如果 threadID=0 (例如 @mention 命令)，嘗試從最後使用的 topic 恢復
+		if key.threadID == 0 {
+			t.lastUsedMu.RLock()
+			if lastThreadID, exists := t.lastUsedThreadID[key.chatID]; exists {
+				key.threadID = lastThreadID
+				log.Printf("[telegram] command threadID recovered: 0 → %d from lastUsedThreadID", key.threadID)
+			}
+			t.lastUsedMu.RUnlock()
+		}
 		log.Printf("[telegram] handling command: %s, threadID=%d, chatID=%d", text, key.threadID, key.chatID)
 		t.handleCommand(key, text)
 		return
