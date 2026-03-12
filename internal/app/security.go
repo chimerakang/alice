@@ -44,6 +44,13 @@ type MultimediaConfig struct {
 	VoiceToTextProvider   string `json:"voice_to_text_provider"` // "openai_whisper"
 }
 
+// RenderingConfig HTML 渲染設定
+type RenderingConfig struct {
+	EnableHTMLScreenshots bool   `json:"enable_html_screenshots"`
+	CacheDir              string `json:"cache_dir"`
+	ChromeExecutable      string `json:"chrome_executable"` // 可選自定義 Chrome 路徑
+}
+
 // ModelRoutingConfig 動態模型路由設定
 type ModelRoutingConfig struct {
 	EnableDynamicRouting bool   `json:"enable_dynamic_routing"`

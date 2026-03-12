@@ -174,6 +174,8 @@
     "help_agents_desc": "/agents — 查看專門化代理清單",
     "help_tasks_desc": "/tasks — 查看待辦工作清單",
     "help_lang_desc": "/lang — 切換 Bot 語言",
+    "help_id_desc": "/id — 顯示當前 Chat ID 和 Thread ID",
+    "id_info": "📋 Chat ID: `{chat_id}`\nThread ID: `{thread_id}`",
     "project_no_none": "無",
     "project_similar_suggestion": "\n\n💡 是否要設定這些相似的專案？",
     "project_available_commands": "\n📋 可用指令：/tasks, /status, /checkpoints",
@@ -272,6 +274,12 @@
     "triage_deep_refactor": "- 跨多個檔案的重構或大規模修改",
     "triage_deep_bugfix": "- 複雜的 bug 修復或診斷",
     "triage_deep_algorithm": "- 演算法實現或邏輯設計",
-    "triage_deep_perf": "- 性能最佳化分析"
+    "triage_deep_perf": "- 性能最佳化分析",
+    "send_file_usage": "用法: /send-file <檔案路徑>",
+    "send_file_forbidden_path": "❌ 禁止訪問此路徑（只允許 temp/, web/, 或專案目錄）",
+    "send_file_error": "❌ 發送檔案失敗: {error}",
+    "send_file_success": "✅ 檔案已成功發送",
+    "send_file_not_found": "❌ 檔案不存在: {path}",
+    "send_file_too_large": "❌ 檔案過大 ({size} > {limit} MB)"
   }
 }

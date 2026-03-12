@@ -13,17 +13,6 @@
 | #2916 | 6:04 PM | 🔵 | Root Cause Identified: Tool Execution Durations Not Updated Before Decision Log Creation | ~567 |
 | #2915 | " | 🔵 | Frontend-Compatible JSON Conversion Function Exists But Flattens Token Fields Correctly | ~560 |
 | #2914 | 6:03 PM | 🔵 | Web API Response Structure Does Not Transform DecisionLog JSON For Frontend | ~544 |
-| #2913 | " | 🔵 | SQLite Storage Shows Token Fields Mapped Correctly From TokensUsed Struct | ~511 |
-| #2912 | " | 🔵 | Backend DecisionLog Structure Shows Token Tracking But Missing in Frontend TypeScript Mapping | ~573 |
-| #2825 | 4:21 PM | 🔵 | Decision Logging PII Filtering Flow | ~423 |
-| #2823 | 4:20 PM | 🔵 | Complete PII Detection Investigation Summary | ~541 |
-| #2820 | " | 🔵 | Telegram Message Processing Creates Baseline Plus PII Events | ~485 |
-| #2818 | 4:19 PM | 🔵 | Base PII Detection Logging Inside DetectAndFilterPII | ~438 |
-| #2816 | " | 🔵 | PII Detection Statistics Calculation Method | ~480 |
-| #2815 | 4:18 PM | 🔵 | Security Events API with Database and Memory Fallback | ~493 |
-| #2812 | " | 🔵 | Security Events API Handler Implementation | ~402 |
-| #2798 | 4:17 PM | 🔵 | Security Event Storage and Retrieval Methods | ~381 |
-| #2797 | 4:16 PM | 🔵 | Security Events Table Schema Details | ~402 |
 
 ### Feb 16, 2026
 
@@ -70,4 +59,25 @@
 | #5535 | 8:30 PM | ✅ | Committed Forum @mention Command Fix | ~293 |
 | #5532 | 8:28 PM | 🔴 | Fixed @mention Commands Not Working in Telegram Forums | ~371 |
 | #5529 | 8:27 PM | 🔵 | /help Command Handler Implementation Found | ~382 |
+
+### Mar 9, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #5908 | 1:32 PM | 🟣 | Implemented recoverActualThreadID function using single-topic heuristic | ~367 |
+| #5907 | " | ✅ | Added threadID recovery logic for @bot_name commands | ~326 |
+| #5890 | 1:29 PM | 🔵 | Telegram bot extracts threadID directly from MessageThreadID field | ~277 |
+
+### Mar 12, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #6278 | 2:12 PM | 🔵 | Photo Upload Implementation Details and Error Handling | ~399 |
+| #6277 | " | 🔵 | Located Photo Upload Functions in Telegram Bot Code | ~331 |
+| #6246 | 1:24 PM | 🔵 | Examined sendMediaFile implementation details | ~310 |
+| #6245 | " | 🔵 | Located sendMediaFile core upload function | ~237 |
+| #6244 | " | 🔵 | Examined media upload architecture and sendPhoto implementation | ~306 |
+| #6243 | 1:23 PM | 🔵 | Analyzed testPhotoUpload function implementation | ~284 |
+| #6242 | " | 🔵 | Examined /test-photo command implementation | ~219 |
+| #6241 | " | 🔵 | Identified photo upload functionality in Telegram bot | ~241 |
 </claude-mem-context>
