@@ -257,6 +257,39 @@ func (pm *PerformanceMonitor) GetAnalytics() PerformanceAnalytics {
 	}
 }
 
+// LoadFromDB loads recent performance metrics from database into memory on startup
+func (pm *PerformanceMonitor) LoadFromDB(storage Storage) {
+	metrics, err := storage.GetPerformanceMetrics(pm.maxMetricsHistory, 0)
+	if err != nil {
+		log.Printf("[perf-monitor] failed to load from DB: %v", err)
+		return
+	}
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.metrics = metrics
+	// Rebuild aggregate stats from loaded metrics
+	for _, m := range metrics {
+		pm.totalRequests++
+		if m.APICallSuccess {
+			pm.successfulCalls++
+		}
+		pm.totalAPILatency += m.APICallLatency
+		pm.totalToolTime += m.ToolExecutionTime
+		pm.totalTokens += int64(m.TokensUsed)
+		pm.totalCost += m.EstimatedCost
+		if m.ErrorType != "" {
+			pm.errorCounts[m.ErrorType]++
+		}
+		if m.ToolExecutionType != "" {
+			pm.toolUsage[m.ToolExecutionType]++
+		}
+		if m.MemoryUsage > pm.peakMemory {
+			pm.peakMemory = m.MemoryUsage
+		}
+	}
+	log.Printf("[perf-monitor] loaded %d metrics from DB", len(metrics))
+}
+
 // GetRecentMetrics 獲取最近的效能指標
 func (pm *PerformanceMonitor) GetRecentMetrics(limit int) []PerformanceMetrics {
 	pm.mu.RLock()

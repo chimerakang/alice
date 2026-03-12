@@ -201,6 +201,19 @@ func (tl *ToolLogger) GetRecentExecutions(limit int) []ToolExecution {
 	return result
 }
 
+// LoadFromDB loads recent tool executions from database into memory on startup
+func (tl *ToolLogger) LoadFromDB(storage Storage) {
+	executions, err := storage.GetToolExecutions(tl.maxSize, 0)
+	if err != nil {
+		log.Printf("[tool-logger] failed to load from DB: %v", err)
+		return
+	}
+	tl.mu.Lock()
+	defer tl.mu.Unlock()
+	tl.executions = executions
+	log.Printf("[tool-logger] loaded %d executions from DB", len(executions))
+}
+
 // GetExecutionCount returns the total number of executions logged
 func (tl *ToolLogger) GetExecutionCount() int {
 	tl.mu.RLock()
@@ -257,6 +270,19 @@ func (dl *DecisionLogger) GetDecisionCount() int {
 	dl.mu.RLock()
 	defer dl.mu.RUnlock()
 	return len(dl.decisions)
+}
+
+// LoadFromDB loads recent decisions from database into memory on startup
+func (dl *DecisionLogger) LoadFromDB(storage Storage) {
+	decisions, err := storage.GetDecisionLogs(dl.maxSize, 0)
+	if err != nil {
+		log.Printf("[decision-logger] failed to load from DB: %v", err)
+		return
+	}
+	dl.mu.Lock()
+	defer dl.mu.Unlock()
+	dl.decisions = decisions
+	log.Printf("[decision-logger] loaded %d decisions from DB", len(decisions))
 }
 
 // SetEnabled enables or disables decision logging

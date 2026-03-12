@@ -463,8 +463,13 @@ func (wi *WebInterface) getDetailedStats() DetailedStats {
 		}
 	}
 
-	// Get tool execution count from global logger
+	// Get tool execution count - prefer DB for accurate historical count
 	toolExecutionCount := int64(globalToolLogger.GetExecutionCount())
+	if globalStorage != nil {
+		if dbCount, err := globalStorage.GetToolExecutionsCount(); err == nil && dbCount > toolExecutionCount {
+			toolExecutionCount = dbCount
+		}
+	}
 
 	return DetailedStats{
 		ActiveSessions:  activeSessions,
@@ -477,6 +482,85 @@ func (wi *WebInterface) getDetailedStats() DetailedStats {
 		RecentAgents:    recentAgents,
 		TotalTokensUsed: totalTokensUsed,
 		TotalCostUSD:    totalCostUSD,
+	}
+}
+
+// parseTimeRange parses start_time and end_time query parameters, returning parsed times and ok flag
+func parseTimeRange(r *http.Request) (start time.Time, end time.Time, ok bool) {
+	startStr := r.URL.Query().Get("start_time")
+	endStr := r.URL.Query().Get("end_time")
+	if startStr == "" || endStr == "" {
+		return time.Time{}, time.Time{}, false
+	}
+	start, err := time.Parse(time.RFC3339, startStr)
+	if err != nil {
+		start, err = time.Parse("2006-01-02T15:04:05Z", startStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, false
+		}
+	}
+	end, err = time.Parse(time.RFC3339, endStr)
+	if err != nil {
+		end, err = time.Parse("2006-01-02T15:04:05Z", endStr)
+		if err != nil {
+			return time.Time{}, time.Time{}, false
+		}
+	}
+	return start, end, true
+}
+
+// computeTrendsFromMetrics calculates performance trends from a slice of metrics
+func computeTrendsFromMetrics(metrics []PerformanceMetrics, hours int) map[string]interface{} {
+	if len(metrics) == 0 {
+		return map[string]interface{}{
+			"period_hours": hours,
+			"data_points":  0,
+			"message":      "No data available for the specified period",
+		}
+	}
+
+	totalLatency := time.Duration(0)
+	totalTokens := 0
+	totalCost := 0.0
+	successful := 0
+	hourlyStats := make(map[int]map[string]interface{})
+
+	for _, metric := range metrics {
+		totalLatency += metric.APICallLatency
+		totalTokens += metric.TokensUsed
+		totalCost += metric.EstimatedCost
+		if metric.APICallSuccess {
+			successful++
+		}
+
+		hour := metric.Timestamp.Hour()
+		if hourlyStats[hour] == nil {
+			hourlyStats[hour] = map[string]interface{}{
+				"requests":    0,
+				"latency_sum": time.Duration(0),
+				"tokens":      0,
+				"cost":        0.0,
+				"errors":      0,
+			}
+		}
+		stats := hourlyStats[hour]
+		stats["requests"] = stats["requests"].(int) + 1
+		stats["latency_sum"] = stats["latency_sum"].(time.Duration) + metric.APICallLatency
+		stats["tokens"] = stats["tokens"].(int) + metric.TokensUsed
+		stats["cost"] = stats["cost"].(float64) + metric.EstimatedCost
+		if !metric.APICallSuccess || metric.ErrorType != "" {
+			stats["errors"] = stats["errors"].(int) + 1
+		}
+	}
+
+	return map[string]interface{}{
+		"period_hours":     hours,
+		"data_points":      len(metrics),
+		"avg_latency_ms":   float64(totalLatency.Nanoseconds()) / float64(len(metrics)) / 1e6,
+		"total_tokens":     totalTokens,
+		"total_cost":       totalCost,
+		"success_rate":     float64(successful) / float64(len(metrics)) * 100,
+		"hourly_breakdown": hourlyStats,
 	}
 }
 
@@ -494,10 +578,27 @@ func (wi *WebInterface) handleRecentTools(w http.ResponseWriter, r *http.Request
 			}
 		}
 
-		executions := globalToolLogger.GetRecentExecutions(limit)
+		var executions []ToolExecution
+		var total int
+
+		// If time range provided and storage available, query DB
+		if startTime, endTime, ok := parseTimeRange(r); ok && globalStorage != nil {
+			dbExecs, err := globalStorage.GetToolExecutionsByTimeRange(startTime, endTime, limit)
+			if err == nil {
+				executions = dbExecs
+				total = len(executions)
+			}
+		}
+
+		// Fallback to in-memory
+		if executions == nil {
+			executions = globalToolLogger.GetRecentExecutions(limit)
+			total = len(executions)
+		}
+
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"executions": executions,
-			"total":      len(executions),
+			"total":      total,
 			"timestamp":  time.Now(),
 		})
 	})(w, r)
@@ -508,7 +609,20 @@ func (wi *WebInterface) handleToolExecutions(w http.ResponseWriter, r *http.Requ
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		executions := globalToolLogger.GetRecentExecutions(0) // Get all
+		var executions []ToolExecution
+
+		// If time range provided and storage available, query DB
+		if startTime, endTime, ok := parseTimeRange(r); ok && globalStorage != nil {
+			dbExecs, err := globalStorage.GetToolExecutionsByTimeRange(startTime, endTime, 0)
+			if err == nil {
+				executions = dbExecs
+			}
+		}
+
+		// Fallback to in-memory
+		if executions == nil {
+			executions = globalToolLogger.GetRecentExecutions(0) // Get all
+		}
 
 		// Calculate statistics
 		toolCounts := make(map[string]int)
@@ -530,13 +644,19 @@ func (wi *WebInterface) handleToolExecutions(w http.ResponseWriter, r *http.Requ
 			successRate = float64(statusCounts["success"]) / float64(total) * 100
 		}
 
+		// Get recent 10 for display
+		recentLimit := 10
+		if len(executions) < recentLimit {
+			recentLimit = len(executions)
+		}
+
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"total_executions": len(executions),
-			"tool_counts":      toolCounts,
-			"status_counts":    statusCounts,
-			"success_rate":     successRate,
-			"recent_executions": globalToolLogger.GetRecentExecutions(10), // Last 10
-			"timestamp":        time.Now(),
+			"total_executions":  len(executions),
+			"tool_counts":       toolCounts,
+			"status_counts":     statusCounts,
+			"success_rate":      successRate,
+			"recent_executions": executions[:recentLimit],
+			"timestamp":         time.Now(),
 		})
 	})(w, r)
 }
@@ -964,7 +1084,25 @@ func (wi *WebInterface) handlePerformanceAnalytics(w http.ResponseWriter, r *htt
 			return
 		}
 
-		analytics := performanceMonitor.GetAnalytics()
+		var analytics PerformanceAnalytics
+
+		// If time range provided and storage available, query DB
+		if startTime, endTime, ok := parseTimeRange(r); ok && globalStorage != nil {
+			hours := int(endTime.Sub(startTime).Hours())
+			if hours < 1 {
+				hours = 1
+			}
+			dbAnalytics, err := globalStorage.GetPerformanceAnalytics(hours)
+			if err == nil && dbAnalytics.TotalRequests > 0 {
+				analytics = dbAnalytics
+			}
+		}
+
+		// Fallback to in-memory
+		if analytics.TotalRequests == 0 {
+			analytics = performanceMonitor.GetAnalytics()
+		}
+
 		recommendations := performanceMonitor.GenerateRecommendations()
 
 		response := map[string]interface{}{
@@ -1000,7 +1138,20 @@ func (wi *WebInterface) handlePerformanceMetrics(w http.ResponseWriter, r *http.
 			}
 		}
 
-		metrics := performanceMonitor.GetRecentMetrics(limit)
+		var metrics []PerformanceMetrics
+
+		// If time range provided and storage available, query DB
+		if startTime, endTime, ok := parseTimeRange(r); ok && globalStorage != nil {
+			dbMetrics, err := globalStorage.GetPerformanceMetricsByTimeRange(startTime, endTime, limit)
+			if err == nil {
+				metrics = dbMetrics
+			}
+		}
+
+		// Fallback to in-memory
+		if metrics == nil {
+			metrics = performanceMonitor.GetRecentMetrics(limit)
+		}
 
 		response := map[string]interface{}{
 			"enabled":   true,
@@ -1036,7 +1187,20 @@ func (wi *WebInterface) handlePerformanceTrends(w http.ResponseWriter, r *http.R
 			}
 		}
 
-		trends := performanceMonitor.GetPerformanceTrends(hours)
+		var trends map[string]interface{}
+
+		// If time range provided and storage available, query DB and compute trends
+		if startTime, endTime, ok := parseTimeRange(r); ok && globalStorage != nil {
+			dbMetrics, err := globalStorage.GetPerformanceMetricsByTimeRange(startTime, endTime, 10000)
+			if err == nil && len(dbMetrics) > 0 {
+				trends = computeTrendsFromMetrics(dbMetrics, hours)
+			}
+		}
+
+		// Fallback to in-memory
+		if trends == nil {
+			trends = performanceMonitor.GetPerformanceTrends(hours)
+		}
 
 		response := map[string]interface{}{
 			"enabled":   true,

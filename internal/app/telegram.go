@@ -105,6 +105,9 @@ type TelegramBot struct {
 	// Track last used Topic for each chat (for @mention recovery when threadID=0)
 	lastUsedThreadID map[int64]int // chatID -> last non-zero threadID
 	lastUsedMu       sync.RWMutex  // Protect lastUsedThreadID
+
+	// Screenshot manager for /preview command
+	screenshotManager *ScreenshotManager
 }
 
 func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
@@ -163,6 +166,9 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 		modelPreferences: make(map[chatKey]string),
 		langPreferences:  make(map[int64]string),
 		lastUsedThreadID: make(map[int64]int), // Track last used Topic for @mention recovery
+
+		// Screenshot manager
+		screenshotManager: NewScreenshotManager(),
 	}
 
 	// Start message queue worker
@@ -200,6 +206,7 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "agents", "description": "View specialized agent list"},
 		{"command": "tasks", "description": "View to-do list"},
 		{"command": "lang", "description": "Switch bot language"},
+		{"command": "preview", "description": "Preview webpage screenshot"},
 		{"command": "help", "description": "Show help message"},
 	}
 
@@ -499,6 +506,13 @@ func (t *TelegramBot) Start() {
 }
 
 func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, caption string, photo []PhotoSize, voice *Voice, document *Document, mediaGroupID string, messageID int) {
+	// Recover from panics to prevent goroutine death leaving status messages stuck
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[telegram] PANIC in handleMessage (chat=%d, thread=%d): %v", key.chatID, key.threadID, r)
+		}
+	}()
+
 	// 調試日誌
 	var voiceInfo string = "none"
 	if voice != nil {
@@ -759,6 +773,9 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		response = t.getLocalizedMessage(key.chatID, "no_reply", nil)
 	}
 
+	// 解析 Agent 回應中的 [SEND_FILE:path] 標記並發送對應檔案
+	response = t.processAgentResponse(key, response, agent.ProjectDir())
+
 	// 加上模型標籤
 	modelTag := getModelTag(agent.lastUsedModel)
 	response = modelTag + "\n\n" + response
@@ -813,7 +830,8 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		help += t.getLocalizedMessage(key.chatID, "help_multiagent_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_agents_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_tasks_desc", nil) + "\n"
-		help += t.getLocalizedMessage(key.chatID, "help_lang_desc", nil)
+		help += t.getLocalizedMessage(key.chatID, "help_lang_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_id_desc", nil)
 		t.sendMarkdown(key, help)
 
 	case "/project":
@@ -1112,8 +1130,37 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		}
 		t.handleSavingsCommand(key, projectPath)
 
+	case "/send-file":
+		// 提取檔案路徑：/send-file <path>
+		filePath := ""
+		if len(parts) > 1 {
+			filePath = strings.Join(parts[1:], " ")
+		}
+		t.handleSendFile(key, filePath)
+
+	case "/test-photo":
+		// 測試命令：直接從本地發送照片
+		t.testPhotoUpload(key)
+
 	case "/lang":
 		t.handleLangCommand(key, text)
+
+	case "/id":
+		msg := t.getLocalizedMessage(key.chatID, "id_info", map[string]string{
+			"{chat_id}":   strconv.FormatInt(key.chatID, 10),
+			"{thread_id}": strconv.Itoa(key.threadID),
+		})
+		t.send(key, msg)
+
+	case "/preview":
+		// 解析 URL 參數
+		if len(parts) < 2 {
+			t.send(key, "❌ 使用方式：/preview <URL>\n例：/preview https://example.com\n或：/preview http://localhost:3939")
+			return
+		}
+
+		targetURL := parts[1]
+		t.handlePreviewCommand(key, targetURL)
 
 	default:
 		t.send(key, t.getLocalizedMessage(key.chatID, "unknown_command", nil))
@@ -1850,7 +1897,8 @@ func (t *TelegramBot) Close() {
 	}
 }
 
-// editMessageRemoveStopButton removes the stop button from a message
+// editMessageRemoveStopButton removes the stop button from a message.
+// Uses synchronous send to guarantee delivery (async queue can drop messages under load).
 func (t *TelegramBot) editMessageRemoveStopButton(key chatKey, messageID int, newText string) {
 	params := map[string]interface{}{
 		"chat_id":    key.chatID,
@@ -1862,13 +1910,335 @@ func (t *TelegramBot) editMessageRemoveStopButton(key chatKey, messageID int, ne
 		params["message_thread_id"] = key.threadID
 	}
 
-	t.sendTelegram("editMessageText", params)
+	if _, err := t.sendMessageSync("editMessageText", params); err != nil {
+		log.Printf("[telegram] editMessageRemoveStopButton error (chat=%d, msg=%d): %v", key.chatID, messageID, err)
+	}
+}
+
+// runAgentWithStopButton runs agent.Run() with a stop button on the first status update,
+// and cleans up the stop button after completion. Used by multimedia handlers (photo/voice/document).
+func (t *TelegramBot) runAgentWithStopButton(key chatKey, agent *Agent, prompt string) (string, error) {
+	var statusMessageID int
+	var firstUpdate = true
+
+	response, err := agent.Run(prompt, func(update string, silent bool) {
+		if firstUpdate && !silent {
+			if msgID, msgErr := t.sendMessageWithStopButton(key, update); msgErr == nil {
+				statusMessageID = msgID
+			} else {
+				t.send(key, update)
+			}
+			firstUpdate = false
+		} else {
+			if silent {
+				t.sendSilent(key, update)
+			} else {
+				t.send(key, update)
+			}
+		}
+	})
+
+	// Remove stop button after completion
+	if statusMessageID != 0 {
+		var finalText string
+		if err != nil {
+			if strings.Contains(err.Error(), "agent aborted by user") {
+				finalText = t.getLocalizedMessage(key.chatID, "execution_aborted", nil)
+			} else if response != "" {
+				finalText = t.getLocalizedMessage(key.chatID, "execution_partial", nil)
+			} else {
+				finalText = t.getLocalizedMessage(key.chatID, "execution_error", nil)
+			}
+		} else {
+			finalText = t.getLocalizedMessage(key.chatID, "execution_completed", nil)
+		}
+		t.editMessageRemoveStopButton(key, statusMessageID, finalText)
+	}
+
+	return response, err
 }
 
 // sendTelegram sends JSON data to Telegram API via the message queue
 func (t *TelegramBot) sendTelegram(method string, params map[string]interface{}) {
 	// Queue the message instead of sending directly
 	t.queueMessage(method, params)
+}
+
+// sendMediaFile 通用媒體發送方法
+// 支持 photo, video, document 類型
+// caption: 檔案說明（支持多國語言模板變數）
+func (t *TelegramBot) sendMediaFile(key chatKey, filePath, mediaType, caption string) error {
+	// 驗證檔案存在
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("file not found: %s", filePath)
+		}
+		return fmt.Errorf("failed to stat file: %w", err)
+	}
+
+	// 驗證檔案大小
+	maxSizeBytes := int64(t.config.Multimedia.MaxFileSizeMB) * 1024 * 1024
+	if fileInfo.Size() > maxSizeBytes {
+		return fmt.Errorf("file too large: %d bytes > %d MB limit", fileInfo.Size(), t.config.Multimedia.MaxFileSizeMB)
+	}
+
+	// 打開檔案
+	file, err := os.Open(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	// 根據媒體類型選擇 API 方法
+	var apiMethod string
+	var formFieldName string
+	switch mediaType {
+	case "photo":
+		apiMethod = "sendPhoto"
+		formFieldName = "photo"
+	case "video":
+		apiMethod = "sendVideo"
+		formFieldName = "video"
+	case "document", "file":
+		apiMethod = "sendDocument"
+		formFieldName = "document"
+	default:
+		return fmt.Errorf("unsupported media type: %s", mediaType)
+	}
+
+	// 構建 multipart form
+	var b bytes.Buffer
+	writer := multipart.NewWriter(&b)
+
+	// 添加媒體檔案
+	fw, err := writer.CreateFormFile(formFieldName, filepath.Base(filePath))
+	if err != nil {
+		return fmt.Errorf("failed to create form file: %w", err)
+	}
+	_, err = io.Copy(fw, file)
+	if err != nil {
+		return fmt.Errorf("failed to copy file: %w", err)
+	}
+
+	// 添加必要的參數
+	writer.WriteField("chat_id", fmt.Sprintf("%d", key.chatID))
+	if key.threadID != 0 {
+		writer.WriteField("message_thread_id", fmt.Sprintf("%d", key.threadID))
+	}
+
+	// 添加 caption（如果有）
+	if caption != "" {
+		writer.WriteField("caption", caption)
+		writer.WriteField("parse_mode", "HTML")
+	}
+
+	// 必須在發送前關閉 writer，以便寫入 final boundary
+	contentType := writer.FormDataContentType()
+	writer.Close()
+
+	log.Printf("[telegram] sendMediaFile request: method=%s, chat_id=%d, threadID=%d, form_size=%d bytes",
+		apiMethod, key.chatID, key.threadID, b.Len())
+
+	// 發送 API 請求
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/%s", t.config.TelegramToken, apiMethod)
+	req, err := http.NewRequest("POST", apiURL, &b)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", contentType)
+	req.ContentLength = int64(b.Len())
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	log.Printf("[telegram] sendMediaFile response: status=%d, response_len=%d, body='%s'",
+		resp.StatusCode, len(body), string(body))
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("[telegram] ❌ API error: status=%d, body=%s", resp.StatusCode, string(body))
+		return fmt.Errorf("Telegram API error (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+// sendPhoto 發送圖片
+func (t *TelegramBot) sendPhoto(key chatKey, filePath, caption string) error {
+	return t.sendMediaFile(key, filePath, "photo", caption)
+}
+
+// sendDocument 發送文件
+func (t *TelegramBot) sendDocument(key chatKey, filePath, caption string) error {
+	return t.sendMediaFile(key, filePath, "document", caption)
+}
+
+// sendVideo 發送影片
+func (t *TelegramBot) sendVideo(key chatKey, filePath, caption string) error {
+	return t.sendMediaFile(key, filePath, "video", caption)
+}
+
+// processAgentResponse 解析 Agent 回應中的 [SEND_FILE:path] 標記並發送對應檔案。
+// 回傳移除標記後的純文字回應。
+// Agent 可在回應中包含 [SEND_FILE:temp/output.png] 來觸發自動上傳。
+func (t *TelegramBot) processAgentResponse(key chatKey, response string, projectPath string) string {
+	const markerPrefix = "[SEND_FILE:"
+	const markerSuffix = "]"
+
+	result := response
+	for {
+		start := strings.Index(result, markerPrefix)
+		if start == -1 {
+			break
+		}
+		end := strings.Index(result[start:], markerSuffix)
+		if end == -1 {
+			break
+		}
+		end = start + end + len(markerSuffix)
+
+		marker := result[start:end]
+		filePath := strings.TrimSpace(marker[len(markerPrefix) : len(marker)-len(markerSuffix)])
+
+		if isPathAllowed(filePath, projectPath) {
+			mediaType := inferMediaType(filePath)
+			if err := t.sendMediaFile(key, filePath, mediaType, ""); err != nil {
+				log.Printf("[telegram] processAgentResponse: failed to send file %q: %v", filePath, err)
+				errMsg := t.getLocalizedMessage(key.chatID, "send_file_error", map[string]string{"{error}": err.Error()})
+				t.send(key, errMsg)
+			} else {
+				log.Printf("[telegram] processAgentResponse: sent file %q as %s", filePath, mediaType)
+			}
+		} else {
+			log.Printf("[telegram] processAgentResponse: rejected path %q (not in allowed dirs)", filePath)
+		}
+
+		// 移除標記（含前後空白行）
+		result = strings.TrimSpace(result[:start]) + "\n" + strings.TrimSpace(result[end:])
+		result = strings.TrimSpace(result)
+	}
+	return result
+}
+
+// isPathAllowed 檢查路徑是否被允許發送
+// 規則: 只允許相對路徑（temp/, web/, project 目錄），禁止絕對路徑和 ../ 遍歷
+func isPathAllowed(filePath, projectPath string) bool {
+	// 規則 1: 禁止絕對路徑
+	if filepath.IsAbs(filePath) {
+		return false
+	}
+
+	// 規則 2: 禁止 ../ 路徑遍歷
+	if strings.Contains(filePath, "..") {
+		return false
+	}
+
+	// 規則 3: 只允許特定目錄的相對路徑
+	normalizedPath := filepath.Clean(filePath)
+	allowedPrefixes := []string{"temp/", "web/", "frontend/"}
+
+	// 檢查是否符合允許的前綴
+	for _, prefix := range allowedPrefixes {
+		if strings.HasPrefix(normalizedPath, prefix) {
+			return true
+		}
+	}
+
+	// 如果有 project path，也允許 project 目錄下的檔案
+	if projectPath != "" {
+		if strings.HasPrefix(normalizedPath, projectPath) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// inferMediaType 推斷媒體類型
+func inferMediaType(filePath string) string {
+	ext := strings.ToLower(filepath.Ext(filePath))
+
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp":
+		return "photo"
+	case ".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm":
+		return "video"
+	case ".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac":
+		return "audio"
+	default:
+		return "document"
+	}
+}
+
+// handleSendFile 處理 /send-file 命令
+func (t *TelegramBot) handleSendFile(key chatKey, filePath string) {
+	if filePath == "" {
+		msgKey := "send_file_usage"
+		msg := t.getLocalizedMessage(key.chatID, msgKey, nil)
+		t.send(key, msg)
+		return
+	}
+
+	// 路徑安全檢查
+	agent := t.getAgent(key)
+	projectPath := agent.ProjectDir()
+
+	if !isPathAllowed(filePath, projectPath) {
+		msgKey := "send_file_forbidden_path"
+		msg := t.getLocalizedMessage(key.chatID, msgKey, nil)
+		t.send(key, msg)
+		return
+	}
+
+	// 推斷媒體類型
+	mediaType := inferMediaType(filePath)
+
+	// 發送檔案
+	if err := t.sendMediaFile(key, filePath, mediaType, "") ; err != nil {
+		msgKey := "send_file_error"
+		msg := t.getLocalizedMessage(key.chatID, msgKey, map[string]string{
+			"{error}": err.Error(),
+		})
+		t.send(key, msg)
+		return
+	}
+
+	// 成功回報
+	msgKey := "send_file_success"
+	msg := t.getLocalizedMessage(key.chatID, msgKey, nil)
+	t.send(key, msg)
+}
+
+// testPhotoUpload 測試命令：直接從本地上傳照片到聊天
+func (t *TelegramBot) testPhotoUpload(key chatKey) {
+	photoPath := "temp/media/photo_from_downloads.png"
+
+	// 驗證文件存在
+	fileInfo, err := os.Stat(photoPath)
+	if err != nil {
+		t.send(key, fmt.Sprintf("❌ 照片文件不存在: %s", photoPath))
+		return
+	}
+
+	// 發送照片
+	if err := t.sendPhoto(key, photoPath, ""); err != nil {
+		t.send(key, fmt.Sprintf("❌ 上傳失敗: %v", err))
+		log.Printf("[telegram] Photo upload failed: %v", err)
+		return
+	}
+
+	// 發送成功確認
+	fileSize := formatFileSize(int64(fileInfo.Size()))
+	confirmMsg := fmt.Sprintf("✅ 照片已上傳！\n📁 文件: %s\n💾 大小: %s\n🎨 解像度: 1170x2532", photoPath, fileSize)
+	t.send(key, confirmMsg)
+	log.Printf("[telegram] Test photo uploaded successfully: %s (%s)", photoPath, fileSize)
 }
 
 // handleTasks 處理 /tasks 命令，顯示未完成的工作清單
@@ -2047,7 +2417,7 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 		if targetPhoto.FileSize > maxSizeBytes {
 			msg := t.getLocalizedMessage(key.chatID, "photo_file_too_large", nil)
 			msg = strings.ReplaceAll(msg, "{index}", fmt.Sprintf("%d", i+1))
-			msg = strings.ReplaceAll(msg, "{size}", formatFileSize(targetPhoto.FileSize))
+			msg = strings.ReplaceAll(msg, "{size}", formatFileSize(int64(targetPhoto.FileSize)))
 			msg = strings.ReplaceAll(msg, "{limit}", fmt.Sprintf("%d", t.config.Multimedia.MaxFileSizeMB))
 			t.send(key, msg)
 			continue
@@ -2160,15 +2530,12 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 		promptWithLang = "請用繁體中文回應。\n\n" + prompt
 	}
 
-	response, err := agent.Run(promptWithLang, func(update string, silent bool) {
-		if silent {
-			t.sendSilent(key, update)
-		} else {
-			t.send(key, update)
-		}
-	})
+	response, err := t.runAgentWithStopButton(key, agent, promptWithLang)
 
 	if err != nil {
+		if strings.Contains(err.Error(), "agent aborted by user") {
+			return
+		}
 		log.Printf("[telegram] batch photo analysis error: %v", err)
 		msg := t.getLocalizedMessage(key.chatID, "photo_analysis_failed", nil)
 		t.send(key, msg)
@@ -2193,7 +2560,7 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 	if targetPhoto.FileSize > maxSizeBytes {
 		msg := t.getLocalizedMessage(key.chatID, "photo_file_too_large", nil)
 		msg = strings.ReplaceAll(msg, "{index}", "1")
-		msg = strings.ReplaceAll(msg, "{size}", formatFileSize(targetPhoto.FileSize))
+		msg = strings.ReplaceAll(msg, "{size}", formatFileSize(int64(targetPhoto.FileSize)))
 		msg = strings.ReplaceAll(msg, "{limit}", fmt.Sprintf("%d", t.config.Multimedia.MaxFileSizeMB))
 		t.send(key, msg)
 		return
@@ -2311,15 +2678,12 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 		promptWithLang = "請用繁體中文回應。\n\n" + prompt
 	}
 
-	response, err := agent.Run(promptWithLang, func(update string, silent bool) {
-		if silent {
-			t.sendSilent(key, update)
-		} else {
-			t.send(key, update)
-		}
-	})
+	response, err := t.runAgentWithStopButton(key, agent, promptWithLang)
 
 	if err != nil {
+		if strings.Contains(err.Error(), "agent aborted by user") {
+			return
+		}
 		log.Printf("[telegram] single photo analysis error: %v", err)
 		errMsg := t.getLocalizedMessage(key.chatID, "photo_analysis_failed", nil)
 		t.send(key, errMsg)
@@ -2349,7 +2713,7 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
 	if targetPhoto.FileSize > maxSizeBytes {
 		msg := t.getLocalizedMessage(key.chatID, "photo_file_too_large", nil)
-		msg = strings.ReplaceAll(msg, "{size}", formatFileSize(targetPhoto.FileSize))
+		msg = strings.ReplaceAll(msg, "{size}", formatFileSize(int64(targetPhoto.FileSize)))
 		msg = strings.ReplaceAll(msg, "{limit}", fmt.Sprintf("%d", t.config.Multimedia.MaxFileSizeMB))
 		msg = strings.ReplaceAll(msg, "{index}", "")
 		t.send(key, msg)
@@ -2429,14 +2793,11 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 		promptWithLang = "請用繁體中文回應。\n\n" + prompt
 	}
 
-	response, err := agent.Run(promptWithLang, func(update string, silent bool) {
-		if silent {
-			t.sendSilent(key, update)
-		} else {
-			t.send(key, update)
-		}
-	})
+	response, err := t.runAgentWithStopButton(key, agent, promptWithLang)
 	if err != nil {
+		if strings.Contains(err.Error(), "agent aborted by user") {
+			return
+		}
 		log.Printf("[telegram] photo analysis error: %v", err)
 		msg := t.getLocalizedMessage(key.chatID, "photo_analysis_failed", nil)
 		t.send(key, msg)
@@ -2473,14 +2834,17 @@ func copyFile(src, dst string) error {
 }
 
 // formatFileSize 格式化檔案大小顯示
-func formatFileSize(bytes int) string {
+func formatFileSize(bytes int64) string {
 	if bytes < 1024 {
 		return fmt.Sprintf("%d B", bytes)
 	}
 	if bytes < 1024*1024 {
 		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
 	}
-	return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
+	if bytes < 1024*1024*1024 {
+		return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
+	}
+	return fmt.Sprintf("%.1f GB", float64(bytes)/(1024*1024*1024))
 }
 
 // CleanupTempMediaFiles 清理舊的臨時媒體檔案
@@ -2636,7 +3000,7 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
 	if voice.FileSize > maxSizeBytes {
 		msg := t.getLocalizedMessage(key.chatID, "voice_file_too_large", nil)
-		msg = strings.ReplaceAll(msg, "{size}", formatFileSize(voice.FileSize))
+		msg = strings.ReplaceAll(msg, "{size}", formatFileSize(int64(voice.FileSize)))
 		msg = strings.ReplaceAll(msg, "{limit}", fmt.Sprintf("%d", t.config.Multimedia.MaxFileSizeMB))
 		t.send(key, msg)
 		return
@@ -2755,14 +3119,11 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 		promptWithLang = "請用繁體中文回應。\n\n" + prompt
 	}
 
-	response, err := agent.Run(promptWithLang, func(update string, silent bool) {
-		if silent {
-			t.sendSilent(key, update)
-		} else {
-			t.send(key, update)
-		}
-	})
+	response, err := t.runAgentWithStopButton(key, agent, promptWithLang)
 	if err != nil {
+		if strings.Contains(err.Error(), "agent aborted by user") {
+			return
+		}
 		log.Printf("[telegram] voice analysis error: %v", err)
 		analysisFailMsg := t.getLocalizedMessage(key.chatID, "voice_analyze_failed", nil)
 		t.send(key, analysisFailMsg)
@@ -3193,7 +3554,7 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 	maxSizeBytes := t.config.Multimedia.MaxFileSizeMB * 1024 * 1024
 	if document.FileSize > maxSizeBytes {
 		msg := t.getLocalizedMessage(key.chatID, "document_file_too_large", nil)
-		msg = strings.ReplaceAll(msg, "{size}", formatFileSize(document.FileSize))
+		msg = strings.ReplaceAll(msg, "{size}", formatFileSize(int64(document.FileSize)))
 		msg = strings.ReplaceAll(msg, "{limit}", fmt.Sprintf("%d", t.config.Multimedia.MaxFileSizeMB))
 		t.send(key, msg)
 		return
@@ -3301,14 +3662,11 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 		promptWithLang = "請用繁體中文回應。\n\n" + prompt
 	}
 
-	response, err := agent.Run(promptWithLang, func(update string, silent bool) {
-		if silent {
-			t.sendSilent(key, update)
-		} else {
-			t.send(key, update)
-		}
-	})
+	response, err := t.runAgentWithStopButton(key, agent, promptWithLang)
 	if err != nil {
+		if strings.Contains(err.Error(), "agent aborted by user") {
+			return
+		}
 		log.Printf("[telegram] document analysis error: %v", err)
 		errMsg := t.getLocalizedMessage(key.chatID, "document_analysis_failed", nil)
 		t.send(key, errMsg)
@@ -3573,6 +3931,85 @@ func (t *TelegramBot) setChatlanguage(chatID int64, lang string) {
 			log.Printf("[telegram] failed to save chat language preference: %v", err)
 		}
 	}
+}
+
+// handlePreviewCommand 處理 /preview 命令，進行網頁截圖和卡片展示
+func (t *TelegramBot) handlePreviewCommand(key chatKey, urlStr string) {
+	// 發送"處理中"提示
+	t.send(key, fmt.Sprintf("🔄 正在預覽 %s，請稍候...", urlStr))
+
+	// 建立 context (30 秒超時)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// 優化：使用單一 rod browser 實例完成截圖和 metadata 提取
+	filePath, metadata, err := t.screenshotManager.CaptureScreenshotWithMetadata(ctx, urlStr)
+	if err != nil {
+		t.send(key, fmt.Sprintf("❌ 截圖失敗：%v", err))
+		return
+	}
+
+	// 構建卡片式消息
+	cardMsg := t.buildPreviewCard(urlStr, metadata)
+
+	// 發送卡片消息
+	t.send(key, cardMsg)
+
+	// 發送截圖圖片
+	if err := t.sendPhoto(key, filePath, ""); err != nil {
+		t.send(key, fmt.Sprintf("⚠️ 上傳截圖失敗：%v", err))
+	}
+
+	// 清理舊截圖（非同步，保留最近 100 張）
+	go func() {
+		if err := t.screenshotManager.CleanupOldScreenshots(100); err != nil {
+			log.Printf("[telegram] cleanup old screenshots failed: %v", err)
+		}
+	}()
+}
+
+// buildPreviewCard 構建卡片式預覽消息
+func (t *TelegramBot) buildPreviewCard(urlStr string, metadata *WebMetadata) string {
+	var sb strings.Builder
+
+	sb.WriteString("📄 *網頁預覽*\n")
+	sb.WriteString("────────────────\n")
+
+	// 標題
+	if metadata.Title != "" {
+		// 截斷長標題（超過 50 字）
+		title := metadata.Title
+		if len(title) > 50 {
+			title = title[:50] + "…"
+		}
+		sb.WriteString(fmt.Sprintf("*%s*\n", title))
+	} else {
+		sb.WriteString("*(無標題)*\n")
+	}
+
+	// 描述
+	if metadata.Description != "" {
+		// 截斷長描述（超過 200 字）
+		desc := metadata.Description
+		if len(desc) > 200 {
+			desc = desc[:200] + "…"
+		}
+		sb.WriteString(fmt.Sprintf("\n%s\n", desc))
+	}
+
+	sb.WriteString("\n")
+
+	// og:image（如果有）
+	if metadata.ImageURL != "" {
+		sb.WriteString(fmt.Sprintf("🖼️ og:image: %s\n", metadata.ImageURL))
+	}
+
+	// URL
+	sb.WriteString("\n")
+	sb.WriteString(fmt.Sprintf("🔗 [網址](%s)\n", urlStr))
+	sb.WriteString("✅ 截圖在下方")
+
+	return sb.String()
 }
 
 // abs 計算絕對值

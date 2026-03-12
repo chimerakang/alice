@@ -49,6 +49,9 @@ type Config struct {
 	// Multimedia Settings
 	Multimedia MultimediaConfig `json:"multimedia"`
 
+	// HTML Rendering Settings
+	Rendering RenderingConfig `json:"rendering"`
+
 	// Model Routing Settings
 	ModelRouting ModelRoutingConfig `json:"model_routing"`
 }
@@ -85,6 +88,11 @@ func LoadConfig() (*Config, error) {
 			MaxFileSizeMB:       20,             // 20MB limit
 			TempDownloadDir:     "./temp/media", // Temporary download directory
 			VoiceToTextProvider: "openai_whisper", // Default to OpenAI Whisper
+		},
+		Rendering: RenderingConfig{
+			EnableHTMLScreenshots: true,
+			CacheDir:              "./temp/renders",
+			ChromeExecutable:      "", // Use system Chrome/Chromium by default
 		},
 		ModelRouting: ModelRoutingConfig{
 			EnableDynamicRouting: false, // Disabled by default
@@ -326,6 +334,16 @@ func Main() {
 		log.Printf("   Performance monitoring: enabled (retention: %dh)", config.PerformanceMetricsRetention)
 	} else {
 		log.Printf("   Performance monitoring: disabled")
+	}
+
+	// Load historical data from DB into in-memory caches
+	if globalStorage != nil {
+		globalToolLogger.LoadFromDB(globalStorage)
+		globalDecisionLogger.LoadFromDB(globalStorage)
+		if performanceMonitor != nil {
+			performanceMonitor.LoadFromDB(globalStorage)
+		}
+		log.Printf("   Historical data: loaded from database")
 	}
 
 	// Initialize WebSocket system
