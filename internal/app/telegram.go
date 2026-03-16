@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -68,11 +69,12 @@ type Document struct {
 
 // TelegramMessage represents a message to be sent through the rate-limited queue
 type TelegramMessage struct {
-	Method    string                 `json:"method"`
-	Params    map[string]interface{} `json:"params"`
-	Retries   int                    `json:"retries"`
-	MaxRetries int                   `json:"max_retries"`
-	CreatedAt time.Time             `json:"created_at"`
+	Method         string                 `json:"method"`
+	Params         map[string]interface{} `json:"params"`
+	FallbackParams map[string]interface{} `json:"fallback_params,omitempty"` // used when parse_mode causes errors
+	Retries        int                    `json:"retries"`
+	MaxRetries     int                    `json:"max_retries"`
+	CreatedAt      time.Time              `json:"created_at"`
 }
 
 type TelegramBot struct {
@@ -757,7 +759,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		}
 		if response != "" {
 			// Partial success: send accumulated content, then show error
-			t.sendLong(key, response)
+			t.sendLongMarkdown(key, response)
 			msg := t.getLocalizedMessage(key.chatID, "error_occurred", nil)
 			msg = strings.ReplaceAll(msg, "{error}", extractErrorReason(err.Error()))
 			t.send(key, msg)
@@ -780,8 +782,8 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	modelTag := getModelTag(agent.lastUsedModel)
 	response = modelTag + "\n\n" + response
 
-	// Telegram 訊息限制 4096 字元，分段發送
-	t.sendLong(key, response)
+	// Telegram 訊息限制 4096 字元，分段發送（使用 Markdown 格式）
+	t.sendLongMarkdown(key, response)
 }
 
 // extractErrorReason extracts a human-readable error message from API error strings.
@@ -1278,9 +1280,46 @@ func (t *TelegramBot) sendMessageDirect(msg *TelegramMessage) bool {
 		}
 	}
 
+	// Handle 400 Bad Request — if it's a markdown parse error, fall back to plain text
+	if resp.StatusCode == 400 && msg.FallbackParams != nil {
+		bodyStr := string(body)
+		if strings.Contains(bodyStr, "can't parse entities") || strings.Contains(bodyStr, "parse entities") {
+			log.Printf("[telegram] Markdown parse error, retrying as plain text: %s", bodyStr)
+			msg.Params = msg.FallbackParams
+			msg.FallbackParams = nil
+			return false // trigger retry with fallback params
+		}
+	}
+
 	// Log other errors
 	log.Printf("[telegram] %s failed (status %d): %s", msg.Method, resp.StatusCode, string(body))
 	return false
+}
+
+// queueMarkdownMessage queues a message with Markdown parse_mode and a plain-text fallback.
+func (t *TelegramBot) queueMarkdownMessage(method string, params map[string]interface{}) {
+	// Build fallback params (same but without parse_mode)
+	fallback := make(map[string]interface{}, len(params))
+	for k, v := range params {
+		if k != "parse_mode" {
+			fallback[k] = v
+		}
+	}
+
+	msg := &TelegramMessage{
+		Method:         method,
+		Params:         params,
+		FallbackParams: fallback,
+		Retries:        0,
+		MaxRetries:     3,
+		CreatedAt:      time.Now(),
+	}
+
+	select {
+	case t.messageQueue <- msg:
+	case <-time.After(1 * time.Second):
+		log.Printf("[telegram] Message queue full, dropping %s message", method)
+	}
 }
 
 // queueMessage adds a message to the rate-limited sending queue
@@ -1407,20 +1446,293 @@ func (t *TelegramBot) sendMarkdown(key chatKey, text string) {
 	// Clean invalid UTF-8 characters to prevent API errors
 	cleanText := sanitizeUTF8(text)
 
-	params := url.Values{
-		"chat_id":    {strconv.FormatInt(key.chatID, 10)},
-		"text":       {cleanText},
-		"parse_mode": {"Markdown"},
+	params := map[string]interface{}{
+		"chat_id":    strconv.FormatInt(key.chatID, 10),
+		"text":       cleanText,
+		"parse_mode": "Markdown",
 	}
 	if key.threadID != 0 {
-		params.Set("message_thread_id", strconv.Itoa(key.threadID))
-		log.Printf("[telegram] sendMarkdown: setting message_thread_id=%d for chat_id=%d", key.threadID, key.chatID)
-	} else {
-		log.Printf("[telegram] sendMarkdown: WARNING - NO message_thread_id (threadID=0) for chat_id=%d", key.chatID)
+		params["message_thread_id"] = strconv.Itoa(key.threadID)
 	}
 
-	// Use the API call which now goes through the queue
-	t.apiCall("sendMessage", params)
+	// Use markdown queue with plain-text fallback on parse errors
+	t.queueMarkdownMessage("sendMessage", params)
+}
+
+func (t *TelegramBot) sendHTML(key chatKey, htmlText string) {
+	cleanText := sanitizeUTF8(htmlText)
+	params := map[string]interface{}{
+		"chat_id":    strconv.FormatInt(key.chatID, 10),
+		"text":       cleanText,
+		"parse_mode": "HTML",
+	}
+	if key.threadID != 0 {
+		params["message_thread_id"] = strconv.Itoa(key.threadID)
+	}
+	t.queueMarkdownMessage("sendMessage", params)
+}
+
+func (t *TelegramBot) sendLongMarkdown(key chatKey, text string) {
+	const maxLen = 3800 // conservative to account for HTML tag overhead
+
+	if len(text) <= maxLen {
+		t.sendHTML(key, markdownToTelegramHTML(text))
+		return
+	}
+
+	chunks := splitMessage(text, maxLen)
+	for i, chunk := range chunks {
+		if len(chunks) > 1 {
+			chunk = fmt.Sprintf("(%d/%d)\n%s", i+1, len(chunks), chunk)
+		}
+		t.sendHTML(key, markdownToTelegramHTML(chunk))
+	}
+}
+
+// --- Markdown → Telegram HTML conversion ---
+
+var (
+	reTGInlineCode = regexp.MustCompile("`([^`\n]+)`")
+	reTGBold       = regexp.MustCompile(`\*\*([^*\n]+)\*\*`)
+	reTGBoldUnder  = regexp.MustCompile(`__([^_\n]+)__`)
+	reTGStrike     = regexp.MustCompile(`~~([^~\n]+)~~`)
+	reTGLink       = regexp.MustCompile(`\[([^\]\n]+)\]\((https?://[^)\n ]+)\)`)
+)
+
+// markdownToTelegramHTML converts Claude's markdown output to Telegram HTML.
+// Supports: code blocks, inline code, **bold**, ## headers, links, ~~strike~~, ---, tables
+func markdownToTelegramHTML(text string) string {
+	var sb strings.Builder
+	inCode := false
+	var codeLines []string
+
+	lines := strings.Split(text, "\n")
+	for i := 0; i < len(lines); {
+		line := lines[i]
+		if !inCode {
+			if strings.HasPrefix(strings.TrimRight(line, " \t"), "```") {
+				inCode = true
+				codeLines = nil
+				i++
+				continue
+			}
+			// Detect markdown table (lines starting with |)
+			if strings.HasPrefix(strings.TrimSpace(line), "|") {
+				j := i
+				for j < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[j]), "|") {
+					j++
+				}
+				if j-i >= 2 { // at least header + separator
+					sb.WriteString(tgRenderTable(lines[i:j]))
+					sb.WriteByte('\n')
+					i = j
+					continue
+				}
+			}
+			sb.WriteString(tgMarkdownLine(line))
+			sb.WriteByte('\n')
+		} else {
+			if strings.TrimSpace(line) == "```" {
+				sb.WriteString("<pre><code>")
+				sb.WriteString(tgHTMLEscape(strings.Join(codeLines, "\n")))
+				sb.WriteString("</code></pre>\n")
+				inCode = false
+				codeLines = nil
+			} else {
+				codeLines = append(codeLines, line)
+			}
+		}
+		i++
+	}
+	// Flush unclosed code block
+	if inCode && len(codeLines) > 0 {
+		sb.WriteString("<pre><code>")
+		sb.WriteString(tgHTMLEscape(strings.Join(codeLines, "\n")))
+		sb.WriteString("</code></pre>\n")
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+// tgCellWidth returns the display width of a string, counting CJK/emoji as 2 columns.
+func tgCellWidth(s string) int {
+	w := 0
+	for _, r := range s {
+		switch {
+		case r >= 0x1100 && r <= 0x115F, // Hangul Jamo
+			r >= 0x2E80 && r <= 0x303F, // CJK Radicals/Symbols
+			r >= 0x3040 && r <= 0x33FF, // Japanese + CJK Symbols
+			r >= 0x3400 && r <= 0x4DBF, // CJK Extension A
+			r >= 0x4E00 && r <= 0x9FFF, // CJK Unified Ideographs
+			r >= 0xAC00 && r <= 0xD7AF, // Hangul Syllables
+			r >= 0xF900 && r <= 0xFAFF, // CJK Compatibility Ideographs
+			r >= 0xFE30 && r <= 0xFE6F, // CJK Compatibility Forms
+			r >= 0xFF01 && r <= 0xFF60, // Fullwidth Forms
+			r >= 0xFFE0 && r <= 0xFFE6, // Fullwidth Signs
+			r >= 0x1F300 && r <= 0x1FAFF: // Emoji
+			w += 2
+		default:
+			w += 1
+		}
+	}
+	return w
+}
+
+func tgParseTableCells(line string) []string {
+	s := strings.Trim(strings.TrimSpace(line), "|")
+	parts := strings.Split(s, "|")
+	cells := make([]string, len(parts))
+	for i, p := range parts {
+		cells[i] = strings.TrimSpace(p)
+	}
+	return cells
+}
+
+func tgIsTableSeparator(line string) bool {
+	s := strings.TrimSpace(line)
+	for _, c := range s {
+		if c != '|' && c != '-' && c != ':' && c != ' ' {
+			return false
+		}
+	}
+	return strings.Contains(s, "-")
+}
+
+// tgRenderTable converts a slice of markdown table lines into a <pre> ASCII table.
+func tgRenderTable(lines []string) string {
+	var rows [][]string
+	for _, line := range lines {
+		if tgIsTableSeparator(line) {
+			continue
+		}
+		rows = append(rows, tgParseTableCells(line))
+	}
+	if len(rows) == 0 {
+		return ""
+	}
+
+	// Determine column count and widths
+	numCols := 0
+	for _, row := range rows {
+		if len(row) > numCols {
+			numCols = len(row)
+		}
+	}
+	colW := make([]int, numCols)
+	for _, row := range rows {
+		for i, cell := range row {
+			if i < numCols {
+				if w := tgCellWidth(cell); w > colW[i] {
+					colW[i] = w
+				}
+			}
+		}
+	}
+
+	// Build border lines
+	topBorder := "┌"
+	midBorder := "├"
+	botBorder := "└"
+	for i, w := range colW {
+		seg := strings.Repeat("─", w+2)
+		if i < numCols-1 {
+			topBorder += seg + "┬"
+			midBorder += seg + "┼"
+			botBorder += seg + "┴"
+		} else {
+			topBorder += seg + "┐"
+			midBorder += seg + "┤"
+			botBorder += seg + "┘"
+		}
+	}
+
+	var sb strings.Builder
+	for rowIdx, row := range rows {
+		if rowIdx == 0 {
+			sb.WriteString(topBorder + "\n")
+		}
+		sb.WriteString("│")
+		for i := 0; i < numCols; i++ {
+			cell := ""
+			if i < len(row) {
+				cell = row[i]
+			}
+			padding := colW[i] - tgCellWidth(cell)
+			sb.WriteString(" " + cell + strings.Repeat(" ", padding+1) + "│")
+		}
+		sb.WriteString("\n")
+		if rowIdx == 0 {
+			sb.WriteString(midBorder + "\n")
+		}
+	}
+	sb.WriteString(botBorder)
+
+	return "<pre>" + tgHTMLEscape(sb.String()) + "</pre>"
+}
+
+func tgMarkdownLine(line string) string {
+	s := strings.TrimSpace(line)
+	// Horizontal rules → blank line
+	if s == "---" || s == "***" || s == "___" {
+		return ""
+	}
+	// Headers (all levels → bold)
+	for _, pfx := range []string{"#### ", "### ", "## ", "# "} {
+		if strings.HasPrefix(line, pfx) {
+			inner := strings.TrimPrefix(line, pfx)
+			// Strip bold markers inside headers — Telegram HTML disallows nested <b><b>
+			inner = reTGBold.ReplaceAllString(inner, "$1")
+			inner = reTGBoldUnder.ReplaceAllString(inner, "$1")
+			return "<b>" + tgMarkdownInline(inner) + "</b>"
+		}
+	}
+	return tgMarkdownInline(line)
+}
+
+func tgMarkdownInline(text string) string {
+	// 1. Protect inline code spans
+	var codePH []string
+	out := reTGInlineCode.ReplaceAllStringFunc(text, func(m string) string {
+		inner := m[1 : len(m)-1]
+		codePH = append(codePH, "<code>"+tgHTMLEscape(inner)+"</code>")
+		return fmt.Sprintf("\x01%d\x01", len(codePH)-1)
+	})
+
+	// 2. Protect links (before HTML-escaping to avoid double-encoding &)
+	var linkPH []string
+	out = reTGLink.ReplaceAllStringFunc(out, func(m string) string {
+		parts := reTGLink.FindStringSubmatch(m)
+		if len(parts) == 3 {
+			linkPH = append(linkPH, fmt.Sprintf(`<a href="%s">%s</a>`,
+				tgHTMLEscape(parts[2]), tgHTMLEscape(parts[1])))
+		} else {
+			linkPH = append(linkPH, m)
+		}
+		return fmt.Sprintf("\x02%d\x02", len(linkPH)-1)
+	})
+
+	// 3. HTML-escape remaining text
+	out = tgHTMLEscape(out)
+
+	// 4. Apply formatting (bold before strike)
+	out = reTGBold.ReplaceAllString(out, "<b>$1</b>")
+	out = reTGBoldUnder.ReplaceAllString(out, "<b>$1</b>")
+	out = reTGStrike.ReplaceAllString(out, "<s>$1</s>")
+
+	// 5. Restore placeholders
+	for i, lnk := range linkPH {
+		out = strings.ReplaceAll(out, fmt.Sprintf("\x02%d\x02", i), lnk)
+	}
+	for i, c := range codePH {
+		out = strings.ReplaceAll(out, fmt.Sprintf("\x01%d\x01", i), c)
+	}
+	return out
+}
+
+func tgHTMLEscape(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	return s
 }
 
 func (t *TelegramBot) sendTyping(key chatKey) {
@@ -3933,81 +4245,114 @@ func (t *TelegramBot) setChatlanguage(chatID int64, lang string) {
 	}
 }
 
-// handlePreviewCommand 處理 /preview 命令，進行網頁截圖和卡片展示
+// handlePreviewCommand 處理 /preview 命令，進行卡片式網頁預覽
 func (t *TelegramBot) handlePreviewCommand(key chatKey, urlStr string) {
 	// 發送"處理中"提示
 	t.send(key, fmt.Sprintf("🔄 正在預覽 %s，請稍候...", urlStr))
 
-	// 建立 context (30 秒超時)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// 建立 context (45 秒超時，等待截圖)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
-	// 優化：使用單一 rod browser 實例完成截圖和 metadata 提取
-	filePath, metadata, err := t.screenshotManager.CaptureScreenshotWithMetadata(ctx, urlStr)
+	// 截圖 + 提取 metadata（單一 browser 實例）
+	screenshotPath, metadata, err := t.screenshotManager.CaptureScreenshotWithMetadata(ctx, urlStr)
 	if err != nil {
-		t.send(key, fmt.Sprintf("❌ 截圖失敗：%v", err))
+		log.Printf("[telegram] preview CaptureScreenshotWithMetadata failed: %v", err)
+		// 降級：只送文字卡片
+		t.send(key, fmt.Sprintf("📄 *網頁預覽*\n────────────────\n🔗 [%s](%s)\n\n❌ 截圖失敗: %v", urlStr, urlStr, err))
 		return
 	}
+	defer os.Remove(screenshotPath)
 
-	// 構建卡片式消息
-	cardMsg := t.buildPreviewCard(urlStr, metadata)
+	// 構建 caption（截圖的說明文字）
+	caption := t.buildPreviewCaption(urlStr, metadata)
 
-	// 發送卡片消息
-	t.send(key, cardMsg)
-
-	// 發送截圖圖片
-	if err := t.sendPhoto(key, filePath, ""); err != nil {
-		t.send(key, fmt.Sprintf("⚠️ 上傳截圖失敗：%v", err))
+	// 截圖當圖片、card 資訊當 caption，一條訊息
+	if err := t.sendPhoto(key, screenshotPath, caption); err != nil {
+		log.Printf("[telegram] preview sendPhoto failed: %v", err)
+		// 降級：送文字卡片
+		t.send(key, caption)
 	}
-
-	// 清理舊截圖（非同步，保留最近 100 張）
-	go func() {
-		if err := t.screenshotManager.CleanupOldScreenshots(100); err != nil {
-			log.Printf("[telegram] cleanup old screenshots failed: %v", err)
-		}
-	}()
 }
 
-// buildPreviewCard 構建卡片式預覽消息
-func (t *TelegramBot) buildPreviewCard(urlStr string, metadata *WebMetadata) string {
+// downloadImageToTemp 下載圖片到臨時目錄
+func (t *TelegramBot) downloadImageToTemp(ctx context.Context, imageURL string) (string, error) {
+	// 建立臨時目錄
+	tempDir := "temp/preview_images"
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		return "", fmt.Errorf("建立臨時目錄失敗: %w", err)
+	}
+
+	// 創建 HTTP 請求
+	req, err := http.NewRequestWithContext(ctx, "GET", imageURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("建立請求失敗: %w", err)
+	}
+
+	// 設置 User-Agent
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Alice Bot)")
+
+	// 執行請求
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("下載失敗: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 檢查狀態碼
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	// 限制檔案大小 (5 MB)
+	limitedReader := io.LimitedReader{R: resp.Body, N: 5 * 1024 * 1024}
+	imgData, err := io.ReadAll(&limitedReader)
+	if err != nil {
+		return "", fmt.Errorf("讀取圖片失敗: %w", err)
+	}
+
+	if len(imgData) == 0 {
+		return "", fmt.Errorf("圖片為空")
+	}
+
+	// 生成檔名
+	filename := fmt.Sprintf("preview_%d.jpg", time.Now().UnixMilli())
+	filePath := filepath.Join(tempDir, filename)
+
+	// 保存圖片
+	if err := os.WriteFile(filePath, imgData, 0644); err != nil {
+		return "", fmt.Errorf("保存圖片失敗: %w", err)
+	}
+
+	return filePath, nil
+}
+
+// buildPreviewCaption 構建截圖 caption（Telegram caption 上限 1024 字）
+func (t *TelegramBot) buildPreviewCaption(urlStr string, metadata *WebMetadata) string {
 	var sb strings.Builder
 
-	sb.WriteString("📄 *網頁預覽*\n")
-	sb.WriteString("────────────────\n")
-
 	// 標題
-	if metadata.Title != "" {
-		// 截斷長標題（超過 50 字）
+	if metadata != nil && metadata.Title != "" {
 		title := metadata.Title
-		if len(title) > 50 {
-			title = title[:50] + "…"
+		if len([]rune(title)) > 50 {
+			runes := []rune(title)
+			title = string(runes[:50]) + "…"
 		}
 		sb.WriteString(fmt.Sprintf("*%s*\n", title))
-	} else {
-		sb.WriteString("*(無標題)*\n")
 	}
 
 	// 描述
-	if metadata.Description != "" {
-		// 截斷長描述（超過 200 字）
+	if metadata != nil && metadata.Description != "" {
 		desc := metadata.Description
-		if len(desc) > 200 {
-			desc = desc[:200] + "…"
+		if len([]rune(desc)) > 150 {
+			runes := []rune(desc)
+			desc = string(runes[:150]) + "…"
 		}
-		sb.WriteString(fmt.Sprintf("\n%s\n", desc))
+		sb.WriteString(fmt.Sprintf("%s\n", desc))
 	}
 
-	sb.WriteString("\n")
-
-	// og:image（如果有）
-	if metadata.ImageURL != "" {
-		sb.WriteString(fmt.Sprintf("🖼️ og:image: %s\n", metadata.ImageURL))
-	}
-
-	// URL
-	sb.WriteString("\n")
-	sb.WriteString(fmt.Sprintf("🔗 [網址](%s)\n", urlStr))
-	sb.WriteString("✅ 截圖在下方")
+	sb.WriteString(fmt.Sprintf("\n🔗 [開啟網址](%s)", urlStr))
 
 	return sb.String()
 }

@@ -80,10 +80,9 @@ func (sm *ScreenshotManager) captureWithRod(ctx context.Context, urlStr string) 
 	page := browser.MustPage(urlStr)
 	defer page.MustClose()
 
-	// 等待頁面加載（先等 load 事件，再等 JS/網路穩定）
+	// 等待頁面加載（先等 load 事件，再等 React/SPA 渲染完成）
 	page.MustWaitLoad()
-	page.MustWaitIdle() // 等待頁面完全靜止（無 JS 執行、無網路請求）
-	time.Sleep(500 * time.Millisecond) // 額外等待確保最終渲染完成
+	time.Sleep(2 * time.Second) // 等待 React/SPA 渲染完成
 
 	// 獲取頁面截圖 (PNG 格式)
 	buf := page.MustScreenshot()
@@ -194,8 +193,7 @@ func (sm *ScreenshotManager) captureAndExtractWithRod(ctx context.Context, urlSt
 
 	// 等待頁面加載（先等 load 事件，再等 JS/網路穩定）
 	page.MustWaitLoad()
-	page.MustWaitIdle() // 等待頁面完全靜止
-	time.Sleep(500 * time.Millisecond) // 額外等待確保最終渲染完成
+	time.Sleep(2 * time.Second) // 等待 React/SPA 渲染完成
 
 	// 獲取 HTML 並提取 metadata
 	html := page.MustHTML()
