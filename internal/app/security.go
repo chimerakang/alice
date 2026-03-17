@@ -56,6 +56,8 @@ type ModelRoutingConfig struct {
 	EnableDynamicRouting bool   `json:"enable_dynamic_routing"`
 	FastModel            string `json:"fast_model"`
 	DeepModel            string `json:"deep_model"`
+	PlanModel            string `json:"plan_model"`    // OpusPlan: 計劃階段使用的模型 (預設 Opus)
+	ExecuteModel         string `json:"execute_model"` // OpusPlan: 執行階段使用的模型 (預設 Sonnet)
 	UseGPT4oMini         bool   `json:"use_gpt4o_mini_for_triage"`
 }
 

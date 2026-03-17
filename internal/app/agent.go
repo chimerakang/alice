@@ -352,6 +352,9 @@ type Agent struct {
 	threadID              int                      // Telegram thread ID (for forum topics)
 	currentModelOverride  string                   // Current model override for this agent (for dynamic routing)
 	lastUsedModel         string                   // Last model used (for session continuity)
+	enablePlanMode        bool                     // OpusPlan: enable two-phase plan+execute
+	planModel             string                   // OpusPlan: model for planning phase (e.g. Opus)
+	executeModel          string                   // OpusPlan: model for execution phase (e.g. Sonnet)
 	// Abort control
 	cancelFunc context.CancelFunc // 取消正在執行的 CLI 子程序
 	cancelMu   sync.Mutex         // 保護 cancelFunc 的併發存取
@@ -390,6 +393,34 @@ func (a *Agent) IsProcessing() bool {
 // SetModelOverride 設定此 agent 的模型覆蓋（用於動態路由）
 func (a *Agent) SetModelOverride(model string) {
 	a.currentModelOverride = model
+}
+
+// SetPlanMode 啟用或停用 OpusPlan 兩階段模式
+func (a *Agent) SetPlanMode(enabled bool, planModel, executeModel string) {
+	a.enablePlanMode = enabled
+	a.planModel = planModel
+	a.executeModel = executeModel
+}
+
+// IsPlanMode 回報是否啟用 OpusPlan 模式
+func (a *Agent) IsPlanMode() bool {
+	return a.enablePlanMode
+}
+
+// opusPlanPrompt 產生計劃階段的 prompt 包裝
+func opusPlanPrompt(userMessage string) string {
+	return fmt.Sprintf(`You are in PLANNING MODE. Your task is to analyze the following request and produce a detailed execution plan. Do NOT execute any tools or make any changes. Only output a structured plan.
+
+Requirements for your plan:
+1. Break the task into numbered steps
+2. For each step, specify which files need to be modified and what changes are needed
+3. Identify potential risks or edge cases
+4. Estimate complexity (simple/medium/complex) for each step
+
+User request:
+%s
+
+Output your plan in a clear, structured format.`, userMessage)
 }
 
 // selectModel 根據使用者訊息和靜態規則選擇最合適的模型
@@ -586,6 +617,246 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil, routingReason, routingLatency, deltaCost)
 
 	// Save exchange to recentMessages for context bridge on future model switches
+	addToRecentMessages(ps, userMessage, resp.Result)
+
+	return resp.Result, nil
+}
+
+// RunWithPlan executes a two-phase OpusPlan workflow:
+// Phase 1: Call plan model (Opus) with --max-turns 1 to produce a plan
+// Phase 2: Call execute model (Sonnet) with the plan as context to execute
+func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (string, error) {
+	startTime := time.Now()
+
+	// 設定取消 context
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cancelMu.Lock()
+	a.cancelFunc = cancel
+	a.processing = true
+	a.cancelMu.Unlock()
+	defer func() {
+		a.cancelMu.Lock()
+		a.cancelFunc = nil
+		a.processing = false
+		a.cancelMu.Unlock()
+		cancel()
+	}()
+
+	ps := a.current()
+
+	// ========== Phase 1: Planning (Opus, --max-turns 1) ==========
+	if onUpdate != nil {
+		onUpdate("🧠 Phase 1: Planning with Opus...", false)
+	}
+
+	planPrompt := opusPlanPrompt(userMessage)
+
+	log.Printf("[agent] OpusPlan phase 1: calling plan model=%s, project=%s", a.planModel, a.projectDir)
+
+	planResp, planErr := a.client.CallPlan(ctx, planPrompt, a.projectDir, a.planModel, func(contentType, text string) {
+		// Stream thinking/text from plan phase
+		if onUpdate != nil && contentType == "text" && text != "" {
+			preview := text
+			if len(preview) > 100 {
+				preview = preview[:100] + "..."
+			}
+			onUpdate(fmt.Sprintf("🧠 Planning: %s", preview), true)
+		}
+	})
+
+	if planErr != nil {
+		log.Printf("[agent] OpusPlan phase 1 failed: %v", planErr)
+		// Fallback: run normally without plan
+		if onUpdate != nil {
+			onUpdate("⚠️ Plan phase failed, falling back to direct execution...", false)
+		}
+		return a.runDirect(ctx, userMessage, onUpdate, startTime)
+	}
+
+	planText := planResp.Result
+	if planText == "" {
+		planText = planResp.TextContent
+	}
+
+	log.Printf("[agent] OpusPlan phase 1 complete: plan_tokens_in=%d plan_tokens_out=%d plan_cost=$%.4f",
+		planResp.Usage.InputTokens, planResp.Usage.OutputTokens, planResp.TotalCostUSD)
+
+	// Track plan phase cost
+	planCost := planResp.TotalCostUSD
+	planInputTokens := int64(planResp.Usage.InputTokens)
+	planOutputTokens := int64(planResp.Usage.OutputTokens)
+
+	// ========== Phase 2: Execution (Sonnet, with plan context) ==========
+	if onUpdate != nil {
+		onUpdate("⚡ Phase 2: Executing with Sonnet...", false)
+	}
+
+	// Inject plan as context for execution phase
+	executeMessage := fmt.Sprintf(`[Execution Plan from Opus — follow this plan to complete the task]
+
+%s
+
+---
+
+Original user request: %s
+
+Execute the plan above. Follow the steps precisely.`, planText, userMessage)
+
+	// Force new session for execution phase (different model)
+	ps.sessionID = ""
+	a.lastUsedModel = a.executeModel
+
+	log.Printf("[agent] OpusPlan phase 2: calling execute model=%s, project=%s", a.executeModel, a.projectDir)
+
+	// Pre-generate decision ID
+	currentDecisionID := generateDecisionID(a.chatID, a.threadID, startTime)
+	var toolCallsForDecision []ToolExecution
+
+	execResp, execErr := a.client.CallStream(ctx, executeMessage, a.projectDir, ps.sessionID, a.executeModel, func(toolName string, toolInput map[string]interface{}) {
+		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
+		globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID, a.projectDir)
+
+		toolExecution := ToolExecution{
+			Timestamp:   time.Now(),
+			ToolName:    toolName,
+			Input:       toolInput,
+			Status:      "executed",
+			ChatID:      a.chatID,
+			ThreadID:    a.threadID,
+			ProjectPath: a.projectDir,
+		}
+		toolCallsForDecision = append(toolCallsForDecision, toolExecution)
+
+		if onUpdate != nil {
+			msg := formatToolUpdate(toolName, toolInput)
+			if msg != "" {
+				onUpdate(msg, true)
+			}
+		}
+	}, func(contentType, text string) {
+		// Don't send streaming previews
+	})
+
+	// Merge costs from both phases
+	var totalResp *CLIResponse
+	if execResp != nil {
+		totalResp = execResp
+		ps.sessionID = execResp.SessionID
+
+		// Calculate execution phase cost (this is a new session, so TotalCostUSD is session-only)
+		execCost := execResp.TotalCostUSD
+		ps.lastTotalCostUSD = execResp.TotalCostUSD
+
+		// Merge both phases into stats
+		ps.stats.APICallCount += 2 // plan + execute
+		ps.stats.TotalInputTokens += planInputTokens + int64(execResp.Usage.InputTokens)
+		ps.stats.TotalOutputTokens += planOutputTokens + int64(execResp.Usage.OutputTokens)
+		ps.stats.TotalCostUSD += planCost + execCost
+		ps.lastActivity = time.Now()
+
+		log.Printf("[agent] OpusPlan complete: plan_cost=$%.4f exec_cost=$%.4f total_cost=$%.4f exec_turns=%d",
+			planCost, execCost, planCost+execCost, execResp.NumTurns)
+
+		// Log decision with merged stats
+		a.logDecision(userMessage, execResp.Result, toolCallsForDecision, startTime, execResp, execErr, "opus_plan", 0, planCost+execCost)
+	} else if execErr != nil {
+		// Execution failed but we have plan cost to track
+		ps.stats.APICallCount++
+		ps.stats.TotalInputTokens += planInputTokens
+		ps.stats.TotalOutputTokens += planOutputTokens
+		ps.stats.TotalCostUSD += planCost
+		ps.lastActivity = time.Now()
+
+		a.logDecision(userMessage, "", toolCallsForDecision, startTime, nil, execErr, "opus_plan", 0, planCost)
+		return "", fmt.Errorf("OpusPlan execution phase failed: %w", execErr)
+	}
+
+	if execErr != nil {
+		partialText := ""
+		if totalResp != nil {
+			partialText = totalResp.TextContent
+		}
+		return partialText, fmt.Errorf("OpusPlan execution phase failed: %w", execErr)
+	}
+
+	// Save exchange to recentMessages
+	addToRecentMessages(ps, userMessage, execResp.Result)
+
+	return execResp.Result, nil
+}
+
+// runDirect is the standard single-phase execution (fallback when plan phase fails)
+func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func(string, bool), startTime time.Time) (string, error) {
+	if onUpdate != nil {
+		onUpdate("🔧 Claude Code processing...", false)
+	}
+
+	ps := a.current()
+
+	selectedModel := a.executeModel
+	if selectedModel == "" {
+		selectedModel = a.client.GetModel()
+	}
+	a.lastUsedModel = selectedModel
+
+	log.Printf("[agent] runDirect: session=%s, project=%s, model=%s", ps.sessionID, a.projectDir, selectedModel)
+
+	currentDecisionID := generateDecisionID(a.chatID, a.threadID, startTime)
+	var toolCallsForDecision []ToolExecution
+
+	resp, err := a.client.CallStream(ctx, userMessage, a.projectDir, ps.sessionID, selectedModel, func(toolName string, toolInput map[string]interface{}) {
+		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
+		globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID, a.projectDir)
+
+		toolExecution := ToolExecution{
+			Timestamp:   time.Now(),
+			ToolName:    toolName,
+			Input:       toolInput,
+			Status:      "executed",
+			ChatID:      a.chatID,
+			ThreadID:    a.threadID,
+			ProjectPath: a.projectDir,
+		}
+		toolCallsForDecision = append(toolCallsForDecision, toolExecution)
+
+		if onUpdate != nil {
+			msg := formatToolUpdate(toolName, toolInput)
+			if msg != "" {
+				onUpdate(msg, true)
+			}
+		}
+	}, func(contentType, text string) {})
+
+	if err != nil {
+		partialText := ""
+		deltaCost := 0.0
+		if resp != nil {
+			partialText = resp.TextContent
+			if resp.SessionID != "" {
+				ps.sessionID = resp.SessionID
+			}
+			deltaCost = resp.TotalCostUSD - ps.lastTotalCostUSD
+			ps.lastTotalCostUSD = resp.TotalCostUSD
+			ps.stats.APICallCount++
+			ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
+			ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
+			ps.stats.TotalCostUSD += deltaCost
+			ps.lastActivity = time.Now()
+		}
+		a.logDecision(userMessage, partialText, toolCallsForDecision, startTime, resp, err, "opus_plan_fallback", 0, deltaCost)
+		return partialText, fmt.Errorf("CLI call failed: %w", err)
+	}
+
+	ps.sessionID = resp.SessionID
+	deltaCost := resp.TotalCostUSD - ps.lastTotalCostUSD
+	ps.lastTotalCostUSD = resp.TotalCostUSD
+	ps.stats.APICallCount++
+	ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
+	ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
+	ps.stats.TotalCostUSD += deltaCost
+	ps.lastActivity = time.Now()
+
+	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil, "opus_plan_fallback", 0, deltaCost)
 	addToRecentMessages(ps, userMessage, resp.Result)
 
 	return resp.Result, nil

@@ -98,6 +98,8 @@ func LoadConfig() (*Config, error) {
 			EnableDynamicRouting: false, // Disabled by default
 			FastModel:            "claude-haiku-4-5-20251001",
 			DeepModel:            "claude-opus-4-6",
+			PlanModel:            "claude-opus-4-6",            // OpusPlan: Opus for planning
+			ExecuteModel:         "claude-sonnet-4-5-20250929", // OpusPlan: Sonnet for execution
 			UseGPT4oMini:         false,
 		},
 	}
@@ -404,11 +406,7 @@ func Main() {
 	}
 
 	// 環境自適應：選擇合適的客戶端
-	var client interface {
-		Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error)
-		CallStream(ctx context.Context, message, projectDir, sessionID, modelOverride string, onToolUse func(toolName string, toolInput map[string]interface{}), onContent func(contentType, text string)) (*CLIResponse, error)
-		GetModel() string
-	}
+	var client Client
 
 	if isClaudeCodeEnvironment() {
 		log.Printf("[client-routing] Detected Claude Code environment - using Anthropic API")

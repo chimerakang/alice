@@ -650,12 +650,21 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			}
 			switch complexity {
 			case "deep":
-				modelOverride = t.config.ModelRouting.DeepModel
-				log.Printf("[telegram] model routing: classified as deep (Opus)")
+				// Auto-activate OpusPlan for deep tasks when plan_model is configured
+				if t.config.ModelRouting.PlanModel != "" && t.config.ModelRouting.ExecuteModel != "" {
+					agent.SetPlanMode(true, t.config.ModelRouting.PlanModel, t.config.ModelRouting.ExecuteModel)
+					log.Printf("[telegram] model routing: classified as deep → auto OpusPlan (plan=%s, exec=%s)",
+						t.config.ModelRouting.PlanModel, t.config.ModelRouting.ExecuteModel)
+				} else {
+					modelOverride = t.config.ModelRouting.DeepModel
+					log.Printf("[telegram] model routing: classified as deep (Opus)")
+				}
 			case "balanced":
 				// Keep default model (Sonnet) - no override needed
+				agent.SetPlanMode(false, "", "") // Ensure plan mode is off
 				log.Printf("[telegram] model routing: classified as balanced (Sonnet)")
 			default: // "fast"
+				agent.SetPlanMode(false, "", "") // Ensure plan mode is off
 				modelOverride = t.config.ModelRouting.FastModel
 				log.Printf("[telegram] model routing: classified as fast (Haiku)")
 			}
@@ -730,6 +739,9 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			// Fall back to regular agent
 			response, err = agent.Run(userMessage, createUpdateCallback())
 		}
+	} else if agent.IsPlanMode() {
+		// OpusPlan two-phase execution
+		response, err = agent.RunWithPlan(userMessage, createUpdateCallback())
 	} else {
 		// Regular single agent execution
 		response, err = agent.Run(userMessage, createUpdateCallback())
@@ -1105,6 +1117,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			return
 		}
 		t.setUserModelPreference(key, "fast")
+		t.getAgent(key).SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_fast", map[string]string{"model": t.config.ModelRouting.FastModel})
 		t.send(key, msg)
 
@@ -1114,6 +1127,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			return
 		}
 		t.setUserModelPreference(key, "deep")
+		t.getAgent(key).SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_deep", map[string]string{"model": t.config.ModelRouting.DeepModel})
 		t.send(key, msg)
 
@@ -1123,7 +1137,22 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			return
 		}
 		t.setUserModelPreference(key, "")
+		t.getAgent(key).SetPlanMode(false, "", "") // Disable plan mode
 		t.send(key, t.getLocalizedMessage(key.chatID, "mode_switched_auto", nil))
+
+	case "/plan":
+		if !t.config.ModelRouting.EnableDynamicRouting {
+			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
+			return
+		}
+		t.setUserModelPreference(key, "plan")
+		agent := t.getAgent(key)
+		agent.SetPlanMode(true, t.config.ModelRouting.PlanModel, t.config.ModelRouting.ExecuteModel)
+		msg := t.getLocalizedMessage(key.chatID, "mode_switched_plan", map[string]string{
+			"plan_model":    t.config.ModelRouting.PlanModel,
+			"execute_model": t.config.ModelRouting.ExecuteModel,
+		})
+		t.send(key, msg)
 
 	case "/savings":
 		var projectPath string

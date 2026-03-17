@@ -18,6 +18,8 @@ import (
 type Client interface {
 	Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error)
 	CallStream(ctx context.Context, message, projectDir, sessionID, modelOverride string, onToolUse func(toolName string, toolInput map[string]interface{}), onContent func(contentType, text string)) (*CLIResponse, error)
+	// CallPlan invokes CLI with --max-turns 1 for planning phase (no tool execution).
+	CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error)
 	GetModel() string
 }
 
@@ -339,6 +341,157 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 	return finalResp, nil
 }
 
+// CallPlan invokes Claude Code CLI with --max-turns 1 for planning-only phase.
+// No session resume — always starts a fresh session for the plan.
+// No tool execution callbacks — planning phase should only think, not act.
+func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+	startTime := time.Now()
+
+	model := c.Model
+	if modelOverride != "" {
+		model = modelOverride
+	}
+
+	args := []string{
+		"-p",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--model", model,
+		"--dangerously-skip-permissions",
+		"--max-turns", "1",
+	}
+
+	args = append(args, message)
+
+	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd.Dir = projectDir
+	cmd.Env = cleanEnvForCLI()
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("claude CLI start: %w", err)
+	}
+
+	var finalResp *CLIResponse
+	var thinkingBlocks []string
+	var textBlocks []string
+
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+
+		var event struct {
+			Type    string `json:"type"`
+			Subtype string `json:"subtype"`
+			Message *struct {
+				Content []struct {
+					Type     string `json:"type"`
+					Text     string `json:"text"`
+					Thinking string `json:"thinking"`
+				} `json:"content"`
+			} `json:"message"`
+			SessionID    string  `json:"session_id"`
+			IsError      bool    `json:"is_error"`
+			NumTurns     int     `json:"num_turns"`
+			Result       string  `json:"result"`
+			TotalCostUSD float64 `json:"total_cost_usd"`
+			DurationMs   int     `json:"duration_ms"`
+			Usage        struct {
+				InputTokens  int `json:"input_tokens"`
+				OutputTokens int `json:"output_tokens"`
+			} `json:"usage"`
+		}
+
+		if err := json.Unmarshal(line, &event); err != nil {
+			continue
+		}
+
+		switch event.Type {
+		case "assistant":
+			if event.Message != nil {
+				for _, c := range event.Message.Content {
+					switch c.Type {
+					case "thinking":
+						if c.Thinking != "" {
+							thinkingBlocks = append(thinkingBlocks, c.Thinking)
+							if onContent != nil {
+								onContent("thinking", c.Thinking)
+							}
+						}
+					case "text":
+						if c.Text != "" {
+							textBlocks = append(textBlocks, c.Text)
+							if onContent != nil {
+								onContent("text", c.Text)
+							}
+						}
+					}
+				}
+			}
+		case "result":
+			finalResp = &CLIResponse{
+				Type:         event.Type,
+				Subtype:      event.Subtype,
+				SessionID:    event.SessionID,
+				IsError:      event.IsError,
+				NumTurns:     event.NumTurns,
+				Result:       event.Result,
+				TotalCostUSD: event.TotalCostUSD,
+				DurationMs:   event.DurationMs,
+			}
+			finalResp.Usage.InputTokens = event.Usage.InputTokens
+			finalResp.Usage.OutputTokens = event.Usage.OutputTokens
+		}
+	}
+
+	if finalResp != nil {
+		finalResp.ThinkingContent = strings.Join(thinkingBlocks, "\n\n---\n\n")
+		finalResp.TextContent = strings.Join(textBlocks, "\n\n")
+	}
+
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() == context.Canceled {
+			return nil, fmt.Errorf("agent aborted by user")
+		}
+		if _, ok := err.(*exec.ExitError); ok {
+			return nil, fmt.Errorf("claude CLI error: %s", stderrBuf.String())
+		}
+		return nil, fmt.Errorf("claude CLI exec: %w", err)
+	}
+
+	if finalResp == nil {
+		return nil, fmt.Errorf("no result event in stream output")
+	}
+
+	// Record performance metrics
+	latency := time.Since(startTime)
+	totalTokens := finalResp.Usage.InputTokens + finalResp.Usage.OutputTokens
+	errorType := ""
+	if finalResp.IsError {
+		errorType = "cli_plan_error"
+	}
+
+	RecordAPICall(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, 0, projectDir, errorType, ExtractModelShortName(model))
+
+	if finalResp.IsError {
+		return finalResp, fmt.Errorf("CLI returned error: %s", finalResp.Result)
+	}
+
+	return finalResp, nil
+}
+
 // Call 使用 Anthropic API 直接調用（APIClient 實現）
 func (a *APIClient) Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error) {
 	startTime := time.Now()
@@ -464,5 +617,18 @@ func (a *APIClient) CallStream(ctx context.Context, message, projectDir, session
 		onContent("text", resp.TextContent)
 	}
 
+	return resp, nil
+}
+
+// CallPlan 使用 Anthropic API 的計劃調用（APIClient 實現）
+// 直接調用 Call，不使用 session resume
+func (a *APIClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+	resp, err := a.Call(ctx, message, projectDir, "", modelOverride)
+	if err != nil {
+		return nil, err
+	}
+	if onContent != nil && resp.TextContent != "" {
+		onContent("text", resp.TextContent)
+	}
 	return resp, nil
 }

@@ -64,6 +64,7 @@
     "mode_switched_fast": "✅ 已切換至快速模式\n模型: `{model}`",
     "mode_switched_deep": "✅ 已切換至深度模式\n模型: `{model}`",
     "mode_switched_auto": "✅ 已切換至自動路由模式",
+    "mode_switched_plan": "✅ 已切換至 OpusPlan 模式\n計劃: `{plan_model}` → 執行: `{execute_model}`\n\n複雜任務將先用 Opus 制定計劃，再用 Sonnet 執行。",
     "routing_disabled": "⚠️ 動態模型路由功能未啟用",
     "task_aborted": "🛑 已中斷正在執行的任務",
     "task_finished": "⚠️ 任務已結束，無需中斷",

@@ -64,6 +64,7 @@
     "mode_switched_fast": "✅ Switched to fast mode\nModel: `{model}`",
     "mode_switched_deep": "✅ Switched to deep mode\nModel: `{model}`",
     "mode_switched_auto": "✅ Switched to auto routing mode",
+    "mode_switched_plan": "✅ Switched to OpusPlan mode\nPlan: `{plan_model}` → Execute: `{execute_model}`\n\nComplex tasks will be planned with Opus first, then executed with Sonnet.",
     "routing_disabled": "⚠️ Dynamic model routing is not enabled",
     "task_aborted": "🛑 Task execution stopped",
     "task_finished": "⚠️ Task has finished, no need to abort",
