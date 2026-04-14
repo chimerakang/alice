@@ -298,6 +298,26 @@
     "parallel_min_tasks": "❌ 至少需要 2 個任務才能並行執行。",
     "parallel_max_tasks": "❌ 最多支援 5 個並行任務。",
     "parallel_started": "🚀 開始並行執行 {count} 個任務...",
-    "parallel_progress": "🔄 [{task_id}] {status}"
+    "parallel_progress": "🔄 [{task_id}] {status}",
+
+    "cron_disabled": "❌ 排程系統未啟用",
+    "cron_usage": "⏰ 排程命令：\n/cron add <排程> <任務> — 新增排程\n/cron list — 列出所有排程\n/cron delete <id> — 刪除排程\n/cron pause <id> — 暫停排程\n/cron resume <id> — 恢復排程\n/cron run <id> — 立即執行\n\n範例：\n/cron add 每天早上九點 go test ./...\n/cron add 每週一早上 幫我生成 git 活動摘要",
+    "cron_add_usage": "❌ 請指定排程和任務\n範例：/cron add 每天早上九點 go test ./...",
+    "cron_add_no_payload": "❌ 請在排程後面指定要執行的任務",
+    "cron_add_parse_error": "❌ 無法解析排程。支援的格式：\n• 每天早上九點、每週一早上、每月1號\n• 每5分鐘、每小時、每6小時\n• 標準 cron: 0 9 * * *",
+    "cron_add_error": "❌ 新增排程失敗：{error}",
+    "cron_added": "✅ 排程已新增\n📋 {name}\n⏰ {schedule}\n📋 類型：{type}\n🆔 {id}",
+    "cron_list_empty": "📋 目前沒有任何排程任務。\n使用 /cron add 新增排程。",
+    "cron_list_header": "📋 排程任務列表（共 {count} 個）",
+    "cron_list_footer": "💡 /cron delete <id> 刪除 | /cron run <id> 立即執行",
+    "cron_deleted": "✅ 排程已刪除：{id}",
+    "cron_delete_error": "❌ 刪除失敗：{error}",
+    "cron_delete_usage": "❌ 請指定任務 ID：/cron delete <id>",
+    "cron_paused": "⏸ 排程已暫停：{id}",
+    "cron_pause_usage": "❌ 請指定任務 ID：/cron pause <id>",
+    "cron_resumed": "▶️ 排程已恢復：{id}",
+    "cron_resume_usage": "❌ 請指定任務 ID：/cron resume <id>",
+    "cron_run_triggered": "🚀 已觸發立即執行：{id}",
+    "cron_run_usage": "❌ 請指定任務 ID：/cron run <id>"
   }
 }

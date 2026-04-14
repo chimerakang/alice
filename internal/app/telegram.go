@@ -1209,6 +1209,9 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		targetURL := parts[1]
 		t.handlePreviewCommand(key, targetURL)
 
+	case "/cron":
+		t.handleCronCommand(key, parts, text)
+
 	case "/parallel":
 		if len(parts) < 2 {
 			t.send(key, t.getLocalizedMessage(key.chatID, "parallel_usage", nil))
@@ -4549,5 +4552,267 @@ func (t *TelegramBot) handleParallelCommand(key chatKey, taskText string) {
 		resultMsg := FormatParallelResults(execution)
 		t.sendMarkdown(key, resultMsg)
 	}()
+}
+
+// handleCronCommand handles all /cron subcommands
+func (t *TelegramBot) handleCronCommand(key chatKey, parts []string, fullText string) {
+	if globalCronScheduler == nil {
+		t.send(key, t.getLocalizedMessage(key.chatID, "cron_disabled", nil))
+		return
+	}
+
+	if len(parts) < 2 {
+		t.send(key, t.getLocalizedMessage(key.chatID, "cron_usage", nil))
+		return
+	}
+
+	subCmd := parts[1]
+	switch subCmd {
+	case "add":
+		t.handleCronAdd(key, fullText)
+	case "list":
+		t.handleCronList(key)
+	case "delete", "rm":
+		if len(parts) < 3 {
+			t.send(key, t.getLocalizedMessage(key.chatID, "cron_delete_usage", nil))
+			return
+		}
+		t.handleCronDelete(key, parts[2])
+	case "pause":
+		if len(parts) < 3 {
+			t.send(key, t.getLocalizedMessage(key.chatID, "cron_pause_usage", nil))
+			return
+		}
+		t.handleCronPause(key, parts[2])
+	case "resume":
+		if len(parts) < 3 {
+			t.send(key, t.getLocalizedMessage(key.chatID, "cron_resume_usage", nil))
+			return
+		}
+		t.handleCronResume(key, parts[2])
+	case "run":
+		if len(parts) < 3 {
+			t.send(key, t.getLocalizedMessage(key.chatID, "cron_run_usage", nil))
+			return
+		}
+		t.handleCronRun(key, parts[2])
+	default:
+		t.send(key, t.getLocalizedMessage(key.chatID, "cron_usage", nil))
+	}
+}
+
+// handleCronAdd adds a new scheduled task
+// Format: /cron add <schedule> <command or prompt>
+// Example: /cron add 每天早上九點 go test ./...
+// Example: /cron add 0 9 * * * go test ./...
+func (t *TelegramBot) handleCronAdd(key chatKey, fullText string) {
+	// Strip "/cron add " prefix
+	after := strings.TrimSpace(strings.TrimPrefix(fullText, "/cron add"))
+	if after == "" {
+		t.send(key, t.getLocalizedMessage(key.chatID, "cron_add_usage", nil))
+		return
+	}
+
+	// Try to parse natural language schedule from the beginning
+	var cronExpr, scheduleName, payload string
+	var taskType string
+
+	// Try natural language first
+	cronExpr, scheduleName = ParseNaturalLanguageCron(after)
+	if cronExpr != "" {
+		// Find where the schedule description ends and payload begins
+		// The payload is everything after the matched schedule keywords
+		payload = extractPayloadAfterSchedule(after)
+		if payload == "" {
+			t.send(key, t.getLocalizedMessage(key.chatID, "cron_add_no_payload", nil))
+			return
+		}
+	} else {
+		// Try raw cron expression: first 5 fields are cron, rest is payload
+		fields := strings.Fields(after)
+		if len(fields) >= 6 {
+			maybeCron := strings.Join(fields[:5], " ")
+			if _, err := ParseNaturalLanguageCron(maybeCron); err == "" {
+				// Direct cron expression check
+				cronExpr = maybeCron
+				scheduleName = "custom"
+				payload = strings.Join(fields[5:], " ")
+			}
+		}
+	}
+
+	if cronExpr == "" || payload == "" {
+		t.send(key, t.getLocalizedMessage(key.chatID, "cron_add_parse_error", nil))
+		return
+	}
+
+	// Determine task type
+	taskType = "prompt" // default to prompt
+	if isShellCommand(payload) {
+		taskType = "command"
+	}
+
+	taskID := fmt.Sprintf("cron_%d_%d", key.chatID, time.Now().UnixMilli())
+	task := ScheduledTask{
+		ID:        taskID,
+		ChatID:    key.chatID,
+		ThreadID:  key.threadID,
+		Name:      truncateCronResult(payload, 50),
+		CronExpr:  cronExpr,
+		TaskType:  taskType,
+		Payload:   payload,
+		Enabled:   true,
+		CreatedAt: time.Now(),
+	}
+
+	if err := globalCronScheduler.Add(task); err != nil {
+		msg := t.getLocalizedMessage(key.chatID, "cron_add_error", map[string]string{
+			"{error}": err.Error(),
+		})
+		t.send(key, msg)
+		return
+	}
+
+	msg := t.getLocalizedMessage(key.chatID, "cron_added", map[string]string{
+		"{name}":     task.Name,
+		"{schedule}": scheduleName + " (" + cronExpr + ")",
+		"{type}":     taskType,
+		"{id}":       taskID,
+	})
+	t.send(key, msg)
+}
+
+// handleCronList lists all scheduled tasks for the current chat
+func (t *TelegramBot) handleCronList(key chatKey) {
+	tasks := globalCronScheduler.List(key.chatID)
+	if len(tasks) == 0 {
+		t.send(key, t.getLocalizedMessage(key.chatID, "cron_list_empty", nil))
+		return
+	}
+
+	var sb strings.Builder
+	header := t.getLocalizedMessage(key.chatID, "cron_list_header", map[string]string{
+		"{count}": fmt.Sprintf("%d", len(tasks)),
+	})
+	sb.WriteString(header + "\n\n")
+
+	for i, task := range tasks {
+		icon := "✅"
+		if !task.Enabled {
+			icon = "⏸"
+		}
+
+		sb.WriteString(fmt.Sprintf("%s **%d. %s**\n", icon, i+1, task.Name))
+		sb.WriteString(fmt.Sprintf("   ID: `%s`\n", task.ID))
+		sb.WriteString(fmt.Sprintf("   ⏰ %s | 📋 %s\n", task.CronExpr, task.TaskType))
+		sb.WriteString(fmt.Sprintf("   🔄 %d runs | ❌ %d fails\n", task.RunCount, task.FailCount))
+
+		if task.LastStatus != "" {
+			statusIcon := "✅"
+			if task.LastStatus == "failed" {
+				statusIcon = "❌"
+			}
+			sb.WriteString(fmt.Sprintf("   %s Last: %s\n", statusIcon, task.LastRunAt.Format("01/02 15:04")))
+		}
+		sb.WriteString("\n")
+	}
+
+	sb.WriteString(t.getLocalizedMessage(key.chatID, "cron_list_footer", nil))
+	t.sendMarkdown(key, sb.String())
+}
+
+// handleCronDelete deletes a scheduled task
+func (t *TelegramBot) handleCronDelete(key chatKey, taskID string) {
+	if err := globalCronScheduler.Remove(taskID, key.chatID); err != nil {
+		msg := t.getLocalizedMessage(key.chatID, "cron_delete_error", map[string]string{
+			"{error}": err.Error(),
+		})
+		t.send(key, msg)
+		return
+	}
+	msg := t.getLocalizedMessage(key.chatID, "cron_deleted", map[string]string{"{id}": taskID})
+	t.send(key, msg)
+}
+
+// handleCronPause pauses a scheduled task
+func (t *TelegramBot) handleCronPause(key chatKey, taskID string) {
+	if err := globalCronScheduler.Pause(taskID, key.chatID); err != nil {
+		t.send(key, fmt.Sprintf("❌ %v", err))
+		return
+	}
+	msg := t.getLocalizedMessage(key.chatID, "cron_paused", map[string]string{"{id}": taskID})
+	t.send(key, msg)
+}
+
+// handleCronResume resumes a paused task
+func (t *TelegramBot) handleCronResume(key chatKey, taskID string) {
+	if err := globalCronScheduler.Resume(taskID, key.chatID); err != nil {
+		t.send(key, fmt.Sprintf("❌ %v", err))
+		return
+	}
+	msg := t.getLocalizedMessage(key.chatID, "cron_resumed", map[string]string{"{id}": taskID})
+	t.send(key, msg)
+}
+
+// handleCronRun manually triggers a task
+func (t *TelegramBot) handleCronRun(key chatKey, taskID string) {
+	if err := globalCronScheduler.RunNow(taskID, key.chatID); err != nil {
+		t.send(key, fmt.Sprintf("❌ %v", err))
+		return
+	}
+	msg := t.getLocalizedMessage(key.chatID, "cron_run_triggered", map[string]string{"{id}": taskID})
+	t.send(key, msg)
+}
+
+// extractPayloadAfterSchedule extracts the task payload after a natural language schedule
+func extractPayloadAfterSchedule(input string) string {
+	// Common schedule delimiters
+	lower := strings.ToLower(input)
+
+	// Find where schedule keywords end
+	scheduleEnders := []string{
+		"每天早上九點", "每天早上9點", "每天早上八點", "每天早上8點",
+		"每天早上十點", "每天早上10點", "每天中午", "每天下午三點", "每天下午3點",
+		"每天下班前", "每天下午六點", "每天下午6點", "每天凌晨", "每天凌晨兩點", "每天凌晨2點",
+		"每週一早上", "每周一早上", "每週五下午", "每周五下午", "每週日", "每周日",
+		"每月1號", "每月一號", "每月15號", "每月十五號",
+		"每5分鐘", "每五分鐘", "每10分鐘", "每十分鐘", "每30分鐘", "每半小時",
+		"每小時", "每一小時", "每6小時", "每六小時",
+		"every day 9am", "every day 8am", "daily 9am", "daily 8am",
+		"daily 9:00", "daily 8:00", "daily 10am", "daily 10:00",
+		"daily noon", "daily 12:00", "daily 3pm", "daily 15:00",
+		"daily 6pm", "daily 18:00", "daily 2am",
+		"every monday morning", "weekly monday",
+		"every friday afternoon", "every sunday",
+		"every month 1st", "monthly", "every month 15th",
+		"every 5 min", "every 10 min", "every 30 min",
+		"every hour", "every 6 hour",
+	}
+
+	for _, ender := range scheduleEnders {
+		idx := strings.Index(lower, ender)
+		if idx >= 0 {
+			afterSchedule := input[idx+len(ender):]
+			return strings.TrimSpace(afterSchedule)
+		}
+	}
+
+	return ""
+}
+
+// isShellCommand detects if the payload looks like a shell command
+func isShellCommand(payload string) bool {
+	cmdPrefixes := []string{
+		"go ", "git ", "npm ", "yarn ", "make ", "docker ",
+		"ls ", "cat ", "grep ", "find ", "curl ",
+		"python ", "node ", "cargo ", "rustc ",
+	}
+	lower := strings.ToLower(strings.TrimSpace(payload))
+	for _, prefix := range cmdPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
 }
 

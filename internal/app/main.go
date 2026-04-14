@@ -435,6 +435,16 @@ func Main() {
 		log.Fatalf("❌ Telegram error: %v", err)
 	}
 
+	// Initialize Cron Scheduler
+	if config.EnablePersistence && globalStorage != nil {
+		globalCronScheduler = NewCronScheduler(tgBot, client)
+		if err := globalCronScheduler.Start(); err != nil {
+			log.Printf("⚠️ Warning: failed to start cron scheduler: %v", err)
+		} else {
+			log.Printf("   Cron scheduler: enabled")
+		}
+	}
+
 	// Start web interface if enabled
 	var webInterface *WebInterface
 	if config.EnableWebInterface {
@@ -489,6 +499,12 @@ func Main() {
 	<-quit
 
 	log.Println("🛑 Shutting down...")
+
+	// Stop cron scheduler
+	if globalCronScheduler != nil {
+		globalCronScheduler.Stop()
+		log.Printf("✅ Cron scheduler stopped")
+	}
 
 	// Graceful shutdown
 	if webInterface != nil {

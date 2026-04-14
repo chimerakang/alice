@@ -60,6 +60,15 @@ type Storage interface {
 	SaveChatLanguage(chatID int64, langCode string) error
 	GetChatLanguage(chatID int64) (string, error)
 
+	// Scheduled Tasks
+	InsertScheduledTask(task ScheduledTask) error
+	DeleteScheduledTask(taskID string, chatID int64) error
+	GetScheduledTask(taskID string, chatID int64) (ScheduledTask, error)
+	GetScheduledTasksByChat(chatID int64) ([]ScheduledTask, error)
+	GetEnabledScheduledTasks() ([]ScheduledTask, error)
+	UpdateScheduledTaskEnabled(taskID string, chatID int64, enabled bool) error
+	UpdateScheduledTaskResult(taskID string, status string, result string, duration time.Duration) error
+
 	// Auto Skills
 	InsertAutoSkill(skill AutoSkill) error
 	UpdateAutoSkill(skill AutoSkill) error
@@ -323,6 +332,28 @@ func (s *SQLiteStorage) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_parallel_executions_created_at ON parallel_executions(created_at);
 	`
 
+	// Scheduled Tasks 表
+	scheduledTasksSQL := `
+	CREATE TABLE IF NOT EXISTS scheduled_tasks (
+		id TEXT PRIMARY KEY,
+		chat_id INTEGER NOT NULL,
+		thread_id INTEGER DEFAULT 0,
+		name TEXT NOT NULL,
+		cron_expr TEXT NOT NULL,
+		task_type TEXT NOT NULL DEFAULT 'command',
+		payload TEXT NOT NULL,
+		enabled INTEGER DEFAULT 1,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		last_run_at DATETIME,
+		last_result TEXT,
+		last_status TEXT,
+		run_count INTEGER DEFAULT 0,
+		fail_count INTEGER DEFAULT 0
+	);
+	CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_chat_id ON scheduled_tasks(chat_id);
+	CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_enabled ON scheduled_tasks(enabled);
+	`
+
 	// 執行所有 SQL 語句
 	tables := []string{
 		toolExecutionsSQL,
@@ -333,6 +364,7 @@ func (s *SQLiteStorage) initTables() error {
 		chatLanguageSQL,
 		autoSkillsSQL,
 		parallelExecutionsSQL,
+		scheduledTasksSQL,
 	}
 
 	for _, tableSQL := range tables {
@@ -1490,6 +1522,155 @@ func (s *SQLiteStorage) GetDatabaseStats() (map[string]interface{}, error) {
 	}
 
 	return stats, nil
+}
+
+// ==================== Scheduled Tasks ====================
+
+// InsertScheduledTask 插入排程任務
+func (s *SQLiteStorage) InsertScheduledTask(task ScheduledTask) error {
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(`
+			INSERT INTO scheduled_tasks (id, chat_id, thread_id, name, cron_expr, task_type,
+				payload, enabled, created_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			task.ID, task.ChatID, task.ThreadID, task.Name, task.CronExpr,
+			task.TaskType, task.Payload, task.Enabled, task.CreatedAt,
+		)
+		return err
+	})
+}
+
+// DeleteScheduledTask 刪除排程任務（需驗證 chatID 擁有權）
+func (s *SQLiteStorage) DeleteScheduledTask(taskID string, chatID int64) error {
+	return s.execWithRetry(func() error {
+		result, err := s.db.Exec(`DELETE FROM scheduled_tasks WHERE id=? AND chat_id=?`, taskID, chatID)
+		if err != nil {
+			return err
+		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			return fmt.Errorf("task not found or access denied")
+		}
+		return nil
+	})
+}
+
+// GetScheduledTask 取得單一排程任務
+func (s *SQLiteStorage) GetScheduledTask(taskID string, chatID int64) (ScheduledTask, error) {
+	row := s.db.QueryRow(`
+		SELECT id, chat_id, thread_id, name, cron_expr, task_type, payload, enabled,
+			created_at, COALESCE(last_run_at,''), COALESCE(last_result,''),
+			COALESCE(last_status,''), run_count, fail_count
+		FROM scheduled_tasks WHERE id=? AND chat_id=?`, taskID, chatID)
+	return scanScheduledTask(row)
+}
+
+// GetScheduledTasksByChat 取得特定聊天的所有排程任務
+func (s *SQLiteStorage) GetScheduledTasksByChat(chatID int64) ([]ScheduledTask, error) {
+	rows, err := s.db.Query(`
+		SELECT id, chat_id, thread_id, name, cron_expr, task_type, payload, enabled,
+			created_at, COALESCE(last_run_at,''), COALESCE(last_result,''),
+			COALESCE(last_status,''), run_count, fail_count
+		FROM scheduled_tasks WHERE chat_id=? ORDER BY created_at DESC`, chatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanScheduledTasks(rows)
+}
+
+// GetEnabledScheduledTasks 取得所有啟用的排程任務
+func (s *SQLiteStorage) GetEnabledScheduledTasks() ([]ScheduledTask, error) {
+	rows, err := s.db.Query(`
+		SELECT id, chat_id, thread_id, name, cron_expr, task_type, payload, enabled,
+			created_at, COALESCE(last_run_at,''), COALESCE(last_result,''),
+			COALESCE(last_status,''), run_count, fail_count
+		FROM scheduled_tasks WHERE enabled=1 ORDER BY created_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanScheduledTasks(rows)
+}
+
+// UpdateScheduledTaskEnabled 更新排程任務的啟用狀態
+func (s *SQLiteStorage) UpdateScheduledTaskEnabled(taskID string, chatID int64, enabled bool) error {
+	return s.execWithRetry(func() error {
+		enabledInt := 0
+		if enabled {
+			enabledInt = 1
+		}
+		_, err := s.db.Exec(`UPDATE scheduled_tasks SET enabled=? WHERE id=? AND chat_id=?`,
+			enabledInt, taskID, chatID)
+		return err
+	})
+}
+
+// UpdateScheduledTaskResult 更新排程任務的執行結果
+func (s *SQLiteStorage) UpdateScheduledTaskResult(taskID string, status string, result string, duration time.Duration) error {
+	return s.execWithRetry(func() error {
+		failIncr := 0
+		if status == "failed" {
+			failIncr = 1
+		}
+		_, err := s.db.Exec(`
+			UPDATE scheduled_tasks
+			SET last_run_at=?, last_status=?, last_result=?,
+				run_count=run_count+1, fail_count=fail_count+?
+			WHERE id=?`,
+			time.Now(), status, result, failIncr, taskID)
+		return err
+	})
+}
+
+// scanScheduledTask scans a single row into ScheduledTask
+func scanScheduledTask(row *sql.Row) (ScheduledTask, error) {
+	var task ScheduledTask
+	var createdAt, lastRunAt, lastResult, lastStatus string
+	var enabled int
+
+	err := row.Scan(&task.ID, &task.ChatID, &task.ThreadID, &task.Name, &task.CronExpr,
+		&task.TaskType, &task.Payload, &enabled, &createdAt, &lastRunAt,
+		&lastResult, &lastStatus, &task.RunCount, &task.FailCount)
+	if err != nil {
+		return task, err
+	}
+
+	task.Enabled = enabled == 1
+	task.LastResult = lastResult
+	task.LastStatus = lastStatus
+	task.CreatedAt, _ = time.Parse("2006-01-02 15:04:05 -0700 MST", createdAt)
+	if lastRunAt != "" {
+		task.LastRunAt, _ = time.Parse("2006-01-02 15:04:05 -0700 MST", lastRunAt)
+	}
+	return task, nil
+}
+
+// scanScheduledTasks scans multiple rows into ScheduledTask slice
+func scanScheduledTasks(rows *sql.Rows) ([]ScheduledTask, error) {
+	var tasks []ScheduledTask
+	for rows.Next() {
+		var task ScheduledTask
+		var createdAt, lastRunAt, lastResult, lastStatus string
+		var enabled int
+
+		err := rows.Scan(&task.ID, &task.ChatID, &task.ThreadID, &task.Name, &task.CronExpr,
+			&task.TaskType, &task.Payload, &enabled, &createdAt, &lastRunAt,
+			&lastResult, &lastStatus, &task.RunCount, &task.FailCount)
+		if err != nil {
+			return nil, err
+		}
+
+		task.Enabled = enabled == 1
+		task.LastResult = lastResult
+		task.LastStatus = lastStatus
+		task.CreatedAt, _ = time.Parse("2006-01-02 15:04:05 -0700 MST", createdAt)
+		if lastRunAt != "" {
+			task.LastRunAt, _ = time.Parse("2006-01-02 15:04:05 -0700 MST", lastRunAt)
+		}
+		tasks = append(tasks, task)
+	}
+	return tasks, rows.Err()
 }
 
 // ==================== Parallel Executions ====================
