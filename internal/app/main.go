@@ -54,6 +54,40 @@ type Config struct {
 
 	// Model Routing Settings
 	ModelRouting ModelRoutingConfig `json:"model_routing"`
+
+	// Backend Execution Settings
+	Backends BackendConfig `json:"backends"`
+}
+
+// BackendConfig configures execution backends
+type BackendConfig struct {
+	Default string             `json:"default"` // default backend name
+	Docker  DockerBackendConfig `json:"docker"`
+	SSH     SSHBackendConfig    `json:"ssh"`
+}
+
+// DockerBackendConfig configures the Docker execution backend
+type DockerBackendConfig struct {
+	Enabled        bool   `json:"enabled"`
+	Image          string `json:"image"`
+	AutoCleanup    bool   `json:"auto_cleanup"`
+	Network        string `json:"network"`
+	MemoryLimit    string `json:"memory_limit"`
+	CPULimit       string `json:"cpu_limit"`
+}
+
+// SSHBackendConfig configures SSH execution backends
+type SSHBackendConfig struct {
+	Enabled bool                       `json:"enabled"`
+	Hosts   map[string]SSHHostConfig   `json:"hosts"`
+}
+
+// SSHHostConfig configures a single SSH host
+type SSHHostConfig struct {
+	Host    string `json:"host"`
+	User    string `json:"user"`
+	KeyPath string `json:"key_path"`
+	WorkDir string `json:"work_dir"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -93,6 +127,21 @@ func LoadConfig() (*Config, error) {
 			EnableHTMLScreenshots: true,
 			CacheDir:              "./temp/renders",
 			ChromeExecutable:      "", // Use system Chrome/Chromium by default
+		},
+		Backends: BackendConfig{
+			Default: "local",
+			Docker: DockerBackendConfig{
+				Enabled:     false,
+				Image:       "golang:1.22-alpine",
+				AutoCleanup: true,
+				Network:     "none",
+				MemoryLimit: "512m",
+				CPULimit:    "2",
+			},
+			SSH: SSHBackendConfig{
+				Enabled: false,
+				Hosts:   make(map[string]SSHHostConfig),
+			},
 		},
 		ModelRouting: ModelRoutingConfig{
 			EnableDynamicRouting: false, // Disabled by default
@@ -434,6 +483,31 @@ func Main() {
 	if err != nil {
 		log.Fatalf("❌ Telegram error: %v", err)
 	}
+
+	// Initialize Backend Manager
+	InitBackendManager(config.DefaultProjectDir)
+	if config.Backends.Docker.Enabled {
+		docker := NewDockerBackend(
+			config.Backends.Docker.Image,
+			config.DefaultProjectDir,
+			config.Backends.Docker.Network,
+			config.Backends.Docker.MemoryLimit,
+			config.Backends.Docker.CPULimit,
+		)
+		globalBackendManager.Register("docker", docker)
+	}
+	if config.Backends.SSH.Enabled {
+		for name, hostCfg := range config.Backends.SSH.Hosts {
+			ssh := NewSSHBackend(hostCfg.Host, hostCfg.User, hostCfg.KeyPath, hostCfg.WorkDir)
+			globalBackendManager.Register("ssh-"+name, ssh)
+		}
+	}
+	if config.Backends.Default != "" && config.Backends.Default != "local" {
+		if err := globalBackendManager.SetDefault(config.Backends.Default); err != nil {
+			log.Printf("⚠️ Warning: failed to set default backend to %s: %v", config.Backends.Default, err)
+		}
+	}
+	log.Printf("   Execution backends: %d registered (default=%s)", len(globalBackendManager.ListAll()), globalBackendManager.DefaultName())
 
 	// Initialize Cron Scheduler
 	if config.EnablePersistence && globalStorage != nil {

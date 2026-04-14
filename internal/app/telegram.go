@@ -1212,6 +1212,9 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 	case "/cron":
 		t.handleCronCommand(key, parts, text)
 
+	case "/backend":
+		t.handleBackendCommand(key, parts)
+
 	case "/parallel":
 		if len(parts) < 2 {
 			t.send(key, t.getLocalizedMessage(key.chatID, "parallel_usage", nil))
@@ -4814,5 +4817,90 @@ func isShellCommand(payload string) bool {
 		}
 	}
 	return false
+}
+
+// handleBackendCommand handles /backend subcommands
+func (t *TelegramBot) handleBackendCommand(key chatKey, parts []string) {
+	if globalBackendManager == nil {
+		t.send(key, t.getLocalizedMessage(key.chatID, "backend_disabled", nil))
+		return
+	}
+
+	if len(parts) < 2 {
+		// Default: show status
+		t.handleBackendList(key)
+		return
+	}
+
+	switch parts[1] {
+	case "list", "ls":
+		t.handleBackendList(key)
+	case "switch", "set":
+		if len(parts) < 3 {
+			t.send(key, t.getLocalizedMessage(key.chatID, "backend_switch_usage", nil))
+			return
+		}
+		t.handleBackendSwitch(key, parts[2])
+	case "health", "ping":
+		t.handleBackendHealth(key)
+	default:
+		t.send(key, t.getLocalizedMessage(key.chatID, "backend_usage", nil))
+	}
+}
+
+// handleBackendList shows all registered backends
+func (t *TelegramBot) handleBackendList(key chatKey) {
+	backends := globalBackendManager.ListAll()
+	defaultName := globalBackendManager.DefaultName()
+
+	msg := t.getLocalizedMessage(key.chatID, "backend_list_header", map[string]string{
+		"{count}": fmt.Sprintf("%d", len(backends)),
+	})
+	msg += "\n\n"
+
+	for _, b := range backends {
+		status := "✅"
+		if !b.Available {
+			status = "❌"
+		}
+		isDefault := ""
+		if b.Name == defaultName {
+			isDefault = " ⭐"
+		}
+		msg += fmt.Sprintf("%s %s [%s]%s\n   %s\n", status, b.Name, b.Type, isDefault, b.Details)
+	}
+
+	msg += "\n" + t.getLocalizedMessage(key.chatID, "backend_list_footer", nil)
+	t.send(key, msg)
+}
+
+// handleBackendSwitch changes the default backend
+func (t *TelegramBot) handleBackendSwitch(key chatKey, name string) {
+	if err := globalBackendManager.SetDefault(name); err != nil {
+		t.send(key, t.getLocalizedMessage(key.chatID, "backend_switch_error", map[string]string{"{error}": err.Error()}))
+		return
+	}
+	t.send(key, t.getLocalizedMessage(key.chatID, "backend_switched", map[string]string{"{name}": name}))
+}
+
+// handleBackendHealth runs health checks on all backends
+func (t *TelegramBot) handleBackendHealth(key chatKey) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	results := globalBackendManager.HealthCheckAll(ctx)
+
+	msg := t.getLocalizedMessage(key.chatID, "backend_health_header", nil)
+	msg += "\n\n"
+
+	for name, err := range results {
+		if err == nil {
+			msg += fmt.Sprintf("✅ %s — OK\n", name)
+		} else {
+			msg += fmt.Sprintf("❌ %s — %s\n", name, err.Error())
+		}
+	}
+
+	t.send(key, msg)
 }
 

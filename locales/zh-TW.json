@@ -318,6 +318,15 @@
     "cron_resumed": "▶️ 排程已恢復：{id}",
     "cron_resume_usage": "❌ 請指定任務 ID：/cron resume <id>",
     "cron_run_triggered": "🚀 已觸發立即執行：{id}",
-    "cron_run_usage": "❌ 請指定任務 ID：/cron run <id>"
+    "cron_run_usage": "❌ 請指定任務 ID：/cron run <id>",
+
+    "backend_disabled": "❌ 後端管理系統未啟用",
+    "backend_usage": "🖥 後端命令：\n/backend — 列出所有後端\n/backend list — 列出所有後端\n/backend switch <name> — 切換預設後端\n/backend health — 檢查所有後端健康狀態",
+    "backend_list_header": "🖥 執行後端（共 {count} 個）",
+    "backend_list_footer": "💡 /backend switch <name> 切換 | /backend health 健康檢查",
+    "backend_switched": "✅ 已切換預設後端為：{name}",
+    "backend_switch_error": "❌ 切換失敗：{error}",
+    "backend_switch_usage": "❌ 請指定後端名稱：/backend switch <name>",
+    "backend_health_header": "🏥 後端健康檢查"
   }
 }
