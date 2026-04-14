@@ -291,6 +291,13 @@
     "skill_list_footer": "💡 Delete a skill: /skill delete <id>",
     "skill_usage": "📚 Auto-Skill commands:\n/skills — List all skills\n/skill delete <id> — Delete a skill",
     "skill_deleted": "✅ Skill deleted: {id}",
-    "skill_delete_error": "❌ Delete failed: {error}"
+    "skill_delete_error": "❌ Delete failed: {error}",
+
+    "parallel_disabled": "❌ Parallel execution system is not enabled",
+    "parallel_usage": "🚀 Parallel execution:\n/parallel\n1. Task one\n2. Task two\n3. Task three\n\nOne task per line, minimum 2, maximum 5.",
+    "parallel_min_tasks": "❌ At least 2 tasks are required for parallel execution.",
+    "parallel_max_tasks": "❌ Maximum 5 parallel tasks supported.",
+    "parallel_started": "🚀 Starting {count} tasks in parallel...",
+    "parallel_progress": "🔄 [{task_id}] {status}"
   }
 }

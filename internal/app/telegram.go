@@ -1209,6 +1209,14 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		targetURL := parts[1]
 		t.handlePreviewCommand(key, targetURL)
 
+	case "/parallel":
+		if len(parts) < 2 {
+			t.send(key, t.getLocalizedMessage(key.chatID, "parallel_usage", nil))
+			return
+		}
+		taskText := strings.TrimSpace(text[len("/parallel"):])
+		t.handleParallelCommand(key, taskText)
+
 	case "/skills":
 		t.handleSkillsCommand(key)
 
@@ -4492,5 +4500,54 @@ func (t *TelegramBot) handleSkillDeleteCommand(key chatKey, skillID string) {
 		"{id}": skillID,
 	})
 	t.send(key, msg)
+}
+
+// handleParallelCommand handles /parallel command for concurrent task execution
+func (t *TelegramBot) handleParallelCommand(key chatKey, taskText string) {
+	if globalOrchestrator == nil {
+		t.send(key, t.getLocalizedMessage(key.chatID, "parallel_disabled", nil))
+		return
+	}
+
+	tasks := ParseParallelTasks(taskText)
+	if len(tasks) < 2 {
+		t.send(key, t.getLocalizedMessage(key.chatID, "parallel_min_tasks", nil))
+		return
+	}
+
+	if len(tasks) > 5 {
+		t.send(key, t.getLocalizedMessage(key.chatID, "parallel_max_tasks", nil))
+		return
+	}
+
+	// Send initial status
+	startMsg := t.getLocalizedMessage(key.chatID, "parallel_started", map[string]string{
+		"{count}": fmt.Sprintf("%d", len(tasks)),
+	})
+	t.send(key, startMsg)
+
+	// Execute in background
+	go func() {
+		execution := globalOrchestrator.ExecuteParallel(
+			tasks,
+			t.client,
+			t.getAgent(key).ProjectDir(),
+			key.chatID,
+			key.threadID,
+			func(taskID, status, result string) {
+				// Send progress update
+				progressMsg := t.getLocalizedMessage(key.chatID, "parallel_progress", map[string]string{
+					"{task_id}": taskID,
+					"{status}":  status,
+				})
+				t.send(key, progressMsg)
+			},
+			0, // use default timeout
+		)
+
+		// Send final results
+		resultMsg := FormatParallelResults(execution)
+		t.sendMarkdown(key, resultMsg)
+	}()
 }
 

@@ -291,6 +291,13 @@
     "skill_list_footer": "💡 刪除技能：/skill delete <id>",
     "skill_usage": "📚 Auto-Skill 命令：\n/skills — 列出所有技能\n/skill delete <id> — 刪除指定技能",
     "skill_deleted": "✅ 技能已刪除：{id}",
-    "skill_delete_error": "❌ 刪除失敗：{error}"
+    "skill_delete_error": "❌ 刪除失敗：{error}",
+
+    "parallel_disabled": "❌ 並行執行系統未啟用",
+    "parallel_usage": "🚀 並行執行命令：\n/parallel\n1. 任務一\n2. 任務二\n3. 任務三\n\n每行一個任務，至少 2 個，最多 5 個。",
+    "parallel_min_tasks": "❌ 至少需要 2 個任務才能並行執行。",
+    "parallel_max_tasks": "❌ 最多支援 5 個並行任務。",
+    "parallel_started": "🚀 開始並行執行 {count} 個任務...",
+    "parallel_progress": "🔄 [{task_id}] {status}"
   }
 }

@@ -290,7 +290,8 @@ func (ac *AgentCoordinator) ShouldUseMultiAgent(task string) bool {
 	return containsAny(taskLower, multiAgentKeywords)
 }
 
-// ExecuteCoordinatedTask breaks down a complex task and assigns it to multiple agents
+// ExecuteCoordinatedTask breaks down a complex task and assigns it to multiple agents.
+// Uses parallel execution when the orchestrator is available and multiple subtasks exist.
 func (ac *AgentCoordinator) ExecuteCoordinatedTask(task string, baseAgent *Agent, onUpdate func(string, bool)) (string, error) {
 	if !ac.enabled {
 		// Fall back to single agent
@@ -301,11 +302,55 @@ func (ac *AgentCoordinator) ExecuteCoordinatedTask(task string, baseAgent *Agent
 	coordinatedTask := ac.createCoordinatedTask(task)
 	ac.activeTask = coordinatedTask
 
+	// Collect all subtasks
+	var allSubTasks []SubTask
+	for _, subTasks := range coordinatedTask.Assignments {
+		allSubTasks = append(allSubTasks, subTasks...)
+	}
+
+	// If orchestrator is available and multiple subtasks, use parallel execution
+	if globalOrchestrator != nil && len(allSubTasks) > 1 {
+		if onUpdate != nil {
+			onUpdate(fmt.Sprintf("🚀 並行執行 %d 個子任務...", len(allSubTasks)), false)
+		}
+
+		// Convert SubTasks to SubAgentTasks
+		tasks := make([]SubAgentTask, len(allSubTasks))
+		for i, st := range allSubTasks {
+			tasks[i] = SubAgentTask{
+				ID:          st.ID,
+				Description: st.Description,
+				DependsOn:   st.Dependencies,
+			}
+		}
+
+		execution := globalOrchestrator.ExecuteParallel(
+			tasks,
+			baseAgent.client,
+			baseAgent.projectDir,
+			baseAgent.chatID,
+			baseAgent.threadID,
+			func(taskID, status, result string) {
+				if onUpdate != nil {
+					onUpdate(fmt.Sprintf("🤖 [%s] %s", taskID, status), true)
+				}
+			},
+			defaultParallelTimeout,
+		)
+
+		// Mark coordinated task done
+		now := time.Now()
+		coordinatedTask.Status = TaskStatusCompleted
+		coordinatedTask.CompletedAt = &now
+
+		return FormatParallelResults(execution), nil
+	}
+
+	// Fallback: sequential execution
 	if onUpdate != nil {
 		onUpdate(fmt.Sprintf("🤖 協調執行任務: %s", task), false)
 	}
 
-	// Execute subtasks in order
 	var results []string
 	for agentType, subTasks := range coordinatedTask.Assignments {
 		specialized := ac.GetOrCreateAgent(agentType, baseAgent)
@@ -327,12 +372,10 @@ func (ac *AgentCoordinator) ExecuteCoordinatedTask(task string, baseAgent *Agent
 		}
 	}
 
-	// Mark task as completed
 	now := time.Now()
 	coordinatedTask.Status = TaskStatusCompleted
 	coordinatedTask.CompletedAt = &now
 
-	// Combine results
 	finalResult := strings.Join(results, "\n\n")
 	return finalResult, nil
 }
@@ -497,4 +540,323 @@ func containsAny(s string, substrings []string) bool {
 		}
 	}
 	return false
+}
+
+// ==================== SubAgent Orchestrator (Parallel Execution) ====================
+
+const (
+	defaultMaxConcurrent = 3
+	defaultParallelTimeout = 10 * time.Minute
+)
+
+// SubAgentOrchestrator manages parallel execution of multiple agent tasks
+type SubAgentOrchestrator struct {
+	maxConcurrent int
+	semaphore     chan struct{}
+	mu            sync.Mutex
+}
+
+// SubAgentTask represents a single task for parallel execution
+type SubAgentTask struct {
+	ID          string   `json:"id"`
+	Description string   `json:"description"`
+	DependsOn   []string `json:"depends_on"` // task IDs this depends on
+}
+
+// SubAgentResult holds the result of a single parallel task
+type SubAgentResult struct {
+	TaskID      string        `json:"task_id"`
+	Description string        `json:"description"`
+	Success     bool          `json:"success"`
+	Result      string        `json:"result"`
+	Error       string        `json:"error,omitempty"`
+	Duration    time.Duration `json:"duration_ms"`
+}
+
+// ParallelExecution represents a complete parallel execution session
+type ParallelExecution struct {
+	ID          string            `json:"id"`
+	ChatID      int64             `json:"chat_id"`
+	ThreadID    int               `json:"thread_id"`
+	Tasks       []SubAgentTask    `json:"tasks"`
+	Results     []SubAgentResult  `json:"results"`
+	Status      TaskStatus        `json:"status"`
+	TotalTime   time.Duration     `json:"total_time_ms"`
+	CreatedAt   time.Time         `json:"created_at"`
+	CompletedAt *time.Time        `json:"completed_at,omitempty"`
+}
+
+// Global orchestrator instance
+var globalOrchestrator *SubAgentOrchestrator
+
+// InitOrchestrator initializes the global SubAgentOrchestrator
+func InitOrchestrator(maxConcurrent int) {
+	if maxConcurrent <= 0 {
+		maxConcurrent = defaultMaxConcurrent
+	}
+	globalOrchestrator = &SubAgentOrchestrator{
+		maxConcurrent: maxConcurrent,
+		semaphore:     make(chan struct{}, maxConcurrent),
+	}
+	log.Printf("[orchestrator] initialized with max_concurrent=%d", maxConcurrent)
+}
+
+// ExecuteParallel runs multiple tasks in parallel using separate Agent instances
+func (o *SubAgentOrchestrator) ExecuteParallel(
+	tasks []SubAgentTask,
+	client Client,
+	projectDir string,
+	chatID int64,
+	threadID int,
+	onProgress func(taskID string, status string, result string),
+	timeout time.Duration,
+) *ParallelExecution {
+	if timeout <= 0 {
+		timeout = defaultParallelTimeout
+	}
+
+	execID := fmt.Sprintf("parallel_%d_%d", chatID, time.Now().UnixMilli())
+	execution := &ParallelExecution{
+		ID:        execID,
+		ChatID:    chatID,
+		ThreadID:  threadID,
+		Tasks:     tasks,
+		Results:   make([]SubAgentResult, len(tasks)),
+		Status:    TaskStatusInProgress,
+		CreatedAt: time.Now(),
+	}
+
+	startTime := time.Now()
+
+	// Build dependency graph
+	taskIndex := make(map[string]int) // task ID → index
+	for i, task := range tasks {
+		taskIndex[task.ID] = i
+	}
+
+	// Identify independent tasks (no dependencies)
+	// and dependent tasks (need to wait)
+	var independent []int
+	dependents := make(map[int][]string) // index → list of dependency task IDs
+
+	for i, task := range tasks {
+		if len(task.DependsOn) == 0 {
+			independent = append(independent, i)
+		} else {
+			dependents[i] = task.DependsOn
+		}
+	}
+
+	// Execute independent tasks in parallel
+	var wg sync.WaitGroup
+	completed := make(map[string]bool)
+	var completedMu sync.Mutex
+
+	// Channel to signal task completion
+	done := make(chan int, len(tasks))
+
+	// Execute a single task
+	executeTask := func(idx int) {
+		defer wg.Done()
+
+		task := tasks[idx]
+
+		// Acquire semaphore
+		o.semaphore <- struct{}{}
+		defer func() { <-o.semaphore }()
+
+		if onProgress != nil {
+			onProgress(task.ID, "started", "")
+		}
+
+		taskStart := time.Now()
+
+		// Create independent agent for this task
+		agent := NewAgent(client, projectDir, chatID, threadID)
+		result, err := agent.Run(task.Description, nil)
+
+		subResult := SubAgentResult{
+			TaskID:      task.ID,
+			Description: task.Description,
+			Success:     err == nil,
+			Result:      result,
+			Duration:    time.Since(taskStart),
+		}
+		if err != nil {
+			subResult.Error = err.Error()
+		}
+
+		execution.Results[idx] = subResult
+
+		completedMu.Lock()
+		completed[task.ID] = true
+		completedMu.Unlock()
+
+		status := "completed"
+		if err != nil {
+			status = "failed"
+		}
+		if onProgress != nil {
+			onProgress(task.ID, status, truncateResult(result, 200))
+		}
+
+		done <- idx
+
+		log.Printf("[orchestrator] task %s %s (%.1fs)", task.ID, status, subResult.Duration.Seconds())
+	}
+
+	// Start independent tasks
+	for _, idx := range independent {
+		wg.Add(1)
+		go executeTask(idx)
+	}
+
+	// Monitor and start dependent tasks when ready
+	if len(dependents) > 0 {
+		go func() {
+			pending := make(map[int]bool)
+			for idx := range dependents {
+				pending[idx] = true
+			}
+
+			for range done {
+				// Check if any pending task's dependencies are all met
+				for idx := range pending {
+					deps := dependents[idx]
+					allMet := true
+					completedMu.Lock()
+					for _, dep := range deps {
+						if !completed[dep] {
+							allMet = false
+							break
+						}
+					}
+					completedMu.Unlock()
+
+					if allMet {
+						delete(pending, idx)
+						wg.Add(1)
+						go executeTask(idx)
+					}
+				}
+			}
+		}()
+	}
+
+	// Wait with timeout
+	waitDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(waitDone)
+		close(done)
+	}()
+
+	select {
+	case <-waitDone:
+		execution.Status = TaskStatusCompleted
+	case <-time.After(timeout):
+		execution.Status = TaskStatusFailed
+		log.Printf("[orchestrator] parallel execution %s timed out after %v", execID, timeout)
+	}
+
+	now := time.Now()
+	execution.CompletedAt = &now
+	execution.TotalTime = time.Since(startTime)
+
+	// Persist to database
+	if globalStorage != nil {
+		go persistParallelExecution(execution)
+	}
+
+	log.Printf("[orchestrator] execution %s finished: %d tasks, %s, %.1fs total",
+		execID, len(tasks), execution.Status, execution.TotalTime.Seconds())
+
+	return execution
+}
+
+// FormatParallelResults formats execution results for display
+func FormatParallelResults(exec *ParallelExecution) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("📊 **並行執行結果** (%s)\n", exec.Status))
+	sb.WriteString(fmt.Sprintf("⏱ 總耗時: %.1f 秒\n\n", exec.TotalTime.Seconds()))
+
+	for i, result := range exec.Results {
+		icon := "✅"
+		if !result.Success {
+			icon = "❌"
+		}
+		sb.WriteString(fmt.Sprintf("%s **任務 %d**: %s\n", icon, i+1, result.Description))
+		sb.WriteString(fmt.Sprintf("   ⏱ %.1fs\n", result.Duration.Seconds()))
+
+		if result.Success {
+			// Show truncated result
+			text := truncateResult(result.Result, 300)
+			if text != "" {
+				sb.WriteString(fmt.Sprintf("   %s\n", text))
+			}
+		} else {
+			sb.WriteString(fmt.Sprintf("   ❌ %s\n", result.Error))
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
+}
+
+// ParseParallelTasks parses user input into parallel tasks
+// Format: numbered list "1. task one\n2. task two\n3. task three"
+func ParseParallelTasks(input string) []SubAgentTask {
+	var tasks []SubAgentTask
+	lines := strings.Split(input, "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		// Strip number prefix like "1. ", "2. ", "- ", etc.
+		desc := line
+		for i, c := range line {
+			if c == '.' || c == ')' {
+				if i > 0 && i < 4 {
+					desc = strings.TrimSpace(line[i+1:])
+					break
+				}
+			}
+			if c == '-' && i == 0 {
+				desc = strings.TrimSpace(line[1:])
+				break
+			}
+		}
+
+		if desc == "" {
+			continue
+		}
+
+		taskID := fmt.Sprintf("task_%d", len(tasks)+1)
+		tasks = append(tasks, SubAgentTask{
+			ID:          taskID,
+			Description: desc,
+		})
+	}
+
+	return tasks
+}
+
+func truncateResult(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+func persistParallelExecution(exec *ParallelExecution) {
+	sqliteStorage, ok := globalStorage.(*SQLiteStorage)
+	if !ok {
+		return
+	}
+	if err := sqliteStorage.InsertParallelExecution(exec); err != nil {
+		log.Printf("[orchestrator] failed to persist execution: %v", err)
+	}
 }

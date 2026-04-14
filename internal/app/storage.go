@@ -306,6 +306,23 @@ func (s *SQLiteStorage) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_auto_skills_project_path ON auto_skills(project_path);
 	`
 
+	// Parallel Executions 表
+	parallelExecutionsSQL := `
+	CREATE TABLE IF NOT EXISTS parallel_executions (
+		id TEXT PRIMARY KEY,
+		chat_id INTEGER NOT NULL,
+		thread_id INTEGER DEFAULT 0,
+		task_count INTEGER,
+		status TEXT,
+		results_json TEXT,
+		total_time_ms INTEGER,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		completed_at DATETIME
+	);
+	CREATE INDEX IF NOT EXISTS idx_parallel_executions_chat_id ON parallel_executions(chat_id);
+	CREATE INDEX IF NOT EXISTS idx_parallel_executions_created_at ON parallel_executions(created_at);
+	`
+
 	// 執行所有 SQL 語句
 	tables := []string{
 		toolExecutionsSQL,
@@ -315,6 +332,7 @@ func (s *SQLiteStorage) initTables() error {
 		topicSettingsSQL,
 		chatLanguageSQL,
 		autoSkillsSQL,
+		parallelExecutionsSQL,
 	}
 
 	for _, tableSQL := range tables {
@@ -1472,6 +1490,29 @@ func (s *SQLiteStorage) GetDatabaseStats() (map[string]interface{}, error) {
 	}
 
 	return stats, nil
+}
+
+// ==================== Parallel Executions ====================
+
+// InsertParallelExecution 插入並行執行記錄
+func (s *SQLiteStorage) InsertParallelExecution(exec *ParallelExecution) error {
+	resultsJSON, _ := json.Marshal(exec.Results)
+	var completedAt interface{}
+	if exec.CompletedAt != nil {
+		completedAt = *exec.CompletedAt
+	}
+
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(`
+			INSERT INTO parallel_executions (id, chat_id, thread_id, task_count, status,
+				results_json, total_time_ms, created_at, completed_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			exec.ID, exec.ChatID, exec.ThreadID, len(exec.Tasks),
+			string(exec.Status), string(resultsJSON),
+			exec.TotalTime.Milliseconds(), exec.CreatedAt, completedAt,
+		)
+		return err
+	})
 }
 
 // ==================== Auto Skills ====================

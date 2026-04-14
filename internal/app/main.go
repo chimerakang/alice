@@ -351,6 +351,10 @@ func Main() {
 		// Initialize Auto-Skill system
 		InitSkillManager()
 		log.Printf("   Auto-Skill system: enabled")
+
+		// Initialize SubAgent Orchestrator for parallel execution
+		InitOrchestrator(3) // max 3 concurrent CLI sessions
+		log.Printf("   SubAgent Orchestrator: enabled (max_concurrent=3)")
 	}
 
 	// Initialize WebSocket system
