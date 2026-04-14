@@ -55,6 +55,7 @@ type RenderingConfig struct {
 type ModelRoutingConfig struct {
 	EnableDynamicRouting bool   `json:"enable_dynamic_routing"`
 	FastModel            string `json:"fast_model"`
+	SmartModel           string `json:"smart_model"`   // /smart: 平衡智能模式 (Sonnet)
 	DeepModel            string `json:"deep_model"`
 	PlanModel            string `json:"plan_model"`    // OpusPlan: 計劃階段使用的模型 (預設 Opus)
 	ExecuteModel         string `json:"execute_model"` // OpusPlan: 執行階段使用的模型 (預設 Sonnet)

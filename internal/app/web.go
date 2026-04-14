@@ -2339,6 +2339,9 @@ func (wi *WebInterface) handleModelRoutingStatus(w http.ResponseWriter, r *http.
 			case "fast":
 				mode = "fast"
 				modelName = wi.bot.config.ModelRouting.FastModel
+			case "smart":
+				mode = "smart"
+				modelName = wi.bot.config.ModelRouting.SmartModel
 			case "deep":
 				mode = "deep"
 				modelName = wi.bot.config.ModelRouting.DeepModel
@@ -2356,6 +2359,7 @@ func (wi *WebInterface) handleModelRoutingStatus(w http.ResponseWriter, r *http.
 		status := map[string]interface{}{
 			"enabled":                   wi.bot.config.ModelRouting.EnableDynamicRouting,
 			"fast_model":                wi.bot.config.ModelRouting.FastModel,
+			"smart_model":               wi.bot.config.ModelRouting.SmartModel,
 			"deep_model":                wi.bot.config.ModelRouting.DeepModel,
 			"default_model":             wi.bot.config.Model,
 			"use_gpt4o_mini_for_triage": wi.bot.config.ModelRouting.UseGPT4oMini,
@@ -2416,6 +2420,9 @@ func (wi *WebInterface) handleModelRoutingSet(w http.ResponseWriter, r *http.Req
 		case "fast":
 			modeValue = "fast"
 			modelName = wi.bot.config.ModelRouting.FastModel
+		case "smart":
+			modeValue = "smart"
+			modelName = wi.bot.config.ModelRouting.SmartModel
 		case "deep":
 			modeValue = "deep"
 			modelName = wi.bot.config.ModelRouting.DeepModel
