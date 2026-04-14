@@ -60,6 +60,13 @@ type Storage interface {
 	SaveChatLanguage(chatID int64, langCode string) error
 	GetChatLanguage(chatID int64) (string, error)
 
+	// Auto Skills
+	InsertAutoSkill(skill AutoSkill) error
+	UpdateAutoSkill(skill AutoSkill) error
+	DeleteAutoSkill(skillID string) error
+	GetActiveSkills() ([]AutoSkill, error)
+	GetSkillsByChat(chatID int64) ([]AutoSkill, error)
+
 	// Data Retention
 	CleanupOldData(retentionDays int) error
 
@@ -275,6 +282,30 @@ func (s *SQLiteStorage) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_chat_language_updated_at ON chat_language(updated_at);
 	`
 
+	// Auto Skills 表
+	autoSkillsSQL := `
+	CREATE TABLE IF NOT EXISTS auto_skills (
+		id TEXT PRIMARY KEY,
+		name TEXT NOT NULL,
+		description TEXT,
+		tool_chain_json TEXT,
+		context TEXT,
+		tags_json TEXT,
+		success_rate REAL DEFAULT 1.0,
+		use_count INTEGER DEFAULT 0,
+		version INTEGER DEFAULT 1,
+		status TEXT DEFAULT 'active',
+		project_path TEXT,
+		chat_id INTEGER,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		last_used_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_auto_skills_status ON auto_skills(status);
+	CREATE INDEX IF NOT EXISTS idx_auto_skills_chat_id ON auto_skills(chat_id);
+	CREATE INDEX IF NOT EXISTS idx_auto_skills_project_path ON auto_skills(project_path);
+	`
+
 	// 執行所有 SQL 語句
 	tables := []string{
 		toolExecutionsSQL,
@@ -283,6 +314,7 @@ func (s *SQLiteStorage) initTables() error {
 		securityEventsSQL,
 		topicSettingsSQL,
 		chatLanguageSQL,
+		autoSkillsSQL,
 	}
 
 	for _, tableSQL := range tables {
@@ -1365,6 +1397,16 @@ func (s *SQLiteStorage) CleanupOldData(retentionDays int) error {
 		}
 	}
 
+	// Deactivate expired auto_skills (last_used_at older than retention period)
+	skillResult, err := tx.Exec(`UPDATE auto_skills SET status='inactive' WHERE status='active' AND last_used_at < ?`, cutoffStr)
+	if err != nil {
+		tx.Rollback()
+		return fmt.Errorf("failed to cleanup auto_skills: %w", err)
+	}
+	if deactivated, _ := skillResult.RowsAffected(); deactivated > 0 {
+		log.Printf("Deactivated %d expired auto_skills", deactivated)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return err
 	}
@@ -1430,6 +1472,108 @@ func (s *SQLiteStorage) GetDatabaseStats() (map[string]interface{}, error) {
 	}
 
 	return stats, nil
+}
+
+// ==================== Auto Skills ====================
+
+// InsertAutoSkill 插入新的自動技能
+func (s *SQLiteStorage) InsertAutoSkill(skill AutoSkill) error {
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(`
+			INSERT INTO auto_skills (id, name, description, tool_chain_json, context, tags_json,
+				success_rate, use_count, version, status, project_path, chat_id,
+				created_at, updated_at, last_used_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			skill.ID, skill.Name, skill.Description, MarshalToolChain(skill.ToolChain),
+			skill.Context, MarshalTags(skill.Tags), skill.SuccessRate, skill.UseCount,
+			skill.Version, skill.Status, skill.ProjectPath, skill.ChatID,
+			skill.CreatedAt, skill.UpdatedAt, skill.LastUsedAt,
+		)
+		return err
+	})
+}
+
+// UpdateAutoSkill 更新自動技能
+func (s *SQLiteStorage) UpdateAutoSkill(skill AutoSkill) error {
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(`
+			UPDATE auto_skills SET name=?, description=?, tool_chain_json=?, context=?,
+				tags_json=?, success_rate=?, use_count=?, version=?, status=?,
+				updated_at=?, last_used_at=?
+			WHERE id=?`,
+			skill.Name, skill.Description, MarshalToolChain(skill.ToolChain),
+			skill.Context, MarshalTags(skill.Tags), skill.SuccessRate, skill.UseCount,
+			skill.Version, skill.Status, skill.UpdatedAt, skill.LastUsedAt, skill.ID,
+		)
+		return err
+	})
+}
+
+// DeleteAutoSkill 刪除自動技能
+func (s *SQLiteStorage) DeleteAutoSkill(skillID string) error {
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(`DELETE FROM auto_skills WHERE id=?`, skillID)
+		return err
+	})
+}
+
+// GetActiveSkills 獲取所有活躍的技能
+func (s *SQLiteStorage) GetActiveSkills() ([]AutoSkill, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, description, tool_chain_json, context, tags_json,
+			success_rate, use_count, version, status, project_path, chat_id,
+			created_at, updated_at, last_used_at
+		FROM auto_skills WHERE status='active'
+		ORDER BY use_count DESC, updated_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanAutoSkills(rows)
+}
+
+// GetSkillsByChat 獲取特定聊天的所有技能
+func (s *SQLiteStorage) GetSkillsByChat(chatID int64) ([]AutoSkill, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, description, tool_chain_json, context, tags_json,
+			success_rate, use_count, version, status, project_path, chat_id,
+			created_at, updated_at, last_used_at
+		FROM auto_skills WHERE chat_id=?
+		ORDER BY updated_at DESC`, chatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanAutoSkills(rows)
+}
+
+// scanAutoSkills scans rows into AutoSkill slice
+func scanAutoSkills(rows *sql.Rows) ([]AutoSkill, error) {
+	var skills []AutoSkill
+	for rows.Next() {
+		var skill AutoSkill
+		var toolChainJSON, tagsJSON string
+		var createdAt, updatedAt, lastUsedAt string
+
+		err := rows.Scan(&skill.ID, &skill.Name, &skill.Description, &toolChainJSON,
+			&skill.Context, &tagsJSON, &skill.SuccessRate, &skill.UseCount,
+			&skill.Version, &skill.Status, &skill.ProjectPath, &skill.ChatID,
+			&createdAt, &updatedAt, &lastUsedAt)
+		if err != nil {
+			return nil, err
+		}
+
+		skill.ToolChain = UnmarshalToolChain(toolChainJSON)
+		skill.Tags = UnmarshalTags(tagsJSON)
+		skill.CreatedAt, _ = time.Parse("2006-01-02 15:04:05 -0700 MST", createdAt)
+		skill.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05 -0700 MST", updatedAt)
+		skill.LastUsedAt, _ = time.Parse("2006-01-02 15:04:05 -0700 MST", lastUsedAt)
+
+		skills = append(skills, skill)
+	}
+	return skills, rows.Err()
 }
 
 // 全域儲存實例

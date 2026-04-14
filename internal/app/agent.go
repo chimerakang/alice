@@ -528,6 +528,16 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		routingReason = "default"
 	}
 
+	// Inject matching auto-skills into user message as context
+	if globalSkillManager != nil {
+		matchedSkills := globalSkillManager.FindRelevantSkills(userMessage, a.projectDir)
+		if len(matchedSkills) > 0 {
+			skillContext := FormatSkillsForPrompt(matchedSkills)
+			userMessage = userMessage + "\n" + skillContext
+			log.Printf("[agent] injected %d auto-skills into prompt", len(matchedSkills))
+		}
+	}
+
 	log.Printf("[agent] calling CLI (stream), session=%s, project=%s, model=%s routing_reason=%s", ps.sessionID, a.projectDir, a.lastUsedModel, routingReason)
 
 	// Pre-generate decision ID so checkpoints created during streaming
@@ -1071,6 +1081,11 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 
 	// Log the decision
 	globalDecisionLogger.LogDecision(decision)
+
+	// Evaluate decision for auto-skill generation
+	if globalSkillManager != nil {
+		go globalSkillManager.EvaluateDecision(decision)
+	}
 
 	log.Printf("[agent] decision logged: task_type=%s, tools=%d, success=%v, duration=%dms",
 		taskType, len(toolCalls), outcome.Success, int(duration.Milliseconds()))

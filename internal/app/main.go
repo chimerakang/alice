@@ -97,6 +97,7 @@ func LoadConfig() (*Config, error) {
 		ModelRouting: ModelRoutingConfig{
 			EnableDynamicRouting: false, // Disabled by default
 			FastModel:            "claude-haiku-4-5-20251001",
+			SmartModel:           "claude-sonnet-4-6",           // /smart: balanced Sonnet
 			DeepModel:            "claude-opus-4-6",
 			PlanModel:            "claude-opus-4-6",            // OpusPlan: Opus for planning
 			ExecuteModel:         "claude-sonnet-4-5-20250929", // OpusPlan: Sonnet for execution
@@ -346,6 +347,10 @@ func Main() {
 			performanceMonitor.LoadFromDB(globalStorage)
 		}
 		log.Printf("   Historical data: loaded from database")
+
+		// Initialize Auto-Skill system
+		InitSkillManager()
+		log.Printf("   Auto-Skill system: enabled")
 	}
 
 	// Initialize WebSocket system

@@ -22,6 +22,7 @@
     "conversation_history_cleared": "🔄 Conversation history cleared",
     "session_id": "`{session_id}`",
     "model_fast": "`{model}` (⚡ Fast Mode)",
+    "model_smart": "`{model}` (💡 Smart Mode)",
     "model_deep": "`{model}` (🧠 Deep Mode)",
     "model_auto": "`{model}` (🤖 Auto Mode)",
     "model_default": "`{model}`",
@@ -62,6 +63,7 @@
     "tasks_command_title": "📋 Alice Task List",
     "tasks_no_issues": "No tasks available",
     "mode_switched_fast": "✅ Switched to fast mode\nModel: `{model}`",
+    "mode_switched_smart": "✅ Switched to smart mode\nModel: `{model}`",
     "mode_switched_deep": "✅ Switched to deep mode\nModel: `{model}`",
     "mode_switched_auto": "✅ Switched to auto routing mode",
     "mode_switched_plan": "✅ Switched to OpusPlan mode\nPlan: `{plan_model}` → Execute: `{execute_model}`\n\nComplex tasks will be planned with Opus first, then executed with Sonnet.",
@@ -281,6 +283,14 @@
     "send_file_error": "❌ Failed to send file: {error}",
     "send_file_success": "✅ File sent successfully",
     "send_file_not_found": "❌ File not found: {path}",
-    "send_file_too_large": "❌ File too large ({size} > {limit} MB)"
+    "send_file_too_large": "❌ File too large ({size} > {limit} MB)",
+
+    "skill_disabled": "❌ Auto-Skill system is not enabled",
+    "skill_list_empty": "📚 No auto-skills yet.\nSkills are automatically created when AI completes complex tasks.",
+    "skill_list_header": "📚 Auto-Skills ({count} total)",
+    "skill_list_footer": "💡 Delete a skill: /skill delete <id>",
+    "skill_usage": "📚 Auto-Skill commands:\n/skills — List all skills\n/skill delete <id> — Delete a skill",
+    "skill_deleted": "✅ Skill deleted: {id}",
+    "skill_delete_error": "❌ Delete failed: {error}"
   }
 }

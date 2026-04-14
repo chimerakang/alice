@@ -620,11 +620,14 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	// Model routing: Three-tier priority system
 	var modelOverride string
 	if t.config.ModelRouting.EnableDynamicRouting {
-		// Priority 1: User explicit preference (/fast or /deep)
+		// Priority 1: User explicit preference (/fast, /smart, or /deep)
 		userPref := t.getUserModelPreference(key)
 		if userPref == "fast" {
 			modelOverride = t.config.ModelRouting.FastModel
 			log.Printf("[telegram] model routing: using fast model (user preference)")
+		} else if userPref == "smart" {
+			modelOverride = t.config.ModelRouting.SmartModel
+			log.Printf("[telegram] model routing: using smart model (user preference)")
 		} else if userPref == "deep" {
 			modelOverride = t.config.ModelRouting.DeepModel
 			log.Printf("[telegram] model routing: using deep model (user preference)")
@@ -973,6 +976,9 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		if modelMode == "fast" {
 			modelDisplay = t.getLocalizedMessage(key.chatID, "model_fast", nil)
 			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.config.ModelRouting.FastModel)
+		} else if modelMode == "smart" {
+			modelDisplay = t.getLocalizedMessage(key.chatID, "model_smart", nil)
+			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.config.ModelRouting.SmartModel)
 		} else if modelMode == "deep" {
 			modelDisplay = t.getLocalizedMessage(key.chatID, "model_deep", nil)
 			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.config.ModelRouting.DeepModel)
@@ -1121,6 +1127,16 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_fast", map[string]string{"model": t.config.ModelRouting.FastModel})
 		t.send(key, msg)
 
+	case "/smart":
+		if !t.config.ModelRouting.EnableDynamicRouting {
+			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
+			return
+		}
+		t.setUserModelPreference(key, "smart")
+		t.getAgent(key).SetPlanMode(false, "", "") // Disable plan mode
+		msg := t.getLocalizedMessage(key.chatID, "mode_switched_smart", map[string]string{"model": t.config.ModelRouting.SmartModel})
+		t.send(key, msg)
+
 	case "/deep":
 		if !t.config.ModelRouting.EnableDynamicRouting {
 			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
@@ -1192,6 +1208,16 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 
 		targetURL := parts[1]
 		t.handlePreviewCommand(key, targetURL)
+
+	case "/skills":
+		t.handleSkillsCommand(key)
+
+	case "/skill":
+		if len(parts) >= 3 && parts[1] == "delete" {
+			t.handleSkillDeleteCommand(key, parts[2])
+		} else {
+			t.send(key, t.getLocalizedMessage(key.chatID, "skill_usage", nil))
+		}
 
 	default:
 		t.send(key, t.getLocalizedMessage(key.chatID, "unknown_command", nil))
@@ -4392,5 +4418,79 @@ func abs(x int) int {
 		return -x
 	}
 	return x
+}
+
+// handleSkillsCommand lists all auto-skills for the current chat
+func (t *TelegramBot) handleSkillsCommand(key chatKey) {
+	if globalSkillManager == nil {
+		t.send(key, t.getLocalizedMessage(key.chatID, "skill_disabled", nil))
+		return
+	}
+
+	skills := globalSkillManager.GetSkillsForChat(key.chatID)
+	if len(skills) == 0 {
+		t.send(key, t.getLocalizedMessage(key.chatID, "skill_list_empty", nil))
+		return
+	}
+
+	header := t.getLocalizedMessage(key.chatID, "skill_list_header", map[string]string{
+		"{count}": fmt.Sprintf("%d", len(skills)),
+	})
+
+	var sb strings.Builder
+	sb.WriteString(header + "\n\n")
+
+	for i, skill := range skills {
+		statusIcon := "✅"
+		if skill.Status == "inactive" {
+			statusIcon = "⏸"
+		} else if skill.Status == "disabled" {
+			statusIcon = "❌"
+		}
+
+		sb.WriteString(fmt.Sprintf("%s **%d. %s**\n", statusIcon, i+1, skill.Name))
+		sb.WriteString(fmt.Sprintf("   ID: `%s`\n", skill.ID))
+		sb.WriteString(fmt.Sprintf("   🔧 %d steps | ✅ %.0f%% | 🔄 %d uses | v%d\n",
+			len(skill.ToolChain), skill.SuccessRate*100, skill.UseCount, skill.Version))
+
+		if len(skill.Tags) > 0 {
+			maxTags := 5
+			if len(skill.Tags) < maxTags {
+				maxTags = len(skill.Tags)
+			}
+			sb.WriteString(fmt.Sprintf("   🏷 %s\n", strings.Join(skill.Tags[:maxTags], ", ")))
+		}
+		sb.WriteString("\n")
+
+		if i >= 19 { // Show max 20 skills
+			sb.WriteString(fmt.Sprintf("... +%d more\n", len(skills)-20))
+			break
+		}
+	}
+
+	sb.WriteString(t.getLocalizedMessage(key.chatID, "skill_list_footer", nil))
+	t.sendMarkdown(key, sb.String())
+}
+
+// handleSkillDeleteCommand deletes a skill by ID
+func (t *TelegramBot) handleSkillDeleteCommand(key chatKey, skillID string) {
+	if globalSkillManager == nil {
+		t.send(key, t.getLocalizedMessage(key.chatID, "skill_disabled", nil))
+		return
+	}
+
+	err := globalSkillManager.DeleteSkill(skillID, key.chatID)
+	if err != nil {
+		msg := t.getLocalizedMessage(key.chatID, "skill_delete_error", map[string]string{
+			"{error}": err.Error(),
+		})
+		t.send(key, msg)
+		return
+	}
+
+	msg := t.getLocalizedMessage(key.chatID, "skill_deleted", map[string]string{
+		"{id}": skillID,
+	})
+	t.send(key, msg)
 }
 
