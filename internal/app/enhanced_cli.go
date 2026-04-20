@@ -36,7 +36,7 @@ func (c *EnhancedCLIClient) CallWithFiles(ctx context.Context, message string, f
 		"--output-format", "json",
 		"--model", c.Model,
 		"--dangerously-skip-permissions",
-		"--max-turns", "25",
+		"--max-turns", c.maxTurnsStr(),
 	}
 
 	// 添加檔案參數
@@ -75,8 +75,18 @@ func (c *EnhancedCLIClient) CallWithFiles(ctx context.Context, message string, f
 		if ctx.Err() == context.Canceled {
 			return nil, fmt.Errorf("agent aborted by user")
 		}
-		// CLI 可能 stderr 有錯誤訊息
+		// CLI exited with error — try to parse stdout anyway
 		if exitErr, ok := err.(*exec.ExitError); ok {
+			if len(output) > 0 {
+				var resp CLIResponse
+				if parseErr := json.Unmarshal(output, &resp); parseErr == nil {
+					log.Printf("[enhanced-cli] CLI exited with error but returned valid response (is_error=%v, turns=%d)", resp.IsError, resp.NumTurns)
+					if !resp.IsError {
+						resp.IsError = true
+					}
+					return &resp, fmt.Errorf("CLI exited with error: %s", resp.Result)
+				}
+			}
 			log.Printf("[enhanced-cli] stderr: %s", string(exitErr.Stderr))
 			return nil, fmt.Errorf("claude CLI error: %s", string(exitErr.Stderr))
 		}
@@ -128,7 +138,7 @@ func (c *EnhancedCLIClient) CallStreamWithFiles(ctx context.Context, message str
 		"--output-format", "stream-json",
 		"--model", c.Model,
 		"--dangerously-skip-permissions",
-		"--max-turns", "25",
+		"--max-turns", c.maxTurnsStr(),
 		"--include-partial-messages",
 	}
 
@@ -209,6 +219,14 @@ func (c *EnhancedCLIClient) CallStreamWithFiles(ctx context.Context, message str
 	}
 
 	if err := cmd.Wait(); err != nil && ctx.Err() != context.Canceled {
+		// CLI exited with error — but we may already have a result from streaming
+		if finalResp != nil {
+			log.Printf("[enhanced-cli] CLI exited with error but streaming captured result (is_error=%v)", finalResp.IsError)
+			if !finalResp.IsError {
+				finalResp.IsError = true
+			}
+			return finalResp, fmt.Errorf("CLI exited with error: %s", finalResp.Result)
+		}
 		if stderrBuf.Len() > 0 {
 			return nil, fmt.Errorf("claude CLI error: %s", stderrBuf.String())
 		}

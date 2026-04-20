@@ -1,19 +1,6 @@
 <claude-mem-context>
 # Recent Activity
 
-### Feb 15, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #3006 | 7:08 PM | 🔵 | Agent ProjectDir method returns projectDir field set during agent creation or modification | ~410 |
-| #3005 | " | 🔵 | Telegram bot getAgent restores project directory from database topic settings on agent creation | ~513 |
-| #3001 | 7:07 PM | ⚖️ | Telegram bot /tasks command bug identified and deferred for later resolution | ~584 |
-| #3000 | 7:06 PM | 🔵 | detectGitHubRepo parses git remote origin URL to extract owner/repo identifier | ~588 |
-| #2999 | " | 🔵 | parseMasterTasks function implements multi-format markdown parser with regex-based pattern matching | ~622 |
-| #2916 | 6:04 PM | 🔵 | Root Cause Identified: Tool Execution Durations Not Updated Before Decision Log Creation | ~567 |
-| #2915 | " | 🔵 | Frontend-Compatible JSON Conversion Function Exists But Flattens Token Fields Correctly | ~560 |
-| #2914 | 6:03 PM | 🔵 | Web API Response Structure Does Not Transform DecisionLog JSON For Frontend | ~544 |
-
 ### Feb 16, 2026
 
 | ID | Time | T | Title | Read |
@@ -39,9 +26,6 @@
 | #3128 | 2:37 AM | 🔵 | CLIClient Injection Pattern in TelegramBot | ~431 |
 | #3127 | " | 🔵 | Model Reference Points in Telegram Bot Layer | ~410 |
 | #3126 | 2:36 AM | 🔵 | Telegram Message Handler Entry Point for User Requests | ~615 |
-| #3125 | " | 🔵 | Agent Execution Layer with Request Processing and Session Management | ~589 |
-| #3124 | " | 🔵 | Claude CLI Client Architecture with Fixed Model Parameter | ~473 |
-| #3123 | 2:35 AM | 🔵 | Alice Configuration System Supporting Single Model Selection | ~438 |
 
 ### Feb 23, 2026
 
@@ -80,4 +64,20 @@
 | #6243 | 1:23 PM | 🔵 | Analyzed testPhotoUpload function implementation | ~284 |
 | #6242 | " | 🔵 | Examined /test-photo command implementation | ~219 |
 | #6241 | " | 🔵 | Identified photo upload functionality in Telegram bot | ~241 |
+
+### Apr 21, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #8515 | 12:46 AM | 🟣 | Integrated sticky session check into model routing priority system | ~553 |
+| #8514 | " | 🟣 | Added ClearSession method for selective session reset | ~493 |
+| #8513 | 12:45 AM | ✅ | Added sticky session configuration fields to ModelRoutingConfig | ~536 |
+| #8512 | " | 🔵 | Preparing implementation: reviewing ModelRoutingConfig structure | ~386 |
+| #8511 | 12:44 AM | 🔵 | Agent.Reset() implementation deletes projectState | ~486 |
+| #8510 | " | 🔵 | /reset command already provides session clearing functionality | ~435 |
+| #8509 | " | 🔵 | Reset command exists but no clear command | ~217 |
+| #8507 | 12:43 AM | 🔵 | ProjectState session tracking infrastructure exists | ~480 |
+| #8506 | 12:42 AM | 🔵 | Agent model override mechanism and default configuration | ~468 |
+| #8505 | " | 🔵 | Model routing architecture and user preference system analysis | ~559 |
+| #8504 | " | 🔵 | Issue #93: Model routing session context loss investigation | ~483 |
 </claude-mem-context>

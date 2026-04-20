@@ -13,6 +13,21 @@ import (
 	"time"
 )
 
+type ModelPricingConfig struct {
+	Haiku  struct {
+		Input  float64 `json:"input"`  // per 1M tokens
+		Output float64 `json:"output"` // per 1M tokens
+	} `json:"haiku"`
+	Sonnet struct {
+		Input  float64 `json:"input"`
+		Output float64 `json:"output"`
+	} `json:"sonnet"`
+	Opus struct {
+		Input  float64 `json:"input"`
+		Output float64 `json:"output"`
+	} `json:"opus"`
+}
+
 type Config struct {
 	TelegramToken     string  `json:"telegram_token"`
 	Model             string  `json:"model"`
@@ -54,6 +69,13 @@ type Config struct {
 
 	// Model Routing Settings
 	ModelRouting ModelRoutingConfig `json:"model_routing"`
+
+	// Model Pricing Settings
+	ModelPricing ModelPricingConfig `json:"model_pricing"`
+
+	// CLI Settings
+	MaxTurns          int `json:"max_turns"`           // max conversation turns per CLI invocation (default 50)
+	CLITimeoutMinutes int `json:"cli_timeout_minutes"` // max execution time per CLI invocation in minutes (default 15, 0=unlimited)
 
 	// Backend Execution Settings
 	Backends BackendConfig `json:"backends"`
@@ -128,6 +150,8 @@ func LoadConfig() (*Config, error) {
 			CacheDir:              "./temp/renders",
 			ChromeExecutable:      "", // Use system Chrome/Chromium by default
 		},
+		MaxTurns:          50, // Default 50 turns per CLI invocation
+		CLITimeoutMinutes: 15, // Default 15 minutes per CLI invocation
 		Backends: BackendConfig{
 			Default: "local",
 			Docker: DockerBackendConfig{
@@ -151,8 +175,18 @@ func LoadConfig() (*Config, error) {
 			PlanModel:            "claude-opus-4-6",            // OpusPlan: Opus for planning
 			ExecuteModel:         "claude-sonnet-4-5-20250929", // OpusPlan: Sonnet for execution
 			UseGPT4oMini:         false,
+			StickySession:         true,
+			SessionIdleTimeoutMin: 5,
 		},
 	}
+
+	// Set default model pricing (per 1M tokens, USD)
+	config.ModelPricing.Haiku.Input = 1.00
+	config.ModelPricing.Haiku.Output = 5.00
+	config.ModelPricing.Sonnet.Input = 3.00
+	config.ModelPricing.Sonnet.Output = 15.00
+	config.ModelPricing.Opus.Input = 15.00
+	config.ModelPricing.Opus.Output = 75.00
 
 	// 優先從 config.json 讀取
 	if data, err := os.ReadFile("config.json"); err == nil {
@@ -345,6 +379,13 @@ func Main() {
 		log.Printf("   Static directory: %s", config.WebStaticDir)
 	}
 
+	// Initialize model pricing from config
+	InitModelPricing(&config.ModelPricing)
+	log.Printf("   Model pricing: configured (Haiku: $%.2f/$%.2f, Sonnet: $%.2f/$%.2f, Opus: $%.2f/$%.2f per 1M tokens)",
+		config.ModelPricing.Haiku.Input, config.ModelPricing.Haiku.Output,
+		config.ModelPricing.Sonnet.Input, config.ModelPricing.Sonnet.Output,
+		config.ModelPricing.Opus.Input, config.ModelPricing.Opus.Output)
+
 	// Initialize Git integration
 	InitGitIntegration()
 	log.Printf("   Git integration: enabled")
@@ -476,7 +517,10 @@ func Main() {
 	} else {
 		log.Printf("[client-routing] Normal environment - using Claude Code CLI")
 		client = NewClient(config.Model)
-		log.Printf("[client-routing] Using CLIClient (Claude Code CLI)")
+		if cli, ok := client.(*CLIClient); ok && config.MaxTurns > 0 {
+			cli.MaxTurns = config.MaxTurns
+		}
+		log.Printf("[client-routing] Using CLIClient (Claude Code CLI, max-turns=%d)", config.MaxTurns)
 	}
 
 	tgBot, err := NewTelegramBot(config, client)

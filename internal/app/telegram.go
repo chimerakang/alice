@@ -251,6 +251,7 @@ func (t *TelegramBot) getAgent(key chatKey) *Agent {
 	}
 
 	agent := NewAgent(t.client, projectDir, key.chatID, key.threadID)
+	agent.cliTimeoutMinutes = t.config.CLITimeoutMinutes
 	t.agents[key] = agent
 	return agent
 }
@@ -631,12 +632,16 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		} else if userPref == "deep" {
 			modelOverride = t.config.ModelRouting.DeepModel
 			log.Printf("[telegram] model routing: using deep model (user preference)")
+		} else if t.isStickySession(agent) {
+			// Priority 2: Sticky session — session active and not idle, skip triage entirely
+			log.Printf("[telegram] model routing: sticky session active (last activity: %v ago), keeping current model + session",
+				time.Since(agent.LastActivity()).Round(time.Second))
 		} else if isContinuationMessage(text) {
-			// Priority 2: Continuation message — inherit current model + session, skip triage
+			// Priority 3: Continuation message — inherit current model + session, skip triage
 			log.Printf("[telegram] model routing: continuation message detected, keeping current model + session")
 			// modelOverride stays empty → agent keeps lastUsedModel + sessionID unchanged
 		} else {
-			// Priority 3: Hybrid triage
+			// Priority 4: Hybrid triage
 			// Phase A: local heuristic for high-confidence cases (0ms)
 			score := evaluateTaskComplexityScore(text)
 			var complexity string
@@ -772,8 +777,17 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			// 已由 /abort 指令回饋，不再發送重複訊息
 			return
 		}
+		if strings.Contains(err.Error(), "context deadline exceeded") {
+			if response != "" {
+				t.sendLongMarkdown(key, response)
+			}
+			msg := t.getLocalizedMessage(key.chatID, "execution_timeout", nil)
+			t.send(key, msg)
+			return
+		}
+		errCategory := classifyError(err.Error())
+		log.Printf("[telegram] execution error: category=%s chat=%d err=%s", errCategory, key.chatID, err.Error())
 		if response != "" {
-			// Partial success: send accumulated content, then show error
 			t.sendLongMarkdown(key, response)
 			msg := t.getLocalizedMessage(key.chatID, "error_occurred", nil)
 			msg = strings.ReplaceAll(msg, "{error}", extractErrorReason(err.Error()))
@@ -813,10 +827,33 @@ func extractErrorReason(errStr string) string {
 	// Remove common prefixes for cleaner output
 	errStr = strings.TrimPrefix(errStr, "CLI call failed: ")
 	errStr = strings.TrimPrefix(errStr, "CLI returned error: ")
-	if len(errStr) > 200 {
-		return errStr[:200] + "..."
+	if len(errStr) > 500 {
+		return errStr[:500] + "..."
 	}
 	return errStr
+}
+
+// classifyError categorizes an error for better user-facing messages and logging.
+func classifyError(errStr string) string {
+	switch {
+	case strings.Contains(errStr, "context deadline exceeded"):
+		return "timeout"
+	case strings.Contains(errStr, "context canceled"),
+		strings.Contains(errStr, "agent aborted by user"):
+		return "cancelled"
+	case strings.Contains(errStr, "file_patch") || strings.Contains(errStr, "unique match"):
+		return "tool_file_patch"
+	case strings.Contains(errStr, "permission denied") || strings.Contains(errStr, "access denied"):
+		return "permission"
+	case strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file"):
+		return "not_found"
+	case strings.Contains(errStr, "rate limit") || strings.Contains(errStr, "429"):
+		return "rate_limit"
+	case strings.Contains(errStr, "overloaded") || strings.Contains(errStr, "529"):
+		return "overloaded"
+	default:
+		return "unknown"
+	}
 }
 
 func (t *TelegramBot) handleCommand(key chatKey, text string) {
@@ -833,6 +870,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		help += t.getLocalizedMessage(key.chatID, "help_basic_commands", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_project_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_reset_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_clear_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_status_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_usage_desc", nil) + "\n\n"
 		help += t.getLocalizedMessage(key.chatID, "help_routing_commands", nil) + "\n"
@@ -1122,9 +1160,14 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
 		}
+		agent := t.getAgent(key)
+		hasSession := agent.SessionID() != ""
 		t.setUserModelPreference(key, "fast")
-		t.getAgent(key).SetPlanMode(false, "", "") // Disable plan mode
+		agent.SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_fast", map[string]string{"model": t.config.ModelRouting.FastModel})
+		if hasSession {
+			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
+		}
 		t.send(key, msg)
 
 	case "/smart":
@@ -1132,9 +1175,14 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
 		}
+		agent := t.getAgent(key)
+		hasSession := agent.SessionID() != ""
 		t.setUserModelPreference(key, "smart")
-		t.getAgent(key).SetPlanMode(false, "", "") // Disable plan mode
+		agent.SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_smart", map[string]string{"model": t.config.ModelRouting.SmartModel})
+		if hasSession {
+			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
+		}
 		t.send(key, msg)
 
 	case "/deep":
@@ -1142,9 +1190,14 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
 		}
+		agent := t.getAgent(key)
+		hasSession := agent.SessionID() != ""
 		t.setUserModelPreference(key, "deep")
-		t.getAgent(key).SetPlanMode(false, "", "") // Disable plan mode
+		agent.SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_deep", map[string]string{"model": t.config.ModelRouting.DeepModel})
+		if hasSession {
+			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
+		}
 		t.send(key, msg)
 
 	case "/auto":
@@ -1155,6 +1208,11 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		t.setUserModelPreference(key, "")
 		t.getAgent(key).SetPlanMode(false, "", "") // Disable plan mode
 		t.send(key, t.getLocalizedMessage(key.chatID, "mode_switched_auto", nil))
+
+	case "/clear":
+		agent := t.getAgent(key)
+		agent.ClearSession()
+		t.send(key, t.getLocalizedMessage(key.chatID, "session_cleared", nil))
 
 	case "/plan":
 		if !t.config.ModelRouting.EnableDynamicRouting {
@@ -3530,12 +3588,27 @@ func getModelTag(model string) string {
 	}
 }
 
-// isContinuationMessage 偵測是否為「繼續語」
-// 繼續語是短且無實質新請求的訊息，應繼承當前 model 與 session，不觸發 triage
+// isStickySession 判斷 agent 是否處於黏性 session 狀態（session 活躍且未閒置超時）
+// 黏性 session 期間一律沿用當前模型，不重新 triage
+func (t *TelegramBot) isStickySession(agent *Agent) bool {
+	if !t.config.ModelRouting.StickySession {
+		return false
+	}
+	if agent.SessionID() == "" {
+		return false
+	}
+	timeoutMin := t.config.ModelRouting.SessionIdleTimeoutMin
+	if timeoutMin <= 0 {
+		timeoutMin = 5
+	}
+	return time.Since(agent.LastActivity()) < time.Duration(timeoutMin)*time.Minute
+}
+
+// isContinuationMessage 偵測是否為 follow-up（接續語或短問句）
+// 當 sticky session 未啟用或 session 不活躍時，用此作為次要防線避免不必要的 triage
 func isContinuationMessage(msg string) bool {
 	msg = strings.TrimSpace(msg)
-	// 超過 100 個字元不可能是純繼續語
-	if len([]rune(msg)) > 100 {
+	if msg == "" {
 		return false
 	}
 	// 含程式碼區塊代表有實質內容
@@ -3543,29 +3616,67 @@ func isContinuationMessage(msg string) bool {
 		return false
 	}
 
+	runes := []rune(msg)
 	msgLower := strings.ToLower(msg)
 
-	// 確定的繼續語詞彙清單（精確匹配）
-	// 包括：單字確認、簡短繼續詞彙、修正指令
-	continuationWords := []string{
-		// 單字確認
-		"好", "是", "對", "行", "嗯", "去",
-		// 簡短英文
-		"ok", "yes", "y", "go",
-		// 帶詞綴的確認
-		"好啊", "好的", "好了", "可以", "OK",
-		// 繼續指令
-		"繼續", "繼續吧", "繼續做", "繼續進行",
-		"continue", "請繼續",
-		// 修正指令
-		"修正", "fix", "fix it",
-		// 下一步指令
-		"下一步", "next", "之後",
-		// 允許指令
-		"做吧", "沒問題", "proceed",
+	// 短訊息（< 15 字）預設視為 follow-up（排除程式碼和完整問題陳述）
+	if len(runes) < 15 {
+		return true
 	}
 
-	for _, word := range continuationWords {
+	// 明確接續語氣詞（前綴匹配）
+	continuationPrefixes := []string{
+		// 中文接續詞
+		"但是", "那", "繼續", "還有", "所以", "那…呢", "那呢",
+		"另外", "接著", "然後", "再來", "而且", "不過", "可是",
+		// 英文接續詞
+		"but ", "and ", "also ", "continue", "furthermore", "moreover",
+		"then ", "next ", "additionally",
+	}
+	for _, prefix := range continuationPrefixes {
+		if strings.HasPrefix(msgLower, strings.ToLower(prefix)) {
+			return true
+		}
+	}
+
+	// 代名詞指涉開頭（短問句，< 50 字）
+	if len(runes) < 50 {
+		pronounPrefixes := []string{
+			"這個", "那個", "它", "這樣", "那樣", "這裡", "那裡",
+			"this ", "that ", "it ", "them ", "those ", "these ",
+		}
+		for _, prefix := range pronounPrefixes {
+			if strings.HasPrefix(msgLower, strings.ToLower(prefix)) {
+				return true
+			}
+		}
+	}
+
+	// 追問短句：以疑問詞開頭且 < 30 字
+	if len(runes) < 30 {
+		questionPrefixes := []string{
+			"為什麼", "怎麼", "如何", "哪裡", "什麼時候",
+			"why ", "how ", "where ", "when ",
+		}
+		for _, prefix := range questionPrefixes {
+			if strings.HasPrefix(msgLower, strings.ToLower(prefix)) {
+				return true
+			}
+		}
+	}
+
+	// 精確匹配的確認／繼續詞
+	exactWords := []string{
+		"好", "是", "對", "行", "嗯", "去", "做", "試試",
+		"ok", "yes", "y", "go", "sure",
+		"好啊", "好的", "好了", "可以", "ok",
+		"繼續", "繼續吧", "繼續做", "繼續進行", "請繼續",
+		"continue", "proceed",
+		"修正", "fix", "fix it",
+		"下一步", "next", "之後",
+		"做吧", "沒問題",
+	}
+	for _, word := range exactWords {
 		if msgLower == strings.ToLower(word) {
 			return true
 		}
@@ -3698,7 +3809,7 @@ func evaluateTaskComplexity(userMessage string) string {
 // 比本地啟發式算法更準確，且無需額外 API 金鑰（使用已有的 Claude 授權）
 // 返回值: "fast", "balanced", 或 "deep"
 func (t *TelegramBot) triageWithHaiku(ctx context.Context, userMessage string) string {
-	triageCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	triageCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
 	prompt := `Classify this task complexity. Reply with EXACTLY ONE WORD only.

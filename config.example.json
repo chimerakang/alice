@@ -26,9 +26,26 @@
   "model_routing": {
     "enable_dynamic_routing": false,
     "fast_model": "claude-haiku-4-5-20251001",
-    "deep_model": "claude-opus-4-6",
+    "deep_model": "claude-opus-4-7",
     "use_gpt4o_mini_for_triage": false
   },
+
+  "model_pricing": {
+    "haiku": {
+      "input": 1.00,
+      "output": 5.00
+    },
+    "sonnet": {
+      "input": 3.00,
+      "output": 15.00
+    },
+    "opus": {
+      "input": 15.00,
+      "output": 75.00
+    }
+  },
+
+  "cli_timeout_minutes": 15,
 
   "enable_performance_monitoring": true,
   "performance_metrics_retention": 24,

@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"io"
 	"net/http"
 	"os"
@@ -25,7 +26,8 @@ type Client interface {
 
 // CLIClient calls Claude Code CLI as a subprocess.
 type CLIClient struct {
-	Model string
+	Model    string
+	MaxTurns int // max conversation turns per CLI invocation (default 50)
 }
 
 // cleanEnvForCLI 返回不含 Claude Code 嵌套檢測環境變數的環境變數列表。
@@ -67,7 +69,15 @@ type CLIResponse struct {
 }
 
 func NewClient(model string) *CLIClient {
-	return &CLIClient{Model: model}
+	return &CLIClient{Model: model, MaxTurns: 50}
+}
+
+// maxTurnsStr returns the max-turns value as a string for CLI args.
+func (c *CLIClient) maxTurnsStr() string {
+	if c.MaxTurns <= 0 {
+		return "50"
+	}
+	return fmt.Sprintf("%d", c.MaxTurns)
 }
 
 // GetModel 返回客戶端的模型名稱（實現 Client 接口）
@@ -111,7 +121,7 @@ func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID, mo
 		"--output-format", "json",
 		"--model", model,
 		"--dangerously-skip-permissions",
-		"--max-turns", "25",
+		"--max-turns", c.maxTurnsStr(),
 	}
 
 	if sessionID != "" {
@@ -129,8 +139,18 @@ func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID, mo
 		if ctx.Err() == context.Canceled {
 			return nil, fmt.Errorf("agent aborted by user")
 		}
-		// CLI 可能 stderr 有錯誤訊息
+		// CLI exited with error — try to parse stdout anyway (CLI may have sent a JSON response before exiting)
 		if exitErr, ok := err.(*exec.ExitError); ok {
+			if len(output) > 0 {
+				var resp CLIResponse
+				if parseErr := json.Unmarshal(output, &resp); parseErr == nil {
+					log.Printf("[cli] CLI exited with error but returned valid response (is_error=%v, turns=%d)", resp.IsError, resp.NumTurns)
+					if !resp.IsError {
+						resp.IsError = true
+					}
+					return &resp, fmt.Errorf("CLI exited with error: %s", resp.Result)
+				}
+			}
 			return nil, fmt.Errorf("claude CLI error: %s", string(exitErr.Stderr))
 		}
 		return nil, fmt.Errorf("claude CLI exec: %w", err)
@@ -186,7 +206,7 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 		"--verbose",
 		"--model", model,
 		"--dangerously-skip-permissions",
-		"--max-turns", "25",
+		"--max-turns", c.maxTurnsStr(),
 	}
 
 	if sessionID != "" {
@@ -305,10 +325,19 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 		if ctx.Err() == context.Canceled {
 			return nil, fmt.Errorf("agent aborted by user")
 		}
-		if _, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("claude CLI error: %s", stderrBuf.String())
+		// CLI exited with error — but we may already have streaming results
+		if finalResp != nil {
+			log.Printf("[cli] CLI exited with error but streaming captured result (is_error=%v, turns=%d, text_len=%d)", finalResp.IsError, finalResp.NumTurns, len(finalResp.TextContent))
+			if !finalResp.IsError {
+				finalResp.IsError = true
+			}
+			// Fall through to normal metrics recording and return below
+		} else {
+			if _, ok := err.(*exec.ExitError); ok {
+				return nil, fmt.Errorf("claude CLI error: %s", stderrBuf.String())
+			}
+			return nil, fmt.Errorf("claude CLI exec: %w", err)
 		}
-		return nil, fmt.Errorf("claude CLI exec: %w", err)
 	}
 
 	if finalResp == nil {
@@ -465,10 +494,17 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOver
 		if ctx.Err() == context.Canceled {
 			return nil, fmt.Errorf("agent aborted by user")
 		}
-		if _, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("claude CLI error: %s", stderrBuf.String())
+		if finalResp != nil {
+			log.Printf("[cli] CallPlan CLI exited with error but streaming captured result (is_error=%v)", finalResp.IsError)
+			if !finalResp.IsError {
+				finalResp.IsError = true
+			}
+		} else {
+			if _, ok := err.(*exec.ExitError); ok {
+				return nil, fmt.Errorf("claude CLI error: %s", stderrBuf.String())
+			}
+			return nil, fmt.Errorf("claude CLI exec: %w", err)
 		}
-		return nil, fmt.Errorf("claude CLI exec: %w", err)
 	}
 
 	if finalResp == nil {

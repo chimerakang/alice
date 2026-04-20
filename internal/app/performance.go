@@ -11,13 +11,39 @@ import (
 )
 
 // ModelPricing 模型費率表（每百萬 tokens 美元）
+// 從 config.json 讀取，通過 InitModelPricing() 初始化
 var ModelPricing = map[string]struct {
 	InputPerMTok  float64
 	OutputPerMTok float64
 }{
-	"haiku":  {1.00, 5.00},     // Claude Haiku 4.5
-	"sonnet": {3.00, 15.00},    // Claude Sonnet 4.5
-	"opus":   {15.00, 75.00},   // Claude Opus 4.6
+	"haiku":  {1.00, 5.00},     // Default: Claude Haiku 4.5
+	"sonnet": {3.00, 15.00},    // Default: Claude Sonnet 4.6
+	"opus":   {15.00, 75.00},   // Default: Claude Opus 4.7
+}
+
+// InitModelPricing 從 config 初始化模型費率
+func InitModelPricing(config *ModelPricingConfig) {
+	if config == nil {
+		return
+	}
+	if config.Haiku.Input > 0 {
+		ModelPricing["haiku"] = struct {
+			InputPerMTok  float64
+			OutputPerMTok float64
+		}{config.Haiku.Input, config.Haiku.Output}
+	}
+	if config.Sonnet.Input > 0 {
+		ModelPricing["sonnet"] = struct {
+			InputPerMTok  float64
+			OutputPerMTok float64
+		}{config.Sonnet.Input, config.Sonnet.Output}
+	}
+	if config.Opus.Input > 0 {
+		ModelPricing["opus"] = struct {
+			InputPerMTok  float64
+			OutputPerMTok float64
+		}{config.Opus.Input, config.Opus.Output}
+	}
 }
 
 // ExtractModelShortName 從完整模型 ID 提取簡短名稱

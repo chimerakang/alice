@@ -60,6 +60,8 @@ type ModelRoutingConfig struct {
 	PlanModel            string `json:"plan_model"`    // OpusPlan: 計劃階段使用的模型 (預設 Opus)
 	ExecuteModel         string `json:"execute_model"` // OpusPlan: 執行階段使用的模型 (預設 Sonnet)
 	UseGPT4oMini         bool   `json:"use_gpt4o_mini_for_triage"`
+	StickySession         bool   `json:"sticky_session"`            // 黏性 session：session 建立後沿用當前模型，不重新 triage（預設 true）
+	SessionIdleTimeoutMin int    `json:"session_idle_timeout_min"`  // 閒置超時分鐘，超過後允許重新 triage（預設 5）
 }
 
 // ModelRoute 單一路由規則

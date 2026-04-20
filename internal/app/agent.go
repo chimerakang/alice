@@ -355,6 +355,7 @@ type Agent struct {
 	enablePlanMode        bool                     // OpusPlan: enable two-phase plan+execute
 	planModel             string                   // OpusPlan: model for planning phase (e.g. Opus)
 	executeModel          string                   // OpusPlan: model for execution phase (e.g. Sonnet)
+	cliTimeoutMinutes int // CLI 執行逾時（分鐘），0=無限制
 	// Abort control
 	cancelFunc context.CancelFunc // 取消正在執行的 CLI 子程序
 	cancelMu   sync.Mutex         // 保護 cancelFunc 的併發存取
@@ -471,8 +472,14 @@ func (a *Agent) current() *projectState {
 func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, error) {
 	startTime := time.Now()
 
-	// 設定取消 context
-	ctx, cancel := context.WithCancel(context.Background())
+	// 設定 context with timeout (可透過 config 調整，預設 15 分鐘，0=無限制)
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if a.cliTimeoutMinutes > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(a.cliTimeoutMinutes)*time.Minute)
+	} else {
+		ctx, cancel = context.WithCancel(context.Background())
+	}
 	a.cancelMu.Lock()
 	a.cancelFunc = cancel
 	a.processing = true
@@ -547,7 +554,26 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	// Track tool executions for this decision
 	var toolCallsForDecision []ToolExecution
 
-	resp, err := a.client.CallStream(ctx, userMessage, a.projectDir, ps.sessionID, a.lastUsedModel, func(toolName string, toolInput map[string]interface{}) {
+	const maxRetries = 2
+	var resp *CLIResponse
+	var err error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			backoff := time.Duration(attempt*15) * time.Second
+			log.Printf("[agent] retry %d/%d after %v (previous error: %v)", attempt, maxRetries, backoff, err)
+			if onUpdate != nil {
+				onUpdate(fmt.Sprintf("🔄 重試中 (%d/%d)...", attempt, maxRetries), false)
+			}
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+			toolCallsForDecision = nil
+		}
+
+		resp, err = a.client.CallStream(ctx, userMessage, a.projectDir, ps.sessionID, a.lastUsedModel, func(toolName string, toolInput map[string]interface{}) {
 		// Check if we should create a checkpoint before executing this tool
 		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
 
@@ -581,17 +607,30 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 			// Don't send streaming previews - full response is sent at completion
 		}
 	})
+
+		if err == nil {
+			break
+		}
+
+		if isRetryableError(err) && attempt < maxRetries {
+			log.Printf("[agent] retryable error detected: %v", err)
+			if resp != nil && resp.SessionID != "" {
+				ps.sessionID = resp.SessionID
+			}
+			continue
+		}
+
+		break
+	} // end retry loop
+
 	if err != nil {
-		// Even on error, resp may contain partial text content from streaming
 		partialText := ""
 		deltaCost := 0.0
 		if resp != nil {
 			partialText = resp.TextContent
-			// Still save session ID and stats for partial results
 			if resp.SessionID != "" {
 				ps.sessionID = resp.SessionID
 			}
-			// Calculate cost delta (CLI's TotalCostUSD is session-cumulative)
 			deltaCost = resp.TotalCostUSD - ps.lastTotalCostUSD
 			ps.lastTotalCostUSD = resp.TotalCostUSD
 
@@ -638,8 +677,13 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (string, error) {
 	startTime := time.Now()
 
-	// 設定取消 context
-	ctx, cancel := context.WithCancel(context.Background())
+	var ctx context.Context
+	var cancel context.CancelFunc
+	if a.cliTimeoutMinutes > 0 {
+		ctx, cancel = context.WithTimeout(context.Background(), time.Duration(a.cliTimeoutMinutes)*time.Minute)
+	} else {
+		ctx, cancel = context.WithCancel(context.Background())
+	}
 	a.cancelMu.Lock()
 	a.cancelFunc = cancel
 	a.processing = true
@@ -872,6 +916,21 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 	return resp.Result, nil
 }
 
+// isRetryableError determines if a CLI error is transient and worth retrying.
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "rate limit") ||
+		strings.Contains(s, "429") ||
+		strings.Contains(s, "overloaded") ||
+		strings.Contains(s, "529") ||
+		strings.Contains(s, "temporary") ||
+		strings.Contains(s, "connection reset") ||
+		strings.Contains(s, "EOF")
+}
+
 // addToRecentMessages 儲存最近一輪對話（最多保留 5 輪）
 func addToRecentMessages(ps *projectState, userMsg, assistantMsg string) {
 	const maxLen = 500
@@ -954,6 +1013,11 @@ func formatToolUpdate(name string, input map[string]interface{}) string {
 // Reset clears the current project's session and stats
 func (a *Agent) Reset() {
 	delete(a.projects, a.projectDir)
+}
+
+// ClearSession resets only the session ID, forcing fresh Claude Code context on next run while preserving usage stats
+func (a *Agent) ClearSession() {
+	a.current().sessionID = ""
 }
 
 // SetProject switches the working directory (preserves all project sessions)
