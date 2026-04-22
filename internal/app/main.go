@@ -107,6 +107,12 @@ type HermesConfig struct {
 	// Progress verbosity: "minimal" | "normal" | "verbose"
 	ProgressVerbosity string `json:"progress_verbosity"` // default "normal"
 
+	// AutoRouteComplex enables Complexity Gate auto-routing: natural-language
+	// messages classified as complex start Hermes automatically without
+	// requiring the /hermes command. Moderate and trivial messages keep
+	// going through the regular model routing path.
+	AutoRouteComplex bool `json:"auto_route_complex"` // default false
+
 	// Resource limits
 	Budget HermesBudgetConfig `json:"budget"`
 

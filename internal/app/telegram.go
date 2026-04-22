@@ -638,6 +638,22 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		return
 	}
 
+	// Complexity Gate auto-routing: if enabled, natural-language messages
+	// classified as complex start Hermes automatically. Continuation messages
+	// (pronouns, short follow-ups) stay on the regular routing path so we do
+	// not hijack conversational context.
+	if t.config.Hermes.Enabled && t.config.Hermes.AutoRouteComplex && !isContinuationMessage(text) {
+		cl := ClassifyComplexity(text)
+		if cl.Complexity == ComplexityComplex {
+			projectDir := t.getAgent(key).ProjectDir()
+			log.Printf("[telegram] auto-route to Hermes rule=%s chatID=%d: %.80s",
+				cl.MatchedRule, key.chatID, text)
+			t.send(key, fmt.Sprintf("🤖 判定為複雜任務（%s）— 自動啟動 Hermes 模式", cl.MatchedRule))
+			go t.startHermesTask(key, text, projectDir)
+			return
+		}
+	}
+
 	// 一般訊息 → agent 處理
 	agent := t.getAgent(key)
 
