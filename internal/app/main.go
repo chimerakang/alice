@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const Version = "1.0.1"
+
 type ModelPricingConfig struct {
 	Haiku  struct {
 		Input  float64 `json:"input"`  // per 1M tokens
