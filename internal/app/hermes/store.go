@@ -49,6 +49,10 @@ type TaskStateStore interface {
 	// AddTokenUsage adds delta tokens to both the task budget and the current sub-task.
 	AddTokenUsage(taskID string, delta int) error
 
+	// AddModelUsage accumulates per-model token usage for the #102 summary report.
+	// Creates a new ModelUsage entry if the model has not been seen on this task.
+	AddModelUsage(taskID, model string, inputTokens, outputTokens int) error
+
 	// ListTasksForChat returns recent tasks for a chat (newest first).
 	ListTasksForChat(chatID int64, limit int) ([]TaskState, error)
 }
@@ -87,12 +91,14 @@ func (s *SQLiteTaskStore) migrate() error {
 			token_budget          TEXT NOT NULL DEFAULT '{}',
 			plan_json             TEXT NOT NULL DEFAULT '[]',
 			github_issue_number   INTEGER NOT NULL DEFAULT 0,
+			model_usages          TEXT NOT NULL DEFAULT '[]',
 			created_at            TEXT NOT NULL,
 			updated_at            TEXT NOT NULL
 		)`,
 		// Additive migration: add github_issue_number to pre-existing tables.
 		// SQLite does not support IF NOT EXISTS on ALTER TABLE — ignore "duplicate column" error.
 		`ALTER TABLE hermes_task_states ADD COLUMN github_issue_number INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE hermes_task_states ADD COLUMN model_usages TEXT NOT NULL DEFAULT '[]'`,
 		`CREATE INDEX IF NOT EXISTS idx_hermes_tasks_chat_status
 			ON hermes_task_states(chat_id, status)`,
 		`CREATE TABLE IF NOT EXISTS hermes_task_artifacts (
@@ -137,19 +143,23 @@ func (s *SQLiteTaskStore) CreateTask(task TaskState) (TaskState, error) {
 	if err != nil {
 		return task, err
 	}
+	modelUsagesJSON, err := json.Marshal(task.ModelUsages)
+	if err != nil {
+		return task, err
+	}
 
 	return task, s.execWithRetry(func() error {
 		_, err := s.db.Exec(`
 			INSERT INTO hermes_task_states
 				(id, chat_id, planner_session, goal, current_idx, accumulated,
 				 status, interrupted_by, interrupt_policy, token_budget, plan_json,
-				 github_issue_number, created_at, updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+				 github_issue_number, model_usages, created_at, updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			task.ID, task.ChatID, task.PlannerSessionID, task.Goal,
 			task.CurrentIdx, task.Accumulated, string(task.Status),
 			task.InterruptedBy, string(task.InterruptPolicy),
 			string(budgetJSON), string(planJSON),
-			task.GithubIssueNumber,
+			task.GithubIssueNumber, string(modelUsagesJSON),
 			task.CreatedAt.Format(time.RFC3339),
 			task.UpdatedAt.Format(time.RFC3339),
 		)
@@ -161,7 +171,7 @@ func (s *SQLiteTaskStore) GetTask(id string) (TaskState, error) {
 	row := s.db.QueryRow(`
 		SELECT id, chat_id, planner_session, goal, current_idx, accumulated,
 		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
-		       github_issue_number, created_at, updated_at
+		       github_issue_number, model_usages, created_at, updated_at
 		FROM hermes_task_states WHERE id = ?`, id)
 	return s.scanTask(row)
 }
@@ -170,7 +180,7 @@ func (s *SQLiteTaskStore) GetActiveTaskForChat(chatID int64) (TaskState, error) 
 	row := s.db.QueryRow(`
 		SELECT id, chat_id, planner_session, goal, current_idx, accumulated,
 		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
-		       github_issue_number, created_at, updated_at
+		       github_issue_number, model_usages, created_at, updated_at
 		FROM hermes_task_states
 		WHERE chat_id = ? AND status NOT IN ('done','failed','interrupted')
 		ORDER BY created_at DESC LIMIT 1`, chatID)
@@ -310,11 +320,55 @@ func (s *SQLiteTaskStore) AddTokenUsage(taskID string, delta int) error {
 	})
 }
 
+func (s *SQLiteTaskStore) AddModelUsage(taskID, model string, inputTokens, outputTokens int) error {
+	return s.execWithRetry(func() error {
+		var modelUsagesJSON string
+		if err := s.db.QueryRow(`SELECT model_usages FROM hermes_task_states WHERE id = ?`, taskID).
+			Scan(&modelUsagesJSON); err != nil {
+			return err
+		}
+		var usages []ModelUsage
+		if modelUsagesJSON != "" {
+			if err := json.Unmarshal([]byte(modelUsagesJSON), &usages); err != nil {
+				return err
+			}
+		}
+		// Merge: bump existing row if model already seen, otherwise append.
+		found := false
+		for i := range usages {
+			if usages[i].Model == model {
+				usages[i].InputTokens += inputTokens
+				usages[i].OutputTokens += outputTokens
+				usages[i].CallCount++
+				found = true
+				break
+			}
+		}
+		if !found {
+			usages = append(usages, ModelUsage{
+				Model:        model,
+				InputTokens:  inputTokens,
+				OutputTokens: outputTokens,
+				CallCount:    1,
+			})
+		}
+		updated, err := json.Marshal(usages)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec(
+			`UPDATE hermes_task_states SET model_usages = ?, updated_at = ? WHERE id = ?`,
+			string(updated), time.Now().Format(time.RFC3339), taskID,
+		)
+		return err
+	})
+}
+
 func (s *SQLiteTaskStore) ListTasksForChat(chatID int64, limit int) ([]TaskState, error) {
 	rows, err := s.db.Query(`
 		SELECT id, chat_id, planner_session, goal, current_idx, accumulated,
 		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
-		       github_issue_number, created_at, updated_at
+		       github_issue_number, model_usages, created_at, updated_at
 		FROM hermes_task_states
 		WHERE chat_id = ?
 		ORDER BY created_at DESC LIMIT ?`, chatID, limit)
@@ -356,7 +410,7 @@ type rowScanner interface {
 
 func (s *SQLiteTaskStore) scanTask(row rowScanner) (TaskState, error) {
 	var task TaskState
-	var statusStr, policyStr, budgetJSON, planJSON string
+	var statusStr, policyStr, budgetJSON, planJSON, modelUsagesJSON string
 	var interruptedBy sql.NullInt64
 	var createdStr, updatedStr string
 
@@ -365,7 +419,7 @@ func (s *SQLiteTaskStore) scanTask(row rowScanner) (TaskState, error) {
 		&task.CurrentIdx, &task.Accumulated,
 		&statusStr, &interruptedBy, &policyStr,
 		&budgetJSON, &planJSON,
-		&task.GithubIssueNumber,
+		&task.GithubIssueNumber, &modelUsagesJSON,
 		&createdStr, &updatedStr,
 	)
 	if err == sql.ErrNoRows {
@@ -385,6 +439,11 @@ func (s *SQLiteTaskStore) scanTask(row rowScanner) (TaskState, error) {
 	}
 	if err := json.Unmarshal([]byte(budgetJSON), &task.TokenBudget); err != nil {
 		return task, err
+	}
+	if modelUsagesJSON != "" {
+		if err := json.Unmarshal([]byte(modelUsagesJSON), &task.ModelUsages); err != nil {
+			return task, err
+		}
 	}
 	if task.CreatedAt, err = time.Parse(time.RFC3339, createdStr); err != nil {
 		return task, err
@@ -415,7 +474,7 @@ func (s *SQLiteTaskStore) scanTaskRow(rows *sql.Rows) (TaskState, error) {
 
 func (s *SQLiteTaskStore) scanRowsInto(rows *sql.Rows) (TaskState, error) {
 	var task TaskState
-	var statusStr, policyStr, budgetJSON, planJSON string
+	var statusStr, policyStr, budgetJSON, planJSON, modelUsagesJSON string
 	var interruptedBy sql.NullInt64
 	var createdStr, updatedStr string
 
@@ -424,7 +483,7 @@ func (s *SQLiteTaskStore) scanRowsInto(rows *sql.Rows) (TaskState, error) {
 		&task.CurrentIdx, &task.Accumulated,
 		&statusStr, &interruptedBy, &policyStr,
 		&budgetJSON, &planJSON,
-		&task.GithubIssueNumber,
+		&task.GithubIssueNumber, &modelUsagesJSON,
 		&createdStr, &updatedStr,
 	)
 	if err != nil {
@@ -441,6 +500,11 @@ func (s *SQLiteTaskStore) scanRowsInto(rows *sql.Rows) (TaskState, error) {
 	}
 	if err := json.Unmarshal([]byte(budgetJSON), &task.TokenBudget); err != nil {
 		return task, err
+	}
+	if modelUsagesJSON != "" {
+		if err := json.Unmarshal([]byte(modelUsagesJSON), &task.ModelUsages); err != nil {
+			return task, err
+		}
 	}
 	if task.CreatedAt, err = time.Parse(time.RFC3339, createdStr); err != nil {
 		return task, err

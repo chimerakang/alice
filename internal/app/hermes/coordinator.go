@@ -168,7 +168,7 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 	}()
 
 	// ── Phase 1: Planning ─────────────────────────────────────────────────────
-	tasks, planTokens, err := c.planner.Plan(ctx, goal, c.cfg.ProjectDir)
+	tasks, planIn, planOut, err := c.planner.Plan(ctx, goal, c.cfg.ProjectDir)
 	if err != nil {
 		var jfail *ErrPlannerJSONFailed
 		if errors.As(err, &jfail) {
@@ -197,7 +197,8 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 		return
 	}
 
-	_ = c.store.AddTokenUsage(taskID, planTokens)
+	_ = c.store.AddTokenUsage(taskID, planIn+planOut)
+	_ = c.store.AddModelUsage(taskID, c.cfg.PlannerModel, planIn, planOut)
 	if sid := c.planner.SessionID(); sid != "" {
 		_ = c.store.UpdatePlannerSession(taskID, sid)
 	}
@@ -302,6 +303,7 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 
 		execTokens := result.InputTokens + result.OutputTokens
 		_ = c.store.AddTokenUsage(taskID, execTokens)
+		_ = c.store.AddModelUsage(taskID, c.cfg.ExecutorModel, result.InputTokens, result.OutputTokens)
 
 		if execErr != nil {
 			if err := c.store.UpdateSubTask(taskID, idx, SubTaskFailed, execErr.Error(), execTokens); err != nil {
@@ -396,13 +398,14 @@ func (c *Coordinator) runCompression(ctx context.Context, taskID string, state T
 		Accumulated: accumulated,
 		Artifacts:   state.Artifacts,
 	}
-	compressed, tokens, err := c.planner.Compress(ctx, req, c.cfg.ProjectDir)
+	compressed, compressedIn, compressedOut, err := c.planner.Compress(ctx, req, c.cfg.ProjectDir)
 	if err != nil {
 		log.Printf("[hermes] compression failed for task %s: %v", taskID, err)
 		return
 	}
 	_ = c.store.UpdateAccumulated(taskID, compressed)
-	_ = c.store.AddTokenUsage(taskID, tokens)
+	_ = c.store.AddTokenUsage(taskID, compressedIn+compressedOut)
+	_ = c.store.AddModelUsage(taskID, c.cfg.PlannerModel, compressedIn, compressedOut)
 }
 
 // newUUID returns a random UUID string.

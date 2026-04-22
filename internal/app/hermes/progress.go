@@ -1,6 +1,9 @@
 package hermes
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
 // Verbosity controls how much progress information is sent to the user.
 type Verbosity int
@@ -119,6 +122,23 @@ func (r *TextProgressReporter) OnDone(state TaskState) {
 			lines = append(lines, "  • "+a.Path)
 		}
 	}
+
+	// Token usage summary (#102). Always render when ModelUsages is populated —
+	// the Coordinator only populates it once operators opt-in via
+	// hermes.summary.enabled, so absence here is the disabled case.
+	if len(state.ModelUsages) > 0 {
+		wallclock := 0
+		if !state.TokenBudget.StartedAt.IsZero() {
+			wallclock = int(time.Since(state.TokenBudget.StartedAt).Seconds())
+		}
+		summary := TaskSummary{
+			TaskState:        &state,
+			WallclockSeconds: wallclock,
+			Verbosity:        "minimal",
+		}
+		lines = append(lines, "", summary.GenerateSummary())
+	}
+
 	r.sendFn(join(lines))
 }
 

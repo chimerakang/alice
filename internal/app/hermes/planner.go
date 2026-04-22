@@ -75,29 +75,32 @@ func NewPlannerSession(callFn CallPlanFunc, maxRetries int, extraRules string) *
 // SessionID returns the current --resume session ID (empty before first call).
 func (p *PlannerSession) SessionID() string { return p.sessionID }
 
-// Plan sends the goal to the Planner and returns parsed SubTasks.
+// Plan sends the goal to the Planner and returns parsed SubTasks plus the
+// accumulated input / output token counts across all attempts (the caller
+// needs the split so per-model ModelUsage can be recorded).
 // Retries up to maxRetries times on JSON parse failure, re-injecting the error
 // as feedback each time.
 // Enforces Complexity Gate: single-operation goals return 1 sub-task.
-func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]SubTask, int, error) {
+func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]SubTask, int, int, error) {
 	systemSection := plannerSystemPrompt
 	if p.extraRules != "" {
 		systemSection = p.extraRules + "\n\n" + plannerSystemPrompt
 	}
 	prompt := systemSection + "\n\nGoal: " + goal
 	var lastText string
-	var totalTokens int
+	var totalIn, totalOut int
 
 	for attempt := 1; attempt <= p.maxRetries; attempt++ {
 		text, sid, inT, outT, err := p.callFn(ctx, prompt, projectDir)
 		if err != nil {
-			return nil, totalTokens, fmt.Errorf("planner attempt %d: %w", attempt, err)
+			return nil, totalIn, totalOut, fmt.Errorf("planner attempt %d: %w", attempt, err)
 		}
 		if sid != "" {
 			p.sessionID = sid
 		}
 		lastText = text
-		totalTokens += inT + outT
+		totalIn += inT
+		totalOut += outT
 
 		tasks, parseErr := parsePlannerJSON(text)
 		if parseErr == nil && len(tasks) > 0 {
@@ -105,7 +108,7 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 			// allow it without further validation. Otherwise validate granularity.
 			if len(tasks) == 1 && isDirectExecutionTask(tasks[0]) {
 				// Complexity Gate: direct execution mode (simple goal)
-				return tasks, totalTokens, nil
+				return tasks, totalIn, totalOut, nil
 			}
 			// Multi-task plan: validate granularity
 			if err := validateGranularityForPlan(tasks); err != nil {
@@ -117,9 +120,9 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 					)
 					continue
 				}
-				return nil, totalTokens, fmt.Errorf("granularity validation failed after retries: %w", err)
+				return nil, totalIn, totalOut, fmt.Errorf("granularity validation failed after retries: %w", err)
 			}
-			return tasks, totalTokens, nil
+			return tasks, totalIn, totalOut, nil
 		}
 
 		if attempt < p.maxRetries {
@@ -130,7 +133,7 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 		}
 	}
 
-	return nil, totalTokens, &ErrPlannerJSONFailed{RawOutput: lastText}
+	return nil, totalIn, totalOut, &ErrPlannerJSONFailed{RawOutput: lastText}
 }
 
 // isDirectExecutionTask checks if the single sub-task is marked as "execute directly"
@@ -149,16 +152,17 @@ func validateGranularityForPlan(tasks []SubTask) error {
 	return validateGranularity(tasks)
 }
 
-// Compress asks the Planner to condense the accumulated execution log.
-func (p *PlannerSession) Compress(ctx context.Context, req CompressRequest, projectDir string) (string, int, error) {
+// Compress asks the Planner to condense the accumulated execution log and
+// returns the compressed text with input / output token counts separated.
+func (p *PlannerSession) Compress(ctx context.Context, req CompressRequest, projectDir string) (string, int, int, error) {
 	text, sid, inT, outT, err := p.callFn(ctx, CompressPrompt(req), projectDir)
 	if err != nil {
-		return "", 0, fmt.Errorf("compress: %w", err)
+		return "", 0, 0, fmt.Errorf("compress: %w", err)
 	}
 	if sid != "" {
 		p.sessionID = sid
 	}
-	return strings.TrimSpace(text), inT + outT, nil
+	return strings.TrimSpace(text), inT, outT, nil
 }
 
 // ── JSON parsing ──────────────────────────────────────────────────────────────
