@@ -184,12 +184,12 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 		if issueNum > 0 && ghCfg.Enabled {
 			if ghCfg.ShouldComment("fail") {
 				body := CommentFailed("Planning", err.Error(), 0, 0)
-				if err := PostComment(ctx, issueNum, body); err != nil {
+				if err := PostComment(ctx, c.cfg.ProjectDir, issueNum, body); err != nil {
 					log.Printf("[hermes] GitHub comment planning fail: %v", err)
 				}
 			}
 			if ghCfg.FailureLabel != "" {
-				if err := ApplyLabel(ctx, issueNum, ghCfg.FailureLabel); err != nil {
+				if err := ApplyLabel(ctx, c.cfg.ProjectDir, issueNum, ghCfg.FailureLabel); err != nil {
 					log.Printf("[hermes] GitHub apply failure label: %v", err)
 				}
 			}
@@ -236,13 +236,13 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 	if issueNum > 0 && ghCfg.Enabled {
 		if ghCfg.ShouldComment("start") {
 			body := CommentStarted(c.cfg.PlannerModel, c.cfg.ExecutorModel)
-			if err := PostComment(ctx, issueNum, body); err != nil {
+			if err := PostComment(ctx, c.cfg.ProjectDir, issueNum, body); err != nil {
 				log.Printf("[hermes] GitHub comment start: %v", err)
 			}
 		}
 		// Write plan back to Issue if it had no checklist
 		if ghCfg.SyncChecklist {
-			if err := WritePlanToIssue(ctx, issueNum, state.Goal, tasks); err != nil {
+			if err := WritePlanToIssue(ctx, c.cfg.ProjectDir, issueNum, state.Goal, tasks); err != nil {
 				log.Printf("[hermes] GitHub write plan: %v", err)
 			}
 		}
@@ -267,12 +267,12 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 			if issueNum > 0 && ghCfg.Enabled {
 				if ghCfg.ShouldComment("budget_exceeded") {
 					body := CommentBudgetExceeded(state.TokenBudget.UsedTokens, state.TokenBudget.MaxTotalTokens)
-					if err := PostComment(ctx, issueNum, body); err != nil {
+					if err := PostComment(ctx, c.cfg.ProjectDir, issueNum, body); err != nil {
 						log.Printf("[hermes] GitHub comment budget: %v", err)
 					}
 				}
 				if ghCfg.FailureLabel != "" {
-					if err := ApplyLabel(ctx, issueNum, ghCfg.FailureLabel); err != nil {
+					if err := ApplyLabel(ctx, c.cfg.ProjectDir, issueNum, ghCfg.FailureLabel); err != nil {
 						log.Printf("[hermes] GitHub apply failure label on budget: %v", err)
 					}
 				}
@@ -333,7 +333,7 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 
 			// GitHub: sync checklist after each successful sub-task
 			if issueNum > 0 && ghCfg.Enabled && ghCfg.SyncChecklist {
-				if err := SyncChecklist(ctx, issueNum, tasks); err != nil {
+				if err := SyncChecklist(ctx, c.cfg.ProjectDir, issueNum, tasks); err != nil {
 					log.Printf("[hermes] GitHub sync checklist idx=%d: %v", idx, err)
 				}
 			}
@@ -341,7 +341,7 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 			// GitHub: post per-subtask progress comment if enabled
 			if issueNum > 0 && ghCfg.Enabled && ghCfg.ShouldComment("complete") {
 				body := CommentSubTaskProgress(idx, len(tasks), subTask, result.ResultText, execTokens, completedCount)
-				if err := PostComment(ctx, issueNum, body); err != nil {
+				if err := PostComment(ctx, c.cfg.ProjectDir, issueNum, body); err != nil {
 					log.Printf("[hermes] GitHub comment subtask progress idx=%d: %v", idx, err)
 				}
 			}
@@ -366,16 +366,16 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 	if issueNum > 0 && ghCfg.Enabled {
 		if ghCfg.ShouldComment("complete") {
 			body := CommentDone(finalState)
-			if err := PostComment(ctx, issueNum, body); err != nil {
+			if err := PostComment(ctx, c.cfg.ProjectDir, issueNum, body); err != nil {
 				log.Printf("[hermes] GitHub comment done: %v", err)
 			}
 		}
 		allDone := completedCount == len(tasks)
 		if allDone && ghCfg.AutoCloseLabel != "" {
 			// Re-fetch labels to check current state
-			if issue, err := FetchIssue(ctx, issueNum); err == nil {
+			if issue, err := FetchIssue(ctx, c.cfg.ProjectDir, issueNum); err == nil {
 				if HasLabel(issue, ghCfg.AutoCloseLabel) {
-					if err := CloseIssue(ctx, issueNum); err != nil {
+					if err := CloseIssue(ctx, c.cfg.ProjectDir, issueNum); err != nil {
 						log.Printf("[hermes] GitHub close issue: %v", err)
 					}
 				}

@@ -36,9 +36,22 @@ type ghIssueJSON struct {
 // checklistRe matches Markdown task list items: `- [ ] text` or `- [x] text`
 var checklistRe = regexp.MustCompile(`(?m)^- \[( |x|X)\] (.+)$`)
 
-// FetchIssue calls `gh issue view N --json title,body,labels` and returns parsed data.
-func FetchIssue(ctx context.Context, number int) (*IssueContext, error) {
-	out, err := exec.CommandContext(ctx, "gh", "issue", "view",
+// ghCommand builds a gh subcommand rooted at projectDir so `gh` resolves the
+// correct repository from that directory's git remote. An empty projectDir
+// falls back to the bot's cwd (compatible with older single-project setups).
+func ghCommand(ctx context.Context, projectDir string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	if projectDir != "" {
+		cmd.Dir = projectDir
+	}
+	return cmd
+}
+
+// FetchIssue calls `gh issue view N --json title,body,labels` in projectDir
+// and returns parsed data. projectDir must match the chat's configured repo
+// so gh resolves the correct remote; empty string falls back to cwd.
+func FetchIssue(ctx context.Context, projectDir string, number int) (*IssueContext, error) {
+	out, err := ghCommand(ctx, projectDir, "issue", "view",
 		fmt.Sprintf("%d", number),
 		"--json", "title,body,labels",
 	).Output()
@@ -144,8 +157,8 @@ func min16(n int) int {
 }
 
 // PostComment posts a comment to the given Issue via `gh issue comment`.
-func PostComment(ctx context.Context, number int, body string) error {
-	cmd := exec.CommandContext(ctx, "gh", "issue", "comment",
+func PostComment(ctx context.Context, projectDir string, number int, body string) error {
+	cmd := ghCommand(ctx, projectDir, "issue", "comment",
 		fmt.Sprintf("%d", number),
 		"--body", body,
 	)
@@ -156,9 +169,9 @@ func PostComment(ctx context.Context, number int, body string) error {
 }
 
 // SyncChecklist fetches the current Issue body and checks off completed sub-tasks.
-func SyncChecklist(ctx context.Context, number int, subtasks []SubTask) error {
+func SyncChecklist(ctx context.Context, projectDir string, number int, subtasks []SubTask) error {
 	// Fetch current body
-	out, err := exec.CommandContext(ctx, "gh", "issue", "view",
+	out, err := ghCommand(ctx, projectDir, "issue", "view",
 		fmt.Sprintf("%d", number),
 		"--json", "body",
 	).Output()
@@ -188,7 +201,7 @@ func SyncChecklist(ctx context.Context, number int, subtasks []SubTask) error {
 		return nil // nothing changed
 	}
 
-	cmd := exec.CommandContext(ctx, "gh", "issue", "edit",
+	cmd := ghCommand(ctx, projectDir, "issue", "edit",
 		fmt.Sprintf("%d", number),
 		"--body", updatedBody,
 	)
@@ -199,8 +212,8 @@ func SyncChecklist(ctx context.Context, number int, subtasks []SubTask) error {
 }
 
 // ApplyLabel adds a label to the Issue (creates if needed via gh's built-in behaviour).
-func ApplyLabel(ctx context.Context, number int, label string) error {
-	cmd := exec.CommandContext(ctx, "gh", "issue", "edit",
+func ApplyLabel(ctx context.Context, projectDir string, number int, label string) error {
+	cmd := ghCommand(ctx, projectDir, "issue", "edit",
 		fmt.Sprintf("%d", number),
 		"--add-label", label,
 	)
@@ -211,8 +224,8 @@ func ApplyLabel(ctx context.Context, number int, label string) error {
 }
 
 // CloseIssue closes the Issue.
-func CloseIssue(ctx context.Context, number int) error {
-	cmd := exec.CommandContext(ctx, "gh", "issue", "close",
+func CloseIssue(ctx context.Context, projectDir string, number int) error {
+	cmd := ghCommand(ctx, projectDir, "issue", "close",
 		fmt.Sprintf("%d", number),
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -233,7 +246,7 @@ func HasLabel(issue *IssueContext, label string) bool {
 
 // WritePlanToIssue writes the generated sub-task plan as a checklist to the Issue body.
 // This is called when the Issue had no checklist and the Planner generated a plan.
-func WritePlanToIssue(ctx context.Context, number int, originalBody string, tasks []SubTask) error {
+func WritePlanToIssue(ctx context.Context, projectDir string, number int, originalBody string, tasks []SubTask) error {
 	var sb strings.Builder
 	sb.WriteString(originalBody)
 	if !strings.HasSuffix(originalBody, "\n") {
@@ -246,7 +259,7 @@ func WritePlanToIssue(ctx context.Context, number int, originalBody string, task
 		sb.WriteString("\n")
 	}
 
-	cmd := exec.CommandContext(ctx, "gh", "issue", "edit",
+	cmd := ghCommand(ctx, projectDir, "issue", "edit",
 		fmt.Sprintf("%d", number),
 		"--body", sb.String(),
 	)
@@ -337,7 +350,7 @@ func CommentSubTaskProgress(idx, totalCount int, subTask SubTask, resultText str
 //   - "complete": TaskState
 //   - "fail": map[string]interface{} with keys "failed_description" (string), "reason" (string), "done_count" (int), "total_count" (int)
 //   - "budget_exceeded": map[string]int with keys "used_tokens", "max_tokens"
-func PostCommentEvent(ctx context.Context, number int, event string, payload interface{}) error {
+func PostCommentEvent(ctx context.Context, projectDir string, number int, event string, payload interface{}) error {
 	var body string
 	switch event {
 	case "start":
@@ -360,5 +373,5 @@ func PostCommentEvent(ctx context.Context, number int, event string, payload int
 		return fmt.Errorf("unknown event type: %s", event)
 	}
 
-	return PostComment(ctx, number, body)
+	return PostComment(ctx, projectDir, number, body)
 }

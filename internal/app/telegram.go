@@ -1424,7 +1424,7 @@ func (t *TelegramBot) isHermesEnabled(key chatKey) bool {
 // startHermesFromIssue fetches a GitHub Issue and starts a Hermes task from it.
 func (t *TelegramBot) startHermesFromIssue(key chatKey, issueNumber int, projectDir string) {
 	ctx := context.Background()
-	issue, err := hermes.FetchIssue(ctx, issueNumber)
+	issue, err := hermes.FetchIssue(ctx, projectDir, issueNumber)
 	if err != nil {
 		t.send(key, fmt.Sprintf("❌ 無法讀取 Issue #%d：%v", issueNumber, err))
 		return
