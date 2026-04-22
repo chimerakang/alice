@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -174,11 +176,30 @@ type UserPromptSubmitPayload struct {
 	Source         string `json:"source"` // optional, script may inject vscode/terminal
 }
 
+// vscodeBlockMode resolves the current Phase 2 behavior for complex prompts.
+// Controlled by env var ALICE_VSCODE_BLOCK_MODE:
+//
+//	off    (default) — Phase 1 observe only, no blocking.
+//	dryrun           — log "would block" decisions without sending block to Claude Code.
+//	on               — return {"decision":"block"} for complex classifications.
+//
+// Dry-run is a low-risk way to watch real blocking decisions accumulate in the
+// log before committing to hard block mode.
+func vscodeBlockMode() string {
+	mode := strings.TrimSpace(strings.ToLower(os.Getenv("ALICE_VSCODE_BLOCK_MODE")))
+	switch mode {
+	case "on", "dryrun":
+		return mode
+	default:
+		return "off"
+	}
+}
+
 // handleUserPromptSubmit receives UserPromptSubmit hook events. Phase 1 of
-// issue #104 is observe-only: classify the prompt via the Complexity Gate
-// heuristic, persist the decision, and return an empty response so Claude
-// Code proceeds normally. Phase 2 will use {"decision":"block"} to redirect
-// complex prompts to Hermes once classifier accuracy is validated.
+// issue #104 classifies the prompt via the Complexity Gate heuristic and
+// persists the decision. Phase 2 (gated by ALICE_VSCODE_BLOCK_MODE) may
+// return {"decision":"block"} for complex prompts, redirecting the user to
+// Alice's Hermes orchestration via Telegram.
 func (wi *WebInterface) handleUserPromptSubmit(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -229,10 +250,27 @@ func (wi *WebInterface) handleUserPromptSubmit(w http.ResponseWriter, r *http.Re
 			}
 		}
 
-		log.Printf("[hooks] UserPromptSubmit session=%s source=%s classification=%s rule=%s len=%d",
-			payload.SessionID, source, result.Complexity, result.MatchedRule, len([]rune(payload.Prompt)))
+		mode := vscodeBlockMode()
+		shouldBlock := result.Complexity == ComplexityComplex && mode == "on"
+		wouldBlock := result.Complexity == ComplexityComplex && mode == "dryrun"
 
-		// Observe mode: return empty object so Claude Code proceeds unchanged.
+		log.Printf("[hooks] UserPromptSubmit session=%s source=%s classification=%s rule=%s len=%d mode=%s block=%t dryrun=%t",
+			payload.SessionID, source, result.Complexity, result.MatchedRule, len([]rune(payload.Prompt)),
+			mode, shouldBlock, wouldBlock)
+
+		if shouldBlock {
+			reason := "Alice Hermes: 判定為 complex 任務。請改用 Telegram 執行 /hermes 以啟動 Planner-Executor 協作。"
+			if custom := os.Getenv("ALICE_VSCODE_BLOCK_REASON"); custom != "" {
+				reason = custom
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"decision": "block",
+				"reason":   reason,
+			})
+			return
+		}
+
+		// Observe mode / dry-run: return empty object so Claude Code proceeds unchanged.
 		json.NewEncoder(w).Encode(map[string]interface{}{})
 	})(w, r)
 }
