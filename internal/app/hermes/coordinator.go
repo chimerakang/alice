@@ -202,6 +202,13 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 		_ = c.store.UpdatePlannerSession(taskID, sid)
 	}
 
+	// Complexity Gate enforcement: validate sub-task count
+	if len(tasks) > 15 {
+		c.progress.OnError(fmt.Errorf("complexity violation: plan has %d sub-tasks (max 15); Planner exceeded granularity limits", len(tasks)))
+		_ = c.store.MarkStatus(taskID, TaskStatusFailed)
+		return
+	}
+
 	// Persist the plan so UpdateSubTask can find sub-task records.
 	if err := c.store.StorePlan(taskID, tasks); err != nil {
 		c.progress.OnError(fmt.Errorf("persist plan: %w", err))

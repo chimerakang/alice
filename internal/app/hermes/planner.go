@@ -13,7 +13,7 @@ const plannerSystemPrompt = `You are the Planner in a Hermes Brain-Executor syst
 
 Your job:
 1. Receive a goal from the user.
-2. Break it into atomic sub-tasks that a separate Executor can carry out one at a time.
+2. Decide whether to decompose into sub-tasks OR return a single "execute directly" sub-task.
 3. Output ONLY a JSON array inside a fenced code block. No prose before or after.
 
 Each sub-task object must have:
@@ -30,11 +30,23 @@ Example output:
 ]
 ` + "```" + `
 
-Rules:
-- Each sub-task must be independently executable.
-- Keep descriptions concrete and tool-actionable.
+COMPLEXITY GATE (Preferred Behavior):
+- For SIMPLE goals (1-3 sequential operations: e.g. "commit & push & tag", "add file & run test"):
+  → Return a SINGLE sub-task: {"id":"s1", "description": "Execute the goal directly", "tool_hints": [...]}
+- For COMPLEX goals (architecture changes, multi-module refactors, feature implementation):
+  → Decompose into 3-7 logically independent sub-tasks.
+
+GRANULARITY RULES:
+- Each sub-task must be > 1 minute of work (not: "stage file A", "stage file B").
+- Group related operations (all file edits for one feature, all tests for one module).
+- Avoid sequential dependencies within a sub-task unless they're inseparable.
+- NEVER decompose a single command into multiple steps (e.g. "git commit" is 1 task, not 5).
+
+Limits:
 - Maximum 15 sub-tasks per plan.
-- Output ONLY the JSON block. No explanation, no preamble.`
+- Prefer underdcomposition (fewer, larger tasks) over overcomposition (many, tiny tasks).
+
+Output ONLY the JSON block. No explanation, no preamble.`
 
 // jsonBlockRe extracts the first ```json ... ``` block from Planner output.
 var jsonBlockRe = regexp.MustCompile("(?s)```(?:json)?\\s*\\n?(\\[.*?\\])\\s*```")
@@ -66,6 +78,7 @@ func (p *PlannerSession) SessionID() string { return p.sessionID }
 // Plan sends the goal to the Planner and returns parsed SubTasks.
 // Retries up to maxRetries times on JSON parse failure, re-injecting the error
 // as feedback each time.
+// Enforces Complexity Gate: single-operation goals return 1 sub-task.
 func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]SubTask, int, error) {
 	systemSection := plannerSystemPrompt
 	if p.extraRules != "" {
@@ -88,6 +101,24 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 
 		tasks, parseErr := parsePlannerJSON(text)
 		if parseErr == nil && len(tasks) > 0 {
+			// Enforce Complexity Gate: if Planner returned 1 task with "Execute directly" pattern,
+			// allow it without further validation. Otherwise validate granularity.
+			if len(tasks) == 1 && isDirectExecutionTask(tasks[0]) {
+				// Complexity Gate: direct execution mode (simple goal)
+				return tasks, totalTokens, nil
+			}
+			// Multi-task plan: validate granularity
+			if err := validateGranularityForPlan(tasks); err != nil {
+				// Granularity violation — inject feedback and retry
+				if attempt < p.maxRetries {
+					prompt = fmt.Sprintf(
+						"Decomposition violated granularity rules on attempt %d:\n%s\n\nFix by grouping related operations. Output ONLY the corrected JSON array.",
+						attempt, err.Error(),
+					)
+					continue
+				}
+				return nil, totalTokens, fmt.Errorf("granularity validation failed after retries: %w", err)
+			}
 			return tasks, totalTokens, nil
 		}
 
@@ -100,6 +131,22 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 	}
 
 	return nil, totalTokens, &ErrPlannerJSONFailed{RawOutput: lastText}
+}
+
+// isDirectExecutionTask checks if the single sub-task is marked as "execute directly"
+// (pattern: "Execute the goal directly" or similar).
+func isDirectExecutionTask(task SubTask) bool {
+	desc := strings.ToLower(task.Description)
+	return strings.Contains(desc, "execute") && strings.Contains(desc, "directly")
+}
+
+// validateGranularityForPlan applies granularity rules to multi-task plans.
+// (Wraps unmarshalSubTasks logic for reuse).
+func validateGranularityForPlan(tasks []SubTask) error {
+	if len(tasks) <= 1 {
+		return nil // No validation needed for single tasks
+	}
+	return validateGranularity(tasks)
 }
 
 // Compress asks the Planner to condense the accumulated execution log.
@@ -146,7 +193,42 @@ func unmarshalSubTasks(raw string) ([]SubTask, error) {
 			tasks[i].Status = SubTaskPending
 		}
 	}
+
+	// Granularity gate: reject overly fine-grained decompositions
+	if len(tasks) > 1 {
+		if err := validateGranularity(tasks); err != nil {
+			return nil, err
+		}
+	}
+
 	return tasks, nil
+}
+
+// validateGranularity ensures sub-tasks are not oversplit (e.g. per-file operations).
+// Rejects: many short tasks, repetitive patterns (stage file A, stage file B, etc).
+func validateGranularity(tasks []SubTask) error {
+	// Pattern: many (>8) tasks with high repetition ("stage", "add", "update" repeated)
+	if len(tasks) > 8 {
+		descWords := make(map[string]int)
+		for _, t := range tasks {
+			// Extract first verb from description
+			parts := strings.Fields(t.Description)
+			if len(parts) > 0 {
+				verb := strings.ToLower(parts[0])
+				descWords[verb]++
+			}
+		}
+		// If one verb accounts for >50% of tasks, likely over-decomposed
+		for verb, count := range descWords {
+			if count > len(tasks)/2 {
+				return fmt.Errorf(
+					"granularity violation: %d/%d tasks start with %q (likely per-item decomposition, not per-feature)",
+					count, len(tasks), verb,
+				)
+			}
+		}
+	}
+	return nil
 }
 
 // ── Error types ───────────────────────────────────────────────────────────────
