@@ -110,6 +110,9 @@ type HermesConfig struct {
 	// Defaults to "internal/app/hermes/prompts" relative to the working directory.
 	PromptsDir string `json:"prompts_dir"`
 
+	// Summary controls task completion summary reporting.
+	Summary HermesSummaryConfig `json:"summary"`
+
 	// GithubIntegration controls Hermes ↔ GitHub Issue integration.
 	GithubIntegration GithubIntegrationConfig `json:"github_integration"`
 }
@@ -151,6 +154,21 @@ type HermesHooksConfig struct {
 	WorkDir        string   `json:"work_dir"`         // root for build validators; defaults to project dir
 }
 
+// CostRateConfig defines pricing for a model.
+type CostRateConfig struct {
+	InputPerMToken  float64 `json:"input_per_mtok"`  // cost per 1M input tokens
+	OutputPerMToken float64 `json:"output_per_mtok"` // cost per 1M output tokens
+}
+
+// HermesSummaryConfig controls task completion summary reporting.
+type HermesSummaryConfig struct {
+	Enabled            bool                       `json:"enabled"`             // whether to generate summaries
+	Verbosity          string                     `json:"verbosity"`           // "minimal" or "detailed"
+	IncludeCostEst     bool                       `json:"include_cost_estimate"`
+	Targets            []string                   `json:"targets"`             // where to push summaries ("telegram", "github")
+	CostRates          map[string]CostRateConfig `json:"cost_rates"`          // per-model pricing
+}
+
 // HermesDefaults returns a HermesConfig with sensible defaults filled in.
 func HermesDefaults(cfg HermesConfig) HermesConfig {
 	if cfg.MaxRetriesPerSubtask == 0 {
@@ -170,6 +188,27 @@ func HermesDefaults(cfg HermesConfig) HermesConfig {
 	}
 	if cfg.Budget.MaxWallclockSeconds == 0 {
 		cfg.Budget.MaxWallclockSeconds = 600
+	}
+	if cfg.Summary.Verbosity == "" {
+		cfg.Summary.Verbosity = "minimal"
+	}
+	if len(cfg.Summary.Targets) == 0 {
+		cfg.Summary.Targets = []string{"telegram"}
+	}
+	if cfg.Summary.CostRates == nil {
+		cfg.Summary.CostRates = make(map[string]CostRateConfig)
+		cfg.Summary.CostRates["claude-opus-4-7"] = CostRateConfig{
+			InputPerMToken:  15.0,
+			OutputPerMToken: 75.0,
+		}
+		cfg.Summary.CostRates["claude-sonnet-4-6"] = CostRateConfig{
+			InputPerMToken:  3.0,
+			OutputPerMToken: 15.0,
+		}
+		cfg.Summary.CostRates["claude-haiku-4-5-20251001"] = CostRateConfig{
+			InputPerMToken:  1.0,
+			OutputPerMToken: 5.0,
+		}
 	}
 	return cfg
 }

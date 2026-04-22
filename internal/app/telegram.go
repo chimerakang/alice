@@ -1323,6 +1323,9 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 	case "/hermes":
 		t.handleHermesCommand(key, parts)
 
+	case "/hermes-stats":
+		t.handleHermesStatsCommand(key, parts)
+
 	default:
 		t.send(key, t.getLocalizedMessage(key.chatID, "unknown_command", nil))
 	}
@@ -1389,6 +1392,22 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string) {
 		t.hermesMu.Unlock()
 		t.send(key, "✅ Hermes 模式已啟用。下一則訊息將由 Planner-Executor 架構處理。\n輸入 /auto 切回一般模式，/hermes stop 中止目前任務。\n\n提示：/hermes #<issue> 直接從 GitHub Issue 啟動。")
 	}
+}
+
+// handleHermesStatsCommand queries and reports Hermes task statistics.
+//
+//	/hermes-stats       — show most recent task summary
+//	/hermes-stats week  — show aggregated stats for past 7 days
+//	/hermes-stats chat  — show aggregated stats for this chat
+func (t *TelegramBot) handleHermesStatsCommand(key chatKey, parts []string) {
+	if !t.config.Hermes.Enabled {
+		t.send(key, "Hermes 模式未啟用。")
+		return
+	}
+
+	// TODO: Implement stats querying once storage layer is accessible
+	// For now, return a placeholder message.
+	t.send(key, "📊 Hermes 統計查詢功能正在實現中。請稍候。")
 }
 
 // isHermesEnabled reports whether Hermes mode is active for this chat.
@@ -1534,6 +1553,7 @@ func (t *TelegramBot) startHermesTaskWithIssue(key chatKey, goal, projectDir str
 		ExecutorRules:         pb.ForRole(hermes.RoleExecutor),
 		GithubIssueNumber:     issueNumber,
 		GithubCfg:             ghCfg,
+		PostCompletionHook:    t.buildTaskSyncHook(ghIntegration.TriggerTaskSync, projectDir),
 	}
 
 	// Use a noop store when no DB is available yet (wired fully in #97→#98 integration)
@@ -1553,6 +1573,24 @@ func (t *TelegramBot) startHermesTaskWithIssue(key chatKey, goal, projectDir str
 		return
 	}
 	log.Printf("[hermes] chat %d started task %s", key.chatID, taskID)
+}
+
+// buildTaskSyncHook returns a post-completion hook that runs `claude -p /task-sync`
+// when triggerSync is true. Returns nil otherwise.
+func (t *TelegramBot) buildTaskSyncHook(triggerSync bool, projectDir string) func(ctx context.Context) {
+	if !triggerSync {
+		return nil
+	}
+	return func(ctx context.Context) {
+		cmd := exec.CommandContext(ctx, "claude", "--print", "--dangerously-skip-permissions", "/task-sync")
+		cmd.Dir = projectDir
+		cmd.Env = cleanEnvForCLI()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			log.Printf("[hermes] task-sync failed: %v (output: %s)", err, out)
+		} else {
+			log.Printf("[hermes] task-sync completed")
+		}
+	}
 }
 
 // --- Send helpers (直接用 Telegram HTTP API 以支援 message_thread_id) ---

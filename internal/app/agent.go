@@ -449,8 +449,8 @@ func (a *Agent) selectModel(userMessage string) (model string, routingReason str
 		return bestMatch.Model, "static_rule"
 	}
 
-	// 返回空字串，讓呼叫方使用配置中的預設模型
-	return "", "default"
+	// 返回預設模型 (Sonnet)
+	return "sonnet", "default"
 }
 
 // current 取得目前專案的狀態，不存在則建立

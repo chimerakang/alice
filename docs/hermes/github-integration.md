@@ -63,6 +63,14 @@
 
 若 Planner 從 Issue checklist 生成 SubTask，兩者描述通常完全一致，確保 1:1 對齊。
 
+## task-sync 自動觸發
+
+`trigger_task_sync_on_complete: true` 時，Hermes 完成後（成功或失敗）會以 goroutine 執行
+`claude --print --dangerously-skip-permissions /task-sync`，更新 `docs/MASTER_TASKS.md`。
+
+觸發邏輯透過 `CoordinatorConfig.PostCompletionHook` callback 注入，由 `telegram.go` 負責
+建立（包含正確的環境變數清理，避免 Claude Code 嵌套執行偵測）。
+
 ## 認證
 
 使用系統已安裝的 `gh` CLI（`gh auth login` 認證），無需額外 PAT。

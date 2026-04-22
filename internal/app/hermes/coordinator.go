@@ -36,6 +36,10 @@ type CoordinatorConfig struct {
 	// GitHub integration
 	GithubIssueNumber int        // 0 = no issue linked
 	GithubCfg         GithubCfg  // GitHub notification settings
+
+	// PostCompletionHook is called (in a goroutine) after the task finishes,
+	// regardless of success or failure. Nil means no hook.
+	PostCompletionHook func(ctx context.Context)
 }
 
 // Coordinator orchestrates the Planner-Executor lifecycle for a single chat.
@@ -173,6 +177,23 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 			c.progress.OnError(err)
 		}
 		_ = c.store.MarkStatus(taskID, TaskStatusFailed)
+
+		// GitHub: post failure comment and apply failure label
+		issueNum := c.cfg.GithubIssueNumber
+		ghCfg := c.cfg.GithubCfg
+		if issueNum > 0 && ghCfg.Enabled {
+			if ghCfg.ShouldComment("fail") {
+				body := CommentFailed("Planning", err.Error(), 0, 0)
+				if err := PostComment(ctx, issueNum, body); err != nil {
+					log.Printf("[hermes] GitHub comment planning fail: %v", err)
+				}
+			}
+			if ghCfg.FailureLabel != "" {
+				if err := ApplyLabel(ctx, issueNum, ghCfg.FailureLabel); err != nil {
+					log.Printf("[hermes] GitHub apply failure label: %v", err)
+				}
+			}
+		}
 		return
 	}
 
@@ -236,10 +257,17 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 		if state.TokenBudget.Exceeded() {
 			c.progress.OnBudgetWarning(state.TokenBudget)
 			_ = c.store.MarkStatus(taskID, TaskStatusFailed)
-			if issueNum > 0 && ghCfg.ShouldComment("budget_exceeded") {
-				body := CommentBudgetExceeded(state.TokenBudget.UsedTokens, state.TokenBudget.MaxTotalTokens)
-				if err := PostComment(ctx, issueNum, body); err != nil {
-					log.Printf("[hermes] GitHub comment budget: %v", err)
+			if issueNum > 0 && ghCfg.Enabled {
+				if ghCfg.ShouldComment("budget_exceeded") {
+					body := CommentBudgetExceeded(state.TokenBudget.UsedTokens, state.TokenBudget.MaxTotalTokens)
+					if err := PostComment(ctx, issueNum, body); err != nil {
+						log.Printf("[hermes] GitHub comment budget: %v", err)
+					}
+				}
+				if ghCfg.FailureLabel != "" {
+					if err := ApplyLabel(ctx, issueNum, ghCfg.FailureLabel); err != nil {
+						log.Printf("[hermes] GitHub apply failure label on budget: %v", err)
+					}
 				}
 			}
 			return
@@ -302,6 +330,14 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 					log.Printf("[hermes] GitHub sync checklist idx=%d: %v", idx, err)
 				}
 			}
+
+			// GitHub: post per-subtask progress comment if enabled
+			if issueNum > 0 && ghCfg.Enabled && ghCfg.ShouldComment("complete") {
+				body := CommentSubTaskProgress(idx, len(tasks), subTask, result.ResultText, execTokens, completedCount)
+				if err := PostComment(ctx, issueNum, body); err != nil {
+					log.Printf("[hermes] GitHub comment subtask progress idx=%d: %v", idx, err)
+				}
+			}
 		}
 
 		// Update accumulated summary
@@ -338,6 +374,11 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 				}
 			}
 		}
+	}
+
+	// Post-completion: run optional hook (e.g. /task-sync)
+	if c.cfg.PostCompletionHook != nil {
+		go c.cfg.PostCompletionHook(ctx)
 	}
 }
 

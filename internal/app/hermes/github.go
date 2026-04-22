@@ -21,8 +21,9 @@ type IssueContext struct {
 
 // ChecklistItem represents one `- [ ]` or `- [x]` line in an Issue body.
 type ChecklistItem struct {
-	Text    string
-	Checked bool
+	Text       string
+	Checked    bool
+	LineNumber int // 0-indexed line in Issue body, for sync anchoring
 }
 
 // ghIssueJSON is the JSON shape returned by `gh issue view --json title,body,labels`.
@@ -64,14 +65,19 @@ func FetchIssue(ctx context.Context, number int) (*IssueContext, error) {
 	}, nil
 }
 
-// ExtractChecklist parses `- [ ]` and `- [x]` items from a Markdown body.
+// ExtractChecklist parses `- [ ]` and `- [x]` items from a Markdown body with line numbers.
 func ExtractChecklist(body string) []ChecklistItem {
-	matches := checklistRe.FindAllStringSubmatch(body, -1)
-	items := make([]ChecklistItem, 0, len(matches))
-	for _, m := range matches {
+	lines := strings.Split(body, "\n")
+	items := make([]ChecklistItem, 0)
+	for lineIdx, line := range lines {
+		m := checklistRe.FindStringSubmatch(line)
+		if len(m) < 3 {
+			continue
+		}
 		items = append(items, ChecklistItem{
-			Text:    strings.TrimSpace(m[2]),
-			Checked: strings.ToLower(m[1]) == "x",
+			Text:       strings.TrimSpace(m[2]),
+			Checked:    strings.ToLower(m[1]) == "x",
+			LineNumber: lineIdx,
 		})
 	}
 	return items
@@ -312,4 +318,47 @@ func CommentBudgetExceeded(used, max int) string {
 		"- Token 用量: %d / %d\n\n"+
 		"可增加 `hermes.budget.max_total_tokens` 後重新執行。",
 		used, max)
+}
+
+// CommentSubTaskProgress builds a per-subtask progress comment.
+func CommentSubTaskProgress(idx, totalCount int, subTask SubTask, resultText string, execTokens, completedCount int) string {
+	return fmt.Sprintf("✅ **子任務進度** (%d/%d)\n\n"+
+		"- 子任務: `%s`\n"+
+		"- 結果: %s\n"+
+		"- Token 用量: %d\n"+
+		"- 完成進度: %d/%d\n",
+		idx+1, totalCount, subTask.Description, resultText, execTokens, completedCount, totalCount)
+}
+
+// PostCommentEvent posts a lifecycle event comment to the Issue.
+// event must be one of: "start", "complete", "fail", "budget_exceeded".
+// payload type depends on the event:
+//   - "start": map[string]string with keys "planner_model", "executor_model"
+//   - "complete": TaskState
+//   - "fail": map[string]interface{} with keys "failed_description" (string), "reason" (string), "done_count" (int), "total_count" (int)
+//   - "budget_exceeded": map[string]int with keys "used_tokens", "max_tokens"
+func PostCommentEvent(ctx context.Context, number int, event string, payload interface{}) error {
+	var body string
+	switch event {
+	case "start":
+		pm := payload.(map[string]string)
+		body = CommentStarted(pm["planner_model"], pm["executor_model"])
+	case "complete":
+		state := payload.(TaskState)
+		body = CommentDone(state)
+	case "fail":
+		p := payload.(map[string]interface{})
+		failedDesc := p["failed_description"].(string)
+		reason := p["reason"].(string)
+		doneCount := p["done_count"].(int)
+		totalCount := p["total_count"].(int)
+		body = CommentFailed(failedDesc, reason, doneCount, totalCount)
+	case "budget_exceeded":
+		p := payload.(map[string]int)
+		body = CommentBudgetExceeded(p["used_tokens"], p["max_tokens"])
+	default:
+		return fmt.Errorf("unknown event type: %s", event)
+	}
+
+	return PostComment(ctx, number, body)
 }

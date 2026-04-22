@@ -52,6 +52,7 @@ type TaskState struct {
 	TokenBudget       TokenBudget     `json:"token_budget"`
 	InterruptPolicy   InterruptPolicy `json:"interrupt_policy"`
 	GithubIssueNumber int             `json:"github_issue_number,omitempty"` // 0 = no issue linked
+	ModelUsages       []ModelUsage    `json:"model_usages"`                  // per-model token tracking
 	CreatedAt         time.Time       `json:"created_at"`
 	UpdatedAt         time.Time       `json:"updated_at"`
 }
@@ -73,6 +74,26 @@ func (t *TaskState) IsTerminal() bool {
 	return false
 }
 
+// AddUsage records token usage for a given model, accumulating into ModelUsages slice.
+func (t *TaskState) AddUsage(model string, inputTokens, outputTokens int) {
+	// Find existing entry for this model.
+	for i := range t.ModelUsages {
+		if t.ModelUsages[i].Model == model {
+			t.ModelUsages[i].InputTokens += inputTokens
+			t.ModelUsages[i].OutputTokens += outputTokens
+			t.ModelUsages[i].CallCount++
+			return
+		}
+	}
+	// Create new entry if not found.
+	t.ModelUsages = append(t.ModelUsages, ModelUsage{
+		Model:        model,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		CallCount:    1,
+	})
+}
+
 // SubTask represents an atomic unit of work assigned to an Executor.
 type SubTask struct {
 	ID          string        `json:"id"`
@@ -89,6 +110,19 @@ type Artifact struct {
 	Path      string `json:"path"`
 	Hash      string `json:"hash"`       // SHA-256 hex of file contents after write
 	SubTaskID string `json:"sub_task_id"`
+}
+
+// ModelUsage tracks token consumption per model.
+type ModelUsage struct {
+	Model        string `json:"model"`         // e.g., "claude-opus-4-7" or "claude-haiku-4-5-20251001"
+	InputTokens  int    `json:"input_tokens"`
+	OutputTokens int    `json:"output_tokens"`
+	CallCount    int    `json:"call_count"`
+}
+
+// TotalTokens returns the sum of input and output tokens.
+func (m *ModelUsage) TotalTokens() int {
+	return m.InputTokens + m.OutputTokens
 }
 
 // TokenBudget enforces resource limits at the task level.

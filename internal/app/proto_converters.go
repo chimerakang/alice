@@ -699,8 +699,8 @@ func (wi *WebInterface) handleRecentDecisionsProto(w http.ResponseWriter, r *htt
 						// Use the new method that supports offset for time range queries
 						decisions, err = globalStorage.GetDecisionLogsByTimeRangeWithOffset(startTime, endTime, limit, offset, "")
 						// Get accurate total count for the time range
-						if totalCount, countErr := globalStorage.GetDecisionLogsCountByTimeRange(startTime, endTime); countErr == nil {
-							totalCount = totalCount
+						if newCount, countErr := globalStorage.GetDecisionLogsCountByTimeRange(startTime, endTime); countErr == nil {
+							totalCount = newCount
 						} else {
 							totalCount = int64(len(decisions)) // fallback to length if count fails
 						}
