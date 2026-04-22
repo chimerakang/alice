@@ -354,6 +354,24 @@ func (s *SQLiteStorage) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_enabled ON scheduled_tasks(enabled);
 	`
 
+	// Prompt Classifications 表 (Hermes 實驗 #104 — VS Code UserPromptSubmit 觀測)
+	promptClassificationsSQL := `
+	CREATE TABLE IF NOT EXISTS prompt_classifications (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id TEXT NOT NULL,
+		timestamp DATETIME NOT NULL,
+		source TEXT NOT NULL,
+		cwd TEXT,
+		prompt_snippet TEXT,
+		prompt_length INTEGER,
+		classification TEXT NOT NULL,
+		matched_rule TEXT
+	);
+	CREATE INDEX IF NOT EXISTS idx_prompt_classifications_timestamp ON prompt_classifications(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_prompt_classifications_classification ON prompt_classifications(classification);
+	CREATE INDEX IF NOT EXISTS idx_prompt_classifications_source ON prompt_classifications(source);
+	`
+
 	// 執行所有 SQL 語句
 	tables := []string{
 		toolExecutionsSQL,
@@ -365,6 +383,7 @@ func (s *SQLiteStorage) initTables() error {
 		autoSkillsSQL,
 		parallelExecutionsSQL,
 		scheduledTasksSQL,
+		promptClassificationsSQL,
 	}
 
 	for _, tableSQL := range tables {
@@ -1811,4 +1830,31 @@ func InitStorage(dbPath string) error {
 	globalStorage = storage
 	log.Printf("Storage system initialized successfully")
 	return nil
+}
+
+// PromptClassificationRecord is the row written by RecordPromptClassification.
+// It mirrors the prompt_classifications table, used by the Hermes UserPromptSubmit
+// observation experiment (#104).
+type PromptClassificationRecord struct {
+	SessionID      string
+	Timestamp      time.Time
+	Source         string
+	CWD            string
+	PromptSnippet  string
+	PromptLength   int
+	Classification string
+	MatchedRule    string
+}
+
+// RecordPromptClassification inserts one row into prompt_classifications.
+// Failures are surfaced to the caller so hook handlers can log them.
+func (s *SQLiteStorage) RecordPromptClassification(rec PromptClassificationRecord) error {
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(`
+			INSERT INTO prompt_classifications
+				(session_id, timestamp, source, cwd, prompt_snippet, prompt_length, classification, matched_rule)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, rec.SessionID, rec.Timestamp, rec.Source, rec.CWD, rec.PromptSnippet, rec.PromptLength, rec.Classification, rec.MatchedRule)
+		return err
+	})
 }

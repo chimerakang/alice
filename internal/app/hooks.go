@@ -162,6 +162,81 @@ func (wi *WebInterface) handleHookSessionComplete(w http.ResponseWriter, payload
 	})
 }
 
+// UserPromptSubmitPayload is the subset of Claude Code's UserPromptSubmit hook
+// payload that Alice records for the #104 VS Code interception experiment.
+// Fields follow the Claude Code hook schema; unknown fields are ignored.
+type UserPromptSubmitPayload struct {
+	SessionID      string `json:"session_id"`
+	HookEventName  string `json:"hook_event_name"`
+	CWD            string `json:"cwd"`
+	Prompt         string `json:"prompt"`
+	TranscriptPath string `json:"transcript_path"`
+	Source         string `json:"source"` // optional, script may inject vscode/terminal
+}
+
+// handleUserPromptSubmit receives UserPromptSubmit hook events. Phase 1 of
+// issue #104 is observe-only: classify the prompt via the Complexity Gate
+// heuristic, persist the decision, and return an empty response so Claude
+// Code proceeds normally. Phase 2 will use {"decision":"block"} to redirect
+// complex prompts to Hermes once classifier accuracy is validated.
+func (wi *WebInterface) handleUserPromptSubmit(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodPost {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+
+		var payload UserPromptSubmitPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"invalid JSON: %s"}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+
+		if payload.SessionID == "" {
+			http.Error(w, `{"error":"session_id is required"}`, http.StatusBadRequest)
+			return
+		}
+
+		source := payload.Source
+		if source == "" {
+			source = "unknown"
+		}
+
+		result := ClassifyComplexity(payload.Prompt)
+		snippet := payload.Prompt
+		if len([]rune(snippet)) > 200 {
+			runes := []rune(snippet)
+			snippet = string(runes[:200])
+		}
+
+		if globalStorage != nil {
+			if sqliteStorage, ok := globalStorage.(*SQLiteStorage); ok {
+				rec := PromptClassificationRecord{
+					SessionID:      payload.SessionID,
+					Timestamp:      time.Now(),
+					Source:         source,
+					CWD:            payload.CWD,
+					PromptSnippet:  snippet,
+					PromptLength:   len([]rune(payload.Prompt)),
+					Classification: string(result.Complexity),
+					MatchedRule:    result.MatchedRule,
+				}
+				if err := sqliteStorage.RecordPromptClassification(rec); err != nil {
+					log.Printf("[hooks] prompt classification record failed: %v", err)
+				}
+			}
+		}
+
+		log.Printf("[hooks] UserPromptSubmit session=%s source=%s classification=%s rule=%s len=%d",
+			payload.SessionID, source, result.Complexity, result.MatchedRule, len([]rune(payload.Prompt)))
+
+		// Observe mode: return empty object so Claude Code proceeds unchanged.
+		json.NewEncoder(w).Encode(map[string]interface{}{})
+	})(w, r)
+}
+
 // handleHookSessionActive handles a lightweight "session active" ping
 func (wi *WebInterface) handleHookSessionActive(w http.ResponseWriter, payload ClaudeCodeHookPayload) {
 	if globalWebSocketHub != nil {
