@@ -1344,6 +1344,21 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string) {
 		sub = strings.ToLower(parts[1])
 	}
 
+	// /hermes #N — fetch GitHub Issue and start task immediately
+	if len(parts) > 1 && strings.HasPrefix(parts[1], "#") {
+		numStr := strings.TrimPrefix(parts[1], "#")
+		issueNum := 0
+		fmt.Sscanf(numStr, "%d", &issueNum)
+		if issueNum <= 0 {
+			t.send(key, fmt.Sprintf("❌ 無效的 Issue 編號：%s", parts[1]))
+			return
+		}
+		t.send(key, fmt.Sprintf("🔍 正在讀取 GitHub Issue #%d…", issueNum))
+		projectDir := t.getAgent(key).ProjectDir()
+		go t.startHermesFromIssue(key, issueNum, projectDir)
+		return
+	}
+
 	switch sub {
 	case "status":
 		t.hermesMu.RLock()
@@ -1372,7 +1387,7 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string) {
 		t.hermesMu.Lock()
 		t.hermesCoords[key] = &hermesCoord{enabled: true}
 		t.hermesMu.Unlock()
-		t.send(key, "✅ Hermes 模式已啟用。下一則訊息將由 Planner-Executor 架構處理。\n輸入 /auto 切回一般模式，/hermes stop 中止目前任務。")
+		t.send(key, "✅ Hermes 模式已啟用。下一則訊息將由 Planner-Executor 架構處理。\n輸入 /auto 切回一般模式，/hermes stop 中止目前任務。\n\n提示：/hermes #<issue> 直接從 GitHub Issue 啟動。")
 	}
 }
 
@@ -1387,9 +1402,53 @@ func (t *TelegramBot) isHermesEnabled(key chatKey) bool {
 	return hc != nil && hc.enabled
 }
 
+// startHermesFromIssue fetches a GitHub Issue and starts a Hermes task from it.
+func (t *TelegramBot) startHermesFromIssue(key chatKey, issueNumber int, projectDir string) {
+	ctx := context.Background()
+	issue, err := hermes.FetchIssue(ctx, issueNumber)
+	if err != nil {
+		t.send(key, fmt.Sprintf("❌ 無法讀取 Issue #%d：%v", issueNumber, err))
+		return
+	}
+
+	cfg := HermesDefaults(t.config.Hermes)
+	ghCfg := t.config.Hermes.GithubIntegration
+
+	// Apply complexity label budget overrides if present
+	budget := HermesBudgetConfig{
+		MaxTotalTokens:      cfg.Budget.MaxTotalTokens,
+		MaxWallclockSeconds: cfg.Budget.MaxWallclockSeconds,
+	}
+	for _, label := range issue.Labels {
+		if override, ok := ghCfg.ComplexityBudgetMap[label]; ok {
+			budget = override
+			log.Printf("[hermes] applying budget from label %q: %+v", label, override)
+			break
+		}
+	}
+
+	goal := hermes.BuildGoalFromIssue(issue)
+	t.send(key, fmt.Sprintf("🤖 **Hermes 啟動** — Issue #%d: %s\n%d 個待辦項目", issueNumber, issue.Title, func() int {
+		n := 0
+		for _, item := range issue.Checklist {
+			if !item.Checked {
+				n++
+			}
+		}
+		return n
+	}()))
+
+	t.startHermesTaskWithIssue(key, goal, projectDir, issueNumber, budget, ghCfg)
+}
+
 // startHermesTask launches a Hermes coordinator for the given goal.
 // Uses context.Background() so the task survives handler cancellation.
 func (t *TelegramBot) startHermesTask(key chatKey, goal, projectDir string) {
+	t.startHermesTaskWithIssue(key, goal, projectDir, 0, HermesBudgetConfig{}, GithubIntegrationConfig{})
+}
+
+// startHermesTaskWithIssue is the common implementation for startHermesTask and startHermesFromIssue.
+func (t *TelegramBot) startHermesTaskWithIssue(key chatKey, goal, projectDir string, issueNumber int, budgetOverride HermesBudgetConfig, ghIntegration GithubIntegrationConfig) {
 	ctx := context.Background()
 	cfg := HermesDefaults(t.config.Hermes)
 
@@ -1418,9 +1477,18 @@ func (t *TelegramBot) startHermesTask(key chatKey, goal, projectDir string) {
 		t.send(key, text)
 	})
 
+	// Budget: use override (from complexity label) or config default
+	budgetTokens := cfg.Budget.MaxTotalTokens
+	budgetSecs := cfg.Budget.MaxWallclockSeconds
+	if budgetOverride.MaxTotalTokens > 0 {
+		budgetTokens = budgetOverride.MaxTotalTokens
+	}
+	if budgetOverride.MaxWallclockSeconds > 0 {
+		budgetSecs = budgetOverride.MaxWallclockSeconds
+	}
 	budget := hermes.TokenBudget{
-		MaxTotalTokens:      cfg.Budget.MaxTotalTokens,
-		MaxWallclockSeconds: cfg.Budget.MaxWallclockSeconds,
+		MaxTotalTokens:      budgetTokens,
+		MaxWallclockSeconds: budgetSecs,
 	}
 
 	// Load role-specific operating rules from the prompts directory.
@@ -1430,6 +1498,27 @@ func (t *TelegramBot) startHermesTask(key chatKey, goal, projectDir string) {
 		promptsDir = "internal/app/hermes/prompts"
 	}
 	pb := hermes.LoadPromptBuilder(promptsDir)
+
+	// Build GitHub integration config for coordinator
+	ghCfg := hermes.GithubCfg{
+		Enabled:         ghIntegration.Enabled,
+		SyncChecklist:   ghIntegration.SyncChecklist,
+		AutoCloseLabel:  ghIntegration.AutoCloseLabel,
+		FailureLabel:    ghIntegration.FailureLabel,
+		TriggerTaskSync: ghIntegration.TriggerTaskSync,
+	}
+	for _, ev := range ghIntegration.CommentOnEvents {
+		switch ev {
+		case "start":
+			ghCfg.CommentOnStart = true
+		case "complete":
+			ghCfg.CommentOnDone = true
+		case "fail":
+			ghCfg.CommentOnFail = true
+		case "budget_exceeded":
+			ghCfg.CommentOnBudget = true
+		}
+	}
 
 	coordCfg := hermes.CoordinatorConfig{
 		ChatID:                key.chatID,
@@ -1443,6 +1532,8 @@ func (t *TelegramBot) startHermesTask(key chatKey, goal, projectDir string) {
 		Budget:                budget,
 		PlannerRules:          pb.ForRole(hermes.RolePlanner),
 		ExecutorRules:         pb.ForRole(hermes.RoleExecutor),
+		GithubIssueNumber:     issueNumber,
+		GithubCfg:             ghCfg,
 	}
 
 	// Use a noop store when no DB is available yet (wired fully in #97→#98 integration)

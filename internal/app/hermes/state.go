@@ -39,20 +39,21 @@ const (
 
 // TaskState is the top-level record for a Hermes planning session.
 type TaskState struct {
-	ID               string         `json:"id"`                // UUID
-	ChatID           int64          `json:"chat_id"`           // Telegram chat
-	PlannerSessionID string         `json:"planner_session_id"` // Claude Code --resume ID
-	Goal             string         `json:"goal"`
-	Plan             []SubTask      `json:"plan"`
-	CurrentIdx       int            `json:"current_idx"`
-	Accumulated      string         `json:"accumulated"`  // rolling executor summary
-	Artifacts        []Artifact     `json:"artifacts"`
-	Status           TaskStatus     `json:"status"`
-	InterruptedBy    *int64         `json:"interrupted_by,omitempty"` // Telegram message ID
-	TokenBudget      TokenBudget    `json:"token_budget"`
-	InterruptPolicy  InterruptPolicy `json:"interrupt_policy"`
-	CreatedAt        time.Time      `json:"created_at"`
-	UpdatedAt        time.Time      `json:"updated_at"`
+	ID                string          `json:"id"`                 // UUID
+	ChatID            int64           `json:"chat_id"`            // Telegram chat
+	PlannerSessionID  string          `json:"planner_session_id"` // Claude Code --resume ID
+	Goal              string          `json:"goal"`
+	Plan              []SubTask       `json:"plan"`
+	CurrentIdx        int             `json:"current_idx"`
+	Accumulated       string          `json:"accumulated"`            // rolling executor summary
+	Artifacts         []Artifact      `json:"artifacts"`
+	Status            TaskStatus      `json:"status"`
+	InterruptedBy     *int64          `json:"interrupted_by,omitempty"` // Telegram message ID
+	TokenBudget       TokenBudget     `json:"token_budget"`
+	InterruptPolicy   InterruptPolicy `json:"interrupt_policy"`
+	GithubIssueNumber int             `json:"github_issue_number,omitempty"` // 0 = no issue linked
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
 // CurrentSubTask returns the active SubTask, or nil if the plan is exhausted.

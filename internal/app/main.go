@@ -109,6 +109,32 @@ type HermesConfig struct {
 	// PromptsDir is the directory containing planner_rules.md and executor_rules.md.
 	// Defaults to "internal/app/hermes/prompts" relative to the working directory.
 	PromptsDir string `json:"prompts_dir"`
+
+	// GithubIntegration controls Hermes ↔ GitHub Issue integration.
+	GithubIntegration GithubIntegrationConfig `json:"github_integration"`
+}
+
+// GithubIntegrationConfig controls how Hermes interacts with GitHub Issues.
+type GithubIntegrationConfig struct {
+	Enabled bool `json:"enabled"`
+
+	// Comment events: "start", "complete", "fail", "budget_exceeded"
+	CommentOnEvents []string `json:"comment_on_events"`
+
+	// SyncChecklist updates Issue `- [ ]` items as SubTasks complete.
+	SyncChecklist bool `json:"sync_checklist"`
+
+	// AutoCloseLabel: if the Issue has this label, close it when all SubTasks succeed.
+	AutoCloseLabel string `json:"auto_close_on_label"`
+
+	// FailureLabel is added to the Issue when Hermes execution fails.
+	FailureLabel string `json:"mark_failure_label"`
+
+	// TriggerTaskSync runs `gh` task-sync on Hermes completion (best-effort).
+	TriggerTaskSync bool `json:"trigger_task_sync_on_complete"`
+
+	// ComplexityBudgetMap maps complexity labels (e.g. "complexity:small") to budget overrides.
+	ComplexityBudgetMap map[string]HermesBudgetConfig `json:"complexity_budget_map"`
 }
 
 // HermesBudgetConfig sets task-level resource limits.

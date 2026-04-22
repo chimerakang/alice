@@ -32,6 +32,10 @@ type CoordinatorConfig struct {
 	PlannerRules string
 	// ExecutorRules is passed as coreRules to BuildExecutorPrompt on every Execute() call.
 	ExecutorRules string
+
+	// GitHub integration
+	GithubIssueNumber int        // 0 = no issue linked
+	GithubCfg         GithubCfg  // GitHub notification settings
 }
 
 // Coordinator orchestrates the Planner-Executor lifecycle for a single chat.
@@ -198,6 +202,24 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 
 	c.progress.OnPlanReady(tasks)
 
+	// GitHub: post "started" comment + write plan checklist if no checklist existed
+	issueNum := c.cfg.GithubIssueNumber
+	ghCfg := c.cfg.GithubCfg
+	if issueNum > 0 && ghCfg.Enabled {
+		if ghCfg.ShouldComment("start") {
+			body := CommentStarted(c.cfg.PlannerModel, c.cfg.ExecutorModel)
+			if err := PostComment(ctx, issueNum, body); err != nil {
+				log.Printf("[hermes] GitHub comment start: %v", err)
+			}
+		}
+		// Write plan back to Issue if it had no checklist
+		if ghCfg.SyncChecklist {
+			if err := WritePlanToIssue(ctx, issueNum, state.Goal, tasks); err != nil {
+				log.Printf("[hermes] GitHub write plan: %v", err)
+			}
+		}
+	}
+
 	// ── Phase 2: Execution loop ───────────────────────────────────────────────
 	accCfg := c.cfg.AccumulatedCfg
 	completedCount := 0
@@ -214,6 +236,12 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 		if state.TokenBudget.Exceeded() {
 			c.progress.OnBudgetWarning(state.TokenBudget)
 			_ = c.store.MarkStatus(taskID, TaskStatusFailed)
+			if issueNum > 0 && ghCfg.ShouldComment("budget_exceeded") {
+				body := CommentBudgetExceeded(state.TokenBudget.UsedTokens, state.TokenBudget.MaxTotalTokens)
+				if err := PostComment(ctx, issueNum, body); err != nil {
+					log.Printf("[hermes] GitHub comment budget: %v", err)
+				}
+			}
 			return
 		}
 
@@ -267,6 +295,13 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 			completedCount++
 			tasks[idx].Status = SubTaskDone
 			tasks[idx].Result = result.ResultText
+
+			// GitHub: sync checklist after each successful sub-task
+			if issueNum > 0 && ghCfg.Enabled && ghCfg.SyncChecklist {
+				if err := SyncChecklist(ctx, issueNum, tasks); err != nil {
+					log.Printf("[hermes] GitHub sync checklist idx=%d: %v", idx, err)
+				}
+			}
 		}
 
 		// Update accumulated summary
@@ -283,6 +318,27 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 	_ = c.store.MarkStatus(taskID, TaskStatusDone)
 	finalState, _ := c.store.GetTask(taskID)
 	c.progress.OnDone(finalState)
+
+	// GitHub: post done comment, auto-close, apply failure label
+	if issueNum > 0 && ghCfg.Enabled {
+		if ghCfg.ShouldComment("complete") {
+			body := CommentDone(finalState)
+			if err := PostComment(ctx, issueNum, body); err != nil {
+				log.Printf("[hermes] GitHub comment done: %v", err)
+			}
+		}
+		allDone := completedCount == len(tasks)
+		if allDone && ghCfg.AutoCloseLabel != "" {
+			// Re-fetch labels to check current state
+			if issue, err := FetchIssue(ctx, issueNum); err == nil {
+				if HasLabel(issue, ghCfg.AutoCloseLabel) {
+					if err := CloseIssue(ctx, issueNum); err != nil {
+						log.Printf("[hermes] GitHub close issue: %v", err)
+					}
+				}
+			}
+		}
+	}
 }
 
 // runCompression calls the Planner to compress the accumulated summary.

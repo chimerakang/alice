@@ -75,20 +75,24 @@ func NewSQLiteTaskStore(db *sql.DB) (*SQLiteTaskStore, error) {
 func (s *SQLiteTaskStore) migrate() error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS hermes_task_states (
-			id                TEXT PRIMARY KEY,
-			chat_id           INTEGER NOT NULL,
-			planner_session   TEXT NOT NULL DEFAULT '',
-			goal              TEXT NOT NULL,
-			current_idx       INTEGER NOT NULL DEFAULT 0,
-			accumulated       TEXT NOT NULL DEFAULT '',
-			status            TEXT NOT NULL DEFAULT 'planning',
-			interrupted_by    INTEGER,
-			interrupt_policy  TEXT NOT NULL DEFAULT 'queue',
-			token_budget      TEXT NOT NULL DEFAULT '{}',
-			plan_json         TEXT NOT NULL DEFAULT '[]',
-			created_at        TEXT NOT NULL,
-			updated_at        TEXT NOT NULL
+			id                    TEXT PRIMARY KEY,
+			chat_id               INTEGER NOT NULL,
+			planner_session       TEXT NOT NULL DEFAULT '',
+			goal                  TEXT NOT NULL,
+			current_idx           INTEGER NOT NULL DEFAULT 0,
+			accumulated           TEXT NOT NULL DEFAULT '',
+			status                TEXT NOT NULL DEFAULT 'planning',
+			interrupted_by        INTEGER,
+			interrupt_policy      TEXT NOT NULL DEFAULT 'queue',
+			token_budget          TEXT NOT NULL DEFAULT '{}',
+			plan_json             TEXT NOT NULL DEFAULT '[]',
+			github_issue_number   INTEGER NOT NULL DEFAULT 0,
+			created_at            TEXT NOT NULL,
+			updated_at            TEXT NOT NULL
 		)`,
+		// Additive migration: add github_issue_number to pre-existing tables.
+		// SQLite does not support IF NOT EXISTS on ALTER TABLE — ignore "duplicate column" error.
+		`ALTER TABLE hermes_task_states ADD COLUMN github_issue_number INTEGER NOT NULL DEFAULT 0`,
 		`CREATE INDEX IF NOT EXISTS idx_hermes_tasks_chat_status
 			ON hermes_task_states(chat_id, status)`,
 		`CREATE TABLE IF NOT EXISTS hermes_task_artifacts (
@@ -106,6 +110,11 @@ func (s *SQLiteTaskStore) migrate() error {
 	return s.execWithRetry(func() error {
 		for _, stmt := range stmts {
 			if _, err := s.db.Exec(stmt); err != nil {
+				// ALTER TABLE ADD COLUMN fails with "duplicate column name" when the
+				// column already exists (e.g. fresh installs that hit CREATE TABLE first).
+				if strings.Contains(err.Error(), "duplicate column name") {
+					continue
+				}
 				return fmt.Errorf("migrate: %w", err)
 			}
 		}
@@ -134,12 +143,13 @@ func (s *SQLiteTaskStore) CreateTask(task TaskState) (TaskState, error) {
 			INSERT INTO hermes_task_states
 				(id, chat_id, planner_session, goal, current_idx, accumulated,
 				 status, interrupted_by, interrupt_policy, token_budget, plan_json,
-				 created_at, updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+				 github_issue_number, created_at, updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			task.ID, task.ChatID, task.PlannerSessionID, task.Goal,
 			task.CurrentIdx, task.Accumulated, string(task.Status),
 			task.InterruptedBy, string(task.InterruptPolicy),
 			string(budgetJSON), string(planJSON),
+			task.GithubIssueNumber,
 			task.CreatedAt.Format(time.RFC3339),
 			task.UpdatedAt.Format(time.RFC3339),
 		)
@@ -151,7 +161,7 @@ func (s *SQLiteTaskStore) GetTask(id string) (TaskState, error) {
 	row := s.db.QueryRow(`
 		SELECT id, chat_id, planner_session, goal, current_idx, accumulated,
 		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
-		       created_at, updated_at
+		       github_issue_number, created_at, updated_at
 		FROM hermes_task_states WHERE id = ?`, id)
 	return s.scanTask(row)
 }
@@ -160,7 +170,7 @@ func (s *SQLiteTaskStore) GetActiveTaskForChat(chatID int64) (TaskState, error) 
 	row := s.db.QueryRow(`
 		SELECT id, chat_id, planner_session, goal, current_idx, accumulated,
 		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
-		       created_at, updated_at
+		       github_issue_number, created_at, updated_at
 		FROM hermes_task_states
 		WHERE chat_id = ? AND status NOT IN ('done','failed','interrupted')
 		ORDER BY created_at DESC LIMIT 1`, chatID)
@@ -304,7 +314,7 @@ func (s *SQLiteTaskStore) ListTasksForChat(chatID int64, limit int) ([]TaskState
 	rows, err := s.db.Query(`
 		SELECT id, chat_id, planner_session, goal, current_idx, accumulated,
 		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
-		       created_at, updated_at
+		       github_issue_number, created_at, updated_at
 		FROM hermes_task_states
 		WHERE chat_id = ?
 		ORDER BY created_at DESC LIMIT ?`, chatID, limit)
@@ -355,6 +365,7 @@ func (s *SQLiteTaskStore) scanTask(row rowScanner) (TaskState, error) {
 		&task.CurrentIdx, &task.Accumulated,
 		&statusStr, &interruptedBy, &policyStr,
 		&budgetJSON, &planJSON,
+		&task.GithubIssueNumber,
 		&createdStr, &updatedStr,
 	)
 	if err == sql.ErrNoRows {
@@ -413,6 +424,7 @@ func (s *SQLiteTaskStore) scanRowsInto(rows *sql.Rows) (TaskState, error) {
 		&task.CurrentIdx, &task.Accumulated,
 		&statusStr, &interruptedBy, &policyStr,
 		&budgetJSON, &planJSON,
+		&task.GithubIssueNumber,
 		&createdStr, &updatedStr,
 	)
 	if err != nil {
