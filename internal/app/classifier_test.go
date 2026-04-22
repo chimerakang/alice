@@ -33,7 +33,17 @@ func TestClassifyComplexity(t *testing.T) {
 		// Issue reference
 		{"bare issue halfwidth", "#61", ComplexityModerate},
 		{"bare issue fullwidth", "＃６１", ComplexityModerate},
-		{"issue + short context", "開始處理 #61 的工作", ComplexityModerate},
+
+		// Action verb + issue ref (promoted to complex for Hermes auto-route)
+		{"action verb + issue fullwidth", "請處理＃２３９", ComplexityComplex},
+		{"action verb + issue halfwidth", "請處理 #239", ComplexityComplex},
+		{"fix + issue", "fix #61 the token detector", ComplexityComplex},
+		{"implement + issue", "請實作 #102 的功能", ComplexityComplex},
+		{"start work on issue", "開始處理 #61 的工作", ComplexityComplex},
+
+		// Issue ref with non-action verb stays moderate (not every issue reference means "do it")
+		{"research + issue", "研究一下 #61 的現況", ComplexityModerate},
+		{"check + issue", "檢查 #239 是什麼狀況", ComplexityModerate},
 
 		// IDE noise stripping
 		{"ide opened only stays short", "<ide_opened_file>/path/to/foo.ts</ide_opened_file>git status", ComplexityTrivial},

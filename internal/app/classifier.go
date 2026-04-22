@@ -42,6 +42,16 @@ var moderateKeywords = []string{
 	"investigate", "analyze", "fix", "adjust", "improve", "update",
 }
 
+// actionVerbs is the subset of moderate verbs that imply doing work rather
+// than merely looking at something. When any of these appear alongside an
+// issue reference (#123 / ＃１２３) the prompt is promoted to complex — that
+// pattern almost always means "do the decomposable work tracked in that
+// issue", exactly what Hermes Planner-Executor exists for.
+var actionVerbs = []string{
+	"處理", "修正", "修復", "修", "實作", "實現", "完成", "做",
+	"fix", "implement", "build", "create", "ship", "do",
+}
+
 var complexKeywords = []string{
 	// Chinese heavyweight work verbs: new construction, refactoring, integration
 	"重構", "重新設計", "重寫", "整合", "整體", "所有檔案",
@@ -96,6 +106,15 @@ func ClassifyComplexity(prompt string) ClassificationResult {
 	// short prompts implies multi-step work.
 	if kw := firstMatch(lower, complexKeywords); kw != "" {
 		return ClassificationResult{Complexity: ComplexityComplex, MatchedRule: "complex-verb:" + kw}
+	}
+
+	// Action verb paired with an issue reference is a strong "do decomposable
+	// work" signal ("請處理 #239", "fix #61") — promote to complex so Hermes
+	// takes the task.
+	if issueRefPattern.MatchString(cleaned) {
+		if kw := firstMatch(lower, actionVerbs); kw != "" {
+			return ClassificationResult{Complexity: ComplexityComplex, MatchedRule: "action-verb+issue-ref:" + kw}
+		}
 	}
 
 	// Moderate verbs cover the common "investigate / fix / adjust" middle ground.
