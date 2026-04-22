@@ -10,6 +10,7 @@ import (
 	"time"
 
 	alicev1 "claude-tg-agent/gen/go/alice/v1"
+	"claude-tg-agent/internal/app/security"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -1081,7 +1082,7 @@ func (wi *WebInterface) handleSecurityEventsProto(w http.ResponseWriter, r *http
 			}
 		}
 
-		var events []SecurityEvent
+		var events []security.SecurityEvent
 		var err error
 
 		// 根據來源和參數選擇查詢方式
@@ -1100,12 +1101,12 @@ func (wi *WebInterface) handleSecurityEventsProto(w http.ResponseWriter, r *http
 
 			if err != nil {
 				log.Printf("Database query error, falling back to memory: %v", err)
-				if globalSecurityManager != nil {
-					events = globalSecurityManager.GetSecurityEvents(limit, "")
+				if security.Global() != nil {
+					events = security.Global().GetSecurityEvents(limit, "")
 				}
 			}
-		} else if globalSecurityManager != nil {
-			events = globalSecurityManager.GetSecurityEvents(limit, "")
+		} else if security.Global() != nil {
+			events = security.Global().GetSecurityEvents(limit, "")
 		}
 
 		response := map[string]interface{}{
@@ -1156,7 +1157,7 @@ func (wi *WebInterface) handleSecurityStatsProto(w http.ResponseWriter, r *http.
 		}
 
 		// 優先使用時間範圍篩選的結果，如果沒有提供時間則使用全部資料
-		var events []SecurityEvent
+		var events []security.SecurityEvent
 
 		if startTimeStr != "" && endTimeStr != "" {
 			// 使用指定的時間範圍

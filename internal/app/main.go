@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"claude-tg-agent/internal/app/security"
 )
 
 const Version = "1.0.1"
@@ -55,7 +57,7 @@ type Config struct {
 	PerformanceMetricsRetention int  `json:"performance_metrics_retention"` // hours
 
 	// Security Settings
-	Security SecurityConfig `json:"security"`
+	Security security.SecurityConfig `json:"security"`
 
 	// Storage Settings
 	EnablePersistence   bool   `json:"enable_persistence"`
@@ -261,7 +263,7 @@ func LoadConfig() (*Config, error) {
 		DatabasePath:                "./data/alice.db", // Default database path
 		DataRetentionDays:           30,    // Keep 30 days of data
 		EnableDataCleanup:           true,  // Enable automatic cleanup
-		Security: SecurityConfig{
+		Security: security.SecurityConfig{
 			EnableRateLimiting:    true,
 			RateLimitRPM:          120,  // 120 requests per minute (SPA makes many concurrent calls)
 			RateLimitBurst:        30,   // 30 burst capacity (SPA initial load ~15 parallel requests)
@@ -598,10 +600,20 @@ func Main() {
 	}
 
 	// Initialize security manager
-	if err := InitSecurity(config.Security); err != nil {
+	if err := security.Init(config.Security); err != nil {
 		log.Printf("❌ Security initialization failed: %v", err)
 		log.Fatalf("Unable to continue without security features")
 	}
+	// Wire persistence + broadcast callbacks to break the import cycle with app
+	security.OnPersistEvent = func(e security.SecurityEvent) {
+		if globalStorage == nil {
+			return
+		}
+		if err := globalStorage.InsertSecurityEvent(e); err != nil {
+			log.Printf("Warning: failed to persist security event to database: %v", err)
+		}
+	}
+	security.OnBroadcastEvent = BroadcastSecurityEvent
 	log.Printf("   Security features: rate limiting=%v, PII detection=%v, audit logging=%v",
 		config.Security.EnableRateLimiting,
 		config.Security.EnablePIIDetection,

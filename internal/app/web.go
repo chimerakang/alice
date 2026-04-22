@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"claude-tg-agent/internal/app/security"
 )
 
 // AgentInfo represents agent information for the API
@@ -162,11 +164,11 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	// 應用安全中間件
 	var handler http.Handler = mux
 
-	if globalSecurityManager != nil {
+	if security.Global() != nil {
 		// 依序應用中間件 (注意順序)
-		handler = globalSecurityManager.SecurityHeadersMiddleware(handler)
-		handler = globalSecurityManager.IPFilterMiddleware(handler)
-		handler = globalSecurityManager.RateLimitMiddleware(handler)
+		handler = security.Global().SecurityHeadersMiddleware(handler)
+		handler = security.Global().IPFilterMiddleware(handler)
+		handler = security.Global().RateLimitMiddleware(handler)
 	}
 
 	return handler
@@ -1466,7 +1468,7 @@ func (wi *WebInterface) handleSecurityEvents(w http.ResponseWriter, r *http.Requ
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		if globalSecurityManager == nil {
+		if security.Global() == nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"enabled": false,
 				"message": "Security management is disabled",
@@ -1488,7 +1490,7 @@ func (wi *WebInterface) handleSecurityEvents(w http.ResponseWriter, r *http.Requ
 		startTimeStr := query.Get("start_time")
 		endTimeStr := query.Get("end_time")
 
-		var events []SecurityEvent
+		var events []security.SecurityEvent
 		var err error
 
 		// Check if time range is provided
@@ -1502,27 +1504,27 @@ func (wi *WebInterface) handleSecurityEvents(w http.ResponseWriter, r *http.Requ
 				events, err = globalStorage.GetSecurityEventsByTimeRange(startTime, endTime, limit)
 				if err != nil {
 					log.Printf("Failed to get events by time range: %v", err)
-					events = []SecurityEvent{}
+					events = []security.SecurityEvent{}
 				}
 			} else {
 				// Fall back to manager if time parsing fails
-				events = globalSecurityManager.GetSecurityEvents(limit, severity)
+				events = security.Global().GetSecurityEvents(limit, severity)
 			}
 		} else if globalStorage != nil {
 			// Query all events from database (no time filter)
 			events, err = globalStorage.GetSecurityEvents(limit, 0)
 			if err != nil {
 				log.Printf("Failed to get events from database: %v", err)
-				events = globalSecurityManager.GetSecurityEvents(limit, severity)
+				events = security.Global().GetSecurityEvents(limit, severity)
 			}
 		} else {
 			// Fallback to manager
-			events = globalSecurityManager.GetSecurityEvents(limit, severity)
+			events = security.Global().GetSecurityEvents(limit, severity)
 		}
 
 		// Filter by severity if specified
 		if severity != "" && events != nil {
-			var filtered []SecurityEvent
+			var filtered []security.SecurityEvent
 			for _, e := range events {
 				if e.Severity == severity {
 					filtered = append(filtered, e)
@@ -1549,7 +1551,7 @@ func (wi *WebInterface) handleSecurityStats(w http.ResponseWriter, r *http.Reque
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		if globalSecurityManager == nil {
+		if security.Global() == nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"enabled": false,
 				"message": "Security management is disabled",
@@ -1643,7 +1645,7 @@ func (wi *WebInterface) handleSecurityStats(w http.ResponseWriter, r *http.Reque
 		}
 
 		// Fallback to manager stats (no time filter)
-		stats := globalSecurityManager.GetSecurityStats()
+		stats := security.Global().GetSecurityStats()
 		stats["enabled"] = true
 		stats["timestamp"] = time.Now()
 
@@ -1656,7 +1658,7 @@ func (wi *WebInterface) handleSecurityAudit(w http.ResponseWriter, r *http.Reque
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		if globalSecurityManager == nil {
+		if security.Global() == nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"enabled": false,
 				"message": "Security management is disabled",
@@ -1665,12 +1667,12 @@ func (wi *WebInterface) handleSecurityAudit(w http.ResponseWriter, r *http.Reque
 		}
 
 		// Get events by severity
-		critical := globalSecurityManager.GetSecurityEvents(10, "critical")
-		high := globalSecurityManager.GetSecurityEvents(20, "high")
-		medium := globalSecurityManager.GetSecurityEvents(30, "medium")
-		low := globalSecurityManager.GetSecurityEvents(10, "low")
+		critical := security.Global().GetSecurityEvents(10, "critical")
+		high := security.Global().GetSecurityEvents(20, "high")
+		medium := security.Global().GetSecurityEvents(30, "medium")
+		low := security.Global().GetSecurityEvents(10, "low")
 
-		stats := globalSecurityManager.GetSecurityStats()
+		stats := security.Global().GetSecurityStats()
 
 		response := map[string]interface{}{
 			"enabled":    true,
@@ -1808,8 +1810,8 @@ func generatePrometheusMetrics() string {
 	}
 
 	// Security metrics
-	if globalSecurityManager != nil {
-		stats := globalSecurityManager.GetSecurityStats()
+	if security.Global() != nil {
+		stats := security.Global().GetSecurityStats()
 
 		if totalEvents, ok := stats["total_events"].(int); ok {
 			metrics.WriteString("# HELP alice_security_events_total Total security events\n")

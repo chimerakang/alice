@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"claude-tg-agent/internal/app/security"
 )
 
 // TokenStats tracks cumulative token usage for an agent session.
@@ -1246,9 +1248,9 @@ func generateSummary(userPrompt, agentResponse, taskType string) string {
 // filterSensitiveData removes or masks sensitive information from text
 func (a *Agent) filterSensitiveData(text string) string {
 	// Use security manager's PII detection if available
-	if globalSecurityManager != nil {
+	if sm := security.Global(); sm != nil {
 		// Don't log events here to avoid double-logging (the original detection point should log)
-		filtered, _ := globalSecurityManager.DetectAndFilterPII(text, false, nil)
+		filtered, _ := sm.DetectAndFilterPII(text, false, nil)
 		return filtered
 	}
 

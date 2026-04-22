@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"claude-tg-agent/internal/app/hermes"
+	"claude-tg-agent/internal/app/security"
 )
 
 // chatKey 用於識別獨立對話（支援 Forum Topics）
@@ -579,9 +580,9 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	}
 
 	// 安全檢查和 PII 檢測
-	if globalSecurityManager != nil {
+	if security.Global() != nil {
 		// 記錄用戶請求安全事件
-		globalSecurityManager.LogSecurityEvent(SecurityEvent{
+		security.Global().LogSecurityEvent(security.SecurityEvent{
 			EventType:   "telegram_message_received",
 			Severity:    "low",
 			Description: "User message received via Telegram",
@@ -594,7 +595,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		})
 
 		// PII 檢測和過濾 (自動記錄事件)
-		filteredText, detected := globalSecurityManager.DetectAndFilterPII(text, true, &PIIDetectionContext{
+		filteredText, detected := security.Global().DetectAndFilterPII(text, true, &security.PIIDetectionContext{
 			ChatID:      key.chatID,
 			UserID:      userID,
 			MessageType: "text",
@@ -3216,8 +3217,8 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 	}
 
 	// 安全檢查和事件記錄
-	if globalSecurityManager != nil {
-		globalSecurityManager.LogSecurityEvent(SecurityEvent{
+	if security.Global() != nil {
+		security.Global().LogSecurityEvent(security.SecurityEvent{
 			EventType:   "telegram_batch_photos_received",
 			Severity:    "medium",
 			Description: fmt.Sprintf("Batch of %d photos received via Telegram", len(relativeImagePaths)),
@@ -3232,7 +3233,7 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 
 		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
-			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true, &PIIDetectionContext{
+			filteredCaption, detected := security.Global().DetectAndFilterPII(caption, true, &security.PIIDetectionContext{
 			ChatID:      key.chatID,
 			UserID:      userID,
 			MessageType: "photo",
@@ -3363,8 +3364,8 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 	}
 
 	// 安全檢查和 PII 檢測（與原有邏輯相同）
-	if globalSecurityManager != nil {
-		globalSecurityManager.LogSecurityEvent(SecurityEvent{
+	if security.Global() != nil {
+		security.Global().LogSecurityEvent(security.SecurityEvent{
 			EventType:   "telegram_photo_received",
 			Severity:    "medium",
 			Description: "Photo message received via Telegram",
@@ -3381,7 +3382,7 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 
 		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
-			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true, &PIIDetectionContext{
+			filteredCaption, detected := security.Global().DetectAndFilterPII(caption, true, &security.PIIDetectionContext{
 			ChatID:      key.chatID,
 			UserID:      userID,
 			MessageType: "photo",
@@ -3480,8 +3481,8 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 	}
 
 	// 安全檢查和 PII 檢測
-	if globalSecurityManager != nil {
-		globalSecurityManager.LogSecurityEvent(SecurityEvent{
+	if security.Global() != nil {
+		security.Global().LogSecurityEvent(security.SecurityEvent{
 			EventType:   "telegram_photo_received",
 			Severity:    "medium",
 			Description: "Photo message received via Telegram",
@@ -3498,7 +3499,7 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 
 		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
-			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true, &PIIDetectionContext{
+			filteredCaption, detected := security.Global().DetectAndFilterPII(caption, true, &security.PIIDetectionContext{
 			ChatID:      key.chatID,
 			UserID:      userID,
 			MessageType: "photo",
@@ -3769,8 +3770,8 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 	}()
 
 	// 安全檢查和事件記錄
-	if globalSecurityManager != nil {
-		globalSecurityManager.LogSecurityEvent(SecurityEvent{
+	if security.Global() != nil {
+		security.Global().LogSecurityEvent(security.SecurityEvent{
 			EventType:   "telegram_voice_received",
 			Severity:    "medium",
 			Description: "Voice message received via Telegram",
@@ -3787,7 +3788,7 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 
 		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
-			filteredCaption, detected := globalSecurityManager.DetectAndFilterPII(caption, true, &PIIDetectionContext{
+			filteredCaption, detected := security.Global().DetectAndFilterPII(caption, true, &security.PIIDetectionContext{
 			ChatID:      key.chatID,
 			UserID:      userID,
 			MessageType: "voice",
@@ -3797,7 +3798,7 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 		})
 			if len(detected) > 0 {
 				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
-				globalSecurityManager.LogSecurityEvent(SecurityEvent{
+				security.Global().LogSecurityEvent(security.SecurityEvent{
 					EventType:   "pii_detected_voice_caption",
 					Severity:    "low", // 降低嚴重性，主要事件已記錄
 					Description: fmt.Sprintf("Voice caption contained PII (filtered): %v", detected),
@@ -4350,8 +4351,8 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 	}
 
 	// 安全檢查和事件記錄
-	if globalSecurityManager != nil {
-		globalSecurityManager.LogSecurityEvent(SecurityEvent{
+	if security.Global() != nil {
+		security.Global().LogSecurityEvent(security.SecurityEvent{
 			EventType:   "telegram_document_received",
 			Severity:    "medium",
 			Description: "Document file received via Telegram",

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"claude-tg-agent/internal/app/security"
+
 	_ "modernc.org/sqlite" // Pure Go SQLite driver (no CGO required)
 )
 
@@ -40,10 +42,10 @@ type Storage interface {
 	GetCostSavingsByProject(projectPath string, hours int) (CostSavingsReport, error)
 
 	// Security Events
-	InsertSecurityEvent(event SecurityEvent) error
-	GetSecurityEvents(limit int, offset int) ([]SecurityEvent, error)
-	GetSecurityEventsByTimeRange(start, end time.Time, limit int) ([]SecurityEvent, error)
-	GetSecurityEventsBySeverity(severity string, limit int) ([]SecurityEvent, error)
+	InsertSecurityEvent(event security.SecurityEvent) error
+	GetSecurityEvents(limit int, offset int) ([]security.SecurityEvent, error)
+	GetSecurityEventsByTimeRange(start, end time.Time, limit int) ([]security.SecurityEvent, error)
+	GetSecurityEventsBySeverity(severity string, limit int) ([]security.SecurityEvent, error)
 
 	// Count Queries (for pagination)
 	GetToolExecutionsCount() (int64, error)
@@ -1237,7 +1239,7 @@ func (s *SQLiteStorage) scanPerformanceMetrics(rows *sql.Rows) ([]PerformanceMet
 // ==================== Security Events ====================
 
 // InsertSecurityEvent 插入安全事件
-func (s *SQLiteStorage) InsertSecurityEvent(event SecurityEvent) error {
+func (s *SQLiteStorage) InsertSecurityEvent(event security.SecurityEvent) error {
 	return s.execWithRetry(func() error {
 		detailsJSON, _ := json.Marshal(event.Details)
 
@@ -1255,7 +1257,7 @@ func (s *SQLiteStorage) InsertSecurityEvent(event SecurityEvent) error {
 }
 
 // GetSecurityEvents 獲取安全事件（分頁）
-func (s *SQLiteStorage) GetSecurityEvents(limit int, offset int) ([]SecurityEvent, error) {
+func (s *SQLiteStorage) GetSecurityEvents(limit int, offset int) ([]security.SecurityEvent, error) {
 	rows, err := s.db.Query(`
 		SELECT event_id, timestamp, event_type, severity, description, user_id,
 			   ip_address, user_agent, details_json, mitigated
@@ -1271,7 +1273,7 @@ func (s *SQLiteStorage) GetSecurityEvents(limit int, offset int) ([]SecurityEven
 }
 
 // GetSecurityEventsByTimeRange 按時間範圍獲取安全事件
-func (s *SQLiteStorage) GetSecurityEventsByTimeRange(start, end time.Time, limit int) ([]SecurityEvent, error) {
+func (s *SQLiteStorage) GetSecurityEventsByTimeRange(start, end time.Time, limit int) ([]security.SecurityEvent, error) {
 	startStr := formatTimeForSQLite(start)
 	endStr := formatTimeForSQLite(end)
 	rows, err := s.db.Query(`
@@ -1290,7 +1292,7 @@ func (s *SQLiteStorage) GetSecurityEventsByTimeRange(start, end time.Time, limit
 }
 
 // GetSecurityEventsBySeverity 按嚴重性獲取安全事件
-func (s *SQLiteStorage) GetSecurityEventsBySeverity(severity string, limit int) ([]SecurityEvent, error) {
+func (s *SQLiteStorage) GetSecurityEventsBySeverity(severity string, limit int) ([]security.SecurityEvent, error) {
 	rows, err := s.db.Query(`
 		SELECT event_id, timestamp, event_type, severity, description, user_id,
 			   ip_address, user_agent, details_json, mitigated
@@ -1307,10 +1309,10 @@ func (s *SQLiteStorage) GetSecurityEventsBySeverity(severity string, limit int) 
 }
 
 // scanSecurityEvents 掃描安全事件結果
-func (s *SQLiteStorage) scanSecurityEvents(rows *sql.Rows) ([]SecurityEvent, error) {
-	var events []SecurityEvent
+func (s *SQLiteStorage) scanSecurityEvents(rows *sql.Rows) ([]security.SecurityEvent, error) {
+	var events []security.SecurityEvent
 	for rows.Next() {
-		var event SecurityEvent
+		var event security.SecurityEvent
 		var detailsJSON string
 		var userID sql.NullInt64
 

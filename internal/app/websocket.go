@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"claude-tg-agent/internal/app/security"
 )
 
 // WebSocketEvent 定義 WebSocket 事件的結構
@@ -326,7 +328,7 @@ func BroadcastPerformanceEvent(metric PerformanceMetrics) {
 }
 
 // BroadcastSecurityEvent 廣播安全事件
-func BroadcastSecurityEvent(event SecurityEvent) {
+func BroadcastSecurityEvent(event security.SecurityEvent) {
 	if globalWebSocketHub == nil {
 		return
 	}
