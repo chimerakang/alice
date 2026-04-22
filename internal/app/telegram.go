@@ -13,12 +13,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"claude-tg-agent/internal/app/hermes"
 )
 
 // chatKey 用於識別獨立對話（支援 Forum Topics）
@@ -110,6 +112,16 @@ type TelegramBot struct {
 
 	// Screenshot manager for /preview command
 	screenshotManager *ScreenshotManager
+
+	// Hermes Brain-Executor coordinators (per chat)
+	hermesCoords   map[chatKey]*hermesCoord
+	hermesMu       sync.RWMutex
+}
+
+// hermesCoord bundles the coordinator and its enabled flag for a single chat.
+type hermesCoord struct {
+	coord   interface{ TaskID() string; IsRunning() bool }
+	enabled bool
 }
 
 func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
@@ -171,6 +183,9 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 
 		// Screenshot manager
 		screenshotManager: NewScreenshotManager(),
+
+		// Hermes coordinators
+		hermesCoords: make(map[chatKey]*hermesCoord),
 	}
 
 	// Start message queue worker
@@ -612,6 +627,13 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		}
 		log.Printf("[telegram] handling command: %s, threadID=%d, chatID=%d", text, key.threadID, key.chatID)
 		t.handleCommand(key, text)
+		return
+	}
+
+	// Hermes mode: route to Brain-Executor coordinator instead of normal agent
+	if t.isHermesEnabled(key) {
+		projectDir := t.getAgent(key).ProjectDir()
+		go t.startHermesTask(key, text, projectDir)
 		return
 	}
 
@@ -1201,6 +1223,13 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		t.send(key, msg)
 
 	case "/auto":
+		// Also disable Hermes mode if active
+		t.hermesMu.Lock()
+		if hc := t.hermesCoords[key]; hc != nil {
+			hc.enabled = false
+		}
+		t.hermesMu.Unlock()
+
 		if !t.config.ModelRouting.EnableDynamicRouting {
 			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
@@ -1291,9 +1320,148 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			t.send(key, t.getLocalizedMessage(key.chatID, "skill_usage", nil))
 		}
 
+	case "/hermes":
+		t.handleHermesCommand(key, parts)
+
 	default:
 		t.send(key, t.getLocalizedMessage(key.chatID, "unknown_command", nil))
 	}
+}
+
+// handleHermesCommand enables or queries Hermes mode for this chat.
+//
+//	/hermes         — enable Hermes mode (next message will trigger Brain-Executor)
+//	/hermes status  — show current coordinator state
+//	/hermes stop    — cancel current task and disable Hermes mode
+func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string) {
+	if !t.config.Hermes.Enabled {
+		t.send(key, "Hermes 模式未啟用。請在 config.json 中設定 hermes.enabled = true。")
+		return
+	}
+
+	sub := ""
+	if len(parts) > 1 {
+		sub = strings.ToLower(parts[1])
+	}
+
+	switch sub {
+	case "status":
+		t.hermesMu.RLock()
+		hc := t.hermesCoords[key]
+		t.hermesMu.RUnlock()
+		if hc == nil || !hc.enabled {
+			t.send(key, "Hermes 模式：未啟用")
+			return
+		}
+		if hc.coord != nil && hc.coord.IsRunning() {
+			t.send(key, fmt.Sprintf("Hermes 模式：執行中（任務 %s）", hc.coord.TaskID()))
+		} else {
+			t.send(key, "Hermes 模式：已啟用，等待下一則訊息")
+		}
+
+	case "stop":
+		t.hermesMu.Lock()
+		hc := t.hermesCoords[key]
+		if hc != nil {
+			hc.enabled = false
+		}
+		t.hermesMu.Unlock()
+		t.send(key, "Hermes 模式已停用，切回一般模式。")
+
+	default:
+		t.hermesMu.Lock()
+		t.hermesCoords[key] = &hermesCoord{enabled: true}
+		t.hermesMu.Unlock()
+		t.send(key, "✅ Hermes 模式已啟用。下一則訊息將由 Planner-Executor 架構處理。\n輸入 /auto 切回一般模式，/hermes stop 中止目前任務。")
+	}
+}
+
+// isHermesEnabled reports whether Hermes mode is active for this chat.
+func (t *TelegramBot) isHermesEnabled(key chatKey) bool {
+	if !t.config.Hermes.Enabled {
+		return false
+	}
+	t.hermesMu.RLock()
+	hc := t.hermesCoords[key]
+	t.hermesMu.RUnlock()
+	return hc != nil && hc.enabled
+}
+
+// startHermesTask launches a Hermes coordinator for the given goal.
+// Uses context.Background() so the task survives handler cancellation.
+func (t *TelegramBot) startHermesTask(key chatKey, goal, projectDir string) {
+	ctx := context.Background()
+	cfg := HermesDefaults(t.config.Hermes)
+
+	plannerModel := cfg.PlannerModel
+	if plannerModel == "" {
+		plannerModel = t.config.ModelRouting.DeepModel
+	}
+	executorModel := cfg.ExecutorModel
+	if executorModel == "" {
+		executorModel = t.config.ModelRouting.FastModel
+	}
+
+	cliClient, ok := t.client.(*CLIClient)
+	if !ok {
+		t.send(key, "Hermes 模式需要 CLIClient 後端，目前後端不支援。")
+		return
+	}
+
+	planFn := makePlanFn(cliClient, plannerModel)
+	execFn := makeExecFn(cliClient, executorModel)
+
+	taskStore := buildHermesTaskStore()
+
+	verbosity := hermes.ParseVerbosity(cfg.ProgressVerbosity)
+	reporter := hermes.NewTextProgressReporter(verbosity, func(text string) {
+		t.send(key, text)
+	})
+
+	budget := hermes.TokenBudget{
+		MaxTotalTokens:      cfg.Budget.MaxTotalTokens,
+		MaxWallclockSeconds: cfg.Budget.MaxWallclockSeconds,
+	}
+
+	// Load role-specific operating rules from the prompts directory.
+	// Falls back to embedded defaults if the directory is missing.
+	promptsDir := cfg.PromptsDir
+	if promptsDir == "" {
+		promptsDir = "internal/app/hermes/prompts"
+	}
+	pb := hermes.LoadPromptBuilder(promptsDir)
+
+	coordCfg := hermes.CoordinatorConfig{
+		ChatID:                key.chatID,
+		ProjectDir:            projectDir,
+		PlannerModel:          plannerModel,
+		ExecutorModel:         executorModel,
+		MaxRetriesPerSubtask:  cfg.MaxRetriesPerSubtask,
+		MaxPlannerJSONRetries: cfg.MaxPlannerJSONRetries,
+		InterruptPolicy:       hermes.InterruptPolicy(cfg.InterruptPolicy),
+		ProgressVerbosity:     verbosity,
+		Budget:                budget,
+		PlannerRules:          pb.ForRole(hermes.RolePlanner),
+		ExecutorRules:         pb.ForRole(hermes.RoleExecutor),
+	}
+
+	// Use a noop store when no DB is available yet (wired fully in #97→#98 integration)
+	if taskStore == nil {
+		taskStore = &hermes.NoopTaskStore{}
+	}
+
+	coord := hermes.NewCoordinator(coordCfg, planFn, execFn, taskStore, reporter, nil)
+
+	t.hermesMu.Lock()
+	t.hermesCoords[key] = &hermesCoord{coord: coord, enabled: true}
+	t.hermesMu.Unlock()
+
+	taskID, err := coord.Start(ctx, goal)
+	if err != nil {
+		t.send(key, fmt.Sprintf("Hermes 啟動失敗：%v", err))
+		return
+	}
+	log.Printf("[hermes] chat %d started task %s", key.chatID, taskID)
 }
 
 // --- Send helpers (直接用 Telegram HTTP API 以支援 message_thread_id) ---

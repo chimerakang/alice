@@ -79,6 +79,73 @@ type Config struct {
 
 	// Backend Execution Settings
 	Backends BackendConfig `json:"backends"`
+
+	// Hermes Settings
+	Hermes HermesConfig `json:"hermes"`
+}
+
+// HermesConfig controls Hermes Brain-Executor mode settings.
+type HermesConfig struct {
+	Enabled bool              `json:"enabled"`
+	Hooks   HermesHooksConfig `json:"hooks"`
+
+	// Model overrides (defaults to ModelRoutingConfig values when empty)
+	PlannerModel  string `json:"planner_model"`  // e.g. "claude-opus-4-7"
+	ExecutorModel string `json:"executor_model"` // e.g. "claude-haiku-4-5-20251001"
+
+	// Retry limits
+	MaxRetriesPerSubtask    int `json:"max_retries_per_subtask"`    // default 3
+	MaxPlannerJSONRetries   int `json:"max_planner_json_retries"`   // default 3
+
+	// Interrupt behaviour: "queue" | "interrupt" | "inject"
+	InterruptPolicy string `json:"interrupt_policy"` // default "queue"
+
+	// Progress verbosity: "minimal" | "normal" | "verbose"
+	ProgressVerbosity string `json:"progress_verbosity"` // default "normal"
+
+	// Resource limits
+	Budget HermesBudgetConfig `json:"budget"`
+
+	// PromptsDir is the directory containing planner_rules.md and executor_rules.md.
+	// Defaults to "internal/app/hermes/prompts" relative to the working directory.
+	PromptsDir string `json:"prompts_dir"`
+}
+
+// HermesBudgetConfig sets task-level resource limits.
+type HermesBudgetConfig struct {
+	MaxTotalTokens      int `json:"max_total_tokens"`      // default 500000; 0 = unlimited
+	MaxWallclockSeconds int `json:"max_wallclock_seconds"` // default 600; 0 = unlimited
+}
+
+// HermesHooksConfig controls which tool execution hooks are active.
+type HermesHooksConfig struct {
+	PathGuard      bool     `json:"path_guard"`       // block writes to protected paths; auto-enabled in Hermes mode
+	ExtraDenyPaths []string `json:"extra_deny_paths"` // additional path patterns to block
+	PostValidators []string `json:"post_validators"`  // "go_build", "tsc_check", "json_lint"
+	WorkDir        string   `json:"work_dir"`         // root for build validators; defaults to project dir
+}
+
+// HermesDefaults returns a HermesConfig with sensible defaults filled in.
+func HermesDefaults(cfg HermesConfig) HermesConfig {
+	if cfg.MaxRetriesPerSubtask == 0 {
+		cfg.MaxRetriesPerSubtask = 3
+	}
+	if cfg.MaxPlannerJSONRetries == 0 {
+		cfg.MaxPlannerJSONRetries = 3
+	}
+	if cfg.InterruptPolicy == "" {
+		cfg.InterruptPolicy = "queue"
+	}
+	if cfg.ProgressVerbosity == "" {
+		cfg.ProgressVerbosity = "normal"
+	}
+	if cfg.Budget.MaxTotalTokens == 0 {
+		cfg.Budget.MaxTotalTokens = 500_000
+	}
+	if cfg.Budget.MaxWallclockSeconds == 0 {
+		cfg.Budget.MaxWallclockSeconds = 600
+	}
+	return cfg
 }
 
 // BackendConfig configures execution backends

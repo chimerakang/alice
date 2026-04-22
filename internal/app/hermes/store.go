@@ -1,0 +1,485 @@
+package hermes
+
+import (
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+// TaskStateStore defines persistence operations for Hermes task states.
+type TaskStateStore interface {
+	// CreateTask persists a new TaskState and returns it with CreatedAt/UpdatedAt set.
+	CreateTask(task TaskState) (TaskState, error)
+
+	// GetTask retrieves a task by ID.
+	GetTask(id string) (TaskState, error)
+
+	// GetActiveTaskForChat returns the most recent non-terminal task for a chat, or ErrNoTask.
+	GetActiveTaskForChat(chatID int64) (TaskState, error)
+
+	// StorePlan persists the Planner's sub-task list, replacing any existing plan.
+	// Must be called before UpdateSubTask.
+	StorePlan(taskID string, plan []SubTask) error
+
+	// UpdateSubTask writes the result and status of a single sub-task back to the store.
+	UpdateSubTask(taskID string, idx int, status SubTaskStatus, result string, tokensUsed int) error
+
+	// AdvanceTask increments CurrentIdx and sets the task status.
+	AdvanceTask(taskID string, nextIdx int, status TaskStatus) error
+
+	// AppendArtifact adds a file artifact record to the task.
+	AppendArtifact(taskID string, artifact Artifact) error
+
+	// UpdateAccumulated replaces the accumulated summary text.
+	UpdateAccumulated(taskID string, accumulated string) error
+
+	// UpdatePlannerSession records the Planner's CLI --resume session ID.
+	UpdatePlannerSession(taskID string, sessionID string) error
+
+	// MarkInterrupted sets task status to interrupted and records the message ID.
+	MarkInterrupted(taskID string, messageID int64) error
+
+	// MarkStatus sets an arbitrary terminal or transition status on a task.
+	MarkStatus(taskID string, status TaskStatus) error
+
+	// AddTokenUsage adds delta tokens to both the task budget and the current sub-task.
+	AddTokenUsage(taskID string, delta int) error
+
+	// ListTasksForChat returns recent tasks for a chat (newest first).
+	ListTasksForChat(chatID int64, limit int) ([]TaskState, error)
+}
+
+// ErrNoTask is returned when no matching task exists.
+var ErrNoTask = fmt.Errorf("hermes: no task found")
+
+// SQLiteTaskStore implements TaskStateStore backed by SQLite.
+type SQLiteTaskStore struct {
+	db *sql.DB
+}
+
+// NewSQLiteTaskStore creates and migrates the hermes SQLite tables.
+// db must be an open *sql.DB (typically shared with the main SQLiteStorage).
+func NewSQLiteTaskStore(db *sql.DB) (*SQLiteTaskStore, error) {
+	s := &SQLiteTaskStore{db: db}
+	if err := s.migrate(); err != nil {
+		return nil, fmt.Errorf("hermes store migration: %w", err)
+	}
+	return s, nil
+}
+
+// migrate creates all hermes tables if they don't exist.
+func (s *SQLiteTaskStore) migrate() error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS hermes_task_states (
+			id                TEXT PRIMARY KEY,
+			chat_id           INTEGER NOT NULL,
+			planner_session   TEXT NOT NULL DEFAULT '',
+			goal              TEXT NOT NULL,
+			current_idx       INTEGER NOT NULL DEFAULT 0,
+			accumulated       TEXT NOT NULL DEFAULT '',
+			status            TEXT NOT NULL DEFAULT 'planning',
+			interrupted_by    INTEGER,
+			interrupt_policy  TEXT NOT NULL DEFAULT 'queue',
+			token_budget      TEXT NOT NULL DEFAULT '{}',
+			plan_json         TEXT NOT NULL DEFAULT '[]',
+			created_at        TEXT NOT NULL,
+			updated_at        TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_hermes_tasks_chat_status
+			ON hermes_task_states(chat_id, status)`,
+		`CREATE TABLE IF NOT EXISTS hermes_task_artifacts (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_id     TEXT NOT NULL REFERENCES hermes_task_states(id),
+			path        TEXT NOT NULL,
+			hash        TEXT NOT NULL DEFAULT '',
+			sub_task_id TEXT NOT NULL DEFAULT '',
+			created_at  TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_hermes_artifacts_task
+			ON hermes_task_artifacts(task_id)`,
+	}
+
+	return s.execWithRetry(func() error {
+		for _, stmt := range stmts {
+			if _, err := s.db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+// ── CRUD ──────────────────────────────────────────────────────────────────────
+
+func (s *SQLiteTaskStore) CreateTask(task TaskState) (TaskState, error) {
+	now := time.Now()
+	task.CreatedAt = now
+	task.UpdatedAt = now
+
+	planJSON, err := json.Marshal(task.Plan)
+	if err != nil {
+		return task, err
+	}
+	budgetJSON, err := json.Marshal(task.TokenBudget)
+	if err != nil {
+		return task, err
+	}
+
+	return task, s.execWithRetry(func() error {
+		_, err := s.db.Exec(`
+			INSERT INTO hermes_task_states
+				(id, chat_id, planner_session, goal, current_idx, accumulated,
+				 status, interrupted_by, interrupt_policy, token_budget, plan_json,
+				 created_at, updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			task.ID, task.ChatID, task.PlannerSessionID, task.Goal,
+			task.CurrentIdx, task.Accumulated, string(task.Status),
+			task.InterruptedBy, string(task.InterruptPolicy),
+			string(budgetJSON), string(planJSON),
+			task.CreatedAt.Format(time.RFC3339),
+			task.UpdatedAt.Format(time.RFC3339),
+		)
+		return err
+	})
+}
+
+func (s *SQLiteTaskStore) GetTask(id string) (TaskState, error) {
+	row := s.db.QueryRow(`
+		SELECT id, chat_id, planner_session, goal, current_idx, accumulated,
+		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
+		       created_at, updated_at
+		FROM hermes_task_states WHERE id = ?`, id)
+	return s.scanTask(row)
+}
+
+func (s *SQLiteTaskStore) GetActiveTaskForChat(chatID int64) (TaskState, error) {
+	row := s.db.QueryRow(`
+		SELECT id, chat_id, planner_session, goal, current_idx, accumulated,
+		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
+		       created_at, updated_at
+		FROM hermes_task_states
+		WHERE chat_id = ? AND status NOT IN ('done','failed','interrupted')
+		ORDER BY created_at DESC LIMIT 1`, chatID)
+	return s.scanTask(row)
+}
+
+func (s *SQLiteTaskStore) StorePlan(taskID string, plan []SubTask) error {
+	planJSON, err := json.Marshal(plan)
+	if err != nil {
+		return fmt.Errorf("StorePlan marshal: %w", err)
+	}
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(
+			`UPDATE hermes_task_states SET plan_json = ?, updated_at = ? WHERE id = ?`,
+			string(planJSON), time.Now().Format(time.RFC3339), taskID,
+		)
+		return err
+	})
+}
+
+func (s *SQLiteTaskStore) UpdateSubTask(taskID string, idx int, status SubTaskStatus, result string, tokensUsed int) error {
+	return s.execWithRetry(func() error {
+		// Load current plan, patch, write back
+		var planJSON string
+		if err := s.db.QueryRow(`SELECT plan_json FROM hermes_task_states WHERE id = ?`, taskID).
+			Scan(&planJSON); err != nil {
+			return err
+		}
+		var plan []SubTask
+		if err := json.Unmarshal([]byte(planJSON), &plan); err != nil {
+			return err
+		}
+		if idx < 0 || idx >= len(plan) {
+			return fmt.Errorf("sub-task index %d out of range", idx)
+		}
+		plan[idx].Status = status
+		plan[idx].Result = result
+		plan[idx].TokensUsed += tokensUsed
+		plan[idx].Attempts++
+
+		updated, err := json.Marshal(plan)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec(
+			`UPDATE hermes_task_states SET plan_json = ?, updated_at = ? WHERE id = ?`,
+			string(updated), time.Now().Format(time.RFC3339), taskID,
+		)
+		return err
+	})
+}
+
+func (s *SQLiteTaskStore) AdvanceTask(taskID string, nextIdx int, status TaskStatus) error {
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(
+			`UPDATE hermes_task_states SET current_idx = ?, status = ?, updated_at = ? WHERE id = ?`,
+			nextIdx, string(status), time.Now().Format(time.RFC3339), taskID,
+		)
+		return err
+	})
+}
+
+func (s *SQLiteTaskStore) AppendArtifact(taskID string, artifact Artifact) error {
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(`
+			INSERT INTO hermes_task_artifacts (task_id, path, hash, sub_task_id, created_at)
+			VALUES (?,?,?,?,?)`,
+			taskID, artifact.Path, artifact.Hash, artifact.SubTaskID,
+			time.Now().Format(time.RFC3339),
+		)
+		return err
+	})
+}
+
+func (s *SQLiteTaskStore) UpdateAccumulated(taskID string, accumulated string) error {
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(
+			`UPDATE hermes_task_states SET accumulated = ?, updated_at = ? WHERE id = ?`,
+			accumulated, time.Now().Format(time.RFC3339), taskID,
+		)
+		return err
+	})
+}
+
+func (s *SQLiteTaskStore) UpdatePlannerSession(taskID string, sessionID string) error {
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(
+			`UPDATE hermes_task_states SET planner_session = ?, updated_at = ? WHERE id = ?`,
+			sessionID, time.Now().Format(time.RFC3339), taskID,
+		)
+		return err
+	})
+}
+
+func (s *SQLiteTaskStore) MarkInterrupted(taskID string, messageID int64) error {
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(
+			`UPDATE hermes_task_states SET status = 'interrupted', interrupted_by = ?, updated_at = ? WHERE id = ?`,
+			messageID, time.Now().Format(time.RFC3339), taskID,
+		)
+		return err
+	})
+}
+
+func (s *SQLiteTaskStore) MarkStatus(taskID string, status TaskStatus) error {
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(
+			`UPDATE hermes_task_states SET status = ?, updated_at = ? WHERE id = ?`,
+			string(status), time.Now().Format(time.RFC3339), taskID,
+		)
+		return err
+	})
+}
+
+func (s *SQLiteTaskStore) AddTokenUsage(taskID string, delta int) error {
+	return s.execWithRetry(func() error {
+		var budgetJSON string
+		if err := s.db.QueryRow(`SELECT token_budget FROM hermes_task_states WHERE id = ?`, taskID).
+			Scan(&budgetJSON); err != nil {
+			return err
+		}
+		var budget TokenBudget
+		if err := json.Unmarshal([]byte(budgetJSON), &budget); err != nil {
+			return err
+		}
+		budget.UsedTokens += delta
+
+		updated, err := json.Marshal(budget)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec(
+			`UPDATE hermes_task_states SET token_budget = ?, updated_at = ? WHERE id = ?`,
+			string(updated), time.Now().Format(time.RFC3339), taskID,
+		)
+		return err
+	})
+}
+
+func (s *SQLiteTaskStore) ListTasksForChat(chatID int64, limit int) ([]TaskState, error) {
+	rows, err := s.db.Query(`
+		SELECT id, chat_id, planner_session, goal, current_idx, accumulated,
+		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
+		       created_at, updated_at
+		FROM hermes_task_states
+		WHERE chat_id = ?
+		ORDER BY created_at DESC LIMIT ?`, chatID, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	// Collect base task data first, then close rows before loading artifacts.
+	// Loading artifacts requires a second query on the same connection; keeping
+	// rows open while issuing another query deadlocks on MaxOpenConns(1).
+	var tasks []TaskState
+	for rows.Next() {
+		task, err := s.scanTaskRowNoArtifacts(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		tasks = append(tasks, task)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+
+	// Now load artifacts for each task with the connection free.
+	for i := range tasks {
+		tasks[i].Artifacts, err = s.loadArtifacts(tasks[i].ID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return tasks, nil
+}
+
+// ── scanning helpers ──────────────────────────────────────────────────────────
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func (s *SQLiteTaskStore) scanTask(row rowScanner) (TaskState, error) {
+	var task TaskState
+	var statusStr, policyStr, budgetJSON, planJSON string
+	var interruptedBy sql.NullInt64
+	var createdStr, updatedStr string
+
+	err := row.Scan(
+		&task.ID, &task.ChatID, &task.PlannerSessionID, &task.Goal,
+		&task.CurrentIdx, &task.Accumulated,
+		&statusStr, &interruptedBy, &policyStr,
+		&budgetJSON, &planJSON,
+		&createdStr, &updatedStr,
+	)
+	if err == sql.ErrNoRows {
+		return task, ErrNoTask
+	}
+	if err != nil {
+		return task, err
+	}
+
+	task.Status = TaskStatus(statusStr)
+	task.InterruptPolicy = InterruptPolicy(policyStr)
+	if interruptedBy.Valid {
+		task.InterruptedBy = &interruptedBy.Int64
+	}
+	if err := json.Unmarshal([]byte(planJSON), &task.Plan); err != nil {
+		return task, err
+	}
+	if err := json.Unmarshal([]byte(budgetJSON), &task.TokenBudget); err != nil {
+		return task, err
+	}
+	if task.CreatedAt, err = time.Parse(time.RFC3339, createdStr); err != nil {
+		return task, err
+	}
+	if task.UpdatedAt, err = time.Parse(time.RFC3339, updatedStr); err != nil {
+		return task, err
+	}
+
+	// Load artifacts separately
+	task.Artifacts, err = s.loadArtifacts(task.ID)
+	return task, err
+}
+
+// scanTaskRowNoArtifacts scans a task row without loading its artifacts.
+// Use this inside a rows.Next() loop to avoid opening a second query on the same connection.
+func (s *SQLiteTaskStore) scanTaskRowNoArtifacts(rows *sql.Rows) (TaskState, error) {
+	return s.scanRowsInto(rows)
+}
+
+func (s *SQLiteTaskStore) scanTaskRow(rows *sql.Rows) (TaskState, error) {
+	task, err := s.scanRowsInto(rows)
+	if err != nil {
+		return task, err
+	}
+	task.Artifacts, err = s.loadArtifacts(task.ID)
+	return task, err
+}
+
+func (s *SQLiteTaskStore) scanRowsInto(rows *sql.Rows) (TaskState, error) {
+	var task TaskState
+	var statusStr, policyStr, budgetJSON, planJSON string
+	var interruptedBy sql.NullInt64
+	var createdStr, updatedStr string
+
+	err := rows.Scan(
+		&task.ID, &task.ChatID, &task.PlannerSessionID, &task.Goal,
+		&task.CurrentIdx, &task.Accumulated,
+		&statusStr, &interruptedBy, &policyStr,
+		&budgetJSON, &planJSON,
+		&createdStr, &updatedStr,
+	)
+	if err != nil {
+		return task, err
+	}
+
+	task.Status = TaskStatus(statusStr)
+	task.InterruptPolicy = InterruptPolicy(policyStr)
+	if interruptedBy.Valid {
+		task.InterruptedBy = &interruptedBy.Int64
+	}
+	if err := json.Unmarshal([]byte(planJSON), &task.Plan); err != nil {
+		return task, err
+	}
+	if err := json.Unmarshal([]byte(budgetJSON), &task.TokenBudget); err != nil {
+		return task, err
+	}
+	if task.CreatedAt, err = time.Parse(time.RFC3339, createdStr); err != nil {
+		return task, err
+	}
+	if task.UpdatedAt, err = time.Parse(time.RFC3339, updatedStr); err != nil {
+		return task, err
+	}
+	return task, nil
+}
+
+func (s *SQLiteTaskStore) loadArtifacts(taskID string) ([]Artifact, error) {
+	rows, err := s.db.Query(`
+		SELECT path, hash, sub_task_id FROM hermes_task_artifacts
+		WHERE task_id = ? ORDER BY id`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var artifacts []Artifact
+	for rows.Next() {
+		var a Artifact
+		if err := rows.Scan(&a.Path, &a.Hash, &a.SubTaskID); err != nil {
+			return nil, err
+		}
+		artifacts = append(artifacts, a)
+	}
+	return artifacts, rows.Err()
+}
+
+// ── execWithRetry ─────────────────────────────────────────────────────────────
+
+const (
+	maxRetries = 5
+	retryDelay = 50 * time.Millisecond
+)
+
+func (s *SQLiteTaskStore) execWithRetry(op func() error) error {
+	for i := 0; i < maxRetries; i++ {
+		err := op()
+		if err == nil {
+			return nil
+		}
+		if strings.Contains(err.Error(), "database is locked") ||
+			strings.Contains(err.Error(), "SQLITE_BUSY") {
+			if i < maxRetries-1 {
+				time.Sleep(retryDelay * time.Duration(i+1))
+				continue
+			}
+		}
+		return err
+	}
+	return fmt.Errorf("hermes store: operation failed after %d retries", maxRetries)
+}

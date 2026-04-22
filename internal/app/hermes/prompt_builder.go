@@ -1,0 +1,101 @@
+package hermes
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// Role identifies which Hermes participant a prompt is built for.
+type Role int
+
+const (
+	RolePlanner  Role = iota
+	RoleExecutor Role = iota
+)
+
+func (r Role) String() string {
+	switch r {
+	case RolePlanner:
+		return "planner"
+	case RoleExecutor:
+		return "executor"
+	default:
+		return "unknown"
+	}
+}
+
+// defaultPlannerRules is the embedded fallback when no rules file is found.
+const defaultPlannerRules = `# Hermes Planner Rules
+
+你正在以 Hermes 模式執行任務，角色為 **Planner**。
+
+你的職責：將使用者的目標拆解為原子化子任務清單，輸出格式為 JSON 陣列（見下方格式規範）。
+硬規則：
+1. 輸出 ONLY 一個 ` + "`" + "`" + "`" + `json 程式碼區塊，不加任何前言或說明。
+2. 每個子任務必須有 id、description、tool_hints 三個欄位。
+3. 最多 15 個子任務；每個子任務能獨立執行。
+4. 禁止修改 config.json、.git/、.env、*.pem。`
+
+// defaultExecutorRules is the embedded fallback when no rules file is found.
+const defaultExecutorRules = `# Hermes Executor Rules
+
+你正在以 Hermes 模式執行任務，角色為 **Executor**。
+
+你的職責：執行當前子任務，完成後以 ≤ 2 行摘要回報結果。
+硬規則：
+1. 工具錯誤是事實，直接根據錯誤修正，不要爭論。
+2. file_patch 的 old_text 必須在檔案中唯一存在。
+3. 禁止修改 config.json、.git/、.env、*.pem（PathGuard 攔截）。
+4. 完成後輸出 ≤ 2 行結果摘要。
+5. 不執行當前子任務以外的工作。`
+
+// PromptBuilder loads and returns role-specific Hermes operating rules.
+// Rules are loaded from .md files when available; embedded defaults are used as fallback.
+type PromptBuilder struct {
+	plannerRules  string
+	executorRules string
+}
+
+// DefaultPromptBuilder returns a PromptBuilder using the embedded default rules.
+func DefaultPromptBuilder() *PromptBuilder {
+	return &PromptBuilder{
+		plannerRules:  defaultPlannerRules,
+		executorRules: defaultExecutorRules,
+	}
+}
+
+// LoadPromptBuilder loads rules from <dir>/planner_rules.md and <dir>/executor_rules.md.
+// If a file is missing or unreadable, the embedded default for that role is used instead.
+func LoadPromptBuilder(dir string) *PromptBuilder {
+	pb := DefaultPromptBuilder()
+
+	if rules, err := readMD(filepath.Join(dir, "planner_rules.md")); err == nil {
+		pb.plannerRules = rules
+	}
+	if rules, err := readMD(filepath.Join(dir, "executor_rules.md")); err == nil {
+		pb.executorRules = rules
+	}
+	return pb
+}
+
+func readMD(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", path, err)
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// ForRole returns the operating rules text for the given role.
+func (b *PromptBuilder) ForRole(role Role) string {
+	switch role {
+	case RolePlanner:
+		return b.plannerRules
+	case RoleExecutor:
+		return b.executorRules
+	default:
+		return ""
+	}
+}
