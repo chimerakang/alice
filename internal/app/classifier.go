@@ -47,9 +47,27 @@ var moderateKeywords = []string{
 // issue reference (#123 / ＃１２３) the prompt is promoted to complex — that
 // pattern almost always means "do the decomposable work tracked in that
 // issue", exactly what Hermes Planner-Executor exists for.
+//
+// Single-char Chinese verbs (修, 做) and short English words (do) used to
+// live here but matched too aggressively (修改 / 做的 / "do you"); the
+// remaining list requires at least two characters of intent.
 var actionVerbs = []string{
-	"處理", "修正", "修復", "修", "實作", "實現", "完成", "做",
-	"fix", "implement", "build", "create", "ship", "do",
+	"處理", "修正", "修復", "實作", "實現", "完成",
+	"fix", "implement", "build", "create", "ship",
+}
+
+// statusQueryPatterns mark a message as a state inquiry rather than a request
+// to act. When any of these appear alongside an action verb + issue ref the
+// upgrade to complex is suppressed so messages like "請問 #225 處理完畢了嗎"
+// stay on the regular routing path instead of spinning up Hermes.
+var statusQueryPatterns = []string{
+	"如何", "怎麼", "怎樣", "什麼時候",
+	"好了嗎", "完畢", "完成了", "完成沒",
+	"過了", "進度", "結果", "狀態",
+	"哪些", "那些", "子項目", "還有",
+	"請問", "查詢", "查看", "檢視", "看一下", "看下",
+	"是否", "有無", "為何", "為什麼",
+	"?", "？",
 }
 
 var complexKeywords = []string{
@@ -136,9 +154,14 @@ func ClassifyComplexity(prompt string) ClassificationResult {
 
 	// Action verb paired with an issue reference is a strong "do decomposable
 	// work" signal ("請處理 #239", "fix #61") — promote to complex so Hermes
-	// takes the task.
+	// takes the task. Suppress the upgrade when the message reads like a
+	// status query ("處理完畢了嗎", "如何處理 #225") so check-ins do not spin
+	// up a full Planner-Executor cycle.
 	if issueRefPattern.MatchString(cleaned) {
 		if kw := firstMatch(lower, actionVerbs); kw != "" {
+			if status := firstMatch(lower, statusQueryPatterns); status != "" {
+				return ClassificationResult{Complexity: ComplexityModerate, MatchedRule: "status-query:" + status}
+			}
 			return ClassificationResult{Complexity: ComplexityComplex, MatchedRule: "action-verb+issue-ref:" + kw}
 		}
 	}
@@ -164,8 +187,14 @@ func ClassifyComplexity(prompt string) ClassificationResult {
 		return ClassificationResult{Complexity: ComplexityModerate, MatchedRule: "issue-ref"}
 	}
 
-	if length > 200 {
-		return ClassificationResult{Complexity: ComplexityComplex, MatchedRule: "long-prompt"}
+	// Long prompts used to upgrade to complex unconditionally, but the most
+	// common case in practice is the operator pasting a long discussion log
+	// or quoting a previous Hermes summary back at us — neither warrants a
+	// new Planner-Executor cycle. Require both length and an issue reference
+	// or complex-verb signal (already filtered above) before triggering, and
+	// raise the threshold so casual long messages stay moderate.
+	if length > 200 && issueRefPattern.MatchString(cleaned) {
+		return ClassificationResult{Complexity: ComplexityComplex, MatchedRule: "long-prompt+issue-ref"}
 	}
 
 	return ClassificationResult{Complexity: ComplexityModerate, MatchedRule: "default"}

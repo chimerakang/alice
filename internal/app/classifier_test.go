@@ -14,7 +14,8 @@ func TestClassifyComplexity(t *testing.T) {
 		{"short git status", "git status", ComplexityTrivial},
 		{"refactor", "請重構這個 i18n 系統", ComplexityComplex},
 		{"implement", "implement the new hermes coordinator", ComplexityComplex},
-		{"long prompt", "我想做一個很長很長的任務，" + repeat("細節", 100), ComplexityComplex},
+		{"long prompt + issue ref", "我想規劃一個很長的任務 #142 " + repeat("細節", 100), ComplexityComplex},
+		{"long prompt no issue stays moderate", "我跟你討論很久很久" + repeat("這個問題", 100), ComplexityModerate},
 		{"moderate default", "how does the telegram handler work", ComplexityModerate},
 
 		// Chinese work verbs
@@ -44,6 +45,18 @@ func TestClassifyComplexity(t *testing.T) {
 		// Issue ref with non-action verb stays moderate (not every issue reference means "do it")
 		{"research + issue", "研究一下 #61 的現況", ComplexityModerate},
 		{"check + issue", "檢查 #239 是什麼狀況", ComplexityModerate},
+
+		// Status queries containing both action verb + issue ref must NOT trigger Hermes
+		{"status: 完畢了嗎", "請問 #225 的子項目處理完畢了嗎", ComplexityModerate},
+		{"status: 哪些", "請檢視 #225 還有哪些子項目要處理", ComplexityModerate},
+		{"status: 處理過了", "但是剛剛明明 #246 都處理過了", ComplexityModerate},
+		{"status: 為何", "為何 #250 處理還沒完成", ComplexityModerate},
+		{"status: question mark", "處理 #239 完成了嗎？", ComplexityModerate},
+
+		// 修 / 做 / do alone no longer false-fires on common substrings
+		{"not action: 修改", "請修改文字 #61", ComplexityModerate},
+		{"not action: 做的", "我做的判斷對嗎 #225", ComplexityModerate},
+		{"not action: do you", "do you know about #239", ComplexityModerate},
 
 		// IDE noise stripping
 		{"ide opened only stays short", "<ide_opened_file>/path/to/foo.ts</ide_opened_file>git status", ComplexityTrivial},
