@@ -33,6 +33,25 @@ type ghIssueJSON struct {
 	Labels []struct{ Name string `json:"name"` } `json:"labels"`
 }
 
+// IssueListItem is a lightweight summary of one open issue.
+type IssueListItem struct {
+	Number    int
+	Title     string
+	Labels    []string
+	Milestone string
+	UpdatedAt time.Time
+	Priority  int // computed score: higher = more urgent
+}
+
+// ghIssueListJSON is the JSON shape from `gh issue list --json`.
+type ghIssueListJSON struct {
+	Number    int                            `json:"number"`
+	Title     string                         `json:"title"`
+	Labels    []struct{ Name string `json:"name"` } `json:"labels"`
+	Milestone *struct{ Title string `json:"title"` } `json:"milestone"`
+	UpdatedAt time.Time                      `json:"updatedAt"`
+}
+
 // checklistRe matches Markdown task list items: `- [ ] text` or `- [x] text`
 var checklistRe = regexp.MustCompile(`(?m)^- \[( |x|X)\] (.+)$`)
 
@@ -45,6 +64,114 @@ func ghCommand(ctx context.Context, projectDir string, args ...string) *exec.Cmd
 		cmd.Dir = projectDir
 	}
 	return cmd
+}
+
+// ListIssues fetches open issues and returns them sorted by computed priority:
+// bug label > has milestone > recently updated. limit=0 defaults to 15.
+func ListIssues(ctx context.Context, projectDir string, limit int) ([]IssueListItem, error) {
+	if limit <= 0 {
+		limit = 15
+	}
+	out, err := ghCommand(ctx, projectDir, "issue", "list",
+		"--state", "open",
+		"--limit", fmt.Sprintf("%d", limit),
+		"--json", "number,title,labels,milestone,updatedAt",
+	).Output()
+	if err != nil {
+		return nil, fmt.Errorf("gh issue list: %w", err)
+	}
+
+	var raw []ghIssueListJSON
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parse issue list JSON: %w", err)
+	}
+
+	items := make([]IssueListItem, 0, len(raw))
+	for _, r := range raw {
+		labels := make([]string, len(r.Labels))
+		for i, l := range r.Labels {
+			labels[i] = l.Name
+		}
+		milestone := ""
+		if r.Milestone != nil {
+			milestone = r.Milestone.Title
+		}
+
+		score := 0
+		for _, l := range labels {
+			switch strings.ToLower(l) {
+			case "bug":
+				score += 10
+			case "blocked":
+				score -= 5
+			case "priority: high", "high priority":
+				score += 8
+			case "priority: medium", "medium priority":
+				score += 4
+			}
+		}
+		if milestone != "" {
+			score += 5
+		}
+		// Recency bonus: issues updated within last 3 days get +3
+		if time.Since(r.UpdatedAt) < 72*time.Hour {
+			score += 3
+		}
+
+		items = append(items, IssueListItem{
+			Number:    r.Number,
+			Title:     r.Title,
+			Labels:    labels,
+			Milestone: milestone,
+			UpdatedAt: r.UpdatedAt,
+			Priority:  score,
+		})
+	}
+
+	// Sort: higher priority first, then more recent
+	for i := 1; i < len(items); i++ {
+		for j := i; j > 0 && (items[j].Priority > items[j-1].Priority ||
+			(items[j].Priority == items[j-1].Priority && items[j].UpdatedAt.After(items[j-1].UpdatedAt))); j-- {
+			items[j], items[j-1] = items[j-1], items[j]
+		}
+	}
+
+	return items, nil
+}
+
+// FormatIssueList renders a Telegram-friendly issue list message.
+func FormatIssueList(items []IssueListItem) string {
+	if len(items) == 0 {
+		return "✅ 目前沒有未解決的 Issue。"
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("📋 *開放 Issues（共 %d 個，依優先排序）*\n\n", len(items)))
+	for i, item := range items {
+		// Priority indicator
+		indicator := "⚪"
+		switch {
+		case item.Priority >= 13:
+			indicator = "🔴"
+		case item.Priority >= 8:
+			indicator = "🟠"
+		case item.Priority >= 3:
+			indicator = "🟡"
+		}
+
+		sb.WriteString(fmt.Sprintf("%s `#%d` %s\n", indicator, item.Number, item.Title))
+		if len(item.Labels) > 0 {
+			sb.WriteString(fmt.Sprintf("   🏷 %s", strings.Join(item.Labels, ", ")))
+		}
+		if item.Milestone != "" {
+			sb.WriteString(fmt.Sprintf("  📌 %s", item.Milestone))
+		}
+		sb.WriteString("\n")
+		if i < len(items)-1 {
+			sb.WriteString("\n")
+		}
+	}
+	sb.WriteString("\n💡 使用 `/hermes #<編號>` 立即啟動執行。")
+	return sb.String()
 }
 
 // FetchIssue calls `gh issue view N --json title,body,labels` in projectDir
