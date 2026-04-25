@@ -57,6 +57,23 @@ IMPLEMENTATION IMPERATIVE (critical):
   unchecked items as the implementation list. Do not silently downgrade them
   to "verify that item X was done".
 
+ISSUE INFORMATION SOURCE (critical):
+- For ANY question about a GitHub issue — its body, status, comments, checklist
+  state — the authoritative source is the GitHub API via the gh CLI:
+    gh issue view N --json title,body,state,labels,comments
+    gh issue list --state open --json number,title,labels
+    gh issue view N --comments
+- DO NOT plan a sub-task that reads docs/MASTER_TASKS.md for issue state.
+  MASTER_TASKS.md is a periodically-synced snapshot produced by /task-sync;
+  it lags GitHub by minutes to days and frequently shows stale checklists,
+  closed issues marked open, etc. Reading it for issue lookup is a bug.
+- MASTER_TASKS.md is acceptable ONLY when the goal explicitly asks about
+  cross-task planning / phase organisation / portfolio-level reporting that
+  the local doc captures more concisely than running multiple gh queries.
+- When the goal already starts with "[GitHub #N] <title>\n\n..." the issue
+  body has already been fetched and inlined — no gh issue view call needed,
+  just plan against the body that is already in the Goal.
+
 Limits:
 - Maximum 15 sub-tasks per plan.
 - Prefer underdcomposition (fewer, larger tasks) over overcomposition (many, tiny tasks).
