@@ -230,7 +230,29 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 	}()
 
 	// ── Phase 1: Planning ─────────────────────────────────────────────────────
-	tasks, planIn, planOut, err := c.planner.Plan(ctx, goal, c.cfg.ProjectDir)
+	// Pre-Planner gate: short non-implementation goals skip the Opus call and
+	// run as a single Executor turn — saves ~300 tokens of Planner overhead and
+	// ~10s of cold-start latency for status checks, single git commands, and
+	// other one-shot work.
+	var (
+		tasks            []SubTask
+		planIn, planOut  int
+		err              error
+		plannerSkipped   bool
+	)
+	if ClassifyGoal(goal) == GoalSimple {
+		tasks = []SubTask{{
+			ID:          "s1",
+			Description: "Execute the goal directly: " + goal,
+			ToolHints:   nil,
+			Status:      SubTaskPending,
+		}}
+		plannerSkipped = true
+		log.Printf("[hermes] Planner skipped for simple goal (chat=%d): %.60s", c.cfg.ChatID, goal)
+	} else {
+		tasks, planIn, planOut, err = c.planner.Plan(ctx, goal, c.cfg.ProjectDir)
+	}
+	_ = plannerSkipped // reserved for future progress event differentiation
 	if err != nil {
 		var jfail *ErrPlannerJSONFailed
 		if errors.As(err, &jfail) {
@@ -315,7 +337,7 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 	accCfg := c.cfg.AccumulatedCfg
 	completedCount := 0
 
-	for idx := range tasks {
+	for idx := 0; idx < len(tasks); {
 		// Re-load state for up-to-date budget and accumulated.
 		state, err = c.store.GetTask(taskID)
 		if err != nil {
@@ -380,77 +402,69 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 			return
 		}
 
-		subTask := tasks[idx]
-		c.progress.OnSubTaskStart(idx, len(tasks), subTask)
-		if err := c.store.UpdateSubTask(taskID, idx, SubTaskInProgress, "", 0); err != nil {
-			log.Printf("[hermes] UpdateSubTask(in_progress) idx=%d: %v", idx, err)
-		}
+		// Decide whether the next slice of sub-tasks can run in parallel.
+		// GatherReadOnlyBatch returns 1 index for write-capable hints and up to
+		// MaxParallelReadOnly indices when consecutive sub-tasks all have hints
+		// drawn from the read-only set (Read/Grep/Glob/WebFetch/...).
+		batch := GatherReadOnlyBatch(tasks, idx)
+		outcomes := c.runBatch(ctx, taskID, batch, len(tasks), tasks, state)
 
-		// Set current sub-task for BuildExecutorPrompt
-		state.CurrentIdx = idx
+		// Post-process each outcome in original index order so accumulated
+		// summary, GitHub comments and progress events stay deterministic.
+		for _, oc := range outcomes {
+			execTokens := oc.result.InputTokens + oc.result.OutputTokens
 
-		// Execute with retries (validator failures handled inside executor.Execute).
-		// Heavy sub-tasks (Edit/Write tool hints or implementation verbs in the
-		// description) are routed to the heavier executor when configured.
-		executor, executorModel := c.pickExecutor(subTask)
-		result, execErr := executor.Execute(ctx, state, c.cfg.ProjectDir)
-
-		execTokens := result.InputTokens + result.OutputTokens
-		_ = c.store.AddTokenUsage(taskID, execTokens)
-		_ = c.store.AddModelUsage(taskID, executorModel, result.InputTokens, result.OutputTokens)
-
-		if execErr != nil {
-			if err := c.store.UpdateSubTask(taskID, idx, SubTaskFailed, execErr.Error(), execTokens); err != nil {
-				log.Printf("[hermes] UpdateSubTask(failed) idx=%d: %v", idx, err)
+			if oc.execErr != nil {
+				if err := c.store.UpdateSubTask(taskID, oc.idx, SubTaskFailed, oc.execErr.Error(), execTokens); err != nil {
+					log.Printf("[hermes] UpdateSubTask(failed) idx=%d: %v", oc.idx, err)
+				}
+				c.progress.OnSubTaskDone(oc.idx, len(tasks), oc.subTask, false, oc.execErr.Error())
+				continue
 			}
-			c.progress.OnSubTaskDone(idx, len(tasks), subTask, false, execErr.Error())
-			continue
-		}
 
-		// Notify if there were retries
-		if result.Attempts > 1 && result.ValidationError != "" {
-			c.progress.OnRetry(idx, result.Attempts, c.executor.maxRetries, result.ValidationError)
-		}
+			if oc.result.Attempts > 1 && oc.result.ValidationError != "" {
+				c.progress.OnRetry(oc.idx, oc.result.Attempts, c.executor.maxRetries, oc.result.ValidationError)
+			}
 
-		success := result.ValidationError == ""
-		finalStatus := SubTaskDone
-		if !success {
-			finalStatus = SubTaskFailed
-		}
-		if err := c.store.UpdateSubTask(taskID, idx, finalStatus, result.ResultText, execTokens); err != nil {
-			log.Printf("[hermes] UpdateSubTask(%s) idx=%d: %v", finalStatus, idx, err)
-		}
-		c.progress.OnSubTaskDone(idx, len(tasks), subTask, success, result.ResultText)
+			success := oc.result.ValidationError == ""
+			finalStatus := SubTaskDone
+			if !success {
+				finalStatus = SubTaskFailed
+			}
+			if err := c.store.UpdateSubTask(taskID, oc.idx, finalStatus, oc.result.ResultText, execTokens); err != nil {
+				log.Printf("[hermes] UpdateSubTask(%s) idx=%d: %v", finalStatus, oc.idx, err)
+			}
+			c.progress.OnSubTaskDone(oc.idx, len(tasks), oc.subTask, success, oc.result.ResultText)
 
-		if success {
-			completedCount++
-			tasks[idx].Status = SubTaskDone
-			tasks[idx].Result = result.ResultText
+			if success {
+				completedCount++
+				tasks[oc.idx].Status = SubTaskDone
+				tasks[oc.idx].Result = oc.result.ResultText
 
-			// GitHub: sync checklist after each successful sub-task
-			if issueNum > 0 && ghCfg.Enabled && ghCfg.SyncChecklist {
-				if err := SyncChecklist(ctx, c.cfg.ProjectDir, issueNum, tasks); err != nil {
-					log.Printf("[hermes] GitHub sync checklist idx=%d: %v", idx, err)
+				if issueNum > 0 && ghCfg.Enabled && ghCfg.SyncChecklist {
+					if err := SyncChecklist(ctx, c.cfg.ProjectDir, issueNum, tasks); err != nil {
+						log.Printf("[hermes] GitHub sync checklist idx=%d: %v", oc.idx, err)
+					}
+				}
+				if issueNum > 0 && ghCfg.Enabled && ghCfg.ShouldComment("complete") {
+					body := CommentSubTaskProgress(oc.idx, len(tasks), oc.subTask, oc.result.ResultText, execTokens, completedCount)
+					if err := PostComment(ctx, c.cfg.ProjectDir, issueNum, body); err != nil {
+						log.Printf("[hermes] GitHub comment subtask progress idx=%d: %v", oc.idx, err)
+					}
 				}
 			}
 
-			// GitHub: post per-subtask progress comment if enabled
-			if issueNum > 0 && ghCfg.Enabled && ghCfg.ShouldComment("complete") {
-				body := CommentSubTaskProgress(idx, len(tasks), subTask, result.ResultText, execTokens, completedCount)
-				if err := PostComment(ctx, c.cfg.ProjectDir, issueNum, body); err != nil {
-					log.Printf("[hermes] GitHub comment subtask progress idx=%d: %v", idx, err)
-				}
+			// Append this sub-task's result to the rolling summary in idx order.
+			state, _ = c.store.GetTask(taskID)
+			updated, needsCompress := AppendResult(state.Accumulated, oc.result.ResultText, completedCount, accCfg)
+			_ = c.store.UpdateAccumulated(taskID, updated)
+
+			if needsCompress {
+				c.runCompression(ctx, taskID, state, updated)
 			}
 		}
 
-		// Update accumulated summary
-		state, _ = c.store.GetTask(taskID)
-		updated, needsCompress := AppendResult(state.Accumulated, result.ResultText, completedCount, accCfg)
-		_ = c.store.UpdateAccumulated(taskID, updated)
-
-		if needsCompress {
-			c.runCompression(ctx, taskID, state, updated)
-		}
+		idx += len(batch)
 	}
 
 	// ── Phase 3: Done ─────────────────────────────────────────────────────────
@@ -482,6 +496,88 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 	// Post-completion: run optional hook (e.g. /task-sync)
 	if c.cfg.PostCompletionHook != nil {
 		go c.cfg.PostCompletionHook(ctx)
+	}
+}
+
+// batchOutcome carries one sub-task's execution result through the post-batch
+// processing loop. Fields mirror what the legacy single-subtask code path
+// computed inline before being refactored for parallel dispatch.
+type batchOutcome struct {
+	idx           int
+	subTask       SubTask
+	result        ExecuteResult
+	execErr       error
+	executorModel string
+}
+
+// runBatch executes batchIdxs sub-tasks. A single-element batch runs inline;
+// larger batches dispatch goroutines so independent read-only sub-tasks
+// (Read/Grep/Glob/WebFetch — see GatherReadOnlyBatch) can overlap their CLI
+// cold-starts. Outcomes are returned in original idx order so the caller's
+// post-processing (UpdateSubTask, accumulated append, GitHub sync) stays
+// deterministic.
+//
+// State is cloned per goroutine and CurrentIdx overridden so each Executor
+// renders its own prompt. Token usage and per-subtask status updates go
+// through the store, whose execWithRetry already serialises SQLite writes.
+func (c *Coordinator) runBatch(
+	ctx context.Context,
+	taskID string,
+	batchIdxs []int,
+	total int,
+	tasks []SubTask,
+	baseState TaskState,
+) []batchOutcome {
+	outcomes := make([]batchOutcome, len(batchIdxs))
+	if len(batchIdxs) == 1 {
+		outcomes[0] = c.runOneSubTask(ctx, taskID, batchIdxs[0], total, tasks, baseState)
+		return outcomes
+	}
+	var wg sync.WaitGroup
+	for slot, ridx := range batchIdxs {
+		wg.Add(1)
+		go func(slot, ridx int) {
+			defer wg.Done()
+			outcomes[slot] = c.runOneSubTask(ctx, taskID, ridx, total, tasks, baseState)
+		}(slot, ridx)
+	}
+	wg.Wait()
+	return outcomes
+}
+
+// runOneSubTask executes a single sub-task end-to-end excluding the post-
+// processing (status update, accumulated append, GitHub side effects). Those
+// are deferred to the caller so a parallel batch can update them in idx order.
+func (c *Coordinator) runOneSubTask(
+	ctx context.Context,
+	taskID string,
+	idx, total int,
+	tasks []SubTask,
+	baseState TaskState,
+) batchOutcome {
+	subTask := tasks[idx]
+	c.progress.OnSubTaskStart(idx, total, subTask)
+	if err := c.store.UpdateSubTask(taskID, idx, SubTaskInProgress, "", 0); err != nil {
+		log.Printf("[hermes] UpdateSubTask(in_progress) idx=%d: %v", idx, err)
+	}
+
+	// Clone state so concurrent goroutines do not race on CurrentIdx.
+	s := baseState
+	s.CurrentIdx = idx
+
+	executor, executorModel := c.pickExecutor(subTask)
+	result, execErr := executor.Execute(ctx, s, c.cfg.ProjectDir)
+
+	execTokens := result.InputTokens + result.OutputTokens
+	_ = c.store.AddTokenUsage(taskID, execTokens)
+	_ = c.store.AddModelUsage(taskID, executorModel, result.InputTokens, result.OutputTokens)
+
+	return batchOutcome{
+		idx:           idx,
+		subTask:       subTask,
+		result:        result,
+		execErr:       execErr,
+		executorModel: executorModel,
 	}
 }
 
