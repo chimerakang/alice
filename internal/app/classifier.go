@@ -80,6 +80,32 @@ var ideNoisePatterns = []*regexp.Regexp{
 // (full-width). A bare issue reference often precedes a substantive task.
 var issueRefPattern = regexp.MustCompile(`[#＃][0-9０-９]+`)
 
+// ParseIssueNumber extracts the first issue reference (#N or ＃Ｎ) from text
+// and returns it as a regular int. Full-width digits are normalised. Returns
+// (0, false) when the text contains no issue reference.
+func ParseIssueNumber(text string) (int, bool) {
+	match := issueRefPattern.FindString(text)
+	if match == "" {
+		return 0, false
+	}
+	digits := []rune(match)[1:] // drop the leading # or ＃
+	n := 0
+	for _, r := range digits {
+		switch {
+		case r >= '0' && r <= '9':
+			n = n*10 + int(r-'0')
+		case r >= '０' && r <= '９':
+			n = n*10 + int(r-'０')
+		default:
+			return 0, false
+		}
+	}
+	if n == 0 {
+		return 0, false
+	}
+	return n, true
+}
+
 // StripIDENoise removes injected editor/system tags so the classifier scores
 // the user's actual text. Exported for reuse and testing.
 func StripIDENoise(prompt string) string {

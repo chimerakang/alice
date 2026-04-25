@@ -121,8 +121,9 @@ type TelegramBot struct {
 
 // hermesCoord bundles the coordinator and its enabled flag for a single chat.
 type hermesCoord struct {
-	coord   interface{ TaskID() string; IsRunning() bool }
-	enabled bool
+	coord      interface{ TaskID() string; IsRunning() bool }
+	enabled    bool
+	continueCh chan struct{} // non-nil when coordinator is paused on a budget warning
 }
 
 func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
@@ -631,6 +632,13 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		return
 	}
 
+	// Budget-warning continuation: if the coordinator is paused waiting for the
+	// user to confirm, intercept messages that start with "繼續" (or "continue")
+	// and signal the channel instead of routing as a new task.
+	if t.trySignalBudgetContinue(key, text) {
+		return
+	}
+
 	// Hermes mode: route to Brain-Executor coordinator instead of normal agent
 	if t.isHermesEnabled(key) {
 		projectDir := t.getAgent(key).ProjectDir()
@@ -648,6 +656,19 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			projectDir := t.getAgent(key).ProjectDir()
 			log.Printf("[telegram] auto-route to Hermes rule=%s chatID=%d: %.80s",
 				cl.MatchedRule, key.chatID, text)
+
+			// When the trigger was an action verb + issue reference (e.g. "處理 #250"),
+			// route through startHermesFromIssue so the Planner sees the full Issue
+			// body instead of the short user message — otherwise it falls back to a
+			// research-only plan with no implementation sub-tasks.
+			if strings.HasPrefix(cl.MatchedRule, "action-verb+issue-ref:") {
+				if issueNum, ok := ParseIssueNumber(text); ok {
+					t.send(key, fmt.Sprintf("🤖 判定為複雜任務（%s）— 拉取 Issue #%d 內容後啟動 Hermes", cl.MatchedRule, issueNum))
+					go t.startHermesFromIssue(key, issueNum, projectDir)
+					return
+				}
+			}
+
 			t.send(key, fmt.Sprintf("🤖 判定為複雜任務（%s）— 自動啟動 Hermes 模式", cl.MatchedRule))
 			go t.startHermesTask(key, text, projectDir)
 			return
@@ -1350,9 +1371,10 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 
 // handleHermesCommand enables or queries Hermes mode for this chat.
 //
-//	/hermes         — enable Hermes mode (next message will trigger Brain-Executor)
-//	/hermes status  — show current coordinator state
-//	/hermes stop    — cancel current task and disable Hermes mode
+//	/hermes          — enable Hermes mode (next message will trigger Brain-Executor)
+//	/hermes issues   — list open GitHub Issues sorted by priority
+//	/hermes status   — show current coordinator state
+//	/hermes stop     — cancel current task and disable Hermes mode
 func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string) {
 	if !t.config.Hermes.Enabled {
 		t.send(key, "Hermes 模式未啟用。請在 config.json 中設定 hermes.enabled = true。")
@@ -1380,6 +1402,19 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string) {
 	}
 
 	switch sub {
+	case "issues", "list":
+		projectDir := t.getAgent(key).ProjectDir()
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			items, err := hermes.ListIssues(ctx, projectDir, 15)
+			if err != nil {
+				t.send(key, fmt.Sprintf("❌ 無法取得 Issues：%v", err))
+				return
+			}
+			t.send(key, hermes.FormatIssueList(items))
+		}()
+
 	case "status":
 		t.hermesMu.RLock()
 		hc := t.hermesCoords[key]
@@ -1407,7 +1442,18 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string) {
 		t.hermesMu.Lock()
 		t.hermesCoords[key] = &hermesCoord{enabled: true}
 		t.hermesMu.Unlock()
-		t.send(key, "✅ Hermes 模式已啟用。下一則訊息將由 Planner-Executor 架構處理。\n輸入 /auto 切回一般模式，/hermes stop 中止目前任務。\n\n提示：/hermes #<issue> 直接從 GitHub Issue 啟動。")
+		t.send(key, "✅ Hermes 模式已啟用。\n\n正在載入待處理 Issues…")
+		projectDir := t.getAgent(key).ProjectDir()
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			items, err := hermes.ListIssues(ctx, projectDir, 10)
+			if err != nil {
+				t.send(key, "（無法取得 Issues 清單，請直接輸入任務說明或使用 /hermes #<number>）")
+				return
+			}
+			t.send(key, hermes.FormatIssueList(items))
+		}()
 	}
 }
 
@@ -1436,6 +1482,34 @@ func (t *TelegramBot) isHermesEnabled(key chatKey) bool {
 	hc := t.hermesCoords[key]
 	t.hermesMu.RUnlock()
 	return hc != nil && hc.enabled
+}
+
+// trySignalBudgetContinue checks whether the coordinator for this chat is paused
+// on a budget warning. If the message starts with "繼續" or "continue" (case-
+// insensitive), it signals the channel and returns true. Otherwise returns false.
+func (t *TelegramBot) trySignalBudgetContinue(key chatKey, text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	isContinue := strings.HasPrefix(lower, "繼續") || strings.HasPrefix(lower, "continue")
+	if !isContinue {
+		return false
+	}
+
+	t.hermesMu.RLock()
+	hc := t.hermesCoords[key]
+	t.hermesMu.RUnlock()
+
+	if hc == nil || hc.continueCh == nil || hc.coord == nil || !hc.coord.IsRunning() {
+		return false
+	}
+
+	select {
+	case hc.continueCh <- struct{}{}:
+		t.send(key, "▶️ 繼續執行中…")
+		return true
+	default:
+		// Channel already full or already consumed — not waiting.
+		return false
+	}
 }
 
 // startHermesFromIssue fetches a GitHub Issue and starts a Hermes task from it.
@@ -1578,10 +1652,13 @@ func (t *TelegramBot) startHermesTaskWithIssue(key chatKey, goal, projectDir str
 		taskStore = &hermes.NoopTaskStore{}
 	}
 
+	continueCh := make(chan struct{}, 1)
+	coordCfg.ContinueCh = continueCh
+
 	coord := hermes.NewCoordinator(coordCfg, planFn, execFn, taskStore, reporter, nil)
 
 	t.hermesMu.Lock()
-	t.hermesCoords[key] = &hermesCoord{coord: coord, enabled: true}
+	t.hermesCoords[key] = &hermesCoord{coord: coord, enabled: true, continueCh: continueCh}
 	t.hermesMu.Unlock()
 
 	taskID, err := coord.Start(ctx, goal)
