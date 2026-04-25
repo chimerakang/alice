@@ -2,6 +2,7 @@ package hermes
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -113,11 +114,32 @@ func (r *TextProgressReporter) OnDone(state TaskState) {
 	lines := []string{
 		fmt.Sprintf("✅ Hermes 任務完成（%d/%d 子任務成功）", done, total),
 	}
-	if state.Accumulated != "" {
-		lines = append(lines, "", "摘要：", state.Accumulated)
+
+	// Per sub-task conclusion: read each sub-task's Result field, which is the
+	// Executor's ≤ 2-line summary. Far more useful than the rolling
+	// Accumulated text, which is mid-task narration.
+	if hasAnyResult(state.Plan) {
+		lines = append(lines, "", "📋 子任務結果：")
+		for i, t := range state.Plan {
+			icon := "✅"
+			switch t.Status {
+			case SubTaskFailed:
+				icon = "❌"
+			case SubTaskPending, SubTaskInProgress:
+				icon = "⏸️"
+			case SubTaskSkipped:
+				icon = "⏭️"
+			}
+			result := strings.TrimSpace(t.Result)
+			if result == "" {
+				result = "（無回報）"
+			}
+			lines = append(lines, fmt.Sprintf("  %s %d. %s", icon, i+1, truncateRunes(result, 240)))
+		}
 	}
+
 	if len(state.Artifacts) > 0 {
-		lines = append(lines, "", "已修改檔案：")
+		lines = append(lines, "", "📝 已修改檔案：")
 		for _, a := range state.Artifacts {
 			lines = append(lines, "  • "+a.Path)
 		}
@@ -140,6 +162,23 @@ func (r *TextProgressReporter) OnDone(state TaskState) {
 	}
 
 	r.sendFn(join(lines))
+}
+
+func hasAnyResult(plan []SubTask) bool {
+	for _, t := range plan {
+		if strings.TrimSpace(t.Result) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func truncateRunes(s string, max int) string {
+	rs := []rune(s)
+	if len(rs) <= max {
+		return s
+	}
+	return string(rs[:max]) + "…"
 }
 
 func (r *TextProgressReporter) OnBudgetWarning(budget TokenBudget) {

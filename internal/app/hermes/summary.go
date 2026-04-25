@@ -42,12 +42,12 @@ func (s *TaskSummary) generateMinimal() string {
 		label := formatModelLabel(usage.Model)
 		total := usage.TotalTokens()
 		totalTokens += total
-		buf.WriteString(fmt.Sprintf("├─ %s: %d calls, %s tokens\n",
+		buf.WriteString(fmt.Sprintf("├─ %s：%d 次呼叫，%s tokens\n",
 			label, usage.CallCount, formatNumber(total)))
 	}
 
 	// Summary line
-	buf.WriteString(fmt.Sprintf("└─ Total: %s tokens · %s\n",
+	buf.WriteString(fmt.Sprintf("└─ 合計：%s tokens · 耗時 %s\n",
 		formatNumber(totalTokens), formatDuration(s.WallclockSeconds)))
 
 	return strings.TrimSuffix(buf.String(), "\n")
@@ -65,7 +65,7 @@ func (s *TaskSummary) generateDetailed() string {
 		label := formatModelLabel(usage.Model)
 		total := usage.TotalTokens()
 		totalTokens += total
-		buf.WriteString(fmt.Sprintf("  %-10s %d calls   in: %-8s out: %-8s total: %s\n",
+		buf.WriteString(fmt.Sprintf("  %-10s %d 次   輸入: %-8s 輸出: %-8s 合計: %s\n",
 			label, usage.CallCount,
 			formatNumber(usage.InputTokens),
 			formatNumber(usage.OutputTokens),
@@ -93,7 +93,7 @@ func (s *TaskSummary) generateDetailed() string {
 
 	// Execution time section
 	buf.WriteString("⏱️ 執行時間\n")
-	buf.WriteString(fmt.Sprintf("  Total:      %s\n", formatDuration(s.WallclockSeconds)))
+	buf.WriteString(fmt.Sprintf("  合計：%s\n", formatDuration(s.WallclockSeconds)))
 	buf.WriteString("\n")
 
 	// Cost estimate section (if enabled)

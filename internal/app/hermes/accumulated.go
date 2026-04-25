@@ -117,19 +117,20 @@ func BuildExecutorPrompt(state TaskState, coreRules string) string {
 		sb.WriteString(coreRules)
 		sb.WriteString("\n\n")
 	}
-	sb.WriteString("=== Hermes Executor Context ===\n")
-	sb.WriteString("Goal: ")
+	sb.WriteString("=== Hermes Executor 上下文 ===\n")
+	sb.WriteString("語言要求：所有回應必須使用繁體中文。摘要、結論、註解全部繁中。\n\n")
+	sb.WriteString("目標：")
 	sb.WriteString(state.Goal)
 	sb.WriteString("\n\n")
 
 	if state.Accumulated != "" {
-		sb.WriteString("Accumulated summary:\n")
+		sb.WriteString("累積進度：\n")
 		sb.WriteString(state.Accumulated)
 		sb.WriteString("\n\n")
 	}
 
 	if len(state.Artifacts) > 0 {
-		sb.WriteString("Artifacts so far:\n")
+		sb.WriteString("已修改檔案：\n")
 		for _, a := range state.Artifacts {
 			sb.WriteString("  ")
 			sb.WriteString(a.Path)
@@ -143,16 +144,16 @@ func BuildExecutorPrompt(state TaskState, coreRules string) string {
 		sb.WriteString("\n")
 	}
 
-	sb.WriteString("Current sub-task (")
+	sb.WriteString("當前子任務 (")
 	sb.WriteString(itoa(state.CurrentIdx+1))
 	sb.WriteString("/")
 	sb.WriteString(itoa(len(state.Plan)))
-	sb.WriteString("): ")
+	sb.WriteString(")：")
 	sb.WriteString(sub.Description)
 	sb.WriteString("\n")
 
 	if len(sub.ToolHints) > 0 {
-		sb.WriteString("Suggested tools: ")
+		sb.WriteString("建議工具：")
 		sb.WriteString(strings.Join(sub.ToolHints, ", "))
 		sb.WriteString("\n")
 	}
