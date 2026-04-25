@@ -40,6 +40,16 @@ type CoordinatorConfig struct {
 	// PostCompletionHook is called (in a goroutine) after the task finishes,
 	// regardless of success or failure. Nil means no hook.
 	PostCompletionHook func(ctx context.Context)
+
+	// ContinueCh is an optional channel the Telegram handler can signal to resume
+	// execution after a budget warning. When nil, a budget-exceeded event kills the
+	// task immediately (legacy behaviour). The coordinator closes the channel once
+	// it has been consumed.
+	ContinueCh chan struct{}
+
+	// ContinueTimeout is how long the coordinator waits for a signal on ContinueCh
+	// before giving up. Zero defaults to 15 minutes.
+	ContinueTimeout time.Duration
 }
 
 // Coordinator orchestrates the Planner-Executor lifecycle for a single chat.
@@ -264,21 +274,50 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 
 		if state.TokenBudget.Exceeded() {
 			c.progress.OnBudgetWarning(state.TokenBudget)
-			_ = c.store.MarkStatus(taskID, TaskStatusFailed)
-			if issueNum > 0 && ghCfg.Enabled {
-				if ghCfg.ShouldComment("budget_exceeded") {
-					body := CommentBudgetExceeded(state.TokenBudget.UsedTokens, state.TokenBudget.MaxTotalTokens)
-					if err := PostComment(ctx, c.cfg.ProjectDir, issueNum, body); err != nil {
-						log.Printf("[hermes] GitHub comment budget: %v", err)
+
+			// If caller supplied a ContinueCh, pause and wait for the user to
+			// confirm before proceeding. On confirmation the wallclock budget is
+			// reset so remaining sub-tasks get a fresh window.
+			if ch := c.cfg.ContinueCh; ch != nil {
+				timeout := c.cfg.ContinueTimeout
+				if timeout <= 0 {
+					timeout = 15 * time.Minute
+				}
+				select {
+				case <-ch:
+					// User confirmed — reset wallclock and carry on.
+					c.mu.Lock()
+					c.cfg.Budget.StartedAt = time.Now()
+					c.mu.Unlock()
+					// Persist the reset so the next iteration reads updated budget.
+					if err := c.store.ResetBudgetStartedAt(taskID, c.cfg.Budget.StartedAt); err != nil {
+						log.Printf("[hermes] ResetBudgetStartedAt: %v", err)
+					}
+					log.Printf("[hermes] budget warning acknowledged by user — resuming task %s at subtask %d", taskID, idx)
+				case <-time.After(timeout):
+					log.Printf("[hermes] budget warning timed out after %v — stopping task %s", timeout, taskID)
+					_ = c.store.MarkStatus(taskID, TaskStatusFailed)
+					return
+				case <-ctx.Done():
+					return
+				}
+			} else {
+				_ = c.store.MarkStatus(taskID, TaskStatusFailed)
+				if issueNum > 0 && ghCfg.Enabled {
+					if ghCfg.ShouldComment("budget_exceeded") {
+						body := CommentBudgetExceeded(state.TokenBudget.UsedTokens, state.TokenBudget.MaxTotalTokens)
+						if err := PostComment(ctx, c.cfg.ProjectDir, issueNum, body); err != nil {
+							log.Printf("[hermes] GitHub comment budget: %v", err)
+						}
+					}
+					if ghCfg.FailureLabel != "" {
+						if err := ApplyLabel(ctx, c.cfg.ProjectDir, issueNum, ghCfg.FailureLabel); err != nil {
+							log.Printf("[hermes] GitHub apply failure label on budget: %v", err)
+						}
 					}
 				}
-				if ghCfg.FailureLabel != "" {
-					if err := ApplyLabel(ctx, c.cfg.ProjectDir, issueNum, ghCfg.FailureLabel); err != nil {
-						log.Printf("[hermes] GitHub apply failure label on budget: %v", err)
-					}
-				}
+				return
 			}
-			return
 		}
 
 		// Interrupt check

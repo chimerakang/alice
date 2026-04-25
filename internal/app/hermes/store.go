@@ -46,6 +46,10 @@ type TaskStateStore interface {
 	// MarkStatus sets an arbitrary terminal or transition status on a task.
 	MarkStatus(taskID string, status TaskStatus) error
 
+	// ResetBudgetStartedAt updates the wallclock budget start time so that a
+	// user-confirmed "continue" gets a fresh time window.
+	ResetBudgetStartedAt(taskID string, t time.Time) error
+
 	// AddTokenUsage adds delta tokens to both the task budget and the current sub-task.
 	AddTokenUsage(taskID string, delta int) error
 
@@ -290,6 +294,30 @@ func (s *SQLiteTaskStore) MarkStatus(taskID string, status TaskStatus) error {
 		_, err := s.db.Exec(
 			`UPDATE hermes_task_states SET status = ?, updated_at = ? WHERE id = ?`,
 			string(status), time.Now().Format(time.RFC3339), taskID,
+		)
+		return err
+	})
+}
+
+func (s *SQLiteTaskStore) ResetBudgetStartedAt(taskID string, t time.Time) error {
+	return s.execWithRetry(func() error {
+		var raw string
+		err := s.db.QueryRow(`SELECT budget FROM hermes_task_states WHERE id = ?`, taskID).Scan(&raw)
+		if err != nil {
+			return err
+		}
+		var budget TokenBudget
+		if err := json.Unmarshal([]byte(raw), &budget); err != nil {
+			return err
+		}
+		budget.StartedAt = t
+		updated, err := json.Marshal(budget)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec(
+			`UPDATE hermes_task_states SET budget = ?, updated_at = ? WHERE id = ?`,
+			string(updated), time.Now().Format(time.RFC3339), taskID,
 		)
 		return err
 	})

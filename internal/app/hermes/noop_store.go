@@ -31,3 +31,4 @@ func (n *NoopTaskStore) AddModelUsage(taskID, model string, inputTokens, outputT
 	return nil
 }
 func (n *NoopTaskStore) ListTasksForChat(chatID int64, limit int) ([]TaskState, error)    { return nil, nil }
+func (n *NoopTaskStore) ResetBudgetStartedAt(taskID string, t time.Time) error            { return nil }
