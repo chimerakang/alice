@@ -1570,6 +1570,13 @@ func (t *TelegramBot) startHermesTaskWithIssue(key chatKey, goal, projectDir str
 	if executorModel == "" {
 		executorModel = t.config.ModelRouting.FastModel
 	}
+	heavyExecutorModel := cfg.HeavyExecutorModel
+	if heavyExecutorModel == "" {
+		// Default to the routing layer's smart tier (typically Sonnet) so
+		// Edit/Write sub-tasks fall back gracefully when the operator has
+		// not configured an explicit override.
+		heavyExecutorModel = t.config.ModelRouting.SmartModel
+	}
 
 	cliClient, ok := t.client.(*CLIClient)
 	if !ok {
@@ -1579,6 +1586,10 @@ func (t *TelegramBot) startHermesTaskWithIssue(key chatKey, goal, projectDir str
 
 	planFn := makePlanFn(cliClient, plannerModel)
 	execFn := makeExecFn(cliClient, executorModel)
+	var execFnHeavy hermes.CallStreamFunc
+	if heavyExecutorModel != "" && heavyExecutorModel != executorModel {
+		execFnHeavy = makeExecFn(cliClient, heavyExecutorModel)
+	}
 
 	taskStore := buildHermesTaskStore()
 
@@ -1635,6 +1646,7 @@ func (t *TelegramBot) startHermesTaskWithIssue(key chatKey, goal, projectDir str
 		ProjectDir:            projectDir,
 		PlannerModel:          plannerModel,
 		ExecutorModel:         executorModel,
+		HeavyExecutorModel:    heavyExecutorModel,
 		MaxRetriesPerSubtask:  cfg.MaxRetriesPerSubtask,
 		MaxPlannerJSONRetries: cfg.MaxPlannerJSONRetries,
 		InterruptPolicy:       hermes.InterruptPolicy(cfg.InterruptPolicy),
@@ -1655,7 +1667,7 @@ func (t *TelegramBot) startHermesTaskWithIssue(key chatKey, goal, projectDir str
 	continueCh := make(chan struct{}, 1)
 	coordCfg.ContinueCh = continueCh
 
-	coord := hermes.NewCoordinator(coordCfg, planFn, execFn, taskStore, reporter, nil)
+	coord := hermes.NewCoordinator(coordCfg, planFn, execFn, execFnHeavy, taskStore, reporter, nil)
 
 	t.hermesMu.Lock()
 	t.hermesCoords[key] = &hermesCoord{coord: coord, enabled: true, continueCh: continueCh}

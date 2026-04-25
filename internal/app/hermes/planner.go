@@ -42,6 +42,21 @@ GRANULARITY RULES:
 - Avoid sequential dependencies within a sub-task unless they're inseparable.
 - NEVER decompose a single command into multiple steps (e.g. "git commit" is 1 task, not 5).
 
+IMPLEMENTATION IMPERATIVE (critical):
+- If the goal references implementation work — keywords like 修, 修正, 修復, 實作,
+  實現, 完成, refactor, fix, implement, build, create, redesign — the plan MUST
+  include at least one sub-task that uses Edit, Write, file_patch, or Bash to
+  modify the code. Verification-only plans (Read + git log + report) are a
+  failure mode — they look successful but accomplish nothing the user asked for.
+- Verification-only plans (no Edit/Write/file_patch) are PERMITTED only when the
+  goal explicitly says "verify", "review", "check status", "audit", "report",
+  "查詢", "檢視", "確認進度", "報告狀態", or "分析" without an implementation verb.
+- For implementation goals, the typical shape is: read context → modify code →
+  verify (build/test) → commit. The middle step is non-negotiable.
+- If the goal is "[GitHub #N] ..." with an unchecked checklist, treat the
+  unchecked items as the implementation list. Do not silently downgrade them
+  to "verify that item X was done".
+
 Limits:
 - Maximum 15 sub-tasks per plan.
 - Prefer underdcomposition (fewer, larger tasks) over overcomposition (many, tiny tasks).

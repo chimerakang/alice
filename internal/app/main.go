@@ -97,6 +97,12 @@ type HermesConfig struct {
 	PlannerModel  string `json:"planner_model"`  // e.g. "claude-opus-4-7"
 	ExecutorModel string `json:"executor_model"` // e.g. "claude-haiku-4-5-20251001"
 
+	// HeavyExecutorModel overrides ExecutorModel for sub-tasks classified as
+	// substantive code work (Edit/Write tool hints or implementation verbs in
+	// the description). Defaults to ModelRoutingConfig.SmartModel when empty.
+	// Set equal to ExecutorModel to disable the upgrade.
+	HeavyExecutorModel string `json:"heavy_executor_model"`
+
 	// Retry limits
 	MaxRetriesPerSubtask    int `json:"max_retries_per_subtask"`    // default 3
 	MaxPlannerJSONRetries   int `json:"max_planner_json_retries"`   // default 3
@@ -197,7 +203,10 @@ func HermesDefaults(cfg HermesConfig) HermesConfig {
 		cfg.Budget.MaxTotalTokens = 500_000
 	}
 	if cfg.Budget.MaxWallclockSeconds == 0 {
-		cfg.Budget.MaxWallclockSeconds = 600
+		// Bumped from 600s to 3600s after operators reported real implementation
+		// tasks (multi-file edits + build + test) routinely needed > 10 minutes.
+		// Set to 0 explicitly in config.json to disable the wallclock cap entirely.
+		cfg.Budget.MaxWallclockSeconds = 3600
 	}
 	if cfg.Summary.Verbosity == "" {
 		cfg.Summary.Verbosity = "minimal"

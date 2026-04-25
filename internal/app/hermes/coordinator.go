@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +16,13 @@ import (
 type CoordinatorConfig struct {
 	PlannerModel  string
 	ExecutorModel string
+
+	// HeavyExecutorModel optionally overrides ExecutorModel for sub-tasks that
+	// look like substantive code changes (Edit/Write/file_patch tool hints, or
+	// description containing implementation verbs). Empty means "always use
+	// ExecutorModel" — the legacy single-model behaviour.
+	HeavyExecutorModel string
+
 	ProjectDir    string
 	ChatID        int64
 
@@ -55,12 +63,13 @@ type CoordinatorConfig struct {
 // Coordinator orchestrates the Planner-Executor lifecycle for a single chat.
 // It is safe to call from multiple goroutines.
 type Coordinator struct {
-	cfg      CoordinatorConfig
-	planner  *PlannerSession
-	executor *ExecutorSession
-	store    TaskStateStore
-	progress ProgressReporter
-	hooks    *HookRegistry
+	cfg           CoordinatorConfig
+	planner       *PlannerSession
+	executor      *ExecutorSession // light model (e.g. Haiku); always present
+	executorHeavy *ExecutorSession // heavy model (e.g. Sonnet); nil when feature disabled
+	store         TaskStateStore
+	progress      ProgressReporter
+	hooks         *HookRegistry
 
 	mu          sync.Mutex
 	taskID      string
@@ -70,10 +79,15 @@ type Coordinator struct {
 }
 
 // NewCoordinator creates a ready-to-use Coordinator.
+//
+// execFnHeavy is optional: pass nil to use a single executor for every
+// sub-task. When non-nil, sub-tasks classified as heavy (Edit/Write/file_patch
+// hints or implementation verbs in the description) are routed through it.
 func NewCoordinator(
 	cfg CoordinatorConfig,
 	planFn CallPlanFunc,
 	execFn CallStreamFunc,
+	execFnHeavy CallStreamFunc,
 	store TaskStateStore,
 	progress ProgressReporter,
 	hooks *HookRegistry,
@@ -84,7 +98,7 @@ func NewCoordinator(
 	if progress == nil {
 		progress = &NoopProgressReporter{}
 	}
-	return &Coordinator{
+	c := &Coordinator{
 		cfg:      cfg,
 		planner:  NewPlannerSession(planFn, cfg.MaxPlannerJSONRetries, cfg.PlannerRules),
 		executor: NewExecutorSession(execFn, cfg.ExecutorRules, cfg.MaxRetriesPerSubtask),
@@ -92,6 +106,44 @@ func NewCoordinator(
 		progress: progress,
 		hooks:    hooks,
 	}
+	if execFnHeavy != nil && cfg.HeavyExecutorModel != "" {
+		c.executorHeavy = NewExecutorSession(execFnHeavy, cfg.ExecutorRules, cfg.MaxRetriesPerSubtask)
+	}
+	return c
+}
+
+// heavyToolHints lists Claude Code tool names that indicate code-modifying work.
+var heavyToolHints = map[string]struct{}{
+	"Edit": {}, "Write": {}, "MultiEdit": {}, "NotebookEdit": {}, "file_patch": {},
+}
+
+// heavyDescriptionTokens triggers the heavy executor when present in the
+// sub-task description. Single-character substrings are deliberately avoided
+// (cf. classifier.go actionVerbs cleanup).
+var heavyDescriptionTokens = []string{
+	"refactor", "implement", "rewrite", "redesign", "migrate",
+	"重構", "重寫", "實作", "實現", "修正", "修復",
+}
+
+// pickExecutor returns the right ExecutorSession for the given sub-task and
+// reports the model name so AddModelUsage records the correct tier.
+// Falls back to the light executor whenever the heavy one is not configured.
+func (c *Coordinator) pickExecutor(t SubTask) (*ExecutorSession, string) {
+	if c.executorHeavy == nil {
+		return c.executor, c.cfg.ExecutorModel
+	}
+	for _, hint := range t.ToolHints {
+		if _, ok := heavyToolHints[hint]; ok {
+			return c.executorHeavy, c.cfg.HeavyExecutorModel
+		}
+	}
+	desc := strings.ToLower(t.Description)
+	for _, kw := range heavyDescriptionTokens {
+		if strings.Contains(desc, kw) {
+			return c.executorHeavy, c.cfg.HeavyExecutorModel
+		}
+	}
+	return c.executor, c.cfg.ExecutorModel
 }
 
 // Start launches the Hermes lifecycle asynchronously.
@@ -337,12 +389,15 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 		// Set current sub-task for BuildExecutorPrompt
 		state.CurrentIdx = idx
 
-		// Execute with retries (validator failures handled inside executor.Execute)
-		result, execErr := c.executor.Execute(ctx, state, c.cfg.ProjectDir)
+		// Execute with retries (validator failures handled inside executor.Execute).
+		// Heavy sub-tasks (Edit/Write tool hints or implementation verbs in the
+		// description) are routed to the heavier executor when configured.
+		executor, executorModel := c.pickExecutor(subTask)
+		result, execErr := executor.Execute(ctx, state, c.cfg.ProjectDir)
 
 		execTokens := result.InputTokens + result.OutputTokens
 		_ = c.store.AddTokenUsage(taskID, execTokens)
-		_ = c.store.AddModelUsage(taskID, c.cfg.ExecutorModel, result.InputTokens, result.OutputTokens)
+		_ = c.store.AddModelUsage(taskID, executorModel, result.InputTokens, result.OutputTokens)
 
 		if execErr != nil {
 			if err := c.store.UpdateSubTask(taskID, idx, SubTaskFailed, execErr.Error(), execTokens); err != nil {
