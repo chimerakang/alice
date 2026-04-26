@@ -217,6 +217,41 @@ func (s *SQLiteStorage) migrateUnifiedTaskTables() error {
 	return nil
 }
 
+// stripLegacyLanguagePrefixes removes leading language directives
+// ("請用繁體中文回應。\n\n", English equivalent) from historical
+// decision_logs.user_prompt and tasks.goal columns. New writes go through
+// stripLanguageDirective in agent.go; this catches pre-existing rows so
+// Dashboard / Timeline titles don't keep showing the prefix.
+// Idempotent — uses LIKE to match only rows that still carry the prefix.
+func (s *SQLiteStorage) stripLegacyLanguagePrefixes() error {
+	pairs := []struct{ table, column, prefix string }{
+		{"decision_logs", "user_prompt", "請用繁體中文回應。\n\n"},
+		{"decision_logs", "user_prompt", "Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n"},
+		{"tasks", "goal", "請用繁體中文回應。\n\n"},
+		{"tasks", "goal", "Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n"},
+		{"sub_tasks", "description", "請用繁體中文回應。\n\n"},
+		{"sub_tasks", "description", "Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n"},
+	}
+	total := int64(0)
+	for _, p := range pairs {
+		stmt := fmt.Sprintf(
+			`UPDATE %s SET %s = substr(%s, length(?) + 1) WHERE %s LIKE ?`,
+			p.table, p.column, p.column, p.column,
+		)
+		res, err := s.db.Exec(stmt, p.prefix, p.prefix+"%")
+		if err != nil {
+			return fmt.Errorf("strip %s.%s: %w", p.table, p.column, err)
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			total += n
+		}
+	}
+	if total > 0 {
+		log.Printf("[storage] stripped language directive prefix from %d historical row(s)", total)
+	}
+	return nil
+}
+
 // backfillDecisionLogsToUnified copies any historical decision_logs that have
 // not yet been mirrored into the unified task tables. Idempotent — UpsertUnifiedTask
 // uses INSERT OR REPLACE, so re-running on the same record is a no-op.

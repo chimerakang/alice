@@ -401,6 +401,9 @@ func (s *SQLiteStorage) initTables() error {
 	if err := s.backfillDecisionLogsToUnified(); err != nil {
 		log.Printf("[storage] decision_logs backfill warning: %v", err)
 	}
+	if err := s.stripLegacyLanguagePrefixes(); err != nil {
+		log.Printf("[storage] language-prefix strip warning: %v", err)
+	}
 
 	// Migration: add thinking_content column to decision_logs
 	_, err := s.db.Exec(`ALTER TABLE decision_logs ADD COLUMN thinking_content TEXT DEFAULT ''`)

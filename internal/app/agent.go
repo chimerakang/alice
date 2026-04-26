@@ -1033,6 +1033,28 @@ func (a *Agent) ProjectCount() int {
 	return len(a.projects)
 }
 
+// languagePromptPrefixes are the per-language directives Alice prepends to
+// every user message before sending to the CLI (see telegram.go). Stripping
+// them before logging keeps Dashboard / Timeline titles readable instead of
+// showing "請用繁體中文回應。…" on every entry.
+var languagePromptPrefixes = []string{
+	"請用繁體中文回應。\n\n",
+	"Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n",
+}
+
+// stripLanguageDirective removes any leading language directive from a
+// user-facing prompt copy. Used only when surfacing the prompt for display
+// (DecisionLog / Dashboard / Telegram echoes); the CLI request still receives
+// the directive.
+func stripLanguageDirective(prompt string) string {
+	for _, prefix := range languagePromptPrefixes {
+		if strings.HasPrefix(prompt, prefix) {
+			return prompt[len(prefix):]
+		}
+	}
+	return prompt
+}
+
 // logDecision records a complete AI decision with full context
 func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolExecution, startTime time.Time, resp *CLIResponse, err error, routingReason string, routingLatency int, deltaCost float64) {
 	if !globalDecisionLogger.IsEnabled() {
@@ -1102,7 +1124,7 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 		ProjectPath:     a.projectDir,
 		ChatID:          a.chatID,
 		ThreadID:        a.threadID,
-		UserPrompt:      userPrompt,
+		UserPrompt:      stripLanguageDirective(userPrompt),
 		AgentResponse:   agentResponse,
 		ThinkingContent: thinkingContent,
 		ToolCalls:       toolCalls,
