@@ -398,6 +398,9 @@ func (s *SQLiteStorage) initTables() error {
 	if err := s.migrateUnifiedTaskTables(); err != nil {
 		return err
 	}
+	if err := s.backfillDecisionLogsToUnified(); err != nil {
+		log.Printf("[storage] decision_logs backfill warning: %v", err)
+	}
 
 	// Migration: add thinking_content column to decision_logs
 	_, err := s.db.Exec(`ALTER TABLE decision_logs ADD COLUMN thinking_content TEXT DEFAULT ''`)

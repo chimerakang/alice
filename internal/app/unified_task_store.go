@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -213,6 +214,46 @@ func (s *SQLiteStorage) migrateUnifiedTaskTables() error {
 			return fmt.Errorf("unified task migration: %w", err)
 		}
 	}
+	return nil
+}
+
+// backfillDecisionLogsToUnified copies any historical decision_logs that have
+// not yet been mirrored into the unified task tables. Idempotent — UpsertUnifiedTask
+// uses INSERT OR REPLACE, so re-running on the same record is a no-op.
+// Skips when count(tasks where id LIKE 'decision:%') ≥ count(decision_logs).
+func (s *SQLiteStorage) backfillDecisionLogsToUnified() error {
+	var existing int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE id LIKE 'decision:%'`).Scan(&existing); err != nil {
+		return fmt.Errorf("backfill count tasks: %w", err)
+	}
+	var total int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM decision_logs`).Scan(&total); err != nil {
+		return fmt.Errorf("backfill count decision_logs: %w", err)
+	}
+	if existing >= total {
+		return nil
+	}
+	log.Printf("[storage] backfilling decision_logs → unified tasks (mirrored=%d, total=%d)", existing, total)
+
+	const batchSize = 500
+	processed := 0
+	for offset := 0; ; offset += batchSize {
+		decisions, err := s.GetDecisionLogs(batchSize, offset)
+		if err != nil {
+			return fmt.Errorf("backfill page offset=%d: %w", offset, err)
+		}
+		if len(decisions) == 0 {
+			break
+		}
+		for _, d := range decisions {
+			if err := s.insertDecisionLogUnified(d); err != nil {
+				log.Printf("[storage] backfill skipped session=%s ts=%s: %v", d.SessionID, d.Timestamp.Format(time.RFC3339), err)
+				continue
+			}
+			processed++
+		}
+	}
+	log.Printf("[storage] backfill complete: %d records mirrored", processed)
 	return nil
 }
 
