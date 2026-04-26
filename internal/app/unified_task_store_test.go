@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -239,6 +240,142 @@ func TestStoreReviewPersistsUnifiedReviewGraph(t *testing.T) {
 	}
 	if len(review.SubTaskResults) != 1 || review.SubTaskResults[0].IssueTags[0] != "missing_validation" {
 		t.Fatalf("unexpected persisted review subtask results: %+v", review.SubTaskResults)
+	}
+}
+
+func TestStoreReviewRollsBackOnSubTaskInsertFailure(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:        "task-review-rollback",
+		Goal:      "review me",
+		Engine:    "plan_execute",
+		Backend:   "claude",
+		Status:    "done",
+		StartedAt: time.Now().UTC().Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	if err := s.StoreReview(context.Background(), "task-review-rollback", appengine.ReviewResult{
+		ReviewerModel: "gpt-5.5",
+		Verdict:       appengine.VerdictFail,
+		OverallScore:  40,
+		Feedback:      "missing subtask row",
+		IssueTags:     []appengine.ReviewTag{appengine.ReviewTagMissingContext},
+		SubTaskResults: []appengine.ReviewSubTaskResult{
+			{
+				SubTaskID: "task-review-rollback:missing",
+				Score:     10,
+				Feedback:  "cannot persist",
+				IssueTags: []appengine.ReviewTag{appengine.ReviewTagUnderspecifiedInput},
+			},
+		},
+	}); err == nil {
+		t.Fatal("StoreReview: expected foreign key failure")
+	}
+
+	assertCount(t, s.db, "review_results", 0)
+	assertCount(t, s.db, "review_subtask_results", 0)
+}
+
+func TestGetPlannerRulesWeeklyReportAggregatesTopIssueTags(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	for _, taskID := range []string{"task-weekly-1", "task-weekly-2"} {
+		if err := s.UpsertUnifiedTask(UnifiedTask{
+			ID:        taskID,
+			Goal:      "weekly review",
+			Engine:    "plan_execute",
+			Backend:   "codex",
+			Status:    "done",
+			StartedAt: now.Add(-2 * time.Hour),
+		}); err != nil {
+			t.Fatalf("UpsertUnifiedTask(%s): %v", taskID, err)
+		}
+		if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+			ID:          taskID + ":s1",
+			TaskID:      taskID,
+			Idx:         0,
+			Description: "run task",
+			Status:      "done",
+			StartedAt:   now.Add(-90 * time.Minute),
+		}); err != nil {
+			t.Fatalf("UpsertUnifiedSubTask(%s): %v", taskID, err)
+		}
+	}
+
+	reviewID1, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        "task-weekly-1",
+		ReviewerModel: "gpt-5.5",
+		Verdict:       "partial",
+		OverallScore:  70,
+		FeedbackText:  "needs more context",
+		IssueTags:     []string{"missing_context", "missing_validation"},
+		CreatedAt:     now.Add(-6 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("InsertUnifiedReviewResult(1): %v", err)
+	}
+	if err := s.InsertUnifiedReviewSubTaskResult(UnifiedReviewSubTaskResult{
+		ReviewID:  reviewID1,
+		SubTaskID: "task-weekly-1:s1",
+		Score:     68,
+		Feedback:  "validate output",
+		IssueTags: []string{"missing_validation"},
+	}); err != nil {
+		t.Fatalf("InsertUnifiedReviewSubTaskResult(1): %v", err)
+	}
+
+	reviewID2, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        "task-weekly-2",
+		ReviewerModel: "gpt-5.5",
+		Verdict:       "fail",
+		OverallScore:  55,
+		FeedbackText:  "missing context and vague goal",
+		IssueTags:     []string{"missing_context", "ambiguous_goal"},
+		CreatedAt:     now.Add(-3 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("InsertUnifiedReviewResult(2): %v", err)
+	}
+	if err := s.InsertUnifiedReviewSubTaskResult(UnifiedReviewSubTaskResult{
+		ReviewID:  reviewID2,
+		SubTaskID: "task-weekly-2:s1",
+		Score:     50,
+		Feedback:  "insufficient context",
+		IssueTags: []string{"missing_context"},
+	}); err != nil {
+		t.Fatalf("InsertUnifiedReviewSubTaskResult(2): %v", err)
+	}
+
+	report, err := s.GetPlannerRulesWeeklyReport(now.Add(-7*24*time.Hour), now)
+	if err != nil {
+		t.Fatalf("GetPlannerRulesWeeklyReport: %v", err)
+	}
+
+	if report.ReviewCount != 2 {
+		t.Fatalf("ReviewCount: got %d, want 2", report.ReviewCount)
+	}
+	if report.ReviewedSubTaskCount != 2 {
+		t.Fatalf("ReviewedSubTaskCount: got %d, want 2", report.ReviewedSubTaskCount)
+	}
+	if report.VerdictCounts["partial"] != 1 || report.VerdictCounts["fail"] != 1 {
+		t.Fatalf("unexpected verdict counts: %+v", report.VerdictCounts)
+	}
+	if len(report.TopIssueTags) != 3 {
+		t.Fatalf("TopIssueTags len: got %d, want 3", len(report.TopIssueTags))
+	}
+	if report.TopIssueTags[0].Tag != "missing_context" || report.TopIssueTags[0].Count != 3 {
+		t.Fatalf("top issue tag[0]: %+v", report.TopIssueTags[0])
+	}
+	if report.TopIssueTags[1].Tag != "missing_validation" || report.TopIssueTags[1].Count != 2 {
+		t.Fatalf("top issue tag[1]: %+v", report.TopIssueTags[1])
+	}
+	if got := FormatPlannerRulesWeeklyReport(report); !strings.Contains(got, "Top issue tags") || !strings.Contains(got, "missing_context") {
+		t.Fatalf("formatted report missing expected content:\n%s", got)
+	}
+	if len(report.Recommendations) == 0 {
+		t.Fatal("expected recommendations")
 	}
 }
 

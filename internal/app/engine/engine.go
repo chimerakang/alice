@@ -31,6 +31,7 @@ type Artifact struct {
 type Result struct {
 	Text         string
 	Artifacts    []Artifact
+	Review       *ReviewResult
 	InputTokens  int
 	OutputTokens int
 	Cost         float64

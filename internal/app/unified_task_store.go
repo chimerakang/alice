@@ -24,6 +24,7 @@ type UnifiedTaskStore interface {
 	StoreReview(ctx context.Context, taskID string, review appengine.ReviewResult) error
 	ListUnifiedTaskGraphs(query UnifiedTaskQuery) ([]UnifiedTaskGraph, error)
 	CountUnifiedTasks(query UnifiedTaskQuery) (int64, error)
+	GetPlannerRulesWeeklyReport(windowStart, windowEnd time.Time) (PlannerRulesWeeklyReport, error)
 }
 
 type UnifiedTask struct {

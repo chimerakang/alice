@@ -246,6 +246,73 @@ func TestHermesTierChangeClearsExecutorSessionCache(t *testing.T) {
 	}
 }
 
+func TestHandleHermesStatsCommandWeekQueuesWeeklyReviewReport(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	s := newTestSQLiteStorage(t)
+	oldStorage := globalStorage
+	globalStorage = s
+	defer func() { globalStorage = oldStorage }()
+
+	now := time.Now().UTC().Truncate(time.Second)
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:        "task-hermes-week",
+		Goal:      "weekly stats",
+		Engine:    "plan_execute",
+		Backend:   "codex",
+		Status:    "done",
+		StartedAt: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+		ID:          "task-hermes-week:s1",
+		TaskID:      "task-hermes-week",
+		Idx:         0,
+		Description: "step",
+		Status:      "done",
+		StartedAt:   now.Add(-30 * time.Minute),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedSubTask: %v", err)
+	}
+	reviewID, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        "task-hermes-week",
+		ReviewerModel: "gpt-5.5",
+		Verdict:       "partial",
+		OverallScore:  66,
+		FeedbackText:  "more validation needed",
+		IssueTags:     []string{"missing_validation"},
+		CreatedAt:     now.Add(-20 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("InsertUnifiedReviewResult: %v", err)
+	}
+	if err := s.InsertUnifiedReviewSubTaskResult(UnifiedReviewSubTaskResult{
+		ReviewID:  reviewID,
+		SubTaskID: "task-hermes-week:s1",
+		Score:     60,
+		Feedback:  "run tests",
+		IssueTags: []string{"missing_validation"},
+	}); err != nil {
+		t.Fatalf("InsertUnifiedReviewSubTaskResult: %v", err)
+	}
+
+	bot := &TelegramBot{
+		config:       &Config{Hermes: HermesConfig{Enabled: true}},
+		messageQueue: make(chan *TelegramMessage, 10),
+	}
+	bot.handleHermesStatsCommand(key, []string{"/hermes-stats", "week"})
+
+	select {
+	case msg := <-bot.messageQueue:
+		text, _ := msg.Params["text"].(string)
+		if !strings.Contains(text, "Hermes Review 週報") || !strings.Contains(text, "missing_validation") {
+			t.Fatalf("unexpected message text:\n%s", text)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected weekly report message")
+	}
+}
+
 func TestHermesExecutorSessionReusesSameTierAndClearsOnSwitch(t *testing.T) {
 	key := chatKey{chatID: 55, threadID: 2}
 	bot := &TelegramBot{

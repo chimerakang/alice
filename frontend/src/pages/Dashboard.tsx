@@ -2,7 +2,14 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/appStore";
-import type { StatsResponse, DecisionLog, GitState } from "@/types/alice";
+import type {
+  StatsResponse,
+  DecisionLog,
+  GitState,
+  UnifiedReview,
+  UnifiedReviewSubTaskResult,
+  ReviewLiveEvent,
+} from "@/types/alice";
 import DateRangeFilter from "@/components/DateRangeFilter";
 import type { DateRange } from "@/components/DateRangeFilter";
 import StatusBadge from "@/components/StatusBadge";
@@ -25,6 +32,8 @@ import {
   AlertTriangle,
   Loader2,
   TrendingDown,
+  BarChart3,
+  MessageSquareText,
 } from "lucide-react";
 import {
   AreaChart,
@@ -529,9 +538,398 @@ function EmptyChart({ label }: { label: string }) {
   );
 }
 
+type ReviewSource = "stored" | "live";
+
+interface ReviewFeedItem {
+  key: string;
+  task_id: string;
+  goal: string;
+  project_path: string;
+  reviewer_model: string;
+  verdict: string;
+  overall_score: number;
+  issue_tags: string[];
+  feedback_text: string;
+  sub_task_results: UnifiedReviewSubTaskResult[];
+  timestamp: string;
+  source: ReviewSource;
+  advisory_retry: boolean;
+  retry_note: string;
+  failing_subtasks: number;
+}
+
+export function normalizeStoredReview(review: UnifiedReview, decision: DecisionLog): ReviewFeedItem {
+  return {
+    key: [
+      review.task_id || decision.id,
+      review.reviewer_model || "reviewer",
+      review.verdict || "partial",
+      review.overall_score || 0,
+    ].join("|"),
+    task_id: review.task_id || decision.id,
+    goal: decision.user_prompt || "",
+    project_path: decision.project_path || "",
+    reviewer_model: review.reviewer_model || "reviewer",
+    verdict: review.verdict || "partial",
+    overall_score: review.overall_score || 0,
+    issue_tags: review.issue_tags || [],
+    feedback_text: review.feedback_text || "",
+    sub_task_results: review.sub_task_results || [],
+    timestamp: review.created_at || decision.timestamp || "",
+    source: "stored",
+    advisory_retry: review.verdict !== "pass",
+    retry_note: review.verdict === "pass" ? "暫無需重跑" : "建議人工評估後再決定是否重跑",
+    failing_subtasks: review.sub_task_results?.filter((subTask) => subTask.score < 70).length || 0,
+  };
+}
+
+export function normalizeLiveReview(review: ReviewLiveEvent, decision?: DecisionLog): ReviewFeedItem {
+  return {
+    key: [
+      review.task_id,
+      review.reviewer_model || "reviewer",
+      review.verdict || "partial",
+      review.overall_score || 0,
+    ].join("|"),
+    task_id: review.task_id,
+    goal: decision?.user_prompt || "",
+    project_path: decision?.project_path || "",
+    reviewer_model: review.reviewer_model || "reviewer",
+    verdict: review.verdict || "partial",
+    overall_score: review.overall_score || 0,
+    issue_tags: review.issue_tags || [],
+    feedback_text: review.feedback_text || "",
+    sub_task_results: review.sub_task_results || [],
+    timestamp: review.timestamp || "",
+    source: "live",
+    advisory_retry: Boolean(review.advisory_retry),
+    retry_note: review.retry_note || "",
+    failing_subtasks: review.failing_subtasks || 0,
+  };
+}
+
+export function mergeReviewItems(items: ReviewFeedItem[]): ReviewFeedItem[] {
+  const map = new Map<string, ReviewFeedItem>();
+
+  for (const item of items) {
+    const existing = map.get(item.key);
+    if (!existing) {
+      map.set(item.key, item);
+      continue;
+    }
+
+    if (existing.source === "stored") {
+      continue;
+    }
+
+    if (item.source === "stored") {
+      map.set(item.key, item);
+      continue;
+    }
+
+    if (
+      item.sub_task_results.length > existing.sub_task_results.length ||
+      (!existing.feedback_text && item.feedback_text) ||
+      (item.timestamp && existing.timestamp && item.timestamp > existing.timestamp)
+    ) {
+      map.set(item.key, item);
+    }
+  }
+
+  return Array.from(map.values()).sort((a, b) => {
+    const aTs = new Date(a.timestamp || 0).getTime();
+    const bTs = new Date(b.timestamp || 0).getTime();
+    return bTs - aTs;
+  });
+}
+
+export function ReviewPanel({
+  reviews,
+  liveConnected,
+}: {
+  reviews: ReviewFeedItem[];
+  liveConnected: boolean;
+}) {
+  const stats = useMemo(() => {
+    const verdicts = { pass: 0, partial: 0, fail: 0 };
+    const tags = new Map<string, number>();
+    let scoreSum = 0;
+    let withFeedback = 0;
+    let liveCount = 0;
+
+    for (const review of reviews) {
+      const verdict = review.verdict === "pass" || review.verdict === "fail" ? review.verdict : "partial";
+      verdicts[verdict] += 1;
+      scoreSum += review.overall_score || 0;
+      if (review.feedback_text) withFeedback += 1;
+      if (review.source === "live") liveCount += 1;
+      for (const tag of review.issue_tags || []) {
+        tags.set(tag, (tags.get(tag) || 0) + 1);
+      }
+    }
+
+    const total = reviews.length;
+    return {
+      total,
+      passRate: total > 0 ? ((verdicts.pass / total) * 100).toFixed(0) : "0",
+      avgScore: total > 0 ? (scoreSum / total).toFixed(1) : "0.0",
+      withFeedback,
+      liveCount,
+      verdicts,
+      tags,
+    };
+  }, [reviews]);
+
+  const verdictChartData = useMemo(
+    () => [
+      { name: "Pass", value: stats.verdicts.pass, color: "#22c55e" },
+      { name: "Partial", value: stats.verdicts.partial, color: "#f59e0b" },
+      { name: "Fail", value: stats.verdicts.fail, color: "#ef4444" },
+    ].filter((item) => item.value > 0),
+    [stats.verdicts]
+  );
+
+  const tagChartData = useMemo(
+    () =>
+      Array.from(stats.tags.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([tag, value]) => ({ tag, value })),
+    [stats.tags]
+  );
+
+  const recentReviews = reviews.slice(0, 5);
+
+  return (
+    <div className="card p-5">
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-2">
+          <MessageSquareText className="w-4 h-4 text-accent" />
+          <h3 className="text-sm font-semibold text-gray-400">Review Panel</h3>
+        </div>
+        <div className="flex items-center gap-2">
+          <StatusBadge variant={liveConnected ? "success" : "neutral"} size="sm" dot>
+            {liveConnected ? "Live" : "歷史資料"}
+          </StatusBadge>
+          <span className="text-xs text-gray-500 font-mono">
+            {stats.total} reviews
+          </span>
+        </div>
+      </div>
+
+      {reviews.length === 0 ? (
+        <div className="flex items-center justify-center h-40 text-sm text-gray-500">
+          目前還沒有 review 結果
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <MetricCard label="Reviews" value={stats.total} icon={MessageSquareText} color="text-accent" />
+            <MetricCard label="Pass Rate" value={`${stats.passRate}%`} icon={Activity} color="text-success" />
+            <MetricCard label="Avg Score" value={stats.avgScore} icon={BarChart3} color="text-primary" />
+            <MetricCard label="Live" value={stats.liveCount} icon={Wifi} color="text-cyan-400" />
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+            <div className="card p-4">
+              <h4 className="text-xs font-semibold text-gray-400 mb-3">Verdict Distribution</h4>
+              {verdictChartData.length === 0 ? (
+                <EmptyChart label="No verdict data" />
+              ) : (
+                <div className="flex items-center gap-4">
+                  <ResponsiveContainer width={110} height={110}>
+                    <PieChart>
+                      <Pie
+                        data={verdictChartData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={28}
+                        outerRadius={45}
+                        dataKey="value"
+                        strokeWidth={0}
+                      >
+                        {verdictChartData.map((entry, index) => (
+                          <Cell key={entry.name} fill={entry.color || ["#22c55e", "#f59e0b", "#ef4444"][index]} />
+                        ))}
+                      </Pie>
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="space-y-2 text-xs">
+                    {verdictChartData.map((entry) => (
+                      <div key={entry.name} className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
+                        <span className="text-gray-400">{entry.name}</span>
+                        <span className="text-white font-mono">{entry.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="card p-4">
+              <h4 className="text-xs font-semibold text-gray-400 mb-3">Issue Tags</h4>
+              {tagChartData.length === 0 ? (
+                <EmptyChart label="No issue tags recorded" />
+              ) : (
+                <ResponsiveContainer width="100%" height={180}>
+                  <BarChart data={tagChartData} layout="vertical" margin={{ top: 0, right: 10, left: 10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" horizontal={false} />
+                    <XAxis type="number" tick={{ fill: "#6b7280", fontSize: 10 }} tickLine={false} axisLine={false} allowDecimals={false} />
+                    <YAxis
+                      type="category"
+                      dataKey="tag"
+                      width={120}
+                      tick={{ fill: "#d1d5db", fontSize: 10 }}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: "#111827", border: "1px solid #374151", borderRadius: "0.5rem", fontSize: 12 }}
+                      labelStyle={{ color: "#9ca3af" }}
+                    />
+                    <Bar dataKey="value" fill="#6366f1" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+
+            <div className="card p-4">
+              <h4 className="text-xs font-semibold text-gray-400 mb-3">Recent Reviews</h4>
+              <div className="space-y-2 max-h-[240px] overflow-y-auto pr-1">
+                {recentReviews.map((review) => {
+                  const verdictVariant =
+                    review.verdict === "pass" ? "success" : review.verdict === "fail" ? "error" : "warning";
+                  return (
+                    <div key={review.key} className="rounded-lg border border-gray-800/60 bg-black/20 p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <StatusBadge variant={verdictVariant} size="sm">
+                          {review.verdict}
+                        </StatusBadge>
+                        <span className="text-[10px] text-gray-500 font-mono">
+                          {review.overall_score}/100
+                        </span>
+                        <span className="ml-auto text-[10px] text-gray-500 uppercase">
+                          {review.source}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-300 line-clamp-2">
+                        {review.goal || review.feedback_text || "—"}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-1">
+                        {(review.issue_tags || []).slice(0, 4).map((tag) => (
+                          <span key={tag} className="px-1.5 py-0.5 rounded bg-gray-800 text-[10px] text-gray-400">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            {recentReviews.map((review) => (
+              <div key={`${review.key}-detail`} className="rounded-lg border border-gray-800/60 bg-black/20 p-4">
+                <div className="flex flex-wrap items-center gap-2 mb-3">
+                  <StatusBadge
+                    variant={review.verdict === "pass" ? "success" : review.verdict === "fail" ? "error" : "warning"}
+                    size="sm"
+                  >
+                    {review.verdict}
+                  </StatusBadge>
+                  <span className="text-xs text-gray-400">{review.reviewer_model || "reviewer"}</span>
+                  <span className="text-xs text-gray-500 font-mono">{review.overall_score}/100</span>
+                  <span className="text-[10px] text-gray-500 uppercase ml-auto">
+                    {review.source}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-3">
+                  <div className="space-y-3">
+                    <div>
+                      <div className="text-xs text-gray-500 uppercase mb-1">Goal</div>
+                      <div className="text-sm text-gray-200 whitespace-pre-wrap">
+                        {review.goal || "—"}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500 uppercase mb-1">Feedback</div>
+                      <div className="text-sm text-gray-300 whitespace-pre-wrap">
+                        {review.feedback_text || review.retry_note || "—"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-1">
+                      {(review.issue_tags || []).length > 0 ? (
+                        review.issue_tags.map((tag) => (
+                          <span key={tag} className="px-2 py-1 rounded bg-gray-800 text-[10px] text-gray-300">
+                            {tag}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-xs text-gray-500">No issue tags</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      <span className="font-mono">{review.task_id}</span>
+                      {review.project_path ? <span className="ml-2">{review.project_path}</span> : null}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {review.advisory_retry ? review.retry_note || "建議重新檢視" : "暫無需重跑"}
+                    </div>
+                  </div>
+                </div>
+
+                {review.sub_task_results.length > 0 && (
+                  <div className="mt-4 space-y-2">
+                    <div className="text-xs text-gray-500 uppercase">Sub-task Feedback</div>
+                    {review.sub_task_results.map((subTask) => (
+                      <div key={`${review.key}-${subTask.sub_task_id}`} className="rounded-md border border-gray-800/60 p-3">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-mono text-primary-light">{subTask.sub_task_id}</span>
+                          <span className="text-xs text-gray-500 font-mono">{subTask.score}/100</span>
+                        </div>
+                        <div className="text-sm text-gray-300 whitespace-pre-wrap">
+                          {subTask.feedback || "—"}
+                        </div>
+                        {subTask.issue_tags?.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {subTask.issue_tags.map((tag) => (
+                              <span key={tag} className="px-1.5 py-0.5 rounded bg-gray-800 text-[10px] text-gray-400">
+                                {tag}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Dashboard ──────────────────────────────────
 export default function Dashboard() {
-  const { stats, setStats, decisions, wsConnected, toolExecutions, setToolExecutions } = useAppStore();
+  const {
+    stats,
+    setStats,
+    decisions,
+    wsConnected,
+    toolExecutions,
+    setToolExecutions,
+    reviewEvents,
+  } = useAppStore();
   const [loading, setLoading] = useState(true);
   const [projectGitStates, setProjectGitStates] = useState<Map<string, GitState>>(new Map());
   const [recentDecisions, setRecentDecisions] = useState<DecisionLog[]>([]);
@@ -637,6 +1035,17 @@ export default function Dashboard() {
     }
     return merged;
   }, [decisions, recentDecisions]);
+
+  const reviewItems = useMemo(() => {
+    const decisionById = new Map(allDecisions.map((decision) => [decision.id, decision] as const));
+    const storedReviews = allDecisions.flatMap((decision) =>
+      (decision.unified_task?.reviews || []).map((review) => normalizeStoredReview(review, decision))
+    );
+    const liveReviews = reviewEvents.map((review) =>
+      normalizeLiveReview(review, decisionById.get(review.task_id))
+    );
+    return mergeReviewItems([...storedReviews, ...liveReviews]);
+  }, [allDecisions, reviewEvents]);
 
   // Discover project paths from decisions (normalize trailing slashes)
   const projectPaths = useMemo(() => {
@@ -812,6 +1221,8 @@ export default function Dashboard() {
           <SourcePerformanceChart decisions={allDecisions} />
         </div>
       </div>
+
+      <ReviewPanel reviews={reviewItems} liveConnected={wsConnected} />
 
       {/* ── Row 4: Smart Routing Savings (Issue #74) ── */}
       <div className="space-y-4">

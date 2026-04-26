@@ -110,3 +110,34 @@ func TestParseReviewResult(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", got)
 	}
 }
+
+func TestBuildReviewNotificationAndTelegramText(t *testing.T) {
+	review := ReviewResult{
+		ReviewerModel: "gpt-5.5",
+		Verdict:       VerdictPartial,
+		OverallScore:  73,
+		IssueTags:     []ReviewTag{ReviewTagMissingContext, ReviewTagMissingValidation},
+		SubTaskResults: []ReviewSubTaskResult{
+			{SubTaskID: "s1", Score: 65, Feedback: "needs more checks"},
+			{SubTaskID: "s2", Score: 81, Feedback: "ok"},
+		},
+	}
+
+	notification := BuildReviewNotification(" task-123 ", review)
+	if notification.TaskID != "task-123" {
+		t.Fatalf("task id = %q, want trimmed value", notification.TaskID)
+	}
+	if !notification.AdvisoryRetry || notification.FailingSubTasks != 1 {
+		t.Fatalf("notification retry state = %+v", notification)
+	}
+	if notification.RetryNote != "建議人工評估後重跑 1 個失敗/低分子任務" {
+		t.Fatalf("retry note = %q", notification.RetryNote)
+	}
+
+	text := notification.TelegramText()
+	for _, want := range []string{"複審完成", "partial", "missing_context, missing_validation", "建議人工評估後重跑 1 個失敗/低分子任務"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("telegram text missing %q:\n%s", want, text)
+		}
+	}
+}

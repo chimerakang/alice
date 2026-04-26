@@ -9,6 +9,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	appengine "claude-tg-agent/internal/app/engine"
 	"claude-tg-agent/internal/app/security"
 )
 
@@ -311,17 +312,17 @@ func BroadcastPerformanceEvent(metric PerformanceMetrics) {
 	}
 
 	data := map[string]interface{}{
-		"api_latency_ms":        metric.APICallLatency.Milliseconds(),
-		"api_success":           metric.APICallSuccess,
-		"tool_execution_time":   metric.ToolExecutionTime.Milliseconds(),
-		"tool_execution_type":   metric.ToolExecutionType,
-		"tokens_used":           metric.TokensUsed,
-		"estimated_cost":        metric.EstimatedCost,
-		"memory_usage":          metric.MemoryUsage,
-		"error_type":            metric.ErrorType,
-		"chat_id":               metric.ChatID,
-		"agent_type":            metric.AgentType,
-		"timestamp":             metric.Timestamp,
+		"api_latency_ms":      metric.APICallLatency.Milliseconds(),
+		"api_success":         metric.APICallSuccess,
+		"tool_execution_time": metric.ToolExecutionTime.Milliseconds(),
+		"tool_execution_type": metric.ToolExecutionType,
+		"tokens_used":         metric.TokensUsed,
+		"estimated_cost":      metric.EstimatedCost,
+		"memory_usage":        metric.MemoryUsage,
+		"error_type":          metric.ErrorType,
+		"chat_id":             metric.ChatID,
+		"agent_type":          metric.AgentType,
+		"timestamp":           metric.Timestamp,
 	}
 
 	globalWebSocketHub.BroadcastEvent("performance_metric", data)
@@ -364,10 +365,31 @@ func BroadcastAgentStatusEvent(chatID int64, status string, details map[string]i
 	globalWebSocketHub.BroadcastEvent("agent_status", data)
 }
 
+// BroadcastReviewEvent broadcasts a compact review summary to connected clients.
+func BroadcastReviewEvent(notification appengine.ReviewNotification) {
+	if globalWebSocketHub == nil {
+		return
+	}
+
+	data := map[string]interface{}{
+		"task_id":          notification.TaskID,
+		"reviewer_model":   notification.ReviewerModel,
+		"verdict":          notification.Verdict,
+		"overall_score":    notification.OverallScore,
+		"issue_tags":       notification.IssueTags,
+		"advisory_retry":   notification.AdvisoryRetry,
+		"failing_subtasks": notification.FailingSubTasks,
+		"retry_note":       notification.RetryNote,
+		"timestamp":        time.Now(),
+	}
+
+	globalWebSocketHub.BroadcastEvent("review_complete", data)
+}
+
 // generateClientID 生成客戶端 ID
 func generateClientID() string {
 	return time.Now().Format("20060102150405") + "-" +
-		   string(rune('A' + time.Now().Nanosecond()%26))
+		string(rune('A'+time.Now().Nanosecond()%26))
 }
 
 // GetWebSocketStats 獲取 WebSocket 統計資訊

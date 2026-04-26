@@ -215,6 +215,20 @@ export interface UnifiedReview {
   sub_task_results: UnifiedReviewSubTaskResult[];
 }
 
+export interface ReviewLiveEvent {
+  task_id: string;
+  reviewer_model?: string;
+  verdict: string;
+  overall_score: number;
+  issue_tags: string[];
+  advisory_retry?: boolean;
+  failing_subtasks?: number;
+  retry_note?: string;
+  feedback_text?: string;
+  timestamp: string;
+  sub_task_results?: UnifiedReviewSubTaskResult[];
+}
+
 export interface UnifiedTask {
   id: string;
   chat_id: number;
@@ -314,6 +328,7 @@ export type WebSocketEventType =
   | "sub_task_updated"
   | "tool_event"
   | "review_result"
+  | "review_complete"
   | "decision_complete"
   | "performance_metric"
   | "security_alert"

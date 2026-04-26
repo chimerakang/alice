@@ -79,12 +79,27 @@ func (s *recordingReviewStore) StoreReview(ctx context.Context, taskID string, r
 	return nil
 }
 
+type recordingReviewNotifier struct {
+	calls       int
+	lastTaskID  string
+	lastReview  ReviewResult
+	lastSummary ReviewNotification
+}
+
+func (n *recordingReviewNotifier) Notify(ctx context.Context, state hermes.TaskState, review ReviewResult, notification ReviewNotification) {
+	n.calls++
+	n.lastTaskID = state.ID
+	n.lastReview = review
+	n.lastSummary = notification
+}
+
 func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 	store := hermes.NewMemoryTaskStore()
 	runner := &planExecuteRunner{}
 	reporter := &planExecuteReporter{}
 	reviewPhase := &recordingReviewPhase{}
 	reviewStore := &recordingReviewStore{}
+	reviewNotifier := &recordingReviewNotifier{}
 	planFn := func(ctx context.Context, message, projectDir string) (string, string, int, int, error) {
 		return "```json\n" +
 			`[{"id":"s1","description":"read context","tool_hints":["Read"]},` +
@@ -102,6 +117,7 @@ func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 		AccumulatedCfg:        hermes.AccumulatedConfig{},
 		ReviewPhase:           reviewPhase,
 		ReviewStore:           reviewStore,
+		OnReview:              reviewNotifier.Notify,
 	}, planFn, NewDirectEngine(runner), store, reporter)
 
 	taskID, err := engine.Start(context.Background(), "complex implementation goal", NewChatContext(42, 0, "/repo"))
@@ -148,6 +164,9 @@ func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 	}
 	if reviewPhase.last.TaskID != taskID || reviewPhase.last.Accumulated == "" {
 		t.Fatalf("review request missing context: %+v", reviewPhase.last)
+	}
+	if reviewNotifier.calls != 1 || reviewNotifier.lastSummary.TaskID != taskID || reviewNotifier.lastSummary.AdvisoryRetry {
+		t.Fatalf("review notifier = %+v", reviewNotifier)
 	}
 }
 

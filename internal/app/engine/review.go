@@ -82,6 +82,67 @@ type ReviewResult struct {
 	CostUSD        float64               `json:"cost_usd,omitempty"`
 }
 
+// ReviewNotification is a compact summary for user-facing notifications.
+type ReviewNotification struct {
+	TaskID          string      `json:"task_id"`
+	ReviewerModel   string      `json:"reviewer_model,omitempty"`
+	Verdict         Verdict     `json:"verdict"`
+	OverallScore    int         `json:"overall_score"`
+	IssueTags       []ReviewTag `json:"issue_tags,omitempty"`
+	AdvisoryRetry   bool        `json:"advisory_retry"`
+	FailingSubTasks int         `json:"failing_subtasks"`
+	RetryNote       string      `json:"retry_note,omitempty"`
+}
+
+// BuildReviewNotification normalizes a review into a concise summary.
+func BuildReviewNotification(taskID string, review ReviewResult) ReviewNotification {
+	failingSubTasks := 0
+	for _, subTask := range review.SubTaskResults {
+		if subTask.Score < 70 {
+			failingSubTasks++
+		}
+	}
+
+	notification := ReviewNotification{
+		TaskID:          strings.TrimSpace(taskID),
+		ReviewerModel:   strings.TrimSpace(review.ReviewerModel),
+		Verdict:         review.Verdict,
+		OverallScore:    review.OverallScore,
+		IssueTags:       append([]ReviewTag(nil), review.IssueTags...),
+		AdvisoryRetry:   review.Verdict != VerdictPass || failingSubTasks > 0,
+		FailingSubTasks: failingSubTasks,
+	}
+	if notification.AdvisoryRetry {
+		if failingSubTasks > 0 {
+			notification.RetryNote = fmt.Sprintf("建議人工評估後重跑 %d 個失敗/低分子任務", failingSubTasks)
+		} else {
+			notification.RetryNote = "建議人工評估後決定是否重跑"
+		}
+	} else {
+		notification.RetryNote = "暫無需重跑"
+	}
+	return notification
+}
+
+// TelegramText renders the notification as a concise chat message.
+func (n ReviewNotification) TelegramText() string {
+	tags := "無"
+	if len(n.IssueTags) > 0 {
+		items := make([]string, 0, len(n.IssueTags))
+		for _, tag := range n.IssueTags {
+			items = append(items, string(tag))
+		}
+		tags = strings.Join(items, ", ")
+	}
+
+	var b strings.Builder
+	b.WriteString("🔎 複審完成\n")
+	b.WriteString(fmt.Sprintf("結果：%s（%d/100）\n", n.Verdict, n.OverallScore))
+	b.WriteString("標籤：" + tags + "\n")
+	b.WriteString("重跑建議：" + n.RetryNote)
+	return b.String()
+}
+
 // BuildReviewPrompt assembles the first-version reviewer prompt for #119.
 func BuildReviewPrompt(req ReviewRequest) string {
 	type reviewPromptArtifact struct {

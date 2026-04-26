@@ -37,6 +37,7 @@ type PlanExecuteConfig struct {
 	ReviewStore       ReviewResultStore
 	DisableReview     bool
 	ReviewMinSubTasks int
+	OnReview          func(ctx context.Context, state hermes.TaskState, review ReviewResult, notification ReviewNotification)
 
 	ContinueCh      chan struct{}
 	ContinueTimeout time.Duration
@@ -448,6 +449,9 @@ func (e *PlanExecuteEngine) runReview(ctx context.Context, state hermes.TaskStat
 		if err := e.cfg.ReviewStore.StoreReview(ctx, state.ID, result); err != nil {
 			log.Printf("[plan_execute] store review: %v", err)
 		}
+	}
+	if e.cfg.OnReview != nil {
+		e.cfg.OnReview(ctx, state, result, BuildReviewNotification(state.ID, result))
 	}
 }
 

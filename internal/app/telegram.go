@@ -1644,9 +1644,24 @@ func (t *TelegramBot) handleHermesStatsCommand(key chatKey, parts []string) {
 		return
 	}
 
-	// TODO: Implement stats querying once storage layer is accessible
-	// For now, return a placeholder message.
-	t.send(key, "📊 Hermes 統計查詢功能正在實現中。請稍候。")
+	if len(parts) > 1 && strings.EqualFold(parts[1], "week") {
+		if globalStorage == nil {
+			t.send(key, "❌ 無法產生週報：storage 尚未初始化。")
+			return
+		}
+
+		windowEnd := time.Now().UTC()
+		windowStart := windowEnd.Add(-7 * 24 * time.Hour)
+		report, err := globalStorage.GetPlannerRulesWeeklyReport(windowStart, windowEnd)
+		if err != nil {
+			t.send(key, fmt.Sprintf("❌ 無法產生 review 週報：%v", err))
+			return
+		}
+		t.send(key, FormatPlannerRulesWeeklyReport(report))
+		return
+	}
+
+	t.send(key, "📊 使用方式：/hermes-stats week")
 }
 
 // isHermesEnabled reports whether Hermes mode is active for this chat.
@@ -2122,6 +2137,12 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 			onDoneHook(doneCtx, state)
 		}
 	}
+	onReview := func(_ context.Context, state hermes.TaskState, review appengine.ReviewResult, notification appengine.ReviewNotification) {
+		t.send(key, notification.TelegramText())
+		if globalWebSocketHub != nil {
+			BroadcastReviewEvent(notification)
+		}
+	}
 
 	// Use a noop store when no DB is available yet (wired fully in #97→#98 integration)
 	if taskStore == nil {
@@ -2158,6 +2179,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		PostCompletionHook:    t.buildTaskSyncHook(ghIntegration.TriggerTaskSync, projectDir),
 		ReviewPhase:           reviewPhase,
 		ReviewStore:           globalStorage,
+		OnReview:              onReview,
 		ContinueCh:            continueCh,
 		OnDone:                onDone,
 	}, planFn, direct, taskStore, reporter)
