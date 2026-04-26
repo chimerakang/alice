@@ -30,7 +30,7 @@
     "deep_model": "claude-opus-4-7",
     "codex_fast_model": "gpt-5.4-mini",
     "codex_smart_model": "gpt-5.4",
-    "codex_deep_model": "gpt-5.5-pro",
+    "codex_deep_model": "gpt-5.5",
     "use_gpt4o_mini_for_triage": false
   },
 

@@ -110,7 +110,11 @@ func (c *CodexClient) GetModel() string {
 type codexEvent struct {
 	Type     string `json:"type"`
 	ThreadID string `json:"thread_id"` // thread.started
-	Item     *struct {
+	Message  string `json:"message"`   // error event payload (raw, may be JSON-encoded)
+	Error    *struct {
+		Message string `json:"message"`
+	} `json:"error"` // turn.failed
+	Item *struct {
 		ID               string `json:"id"`
 		Type             string `json:"type"`
 		Text             string `json:"text"`              // agent_message
@@ -180,6 +184,7 @@ func (c *CodexClient) runCodexStream(
 		inputTokens  int
 		outputTokens int
 		numTurns     int
+		streamErrMsg string // captured from error / turn.failed events
 	)
 
 	scanner := bufio.NewScanner(stdout)
@@ -199,6 +204,18 @@ func (c *CodexClient) runCodexStream(
 		switch ev.Type {
 		case "thread.started":
 			threadID = ev.ThreadID
+
+		case "error":
+			if ev.Message != "" {
+				streamErrMsg = ev.Message
+				log.Printf("[codex] stream error event: %s", ev.Message)
+			}
+
+		case "turn.failed":
+			if ev.Error != nil && ev.Error.Message != "" {
+				streamErrMsg = ev.Error.Message
+				log.Printf("[codex] turn.failed: %s", ev.Error.Message)
+			}
 
 		case "item.completed":
 			if ev.Item == nil {
@@ -239,6 +256,12 @@ func (c *CodexClient) runCodexStream(
 	isError := false
 	errorType := ""
 	var fatalErr error
+	// A stream-level error/turn.failed is fatal even if the codex process exited 0.
+	if streamErrMsg != "" {
+		isError = true
+		errorType = "codex_stream_error"
+		fatalErr = fmt.Errorf("codex stream error: %s", streamErrMsg)
+	}
 	if waitErr != nil {
 		if ctx.Err() == context.Canceled {
 			// Caller-initiated cancellation: do not record metrics, propagate.

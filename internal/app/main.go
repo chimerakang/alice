@@ -336,7 +336,7 @@ func LoadConfig() (*Config, error) {
 			ExecuteModel:         "claude-sonnet-4-5-20250929", // OpusPlan: Sonnet for execution
 			CodexFastModel:       "gpt-5.4-mini",               // /gfast: fast GPT tier
 			CodexSmartModel:      "gpt-5.4",                    // /gsmart: balanced GPT tier
-			CodexDeepModel:       "gpt-5.5-pro",                // /gdeep: powerful GPT tier
+			CodexDeepModel:       "gpt-5.5",                    // /gdeep: powerful GPT tier (gpt-5.5-pro is API-key-only)
 			UseGPT4oMini:         false,
 			StickySession:         true,
 			SessionIdleTimeoutMin: 5,
