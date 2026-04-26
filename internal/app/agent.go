@@ -1007,6 +1007,15 @@ func formatToolUpdate(name string, input map[string]interface{}) string {
 			return fmt.Sprintf("🔎 Search %s", pattern)
 		}
 		return "🔎 Search content"
+	case "command_execution":
+		// Codex CLI's only tool — shell execution. Mirrors Bash formatting.
+		if cmd, ok := input["command"].(string); ok {
+			if len(cmd) > 60 {
+				cmd = cmd[:60] + "..."
+			}
+			return fmt.Sprintf("💻 %s", cmd)
+		}
+		return "💻 Execute command"
 	default:
 		return fmt.Sprintf("🔧 %s", name)
 	}

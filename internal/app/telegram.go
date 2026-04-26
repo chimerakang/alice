@@ -4112,13 +4112,26 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 
 // getModelTag 根據模型名稱返回對應的標籤
 func getModelTag(model string) string {
+	lower := strings.ToLower(model)
 	switch {
-	case strings.Contains(model, "haiku"):
+	case strings.Contains(lower, "haiku"):
 		return "⚡ [Haiku]"
-	case strings.Contains(model, "opus"):
+	case strings.Contains(lower, "opus"):
 		return "🧠 [Opus]"
-	case strings.Contains(model, "sonnet"):
+	case strings.Contains(lower, "sonnet"):
 		return "🟡 [Sonnet]"
+	case strings.Contains(lower, "gpt-5.5-pro"):
+		return "💎 [GPT-5.5 Pro]"
+	case strings.Contains(lower, "gpt-5.5"):
+		return "🧠 [GPT-5.5]"
+	case strings.Contains(lower, "gpt-5.4-mini"):
+		return "⚡ [GPT-5.4 mini]"
+	case strings.Contains(lower, "gpt-5.4"):
+		return "🟡 [GPT-5.4]"
+	case strings.Contains(lower, "gpt-5.3-codex"):
+		return "🟢 [GPT-5.3 Codex]"
+	case strings.HasPrefix(lower, "gpt-"), strings.HasPrefix(lower, "o3"), strings.HasPrefix(lower, "o4"):
+		return fmt.Sprintf("🤖 [%s]", model)
 	default:
 		return "🤖 [Default]"
 	}
