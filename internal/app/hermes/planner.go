@@ -107,6 +107,9 @@ func NewPlannerSession(callFn CallPlanFunc, maxRetries int, extraRules string) *
 // SessionID returns the current --resume session ID (empty before first call).
 func (p *PlannerSession) SessionID() string { return p.sessionID }
 
+// SetSessionID seeds the Planner's CLI --resume session ID.
+func (p *PlannerSession) SetSessionID(sessionID string) { p.sessionID = sessionID }
+
 // Plan sends the goal to the Planner and returns parsed SubTasks plus the
 // accumulated input / output token counts across all attempts (the caller
 // needs the split so per-model ModelUsage can be recorded).

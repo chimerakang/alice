@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	appengine "claude-tg-agent/internal/app/engine"
+	"claude-tg-agent/internal/app/hermes"
 	"claude-tg-agent/internal/app/security"
 )
 
@@ -709,149 +712,68 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 		cancel()
 	}()
 
-	ps := a.current()
-
-	// ========== Phase 1: Planning (Opus, --max-turns 1) ==========
-	if onUpdate != nil {
-		onUpdate("🧠 Phase 1: Planning with Opus...", false)
+	planFn := func(ctx context.Context, _ string, projectDir string) (string, string, int, int, error) {
+		if onUpdate != nil {
+			onUpdate("🧠 Phase 1: Planning with Opus...", false)
+		}
+		log.Printf("[agent] OpusPlan via PlanExecuteEngine: calling plan model=%s, project=%s", a.planModel, projectDir)
+		planResp, err := a.client.CallPlan(ctx, opusPlanPrompt(userMessage), projectDir, a.planModel, func(contentType, text string) {
+			if onUpdate != nil && contentType == "text" && text != "" {
+				preview := text
+				if len(preview) > 100 {
+					preview = preview[:100] + "..."
+				}
+				onUpdate(fmt.Sprintf("🧠 Planning: %s", preview), true)
+			}
+		})
+		if err != nil {
+			return "", "", 0, 0, err
+		}
+		planText := planResp.Result
+		if planText == "" {
+			planText = planResp.TextContent
+		}
+		desc := fmt.Sprintf("Follow this execution plan to complete the original request.\n\nPlan:\n%s\n\nOriginal user request:\n%s", planText, userMessage)
+		raw, _ := json.Marshal([]hermes.SubTask{{
+			ID:          "s1",
+			Description: desc,
+			Status:      hermes.SubTaskPending,
+		}})
+		return "```json\n" + string(raw) + "\n```", planResp.SessionID, planResp.Usage.InputTokens, planResp.Usage.OutputTokens, nil
 	}
 
-	planPrompt := opusPlanPrompt(userMessage)
-
-	log.Printf("[agent] OpusPlan phase 1: calling plan model=%s, project=%s", a.planModel, a.projectDir)
-
-	planResp, planErr := a.client.CallPlan(ctx, planPrompt, a.projectDir, a.planModel, func(contentType, text string) {
-		// Stream thinking/text from plan phase
-		if onUpdate != nil && contentType == "text" && text != "" {
-			preview := text
-			if len(preview) > 100 {
-				preview = preview[:100] + "..."
-			}
-			onUpdate(fmt.Sprintf("🧠 Planning: %s", preview), true)
+	direct := appengine.NewDirectEngine(directRunnerFunc(func(msg string, update func(string, bool)) (string, error) {
+		if onUpdate != nil {
+			onUpdate("⚡ Phase 2: Executing with Sonnet...", false)
 		}
-	})
+		return a.runDirect(ctx, msg, update, startTime)
+	}))
+	store := hermes.NewMemoryTaskStore()
+	engine := appengine.NewPlanExecuteEngine(appengine.PlanExecuteConfig{
+		PlannerModel:          a.planModel,
+		ProjectDir:            a.projectDir,
+		ChatID:                a.chatID,
+		MaxPlannerJSONRetries: 1,
+		InterruptPolicy:       hermes.InterruptQueue,
+		Budget:                hermes.TokenBudget{},
+		AccumulatedCfg:        hermes.AccumulatedConfig{},
+	}, planFn, direct, store, &hermes.NoopProgressReporter{})
 
-	if planErr != nil {
-		log.Printf("[agent] OpusPlan phase 1 failed: %v", planErr)
-		// Fallback: run normally without plan
+	result, err := engine.Run(ctx, userMessage, a.chatContext, nil)
+	if err != nil {
+		log.Printf("[agent] OpusPlan via PlanExecuteEngine failed: %v", err)
 		if onUpdate != nil {
 			onUpdate("⚠️ Plan phase failed, falling back to direct execution...", false)
 		}
 		return a.runDirect(ctx, userMessage, onUpdate, startTime)
 	}
+	return result.Text, nil
+}
 
-	planText := planResp.Result
-	if planText == "" {
-		planText = planResp.TextContent
-	}
+type directRunnerFunc func(string, func(string, bool)) (string, error)
 
-	log.Printf("[agent] OpusPlan phase 1 complete: plan_tokens_in=%d plan_tokens_out=%d plan_cost=$%.4f",
-		planResp.Usage.InputTokens, planResp.Usage.OutputTokens, planResp.TotalCostUSD)
-
-	// Track plan phase cost
-	planCost := planResp.TotalCostUSD
-	planInputTokens := int64(planResp.Usage.InputTokens)
-	planOutputTokens := int64(planResp.Usage.OutputTokens)
-
-	// ========== Phase 2: Execution (Sonnet, with plan context) ==========
-	if onUpdate != nil {
-		onUpdate("⚡ Phase 2: Executing with Sonnet...", false)
-	}
-
-	// Inject plan as context for execution phase
-	executeMessage := fmt.Sprintf(`[Execution Plan from Opus — follow this plan to complete the task]
-
-%s
-
----
-
-Original user request: %s
-
-Execute the plan above. Follow the steps precisely.`, planText, userMessage)
-
-	// Force new session for execution phase (different model)
-	executeBackend := BackendKindForModel(a.executeModel)
-	ps.ctx.ClearSession(executeBackend)
-	a.lastUsedModel = a.executeModel
-	ps.ctx.LastBackend = executeBackend
-
-	log.Printf("[agent] OpusPlan phase 2: calling execute model=%s, project=%s", a.executeModel, a.projectDir)
-
-	// Pre-generate decision ID
-	currentDecisionID := generateDecisionID(a.chatID, a.threadID, startTime)
-	var toolCallsForDecision []ToolExecution
-
-	execResp, execErr := a.client.CallStream(ctx, executeMessage, a.projectDir, ps.ctx.Session(executeBackend), a.executeModel, func(toolName string, toolInput map[string]interface{}) {
-		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
-		globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID, a.projectDir)
-
-		toolExecution := ToolExecution{
-			Timestamp:   time.Now(),
-			ToolName:    toolName,
-			Input:       toolInput,
-			Status:      "executed",
-			ChatID:      a.chatID,
-			ThreadID:    a.threadID,
-			ProjectPath: a.projectDir,
-		}
-		toolCallsForDecision = append(toolCallsForDecision, toolExecution)
-
-		if onUpdate != nil {
-			msg := formatToolUpdate(toolName, toolInput)
-			if msg != "" {
-				onUpdate(msg, true)
-			}
-		}
-	}, func(contentType, text string) {
-		// Don't send streaming previews
-	})
-
-	// Merge costs from both phases
-	var totalResp *CLIResponse
-	if execResp != nil {
-		totalResp = execResp
-		ps.ctx.SetSession(executeBackend, execResp.SessionID)
-
-		// Calculate execution phase cost (this is a new session, so TotalCostUSD is session-only)
-		execCost := execResp.TotalCostUSD
-		ps.lastTotalCostUSD = execResp.TotalCostUSD
-
-		// Merge both phases into stats
-		ps.stats.APICallCount += 2 // plan + execute
-		ps.stats.TotalInputTokens += planInputTokens + int64(execResp.Usage.InputTokens)
-		ps.stats.TotalOutputTokens += planOutputTokens + int64(execResp.Usage.OutputTokens)
-		ps.stats.TotalCostUSD += planCost + execCost
-		ps.ctx.LastActivity = time.Now()
-
-		log.Printf("[agent] OpusPlan complete: plan_cost=$%.4f exec_cost=$%.4f total_cost=$%.4f exec_turns=%d",
-			planCost, execCost, planCost+execCost, execResp.NumTurns)
-
-		// Log decision with merged stats
-		a.logDecision(userMessage, execResp.Result, toolCallsForDecision, startTime, execResp, execErr, "opus_plan", 0, planCost+execCost)
-	} else if execErr != nil {
-		// Execution failed but we have plan cost to track
-		ps.stats.APICallCount++
-		ps.stats.TotalInputTokens += planInputTokens
-		ps.stats.TotalOutputTokens += planOutputTokens
-		ps.stats.TotalCostUSD += planCost
-		ps.ctx.LastActivity = time.Now()
-
-		a.logDecision(userMessage, "", toolCallsForDecision, startTime, nil, execErr, "opus_plan", 0, planCost)
-		return "", fmt.Errorf("OpusPlan execution phase failed: %w", execErr)
-	}
-
-	if execErr != nil {
-		partialText := ""
-		if totalResp != nil {
-			partialText = totalResp.TextContent
-		}
-		return partialText, fmt.Errorf("OpusPlan execution phase failed: %w", execErr)
-	}
-
-	// Save exchange to recentMessages
-	addToRecentMessages(ps, userMessage, execResp.Result)
-
-	return execResp.Result, nil
+func (f directRunnerFunc) Run(userMessage string, onUpdate func(string, bool)) (string, error) {
+	return f(userMessage, onUpdate)
 }
 
 // runDirect is the standard single-phase execution (fallback when plan phase fails)

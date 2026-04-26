@@ -2031,7 +2031,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	ctx := context.Background()
 	cfg := HermesDefaults(t.config.Hermes)
 
-	var plannerModel, executorModel, heavyExecutorModel string
+	var plannerModel, executorModel string
 	if tier == "codex" {
 		plannerModel = cfg.CodexPlannerModel
 		if plannerModel == "" {
@@ -2040,10 +2040,6 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		executorModel = cfg.CodexExecutorModel
 		if executorModel == "" {
 			executorModel = t.config.ModelRouting.CodexFastModel
-		}
-		heavyExecutorModel = cfg.CodexHeavyExecutorModel
-		if heavyExecutorModel == "" {
-			heavyExecutorModel = t.config.ModelRouting.CodexSmartModel
 		}
 	} else {
 		plannerModel = cfg.PlannerModel
@@ -2054,21 +2050,9 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		if executorModel == "" {
 			executorModel = t.config.ModelRouting.FastModel
 		}
-		heavyExecutorModel = cfg.HeavyExecutorModel
-		if heavyExecutorModel == "" {
-			// Default to the routing layer's smart tier (typically Sonnet) so
-			// Edit/Write sub-tasks fall back gracefully when the operator has
-			// not configured an explicit override.
-			heavyExecutorModel = t.config.ModelRouting.SmartModel
-		}
 	}
 
 	planFn := makePlanFn(t.client, plannerModel)
-	execFn := makeExecFn(t.client, executorModel)
-	var execFnHeavy hermes.CallStreamFunc
-	if heavyExecutorModel != "" && heavyExecutorModel != executorModel {
-		execFnHeavy = makeExecFn(t.client, heavyExecutorModel)
-	}
 
 	taskStore := buildHermesTaskStore()
 
@@ -2123,30 +2107,12 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		}
 	}
 
-	coordCfg := hermes.CoordinatorConfig{
-		ChatID:                key.chatID,
-		ProjectDir:            projectDir,
-		PlannerModel:          plannerModel,
-		ExecutorModel:         executorModel,
-		HeavyExecutorModel:    heavyExecutorModel,
-		MaxRetriesPerSubtask:  cfg.MaxRetriesPerSubtask,
-		MaxPlannerJSONRetries: cfg.MaxPlannerJSONRetries,
-		InterruptPolicy:       hermes.InterruptPolicy(cfg.InterruptPolicy),
-		ProgressVerbosity:     verbosity,
-		Budget:                budget,
-		PlannerRules:          pb.ForRole(hermes.RolePlanner),
-		PlannerSessionID:      plannerSessionID,
-		ExecutorSessionID:     executorSessionID,
-		ExecutorRules:         pb.ForRole(hermes.RoleExecutor),
-		GithubIssueNumber:     issueNumber,
-		GithubCfg:             ghCfg,
-		PostCompletionHook:    t.buildTaskSyncHook(ghIntegration.TriggerTaskSync, projectDir),
-	}
-
 	onDoneHook := t.buildHermesOnDoneHook(key, goal)
-	coordCfg.OnDone = func(doneCtx context.Context, state hermes.TaskState) {
+	onDone := func(doneCtx context.Context, state hermes.TaskState) {
 		t.recordPlannerSession(key, tier, state.PlannerSessionID)
-		t.recordExecutorSession(key, tier, state.ExecutorSessionID)
+		if sess := t.getChatContext(key, projectDir).Session(appengine.BackendKindForModel(executorModel)); sess != "" {
+			t.recordExecutorSession(key, tier, sess)
+		}
 		if onDoneHook != nil {
 			onDoneHook(doneCtx, state)
 		}
@@ -2158,15 +2124,42 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	}
 
 	continueCh := make(chan struct{}, 1)
-	coordCfg.ContinueCh = continueCh
-
-	coord := hermes.NewCoordinator(coordCfg, planFn, execFn, execFnHeavy, taskStore, reporter, nil)
+	agent := t.getAgent(key)
+	if executorSessionID != "" {
+		agent.chatContext.SetSession(appengine.BackendKindForModel(executorModel), executorSessionID)
+	}
+	direct := appengine.NewDirectEngine(directRunnerFunc(func(msg string, update func(string, bool)) (string, error) {
+		prevOverride := agent.currentModelOverride
+		if executorModel != "" {
+			agent.currentModelOverride = executorModel
+		}
+		defer func() {
+			agent.currentModelOverride = prevOverride
+		}()
+		return agent.Run(msg, update)
+	}))
+	coord := appengine.NewPlanExecuteEngine(appengine.PlanExecuteConfig{
+		ChatID:                key.chatID,
+		ProjectDir:            projectDir,
+		PlannerModel:          plannerModel,
+		MaxPlannerJSONRetries: cfg.MaxPlannerJSONRetries,
+		InterruptPolicy:       hermes.InterruptPolicy(cfg.InterruptPolicy),
+		Budget:                budget,
+		AccumulatedCfg:        hermes.AccumulatedConfig{},
+		PlannerRules:          pb.ForRole(hermes.RolePlanner),
+		PlannerSessionID:      plannerSessionID,
+		GithubIssueNumber:     issueNumber,
+		GithubCfg:             ghCfg,
+		PostCompletionHook:    t.buildTaskSyncHook(ghIntegration.TriggerTaskSync, projectDir),
+		ContinueCh:            continueCh,
+		OnDone:                onDone,
+	}, planFn, direct, taskStore, reporter)
 
 	t.hermesMu.Lock()
 	t.hermesCoords[key] = &hermesCoord{coord: coord, enabled: true, continueCh: continueCh}
 	t.hermesMu.Unlock()
 
-	taskID, err := coord.Start(ctx, goal)
+	taskID, err := coord.Start(ctx, goal, agent.chatContext)
 	if err != nil {
 		t.send(key, fmt.Sprintf("Hermes 啟動失敗：%v", err))
 		return
