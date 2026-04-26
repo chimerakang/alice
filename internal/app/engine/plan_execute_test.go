@@ -44,10 +44,47 @@ func (r *planExecuteReporter) OnError(err error) {
 	r.events = append(r.events, "error:"+err.Error())
 }
 
+type recordingReviewPhase struct {
+	calls int
+	last  ReviewRequest
+}
+
+func (r *recordingReviewPhase) Review(ctx context.Context, req ReviewRequest) (ReviewResult, error) {
+	r.calls++
+	r.last = req
+	return ReviewResult{
+		ReviewerModel: "gpt-5.5",
+		Verdict:       VerdictPass,
+		OverallScore:  88,
+		Feedback:      "review ok",
+		SubTaskResults: []ReviewSubTaskResult{
+			{SubTaskID: "s1", Score: 90, Feedback: "good"},
+		},
+		InputTokens:  12,
+		OutputTokens: 8,
+		CostUSD:      0.42,
+	}, nil
+}
+
+type recordingReviewStore struct {
+	calls  int
+	lastID string
+	last   ReviewResult
+}
+
+func (s *recordingReviewStore) StoreReview(ctx context.Context, taskID string, review ReviewResult) error {
+	s.calls++
+	s.lastID = taskID
+	s.last = review
+	return nil
+}
+
 func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 	store := hermes.NewMemoryTaskStore()
 	runner := &planExecuteRunner{}
 	reporter := &planExecuteReporter{}
+	reviewPhase := &recordingReviewPhase{}
+	reviewStore := &recordingReviewStore{}
 	planFn := func(ctx context.Context, message, projectDir string) (string, string, int, int, error) {
 		return "```json\n" +
 			`[{"id":"s1","description":"read context","tool_hints":["Read"]},` +
@@ -63,6 +100,8 @@ func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 		InterruptPolicy:       hermes.InterruptQueue,
 		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
 		AccumulatedCfg:        hermes.AccumulatedConfig{},
+		ReviewPhase:           reviewPhase,
+		ReviewStore:           reviewStore,
 	}, planFn, NewDirectEngine(runner), store, reporter)
 
 	taskID, err := engine.Start(context.Background(), "complex implementation goal", NewChatContext(42, 0, "/repo"))
@@ -98,6 +137,108 @@ func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 	if len(state.ModelUsages) != 1 || state.ModelUsages[0].Model != "planner-model" || state.ModelUsages[0].InputTokens != 11 || state.ModelUsages[0].OutputTokens != 7 {
 		t.Fatalf("model usage = %#v", state.ModelUsages)
 	}
+	if reviewPhase.calls != 1 {
+		t.Fatalf("review calls = %d, want 1", reviewPhase.calls)
+	}
+	if reviewStore.calls != 1 || reviewStore.lastID != taskID {
+		t.Fatalf("review store = %+v", reviewStore)
+	}
+	if reviewStore.last.Verdict != VerdictPass || reviewStore.last.ReviewerModel != "gpt-5.5" {
+		t.Fatalf("review store payload = %+v", reviewStore.last)
+	}
+	if reviewPhase.last.TaskID != taskID || reviewPhase.last.Accumulated == "" {
+		t.Fatalf("review request missing context: %+v", reviewPhase.last)
+	}
+}
+
+func TestPlanExecuteEngineSkipsReviewForSingleSubTask(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	runner := &planExecuteRunner{}
+	reviewPhase := &recordingReviewPhase{}
+	reviewStore := &recordingReviewStore{}
+	planFn := func(ctx context.Context, message, projectDir string) (string, string, int, int, error) {
+		return "```json\n" +
+			`[{"id":"s1","description":"execute directly"}]` +
+			"\n```", "", 0, 0, nil
+	}
+
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		PlannerModel:          "planner-model",
+		ProjectDir:            "/repo",
+		ChatID:                42,
+		MaxPlannerJSONRetries: 1,
+		InterruptPolicy:       hermes.InterruptQueue,
+		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
+		AccumulatedCfg:        hermes.AccumulatedConfig{},
+		ReviewPhase:           reviewPhase,
+		ReviewStore:           reviewStore,
+	}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
+
+	taskID, err := engine.Start(context.Background(), "short goal", NewChatContext(42, 0, "/repo"))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitForPlanExecute(t, engine)
+
+	state, err := store.GetTask(taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if state.Status != hermes.TaskStatusDone {
+		t.Fatalf("status = %s, want done", state.Status)
+	}
+	if reviewPhase.calls != 0 || reviewStore.calls != 0 {
+		t.Fatalf("review should be skipped for single sub-task: phase=%d store=%d", reviewPhase.calls, reviewStore.calls)
+	}
+}
+
+func TestPlanExecuteEngineDoesNotRetryFailedSubTask(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	runner := &failingOnceRunner{}
+	planFn := func(ctx context.Context, message, projectDir string) (string, string, int, int, error) {
+		return "```json\n" +
+			`[{"id":"s1","description":"first"}]` +
+			"\n```", "", 0, 0, nil
+	}
+
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		PlannerModel:          "planner-model",
+		ProjectDir:            "/repo",
+		ChatID:                42,
+		MaxPlannerJSONRetries: 1,
+		InterruptPolicy:       hermes.InterruptQueue,
+		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
+		AccumulatedCfg:        hermes.AccumulatedConfig{},
+	}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
+
+	taskID, err := engine.Start(context.Background(), "goal", NewChatContext(42, 0, "/repo"))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitForPlanExecute(t, engine)
+
+	state, err := store.GetTask(taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if len(runner.prompts) != 1 {
+		t.Fatalf("runner calls = %d, want 1", len(runner.prompts))
+	}
+	if state.Plan[0].Status != hermes.SubTaskFailed {
+		t.Fatalf("first sub-task status = %s, want failed", state.Plan[0].Status)
+	}
+}
+
+type failingOnceRunner struct {
+	prompts []string
+}
+
+func (r *failingOnceRunner) Run(userMessage string, onUpdate func(string, bool)) (string, error) {
+	r.prompts = append(r.prompts, userMessage)
+	if len(r.prompts) == 1 {
+		return "", context.DeadlineExceeded
+	}
+	return "ok", nil
 }
 
 func waitForPlanExecute(t *testing.T, engine *PlanExecuteEngine) {

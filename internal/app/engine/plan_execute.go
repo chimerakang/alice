@@ -33,6 +33,11 @@ type PlanExecuteConfig struct {
 
 	PostCompletionHook func(ctx context.Context)
 
+	ReviewPhase       ReviewPhase
+	ReviewStore       ReviewResultStore
+	DisableReview     bool
+	ReviewMinSubTasks int
+
 	ContinueCh      chan struct{}
 	ContinueTimeout time.Duration
 
@@ -258,6 +263,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 
 	_ = e.store.MarkStatus(taskID, hermes.TaskStatusDone)
 	finalState, _ := e.store.GetTask(taskID)
+	e.runReview(ctx, finalState)
 	e.reporter.OnDone(finalState)
 	if e.cfg.OnDone != nil {
 		e.cfg.OnDone(ctx, finalState)
@@ -400,6 +406,63 @@ func (e *PlanExecuteEngine) onBudgetExceeded(ctx context.Context, state hermes.T
 			log.Printf("[plan_execute] GitHub apply failure label on budget: %v", err)
 		}
 	}
+}
+
+func (e *PlanExecuteEngine) runReview(ctx context.Context, state hermes.TaskState) {
+	if !e.shouldRunReview(state.Plan) {
+		return
+	}
+	if e.cfg.ReviewPhase == nil {
+		return
+	}
+
+	reviewReq := ReviewRequest{
+		TaskID:         state.ID,
+		ProjectDir:     e.cfg.ProjectDir,
+		Goal:           state.Goal,
+		Accumulated:    state.Accumulated,
+		Plan:           append([]hermes.SubTask(nil), state.Plan...),
+		SubTaskResults: ReviewInputsFromPlan(state.Plan),
+	}
+	if len(state.Artifacts) > 0 {
+		reviewReq.Artifacts = make([]Artifact, 0, len(state.Artifacts))
+		for _, artifact := range state.Artifacts {
+			reviewReq.Artifacts = append(reviewReq.Artifacts, Artifact{
+				Path:      artifact.Path,
+				Hash:      artifact.Hash,
+				SubTaskID: artifact.SubTaskID,
+			})
+		}
+	}
+
+	result, err := e.cfg.ReviewPhase.Review(ctx, reviewReq)
+	if err != nil {
+		log.Printf("[plan_execute] review failed: %v", err)
+		return
+	}
+	if err := result.Validate(); err != nil {
+		log.Printf("[plan_execute] review invalid: %v", err)
+		return
+	}
+	if e.cfg.ReviewStore != nil {
+		if err := e.cfg.ReviewStore.StoreReview(ctx, state.ID, result); err != nil {
+			log.Printf("[plan_execute] store review: %v", err)
+		}
+	}
+}
+
+func (e *PlanExecuteEngine) shouldRunReview(tasks []hermes.SubTask) bool {
+	if e.cfg.DisableReview {
+		return false
+	}
+	if e.cfg.ReviewPhase == nil {
+		return false
+	}
+	minTasks := e.cfg.ReviewMinSubTasks
+	if minTasks <= 0 {
+		minTasks = 2
+	}
+	return len(tasks) >= minTasks
 }
 
 func buildSubTaskGoal(goal, accumulated string, idx, total int, subTask hermes.SubTask) string {

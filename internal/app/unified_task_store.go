@@ -1,11 +1,14 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
+
+	appengine "claude-tg-agent/internal/app/engine"
 )
 
 // UnifiedTaskStore is the transitional task-centric persistence API for #114.
@@ -18,6 +21,7 @@ type UnifiedTaskStore interface {
 	InsertUnifiedArtifact(artifact UnifiedArtifact) error
 	InsertUnifiedReviewResult(review UnifiedReviewResult) (int64, error)
 	InsertUnifiedReviewSubTaskResult(result UnifiedReviewSubTaskResult) error
+	StoreReview(ctx context.Context, taskID string, review appengine.ReviewResult) error
 	ListUnifiedTaskGraphs(query UnifiedTaskQuery) ([]UnifiedTaskGraph, error)
 	CountUnifiedTasks(query UnifiedTaskQuery) (int64, error)
 }

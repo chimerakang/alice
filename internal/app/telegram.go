@@ -2051,6 +2051,11 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 			executorModel = t.config.ModelRouting.FastModel
 		}
 	}
+	reviewModel := t.config.ModelRouting.DeepModel
+	if tier == "codex" && t.config.ModelRouting.CodexDeepModel != "" {
+		reviewModel = t.config.ModelRouting.CodexDeepModel
+	}
+	reviewPhase := NewCLIReviewPhase(t.client, reviewModel)
 
 	planFn := makePlanFn(t.client, plannerModel)
 
@@ -2151,6 +2156,8 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		GithubIssueNumber:     issueNumber,
 		GithubCfg:             ghCfg,
 		PostCompletionHook:    t.buildTaskSyncHook(ghIntegration.TriggerTaskSync, projectDir),
+		ReviewPhase:           reviewPhase,
+		ReviewStore:           globalStorage,
 		ContinueCh:            continueCh,
 		OnDone:                onDone,
 	}, planFn, direct, taskStore, reporter)

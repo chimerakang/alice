@@ -1,9 +1,12 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 	"time"
+
+	appengine "claude-tg-agent/internal/app/engine"
 )
 
 func TestInsertDecisionLogWritesUnifiedTaskGraph(t *testing.T) {
@@ -173,6 +176,69 @@ func TestUnifiedReviewResultsIncludeSubTaskReviews(t *testing.T) {
 	}
 	if len(review.SubTaskResults) != 1 || review.SubTaskResults[0].IssueTags[0] != "ambiguous_goal" {
 		t.Fatalf("unexpected subtask review: %+v", review.SubTaskResults)
+	}
+}
+
+func TestStoreReviewPersistsUnifiedReviewGraph(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:         "task-review-store",
+		ChatID:     42,
+		ThreadID:   1,
+		ProjectDir: "/repo",
+		Goal:       "review me",
+		Engine:     "plan_execute",
+		Backend:    "claude",
+		Status:     "done",
+		StartedAt:  time.Now().UTC().Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+		ID:          "task-review-store:s1",
+		TaskID:      "task-review-store",
+		Idx:         0,
+		Description: "review step",
+		Model:       "claude",
+		Status:      "done",
+		StartedAt:   time.Now().UTC().Add(-30 * time.Second),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedSubTask: %v", err)
+	}
+	if err := s.StoreReview(context.Background(), "task-review-store", appengine.ReviewResult{
+		ReviewerModel: "gpt-5.5",
+		Verdict:       appengine.VerdictPartial,
+		OverallScore:  73,
+		Feedback:      "needs follow-up",
+		IssueTags:     []appengine.ReviewTag{appengine.ReviewTagMissingContext},
+		SubTaskResults: []appengine.ReviewSubTaskResult{
+			{
+				SubTaskID: "task-review-store:s1",
+				Score:     72,
+				Feedback:  "more context needed",
+				IssueTags: []appengine.ReviewTag{appengine.ReviewTagMissingValidation},
+			},
+		},
+		InputTokens:  9,
+		OutputTokens: 4,
+		CostUSD:      0.11,
+	}); err != nil {
+		t.Fatalf("StoreReview: %v", err)
+	}
+
+	graphs, err := s.ListUnifiedTaskGraphs(UnifiedTaskQuery{ID: "task-review-store", Limit: 1})
+	if err != nil {
+		t.Fatalf("ListUnifiedTaskGraphs: %v", err)
+	}
+	if len(graphs) != 1 || len(graphs[0].Reviews) != 1 {
+		t.Fatalf("unexpected review graph: %+v", graphs)
+	}
+	review := graphs[0].Reviews[0]
+	if review.ReviewerModel != "gpt-5.5" || review.InputTokens != 9 || review.OutputTokens != 4 {
+		t.Fatalf("unexpected persisted review: %+v", review)
+	}
+	if len(review.SubTaskResults) != 1 || review.SubTaskResults[0].IssueTags[0] != "missing_validation" {
+		t.Fatalf("unexpected persisted review subtask results: %+v", review.SubTaskResults)
 	}
 }
 
