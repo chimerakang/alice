@@ -92,11 +92,16 @@ func (ea *EnhancedAgent) processMultimodalMessage(ctx context.Context, content M
 
 // runWithFiles 使用 Claude Code CLI 的 --file 參數處理檔案
 func (ea *EnhancedAgent) runWithFiles(ctx context.Context, message string, imagePaths []string, onUpdate func(string, bool)) (string, error) {
-	// 類型斷言：確保 client 是 CLIClient
+	// runWithFiles requires EnhancedCLIClient for --file flag support.
+	// Other backends (CodexClient, APIClient) cannot pass image attachments —
+	// the images will be silently dropped, so we surface a notice to the user
+	// before falling back to a text-only Run.
 	cliClient, ok := ea.Agent.client.(*CLIClient)
 	if !ok {
-		// 如果不是 CLIClient（例如 APIClient），回退到普通 Run
-		log.Printf("[enhanced-agent] client is not CLIClient, falling back to regular Run")
+		log.Printf("[enhanced-agent] backend %T does not support file attachments; %d image(s) will be ignored", ea.Agent.client, len(imagePaths))
+		if onUpdate != nil && len(imagePaths) > 0 {
+			onUpdate("⚠️ 目前 AI backend 不支援圖片附件，僅以文字訊息處理。", false)
+		}
 		return ea.Agent.Run(message, onUpdate)
 	}
 

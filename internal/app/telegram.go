@@ -123,6 +123,7 @@ type TelegramBot struct {
 type hermesCoord struct {
 	coord      interface{ TaskID() string; IsRunning() bool }
 	enabled    bool
+	tier       string        // "" or "claude" → Claude tier; "codex" → GPT tier (set by /ghermes)
 	continueCh chan struct{} // non-nil when coordinator is paused on a budget warning
 }
 
@@ -681,7 +682,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	// Model routing: Three-tier priority system
 	var modelOverride string
 	if t.config.ModelRouting.EnableDynamicRouting {
-		// Priority 1: User explicit preference (/fast, /smart, or /deep)
+		// Priority 1: User explicit preference (/fast, /smart, /deep, /gfast, /gsmart, /gdeep)
 		userPref := t.getUserModelPreference(key)
 		if userPref == "fast" {
 			modelOverride = t.config.ModelRouting.FastModel
@@ -692,6 +693,15 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		} else if userPref == "deep" {
 			modelOverride = t.config.ModelRouting.DeepModel
 			log.Printf("[telegram] model routing: using deep model (user preference)")
+		} else if userPref == "gpt-fast" {
+			modelOverride = t.config.ModelRouting.CodexFastModel
+			log.Printf("[telegram] model routing: using GPT fast model (user preference)")
+		} else if userPref == "gpt-smart" {
+			modelOverride = t.config.ModelRouting.CodexSmartModel
+			log.Printf("[telegram] model routing: using GPT smart model (user preference)")
+		} else if userPref == "gpt-deep" {
+			modelOverride = t.config.ModelRouting.CodexDeepModel
+			log.Printf("[telegram] model routing: using GPT deep model (user preference)")
 		} else if t.isStickySession(agent) {
 			// Priority 2: Sticky session — session active and not idle, skip triage entirely
 			log.Printf("[telegram] model routing: sticky session active (last activity: %v ago), keeping current model + session",
@@ -1080,6 +1090,15 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		} else if modelMode == "deep" {
 			modelDisplay = t.getLocalizedMessage(key.chatID, "model_deep", nil)
 			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.config.ModelRouting.DeepModel)
+		} else if modelMode == "gpt-fast" {
+			modelDisplay = t.getLocalizedMessage(key.chatID, "model_gpt_fast", nil)
+			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.config.ModelRouting.CodexFastModel)
+		} else if modelMode == "gpt-smart" {
+			modelDisplay = t.getLocalizedMessage(key.chatID, "model_gpt_smart", nil)
+			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.config.ModelRouting.CodexSmartModel)
+		} else if modelMode == "gpt-deep" {
+			modelDisplay = t.getLocalizedMessage(key.chatID, "model_gpt_deep", nil)
+			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.config.ModelRouting.CodexDeepModel)
 		} else {
 			modelDisplay = t.getLocalizedMessage(key.chatID, "model_auto", nil)
 			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.client.GetModel())
@@ -1260,6 +1279,69 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		}
 		t.send(key, msg)
 
+	case "/gfast":
+		if !t.config.ModelRouting.EnableDynamicRouting {
+			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
+			return
+		}
+		if !t.codexTierAvailable(key) {
+			return
+		}
+		agent := t.getAgent(key)
+		hasSession := agent.SessionID() != ""
+		if hasSession {
+			agent.ClearSession() // isolate backend: GPT tier uses different session state
+		}
+		t.setUserModelPreference(key, "gpt-fast")
+		agent.SetPlanMode(false, "", "") // Disable plan mode
+		msg := t.getLocalizedMessage(key.chatID, "mode_switched_gpt_fast", map[string]string{"model": t.config.ModelRouting.CodexFastModel})
+		if hasSession {
+			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
+		}
+		t.send(key, msg)
+
+	case "/gsmart":
+		if !t.config.ModelRouting.EnableDynamicRouting {
+			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
+			return
+		}
+		if !t.codexTierAvailable(key) {
+			return
+		}
+		agent := t.getAgent(key)
+		hasSession := agent.SessionID() != ""
+		if hasSession {
+			agent.ClearSession() // isolate backend: GPT tier uses different session state
+		}
+		t.setUserModelPreference(key, "gpt-smart")
+		agent.SetPlanMode(false, "", "") // Disable plan mode
+		msg := t.getLocalizedMessage(key.chatID, "mode_switched_gpt_smart", map[string]string{"model": t.config.ModelRouting.CodexSmartModel})
+		if hasSession {
+			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
+		}
+		t.send(key, msg)
+
+	case "/gdeep":
+		if !t.config.ModelRouting.EnableDynamicRouting {
+			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
+			return
+		}
+		if !t.codexTierAvailable(key) {
+			return
+		}
+		agent := t.getAgent(key)
+		hasSession := agent.SessionID() != ""
+		if hasSession {
+			agent.ClearSession() // isolate backend: GPT tier uses different session state
+		}
+		t.setUserModelPreference(key, "gpt-deep")
+		agent.SetPlanMode(false, "", "") // Disable plan mode
+		msg := t.getLocalizedMessage(key.chatID, "mode_switched_gpt_deep", map[string]string{"model": t.config.ModelRouting.CodexDeepModel})
+		if hasSession {
+			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
+		}
+		t.send(key, msg)
+
 	case "/auto":
 		// Also disable Hermes mode if active
 		t.hermesMu.Lock()
@@ -1337,6 +1419,9 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 	case "/cron":
 		t.handleCronCommand(key, parts, text)
 
+	case "/model":
+		t.handleModelCommand(key, parts)
+
 	case "/backend":
 		t.handleBackendCommand(key, parts)
 
@@ -1359,7 +1444,13 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		}
 
 	case "/hermes":
-		t.handleHermesCommand(key, parts)
+		t.handleHermesCommand(key, parts, "")
+
+	case "/ghermes":
+		if !t.codexTierAvailable(key) {
+			return
+		}
+		t.handleHermesCommand(key, parts, "codex")
 
 	case "/hermes-stats":
 		t.handleHermesStatsCommand(key, parts)
@@ -1370,12 +1461,14 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 }
 
 // handleHermesCommand enables or queries Hermes mode for this chat.
+// tier: "" or "claude" → Claude tier (/hermes); "codex" → GPT tier (/ghermes).
 //
 //	/hermes          — enable Hermes mode (next message will trigger Brain-Executor)
 //	/hermes issues   — list open GitHub Issues sorted by priority
 //	/hermes status   — show current coordinator state
 //	/hermes stop     — cancel current task and disable Hermes mode
-func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string) {
+//	/ghermes         — same as above but on the GPT/Codex tier
+func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier string) {
 	if !t.config.Hermes.Enabled {
 		t.send(key, "Hermes 模式未啟用。請在 config.json 中設定 hermes.enabled = true。")
 		return
@@ -1397,6 +1490,14 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string) {
 		}
 		t.send(key, fmt.Sprintf("🔍 正在讀取 GitHub Issue #%d…", issueNum))
 		projectDir := t.getAgent(key).ProjectDir()
+		// Record tier on the coord so startHermesFromIssue → startHermesTaskWithIssue
+		// picks up the right model tier via hermesTierFor.
+		t.hermesMu.Lock()
+		if t.hermesCoords[key] == nil {
+			t.hermesCoords[key] = &hermesCoord{enabled: true}
+		}
+		t.hermesCoords[key].tier = tier
+		t.hermesMu.Unlock()
 		go t.startHermesFromIssue(key, issueNum, projectDir)
 		return
 	}
@@ -1440,9 +1541,13 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string) {
 
 	default:
 		t.hermesMu.Lock()
-		t.hermesCoords[key] = &hermesCoord{enabled: true}
+		t.hermesCoords[key] = &hermesCoord{enabled: true, tier: tier}
 		t.hermesMu.Unlock()
-		t.send(key, "✅ Hermes 模式已啟用。\n\n正在載入待處理 Issues…")
+		if tier == "codex" {
+			t.send(key, "✅ Hermes 模式已啟用（GPT tier）。\n\n正在載入待處理 Issues…")
+		} else {
+			t.send(key, "✅ Hermes 模式已啟用。\n\n正在載入待處理 Issues…")
+		}
 		projectDir := t.getAgent(key).ProjectDir()
 		go func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -1551,44 +1656,72 @@ func (t *TelegramBot) startHermesFromIssue(key chatKey, issueNumber int, project
 	t.startHermesTaskWithIssue(key, goal, projectDir, issueNumber, budget, ghCfg)
 }
 
-// startHermesTask launches a Hermes coordinator for the given goal.
+// startHermesTask launches a Hermes coordinator for the given goal on the Claude tier.
 // Uses context.Background() so the task survives handler cancellation.
 func (t *TelegramBot) startHermesTask(key chatKey, goal, projectDir string) {
-	t.startHermesTaskWithIssue(key, goal, projectDir, 0, HermesBudgetConfig{}, GithubIntegrationConfig{})
+	t.startHermesTaskWithIssueTier(key, goal, projectDir, 0, HermesBudgetConfig{}, GithubIntegrationConfig{}, t.hermesTierFor(key))
 }
 
-// startHermesTaskWithIssue is the common implementation for startHermesTask and startHermesFromIssue.
+// startHermesTaskWithIssue preserves the original signature for callers that don't
+// care about tier — defaults to whatever tier the chat's hermesCoord is on.
 func (t *TelegramBot) startHermesTaskWithIssue(key chatKey, goal, projectDir string, issueNumber int, budgetOverride HermesBudgetConfig, ghIntegration GithubIntegrationConfig) {
+	t.startHermesTaskWithIssueTier(key, goal, projectDir, issueNumber, budgetOverride, ghIntegration, t.hermesTierFor(key))
+}
+
+// hermesTierFor returns the active Hermes tier for this chat ("" or "codex"),
+// derived from the chat's hermesCoord (set by /hermes vs /ghermes).
+func (t *TelegramBot) hermesTierFor(key chatKey) string {
+	t.hermesMu.RLock()
+	defer t.hermesMu.RUnlock()
+	if hc := t.hermesCoords[key]; hc != nil {
+		return hc.tier
+	}
+	return ""
+}
+
+// startHermesTaskWithIssueTier is the common implementation that selects models
+// based on the tier ("" or "claude" → Claude; "codex" → GPT/Codex).
+func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir string, issueNumber int, budgetOverride HermesBudgetConfig, ghIntegration GithubIntegrationConfig, tier string) {
 	ctx := context.Background()
 	cfg := HermesDefaults(t.config.Hermes)
 
-	plannerModel := cfg.PlannerModel
-	if plannerModel == "" {
-		plannerModel = t.config.ModelRouting.DeepModel
-	}
-	executorModel := cfg.ExecutorModel
-	if executorModel == "" {
-		executorModel = t.config.ModelRouting.FastModel
-	}
-	heavyExecutorModel := cfg.HeavyExecutorModel
-	if heavyExecutorModel == "" {
-		// Default to the routing layer's smart tier (typically Sonnet) so
-		// Edit/Write sub-tasks fall back gracefully when the operator has
-		// not configured an explicit override.
-		heavyExecutorModel = t.config.ModelRouting.SmartModel
+	var plannerModel, executorModel, heavyExecutorModel string
+	if tier == "codex" {
+		plannerModel = cfg.CodexPlannerModel
+		if plannerModel == "" {
+			plannerModel = t.config.ModelRouting.CodexDeepModel
+		}
+		executorModel = cfg.CodexExecutorModel
+		if executorModel == "" {
+			executorModel = t.config.ModelRouting.CodexFastModel
+		}
+		heavyExecutorModel = cfg.CodexHeavyExecutorModel
+		if heavyExecutorModel == "" {
+			heavyExecutorModel = t.config.ModelRouting.CodexSmartModel
+		}
+	} else {
+		plannerModel = cfg.PlannerModel
+		if plannerModel == "" {
+			plannerModel = t.config.ModelRouting.DeepModel
+		}
+		executorModel = cfg.ExecutorModel
+		if executorModel == "" {
+			executorModel = t.config.ModelRouting.FastModel
+		}
+		heavyExecutorModel = cfg.HeavyExecutorModel
+		if heavyExecutorModel == "" {
+			// Default to the routing layer's smart tier (typically Sonnet) so
+			// Edit/Write sub-tasks fall back gracefully when the operator has
+			// not configured an explicit override.
+			heavyExecutorModel = t.config.ModelRouting.SmartModel
+		}
 	}
 
-	cliClient, ok := t.client.(*CLIClient)
-	if !ok {
-		t.send(key, "Hermes 模式需要 CLIClient 後端，目前後端不支援。")
-		return
-	}
-
-	planFn := makePlanFn(cliClient, plannerModel)
-	execFn := makeExecFn(cliClient, executorModel)
+	planFn := makePlanFn(t.client, plannerModel)
+	execFn := makeExecFn(t.client, executorModel)
 	var execFnHeavy hermes.CallStreamFunc
 	if heavyExecutorModel != "" && heavyExecutorModel != executorModel {
-		execFnHeavy = makeExecFn(cliClient, heavyExecutorModel)
+		execFnHeavy = makeExecFn(t.client, heavyExecutorModel)
 	}
 
 	taskStore := buildHermesTaskStore()
@@ -5331,6 +5464,69 @@ func isShellCommand(payload string) bool {
 		}
 	}
 	return false
+}
+
+// codexTierAvailable reports whether the active client supports codex/GPT models,
+// sending a localized notice to the chat and returning false otherwise.
+// Called by /gfast /gsmart /gdeep and /model gpt-* before mutating user preference.
+func (t *TelegramBot) codexTierAvailable(key chatKey) bool {
+	mb, ok := t.client.(*MultiBackendClient)
+	if !ok {
+		t.send(key, t.getLocalizedMessage(key.chatID, "codex_tier_requires_multi_backend", nil))
+		return false
+	}
+	if !mb.HasCodex() {
+		t.send(key, t.getLocalizedMessage(key.chatID, "codex_tier_no_openai_key", nil))
+		return false
+	}
+	return true
+}
+
+// modelRequiresCodex reports whether a raw model name routes to the codex backend.
+// Mirrors MultiBackendClient.routeFor's gpt-/o3/o4/codex prefix logic.
+func modelRequiresCodex(model string) bool {
+	lower := strings.ToLower(model)
+	return strings.HasPrefix(lower, "gpt-") ||
+		strings.HasPrefix(lower, "o3") ||
+		strings.HasPrefix(lower, "o4") ||
+		strings.Contains(lower, "codex")
+}
+
+// handleModelCommand handles /model command for explicit model switching.
+// Usage: /model <model-name>  (e.g. /model gpt-5.5-pro, /model claude-sonnet-4-6, /model auto)
+func (t *TelegramBot) handleModelCommand(key chatKey, parts []string) {
+	if len(parts) < 2 {
+		currentPref := t.getUserModelPreference(key)
+		if currentPref == "" {
+			currentPref = "auto"
+		}
+		t.send(key, t.getLocalizedMessage(key.chatID, "model_command_usage", map[string]string{"current": currentPref}))
+		return
+	}
+	modelName := strings.TrimSpace(parts[1])
+	agent := t.getAgent(key)
+	if modelName == "auto" || modelName == "reset" {
+		t.setUserModelPreference(key, "")
+		agent.SetPlanMode(false, "", "")
+		t.send(key, t.getLocalizedMessage(key.chatID, "mode_switched_auto", nil))
+		return
+	}
+	// Reject codex-bound model names when codex tier is unavailable, instead of
+	// silently storing a preference that will fail on the next message.
+	if modelRequiresCodex(modelName) && !t.codexTierAvailable(key) {
+		return
+	}
+	hasSession := agent.SessionID() != ""
+	if hasSession {
+		agent.ClearSession() // isolate backend on cross-backend model switch
+	}
+	t.setUserModelPreference(key, modelName)
+	agent.SetPlanMode(false, "", "")
+	msg := t.getLocalizedMessage(key.chatID, "model_command_switched", map[string]string{"model": modelName})
+	if hasSession {
+		msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
+	}
+	t.send(key, msg)
 }
 
 // handleBackendCommand handles /backend subcommands

@@ -25,6 +25,9 @@ type ModelRoutingConfig struct {
 	DeepModel             string `json:"deep_model"`
 	PlanModel             string `json:"plan_model"`
 	ExecuteModel          string `json:"execute_model"`
+	CodexFastModel        string `json:"codex_fast_model"`
+	CodexSmartModel       string `json:"codex_smart_model"`
+	CodexDeepModel        string `json:"codex_deep_model"`
 	UseGPT4oMini          bool   `json:"use_gpt4o_mini_for_triage"`
 	StickySession         bool   `json:"sticky_session"`
 	SessionIdleTimeoutMin int    `json:"session_idle_timeout_min"`

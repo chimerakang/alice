@@ -77,6 +77,9 @@ type Config struct {
 	// Model Pricing Settings
 	ModelPricing ModelPricingConfig `json:"model_pricing"`
 
+	// AI Backend Selection: "claude" (default), "codex", "api"
+	AIBackend string `json:"ai_backend"`
+
 	// CLI Settings
 	MaxTurns          int `json:"max_turns"`           // max conversation turns per CLI invocation (default 50)
 	CLITimeoutMinutes int `json:"cli_timeout_minutes"` // max execution time per CLI invocation in minutes (default 15, 0=unlimited)
@@ -102,6 +105,12 @@ type HermesConfig struct {
 	// the description). Defaults to ModelRoutingConfig.SmartModel when empty.
 	// Set equal to ExecutorModel to disable the upgrade.
 	HeavyExecutorModel string `json:"heavy_executor_model"`
+
+	// Codex tier overrides — used by /ghermes to run Hermes on the GPT/Codex backend
+	// instead of Claude. Each falls back to ModelRoutingConfig.Codex*Model when empty.
+	CodexPlannerModel       string `json:"codex_planner_model"`
+	CodexExecutorModel      string `json:"codex_executor_model"`
+	CodexHeavyExecutorModel string `json:"codex_heavy_executor_model"`
 
 	// Retry limits
 	MaxRetriesPerSubtask    int `json:"max_retries_per_subtask"`    // default 3
@@ -325,6 +334,9 @@ func LoadConfig() (*Config, error) {
 			DeepModel:            "claude-opus-4-6",
 			PlanModel:            "claude-opus-4-6",            // OpusPlan: Opus for planning
 			ExecuteModel:         "claude-sonnet-4-5-20250929", // OpusPlan: Sonnet for execution
+			CodexFastModel:       "gpt-5.4-mini",               // /gfast: fast GPT tier
+			CodexSmartModel:      "gpt-5.4",                    // /gsmart: balanced GPT tier
+			CodexDeepModel:       "gpt-5.5-pro",                // /gdeep: powerful GPT tier
 			UseGPT4oMini:         false,
 			StickySession:         true,
 			SessionIdleTimeoutMin: 5,
@@ -665,23 +677,76 @@ func Main() {
 		)
 	}
 
-	// 環境自適應：選擇合適的客戶端
+	// 選擇 AI backend：ai_backend config 優先，其次環境自動偵測
 	var client Client
 
-	if isClaudeCodeEnvironment() {
-		log.Printf("[client-routing] Detected Claude Code environment - using Anthropic API")
+	// Resolve OpenAI key: prefer env, otherwise reuse the Whisper key from multimedia config.
+	openaiKey := os.Getenv("OPENAI_API_KEY")
+	openaiKeySource := "env"
+	if openaiKey == "" && config.Multimedia.OpenAIAPIKey != "" {
+		openaiKey = config.Multimedia.OpenAIAPIKey
+		openaiKeySource = "multimedia.openai_api_key"
+	}
+
+	switch config.AIBackend {
+	case "multi":
+		// MultiBackendClient: routes claude/* models to CLIClient, gpt-*/codex/* to CodexClient.
+		// Enables /gfast /gsmart /gdeep cross-backend tier switching in a single session.
+		log.Printf("[client-routing] Config ai_backend=multi - using MultiBackendClient dispatcher")
+		cliClient := NewClient(config.Model)
+		if config.MaxTurns > 0 {
+			cliClient.MaxTurns = config.MaxTurns
+		}
+		var codexClient *CodexClient
+		if openaiKey != "" {
+			codexClient = NewCodexClient(config.ModelRouting.CodexSmartModel, openaiKey)
+			log.Printf("[client-routing] MultiBackendClient: codex backend enabled (default model: %s, key from %s)", config.ModelRouting.CodexSmartModel, openaiKeySource)
+		} else {
+			log.Printf("[client-routing] MultiBackendClient: no OpenAI key (env OPENAI_API_KEY or multimedia.openai_api_key), codex tier disabled — /gfast /gsmart /gdeep will be rejected at runtime")
+		}
+		var apiClient *APIClient
+		if config.AnthropicKey != "" {
+			apiClient = NewAPIClient(config.AnthropicKey, config.Model)
+		}
+		client = NewMultiBackendClient(cliClient, codexClient, apiClient, cliClient)
+		log.Printf("[client-routing] Using MultiBackendClient (CLIClient default, max-turns=%d)", config.MaxTurns)
+	case "codex":
+		log.Printf("[client-routing] Config ai_backend=codex - using Codex CLI")
+		if openaiKey == "" {
+			log.Fatalf("❌ OpenAI API key not set! Codex requires either env OPENAI_API_KEY or config.multimedia.openai_api_key.")
+		}
+		client = NewCodexClient(config.Model, openaiKey)
+		log.Printf("[client-routing] Using CodexClient (Codex CLI, key from %s)", openaiKeySource)
+	case "api":
+		log.Printf("[client-routing] Config ai_backend=api - using Anthropic API direct")
 		if config.AnthropicKey == "" {
 			log.Fatalf("❌ Anthropic API Key not configured! Please set 'anthropic_key' in config.json")
 		}
 		client = NewAPIClient(config.AnthropicKey, config.Model)
 		log.Printf("[client-routing] Using APIClient (Anthropic API direct)")
-	} else {
-		log.Printf("[client-routing] Normal environment - using Claude Code CLI")
+	case "claude":
+		log.Printf("[client-routing] Config ai_backend=claude - using Claude Code CLI (explicit)")
 		client = NewClient(config.Model)
 		if cli, ok := client.(*CLIClient); ok && config.MaxTurns > 0 {
 			cli.MaxTurns = config.MaxTurns
 		}
 		log.Printf("[client-routing] Using CLIClient (Claude Code CLI, max-turns=%d)", config.MaxTurns)
+	default: // empty → auto-detect
+		if isClaudeCodeEnvironment() {
+			log.Printf("[client-routing] Detected Claude Code environment - using Anthropic API")
+			if config.AnthropicKey == "" {
+				log.Fatalf("❌ Anthropic API Key not configured! Please set 'anthropic_key' in config.json")
+			}
+			client = NewAPIClient(config.AnthropicKey, config.Model)
+			log.Printf("[client-routing] Using APIClient (Anthropic API direct)")
+		} else {
+			log.Printf("[client-routing] Normal environment - using Claude Code CLI")
+			client = NewClient(config.Model)
+			if cli, ok := client.(*CLIClient); ok && config.MaxTurns > 0 {
+				cli.MaxTurns = config.MaxTurns
+			}
+			log.Printf("[client-routing] Using CLIClient (Claude Code CLI, max-turns=%d)", config.MaxTurns)
+		}
 	}
 
 	tgBot, err := NewTelegramBot(config, client)

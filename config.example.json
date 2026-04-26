@@ -26,7 +26,11 @@
   "model_routing": {
     "enable_dynamic_routing": false,
     "fast_model": "claude-haiku-4-5-20251001",
+    "smart_model": "claude-sonnet-4-6",
     "deep_model": "claude-opus-4-7",
+    "codex_fast_model": "gpt-5.4-mini",
+    "codex_smart_model": "gpt-5.4",
+    "codex_deep_model": "gpt-5.5-pro",
     "use_gpt4o_mini_for_triage": false
   },
 
@@ -45,6 +49,7 @@
     }
   },
 
+  "ai_backend": "claude",
   "cli_timeout_minutes": 15,
 
   "enable_performance_monitoring": true,

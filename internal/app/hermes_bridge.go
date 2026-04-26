@@ -11,9 +11,9 @@ import (
 	"claude-tg-agent/internal/app/hermes"
 )
 
-// makePlanFn returns a hermes.CallPlanFunc backed by the given CLIClient and model.
+// makePlanFn returns a hermes.CallPlanFunc backed by the given Client and model.
 // projectDir is ignored here — it comes from the call site via the function signature.
-func makePlanFn(client *CLIClient, model string) hermes.CallPlanFunc {
+func makePlanFn(client Client, model string) hermes.CallPlanFunc {
 	return func(ctx context.Context, message, projectDir string) (text, sessionID string, inTokens, outTokens int, err error) {
 		var collected strings.Builder
 		resp, callErr := client.CallPlan(ctx, message, projectDir, model, func(contentType, t string) {
@@ -32,9 +32,9 @@ func makePlanFn(client *CLIClient, model string) hermes.CallPlanFunc {
 	}
 }
 
-// makeExecFn returns a hermes.CallStreamFunc backed by the given CLIClient and model.
+// makeExecFn returns a hermes.CallStreamFunc backed by the given Client and model.
 // Each invocation is a fresh CLI session (no sessionID reuse — Executor cold-starts).
-func makeExecFn(client *CLIClient, model string) hermes.CallStreamFunc {
+func makeExecFn(client Client, model string) hermes.CallStreamFunc {
 	return func(ctx context.Context, prompt, projectDir string, onContent func(string)) (result string, inTokens, outTokens int, validationErr string, err error) {
 		var collected strings.Builder
 		resp, callErr := client.CallStream(ctx, prompt, projectDir, "" /*no session*/, model,
