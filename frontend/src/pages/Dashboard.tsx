@@ -554,7 +554,7 @@ export default function Dashboard() {
     return Math.max(1, hours); // Minimum 1 hour
   }, [dateRange]);
 
-  // Fetch decisions + basic stats to discover project paths
+  // Fetch unified task graphs + basic stats to discover project paths
   useEffect(() => {
     const load = async () => {
       // Use provided date range; when "All" is selected (empty dateRange), query all history
@@ -565,7 +565,7 @@ export default function Dashboard() {
 
       const results = await Promise.allSettled([
         api.getStats(),
-        api.getDecisionsByRange({
+        api.getTaskDecisions({
           limit: 2000,
           startTime,
           endTime,
@@ -609,7 +609,7 @@ export default function Dashboard() {
       const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
       try {
-        const response = await api.getDecisionsByRange({
+        const response = await api.getTaskDecisions({
           limit: 2000,
           startTime: sevenDaysAgo.toISOString(),
           endTime: now.toISOString(),

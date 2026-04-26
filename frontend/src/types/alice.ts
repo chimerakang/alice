@@ -150,6 +150,87 @@ export interface DecisionLog {
   model?: string;
   routing_reason?: string;
   routing_latency_ms?: number;
+  unified_task?: UnifiedTask;
+}
+
+// ========== Unified Task Graph ==========
+
+export interface UnifiedToolEvent {
+  id?: number;
+  sub_task_id: string;
+  tool_name: string;
+  input_json: string;
+  output_json: string;
+  ts: string;
+  status: string;
+}
+
+export interface UnifiedArtifact {
+  id?: number;
+  sub_task_id: string;
+  path: string;
+  hash: string;
+}
+
+export interface UnifiedSubTask {
+  id: string;
+  task_id: string;
+  idx: number;
+  description: string;
+  model: string;
+  status: string;
+  result_text: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  started_at: string;
+  ended_at?: string;
+  routing_reason: string;
+  routing_latency_ms: number;
+  tool_events: UnifiedToolEvent[];
+  artifacts: UnifiedArtifact[];
+}
+
+export interface UnifiedReviewSubTaskResult {
+  id?: number;
+  review_id: number;
+  sub_task_id: string;
+  score: number;
+  feedback: string;
+  issue_tags: string[];
+}
+
+export interface UnifiedReview {
+  id?: number;
+  task_id: string;
+  reviewer_model: string;
+  verdict: string;
+  overall_score: number;
+  feedback_text: string;
+  issue_tags: string[];
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  created_at: string;
+  sub_task_results: UnifiedReviewSubTaskResult[];
+}
+
+export interface UnifiedTask {
+  id: string;
+  chat_id: number;
+  thread_id: number;
+  project_dir: string;
+  goal: string;
+  engine: string;
+  backend: string;
+  status: string;
+  started_at: string;
+  ended_at?: string;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost_usd: number;
+  sub_tasks: UnifiedSubTask[];
+  reviews: UnifiedReview[];
 }
 
 // ========== Performance ==========
@@ -229,6 +310,10 @@ export interface WebSocketEvent {
 export type WebSocketEventType =
   | "tool_execution_start"
   | "tool_execution"
+  | "task_updated"
+  | "sub_task_updated"
+  | "tool_event"
+  | "review_result"
   | "decision_complete"
   | "performance_metric"
   | "security_alert"

@@ -620,7 +620,7 @@ export default function Checkpoints() {
 
     try {
       const query = reset ? { ...buildQuery(), offset: 0 } : buildQuery();
-      const res = await api.getDecisionsByRange(query);
+      const res = await api.getTaskDecisions(query);
 
       if (res.decisions) {
         if (reset) {

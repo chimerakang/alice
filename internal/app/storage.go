@@ -17,6 +17,8 @@ import (
 
 // Storage interface 定義持久化操作
 type Storage interface {
+	UnifiedTaskStore
+
 	// Tool Executions
 	InsertToolExecution(exec ToolExecution) error
 	GetToolExecutions(limit int, offset int) ([]ToolExecution, error)
@@ -110,9 +112,9 @@ func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
 	}
 
 	// 配置連接池以避免 SQLite 並發問題
-	db.SetMaxOpenConns(1)                   // SQLite 只允許一個寫入連接
-	db.SetMaxIdleConns(1)                   // 保持一個空閒連接
-	db.SetConnMaxLifetime(time.Hour)        // 連接最長存活時間
+	db.SetMaxOpenConns(1)            // SQLite 只允許一個寫入連接
+	db.SetMaxIdleConns(1)            // 保持一個空閒連接
+	db.SetConnMaxLifetime(time.Hour) // 連接最長存活時間
 
 	storage := &SQLiteStorage{
 		db:   db,
@@ -141,7 +143,7 @@ func (s *SQLiteStorage) execWithRetry(operation func() error) error {
 
 		// 檢查是否為 SQLite 忙碌錯誤
 		if strings.Contains(err.Error(), "database is locked") ||
-		   strings.Contains(err.Error(), "SQLITE_BUSY") {
+			strings.Contains(err.Error(), "SQLITE_BUSY") {
 			if i < maxRetries-1 { // 不是最後一次重試
 				time.Sleep(retryDelay * time.Duration(i+1)) // 遞增延遲
 				continue
@@ -393,6 +395,9 @@ func (s *SQLiteStorage) initTables() error {
 			return fmt.Errorf("failed to create tables: %w", err)
 		}
 	}
+	if err := s.migrateUnifiedTaskTables(); err != nil {
+		return err
+	}
 
 	// Migration: add thinking_content column to decision_logs
 	_, err := s.db.Exec(`ALTER TABLE decision_logs ADD COLUMN thinking_content TEXT DEFAULT ''`)
@@ -592,7 +597,13 @@ func (s *SQLiteStorage) InsertDecisionLog(log DecisionLog) error {
 		gitCommitHash, gitBranch, log.ThinkingContent, source,
 		log.Model, log.RoutingReason, log.RoutingLatency)
 
-	return err
+	if err != nil {
+		return err
+	}
+	if err := s.insertDecisionLogUnified(log); err != nil {
+		return fmt.Errorf("insert unified task: %w", err)
+	}
+	return nil
 }
 
 // GetDecisionLogs 獲取決策記錄（分頁）
@@ -746,7 +757,10 @@ func (s *SQLiteStorage) GetDecisionLogCountBySessionID(sessionID string) (int64,
 
 // DeleteDecisionLogsBySessionID removes all decision logs for a given session_id (used for upsert on hook re-trigger)
 func (s *SQLiteStorage) DeleteDecisionLogsBySessionID(sessionID string) error {
-	_, err := s.db.Exec(`DELETE FROM decision_logs WHERE session_id = ?`, sessionID)
+	if _, err := s.db.Exec(`DELETE FROM decision_logs WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM tasks WHERE id = ?`, "decision:"+sessionID)
 	return err
 }
 
@@ -939,7 +953,7 @@ func (s *SQLiteStorage) GetToolExecutionStatsByTimeRange(start, end time.Time) (
 		}
 
 		stats[toolType] = map[string]interface{}{
-			"count": count,
+			"count":              count,
 			"avg_execution_time": avgExecutionTime,
 		}
 		hasData = true
@@ -975,7 +989,7 @@ func (s *SQLiteStorage) GetToolExecutionStatsByTimeRange(start, end time.Time) (
 			}
 
 			stats[toolType] = map[string]interface{}{
-				"count": count,
+				"count":              count,
 				"avg_execution_time": avgExecutionTime,
 			}
 		}
@@ -1048,7 +1062,7 @@ func (s *SQLiteStorage) GetCostSavings(hours int) (CostSavingsReport, error) {
 		// 累計實際成本和請求數
 		report.TotalRequests += calls
 		report.ActualCost += cost
-		actualCostByModel[model] += cost  // 累加而不是覆盖！
+		actualCostByModel[model] += cost // 累加而不是覆盖！
 		callsByModel[model] += calls
 		report.RoutingMethodStat[routingReason] += calls
 

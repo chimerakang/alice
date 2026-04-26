@@ -250,6 +250,108 @@ function DecisionDetail({
             )}
           </CollapsiblePanel>
 
+          {/* Unified task graph */}
+          {decision.unified_task && decision.unified_task.sub_tasks?.length > 0 && (
+            <CollapsiblePanel
+              title={`Sub Tasks (${decision.unified_task.sub_tasks.length})`}
+              defaultOpen={decision.unified_task.engine === "plan-execute"}
+              badge={
+                <Brain className="w-3.5 h-3.5 text-primary-light" />
+              }
+            >
+              <div className="space-y-2">
+                {decision.unified_task.sub_tasks.map((subTask) => (
+                  <div key={subTask.id} className="border border-gray-800/60 rounded-md p-3">
+                    <div className="flex items-start gap-2">
+                      <span className="text-xs text-gray-500 font-mono tabular-nums">
+                        #{subTask.idx + 1}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="text-sm text-white leading-snug">{subTask.description || "—"}</p>
+                          <StatusBadge
+                            variant={
+                              subTask.status === "done"
+                                ? "success"
+                                : subTask.status === "failed"
+                                  ? "error"
+                                  : "warning"
+                            }
+                            size="sm"
+                          >
+                            {subTask.status || "pending"}
+                          </StatusBadge>
+                        </div>
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+                          {subTask.model && <span>Model: {subTask.model}</span>}
+                          {(subTask.input_tokens > 0 || subTask.output_tokens > 0) && (
+                            <span>
+                              Tokens: {(subTask.input_tokens + subTask.output_tokens).toLocaleString()}
+                            </span>
+                          )}
+                          {subTask.routing_reason && <span>Route: {subTask.routing_reason}</span>}
+                        </div>
+                        {subTask.result_text && (
+                          <pre className="mt-2 bg-gray-900 border border-gray-800 rounded p-2 text-xs text-gray-300 whitespace-pre-wrap max-h-40 overflow-y-auto">
+                            {subTask.result_text}
+                          </pre>
+                        )}
+                        {subTask.artifacts?.length > 0 && (
+                          <div className="mt-2 text-xs text-gray-500">
+                            <div className="mb-1">Artifacts</div>
+                            {subTask.artifacts.map((artifact) => (
+                              <div key={artifact.id || artifact.path} className="font-mono text-gray-400">
+                                {artifact.path}{artifact.hash ? ` · ${artifact.hash.slice(0, 8)}` : ""}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CollapsiblePanel>
+          )}
+
+          {/* Review results */}
+          {decision.unified_task && decision.unified_task.reviews?.length > 0 && (
+            <CollapsiblePanel
+              title={`Reviews (${decision.unified_task.reviews.length})`}
+              defaultOpen={false}
+              badge={
+                <BarChart3 className="w-3.5 h-3.5 text-accent" />
+              }
+            >
+              <div className="space-y-2">
+                {decision.unified_task.reviews.map((review) => (
+                  <div key={review.id || review.created_at} className="border border-gray-800/60 rounded-md p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <StatusBadge
+                        variant={review.verdict === "pass" ? "success" : review.verdict === "fail" ? "error" : "warning"}
+                        size="sm"
+                      >
+                        {review.verdict || "review"}
+                      </StatusBadge>
+                      <span className="text-xs text-gray-400">{review.reviewer_model || "reviewer"}</span>
+                      <span className="text-xs text-gray-500 font-mono ml-auto">{review.overall_score}/100</span>
+                    </div>
+                    {review.issue_tags?.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        {review.issue_tags.map((tag) => (
+                          <span key={tag} className="px-1.5 py-0.5 rounded bg-gray-800 text-[10px] text-gray-400">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-sm text-gray-300 whitespace-pre-wrap">{review.feedback_text || "—"}</p>
+                  </div>
+                ))}
+              </div>
+            </CollapsiblePanel>
+          )}
+
           {/* Tool Call Gantt Timeline */}
           {toolCount > 1 && (
             <CollapsiblePanel
@@ -412,7 +514,7 @@ export default function Timeline() {
   const [sourceFilter, setSourceFilter] = useState("all");
   const [selectedDecision, setSelectedDecision] = useState<DecisionLog | null>(null);
 
-  // Fetch decisions from API with server-side pagination + time range + source
+  // Fetch task graphs from the unified #114 API with server-side pagination + time range.
   const fetchDecisions = useCallback(async (pageNum: number, range: DateRange, src: string) => {
     try {
       const params: TimeRangeQuery = {
@@ -422,7 +524,7 @@ export default function Timeline() {
         endTime: range.endTime,
         source: src !== "all" ? src : undefined,
       };
-      const res = await api.getDecisionsByRange(params);
+      const res = await api.getTaskDecisions(params);
       setApiDecisions(res.decisions || []);
       setTotalCount(res.total ?? (res.decisions?.length || 0));
     } catch {

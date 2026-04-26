@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
+import { unifiedTaskToDecision } from "@/lib/api";
 import type {
   AgentInfo,
   ToolExecution,
@@ -8,6 +9,7 @@ import type {
   GitState,
   SecurityEvent,
   WebSocketEvent,
+  UnifiedTask,
 } from "@/types/alice";
 
 interface AppState {
@@ -114,6 +116,9 @@ export const useAppStore = create<AppState>()(
       case "tool_execution_start":
       case "tool_execution":
         state.addToolExecution(event.data as ToolExecution);
+        break;
+      case "task_updated":
+        state.addDecision(unifiedTaskToDecision(event.data as UnifiedTask));
         break;
       case "decision_complete":
         state.addDecision(event.data as DecisionLog);

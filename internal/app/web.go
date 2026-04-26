@@ -32,16 +32,16 @@ type AgentInfo struct {
 
 // DetailedStats represents enhanced statistics
 type DetailedStats struct {
-	ActiveSessions    int                   `json:"active_sessions"`
-	TotalSessions     int                   `json:"total_sessions"`
-	ToolsExecuted     int64                 `json:"tools_executed"`
-	TotalProjects     int                   `json:"total_projects"`
-	SuccessRate       float64               `json:"success_rate"`
-	UptimeSeconds     int64                 `json:"uptime_seconds"`
-	Timestamp         time.Time             `json:"timestamp"`
-	RecentAgents      []AgentInfo           `json:"recent_agents"`
-	TotalTokensUsed   int64                 `json:"total_tokens_used"`
-	TotalCostUSD      float64               `json:"total_cost_usd"`
+	ActiveSessions  int         `json:"active_sessions"`
+	TotalSessions   int         `json:"total_sessions"`
+	ToolsExecuted   int64       `json:"tools_executed"`
+	TotalProjects   int         `json:"total_projects"`
+	SuccessRate     float64     `json:"success_rate"`
+	UptimeSeconds   int64       `json:"uptime_seconds"`
+	Timestamp       time.Time   `json:"timestamp"`
+	RecentAgents    []AgentInfo `json:"recent_agents"`
+	TotalTokensUsed int64       `json:"total_tokens_used"`
+	TotalCostUSD    float64     `json:"total_cost_usd"`
 }
 
 // WebInterface manages the HTTP server and web dashboard functionality
@@ -103,6 +103,7 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/decisions/export", wi.handleExportDecisions)
 	mux.HandleFunc("/api/decisions/sources/stats", wi.handleSourceStats)
 	mux.HandleFunc("/api/decisions/sources/performance", wi.handleSourcePerformance)
+	mux.HandleFunc("/api/tasks", wi.handleUnifiedTasks)
 	mux.HandleFunc("/api/multiagent/status", wi.handleMultiAgentStatus)
 	mux.HandleFunc("/api/multiagent/stats", wi.handleMultiAgentStats)
 	mux.HandleFunc("/api/multiagent/agents", wi.handleMultiAgentAgents)
@@ -406,13 +407,13 @@ func (wi *WebInterface) getBasicStats() map[string]interface{} {
 	return map[string]interface{}{
 		"active_sessions":   stats.ActiveSessions,
 		"tools_executed":    stats.ToolsExecuted,
-		"projects":         stats.TotalProjects,
-		"success_rate":     stats.SuccessRate,
-		"uptime_seconds":   stats.UptimeSeconds,
-		"timestamp":        stats.Timestamp,
-		"total_sessions":   stats.TotalSessions,
+		"projects":          stats.TotalProjects,
+		"success_rate":      stats.SuccessRate,
+		"uptime_seconds":    stats.UptimeSeconds,
+		"timestamp":         stats.Timestamp,
+		"total_sessions":    stats.TotalSessions,
 		"total_tokens_used": stats.TotalTokensUsed,
-		"total_cost_usd":   stats.TotalCostUSD,
+		"total_cost_usd":    stats.TotalCostUSD,
 	}
 }
 
@@ -767,6 +768,112 @@ func (wi *WebInterface) handleRecentDecisions(w http.ResponseWriter, r *http.Req
 	})(w, r)
 }
 
+// handleUnifiedTasks returns task-centric execution graphs from the transitional
+// #114 schema: tasks -> sub_tasks -> tool_events/artifacts/reviews.
+func (wi *WebInterface) handleUnifiedTasks(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalStorage == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Storage is unavailable",
+			})
+			return
+		}
+
+		query, err := parseUnifiedTaskQuery(r)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		tasks, err := globalStorage.ListUnifiedTaskGraphs(query)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": fmt.Sprintf("Database query failed: %v", err),
+			})
+			return
+		}
+		total, err := globalStorage.CountUnifiedTasks(query)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": fmt.Sprintf("Database count failed: %v", err),
+			})
+			return
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"tasks":     tasks,
+			"total":     total,
+			"limit":     query.Limit,
+			"offset":    query.Offset,
+			"timestamp": time.Now(),
+		})
+	})(w, r)
+}
+
+func parseUnifiedTaskQuery(r *http.Request) (UnifiedTaskQuery, error) {
+	query := UnifiedTaskQuery{
+		Limit:      parsePositiveIntQuery(r, "limit", 100),
+		Offset:     parseNonNegativeIntQuery(r, "offset", 0),
+		ID:         r.URL.Query().Get("task_id"),
+		ProjectDir: r.URL.Query().Get("project_dir"),
+		Status:     r.URL.Query().Get("status"),
+	}
+	if start := r.URL.Query().Get("start_time"); start != "" {
+		parsed, err := parseAPITime(start)
+		if err != nil {
+			return query, fmt.Errorf("invalid start_time format: %w", err)
+		}
+		query.StartTime = &parsed
+	}
+	if end := r.URL.Query().Get("end_time"); end != "" {
+		parsed, err := parseAPITime(end)
+		if err != nil {
+			return query, fmt.Errorf("invalid end_time format: %w", err)
+		}
+		query.EndTime = &parsed
+	}
+	return query, nil
+}
+
+func parsePositiveIntQuery(r *http.Request, key string, fallback int) int {
+	value := r.URL.Query().Get(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func parseNonNegativeIntQuery(r *http.Request, key string, fallback int) int {
+	value := r.URL.Query().Get(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func parseAPITime(value string) (time.Time, error) {
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed, nil
+	}
+	return time.Parse("2006-01-02T15:04:05Z", value)
+}
+
 // handleDecisionsRange returns decision logs within a specified time range
 // Supports time-based filtering from frontend date picker components
 func (wi *WebInterface) handleDecisionsRange(w http.ResponseWriter, r *http.Request) {
@@ -880,8 +987,8 @@ func (wi *WebInterface) handleSearchDecisions(w http.ResponseWriter, r *http.Req
 
 		decisions := globalDecisionLogger.SearchDecisions(projectPath, taskType, successOnly)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"decisions":    decisions,
-			"total":        len(decisions),
+			"decisions": decisions,
+			"total":     len(decisions),
 			"filters": map[string]interface{}{
 				"project_path": projectPath,
 				"task_type":    taskType,
@@ -1006,11 +1113,11 @@ func (wi *WebInterface) handleMultiAgentStats(w http.ResponseWriter, r *http.Req
 		}
 
 		response := map[string]interface{}{
-			"enabled":           globalAgentCoordinator.IsEnabled(),
-			"total_agents":      len(agents),
-			"active_agents":     activeAgents,
-			"total_tasks":       totalTasks,
-			"agent_details":     agents,
+			"enabled":       globalAgentCoordinator.IsEnabled(),
+			"total_agents":  len(agents),
+			"active_agents": activeAgents,
+			"total_tasks":   totalTasks,
+			"agent_details": agents,
 			"available_types": []string{
 				"General", "CodeReview", "Testing", "Documentation", "Deployment", "Debug",
 			},
@@ -1405,14 +1512,14 @@ func (wi *WebInterface) handleCostsSummary(w http.ResponseWriter, r *http.Reques
 
 		// Return response
 		response := map[string]interface{}{
-			"period_hours":        hours,
-			"start_time":          startTime.Format(time.RFC3339),
-			"end_time":            endTime.Format(time.RFC3339),
-			"total_cost":          totalCost,
-			"total_calls":         totalCalls,
-			"total_tokens":        totalTokens,
-			"avg_cost_per_call":   avgCostPerCall,
-			"by_model":            costsByModel,
+			"period_hours":      hours,
+			"start_time":        startTime.Format(time.RFC3339),
+			"end_time":          endTime.Format(time.RFC3339),
+			"total_cost":        totalCost,
+			"total_calls":       totalCalls,
+			"total_tokens":      totalTokens,
+			"avg_cost_per_call": avgCostPerCall,
+			"by_model":          costsByModel,
 		}
 
 		json.NewEncoder(w).Encode(response)
@@ -1676,8 +1783,8 @@ func (wi *WebInterface) handleSecurityAudit(w http.ResponseWriter, r *http.Reque
 		stats := security.Global().GetSecurityStats()
 
 		response := map[string]interface{}{
-			"enabled":    true,
-			"summary":    stats,
+			"enabled": true,
+			"summary": stats,
 			"events": map[string]interface{}{
 				"critical": critical,
 				"high":     high,
@@ -1938,11 +2045,11 @@ func (wi *WebInterface) handleListCheckpoints(w http.ResponseWriter, r *http.Req
 	}
 
 	response := map[string]interface{}{
-		"checkpoints":  checkpoints,
-		"total_count":  len(checkpoints),
-		"project_dir":  projectDir,
-		"limit":        limit,
-		"timestamp":    time.Now(),
+		"checkpoints": checkpoints,
+		"total_count": len(checkpoints),
+		"project_dir": projectDir,
+		"limit":       limit,
+		"timestamp":   time.Now(),
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -2003,11 +2110,11 @@ func (wi *WebInterface) handleCreateCheckpoint(w http.ResponseWriter, r *http.Re
 
 		// Parse request body
 		var req struct {
-			ProjectDir     string `json:"project_dir"`
-			Description    string `json:"description"`
-			SessionID      string `json:"session_id,omitempty"`
-			ChatID         int64  `json:"chat_id,omitempty"`
-			DecisionLogID  string `json:"decision_log_id,omitempty"`
+			ProjectDir    string `json:"project_dir"`
+			Description   string `json:"description"`
+			SessionID     string `json:"session_id,omitempty"`
+			ChatID        int64  `json:"chat_id,omitempty"`
+			DecisionLogID string `json:"decision_log_id,omitempty"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2038,7 +2145,7 @@ func (wi *WebInterface) handleCreateCheckpoint(w http.ResponseWriter, r *http.Re
 			TriggerManual,
 			req.SessionID,
 			req.ChatID,
-			"", // No dangerous operation for manual checkpoints
+			"",                // No dangerous operation for manual checkpoints
 			req.DecisionLogID, // Use decision_log_id from request
 		)
 		if err != nil {
@@ -2215,12 +2322,12 @@ func (wi *WebInterface) handleAgentReset(w http.ResponseWriter, r *http.Request)
 		// Broadcast WebSocket event for real-time monitoring
 		if globalWebSocketHub != nil {
 			resetEvent := map[string]interface{}{
-				"chat_id":               req.ChatID,
-				"thread_id":             req.ThreadID,
-				"previous_api_calls":    stats.APICallCount,
-				"previous_input_tokens": stats.TotalInputTokens,
+				"chat_id":                req.ChatID,
+				"thread_id":              req.ThreadID,
+				"previous_api_calls":     stats.APICallCount,
+				"previous_input_tokens":  stats.TotalInputTokens,
 				"previous_output_tokens": stats.TotalOutputTokens,
-				"timestamp":             time.Now(),
+				"timestamp":              time.Now(),
 			}
 			globalWebSocketHub.BroadcastEvent("agent_reset", resetEvent)
 		}
@@ -2241,6 +2348,7 @@ func (wi *WebInterface) handleAgentReset(w http.ResponseWriter, r *http.Request)
 		json.NewEncoder(w).Encode(response)
 	})(w, r)
 }
+
 // handleAgentSetProject switches an agent's project directory
 func (wi *WebInterface) handleAgentSetProject(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
@@ -2300,10 +2408,10 @@ func (wi *WebInterface) handleAgentSetProject(w http.ResponseWriter, r *http.Req
 		// Broadcast WebSocket event for real-time monitoring
 		if globalWebSocketHub != nil {
 			projectChangeEvent := map[string]interface{}{
-				"chat_id":               req.ChatID,
-				"thread_id":             req.ThreadID,
-				"previous_project_dir":  previousProjectDir,
-				"new_project_dir":       req.ProjectDir,
+				"chat_id":              req.ChatID,
+				"thread_id":            req.ThreadID,
+				"previous_project_dir": previousProjectDir,
+				"new_project_dir":      req.ProjectDir,
 			}
 
 			globalWebSocketHub.BroadcastEvent("agent_project_changed", projectChangeEvent)

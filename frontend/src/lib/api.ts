@@ -13,6 +13,7 @@ import type {
   GitState,
   GitDiffResponse,
   Checkpoint,
+  UnifiedTask,
 } from "@/types/alice";
 
 const BASE = "";
@@ -32,8 +33,81 @@ function normalizeDecision(d: DecisionLog): DecisionLog {
   return d;
 }
 
-function normalizeDecisions(list?: DecisionLog[]): DecisionLog[] {
-  return (list || []).map(normalizeDecision);
+function parseJSONRecord(raw: string): Record<string, string> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return { raw };
+  }
+}
+
+function isUnifiedSuccess(status: string): boolean {
+  return ["done", "success", "completed", "pass"].includes(status);
+}
+
+function mapUnifiedStatus(status: string): ToolExecution["status"] {
+  if (["done", "success", "executed", "completed"].includes(status)) return "STATUS_SUCCESS";
+  if (["failed", "error"].includes(status)) return "STATUS_ERROR";
+  if (["cancelled", "interrupted"].includes(status)) return "STATUS_CANCELLED";
+  if (["running", "executing", "in_progress"].includes(status)) return "STATUS_RUNNING";
+  return "STATUS_PENDING";
+}
+
+function durationMs(startedAt?: string, endedAt?: string): number {
+  if (!startedAt || !endedAt) return 0;
+  const start = new Date(startedAt).getTime();
+  const end = new Date(endedAt).getTime();
+  return Number.isFinite(start) && Number.isFinite(end) && end >= start ? end - start : 0;
+}
+
+export function unifiedTaskToDecision(task: UnifiedTask): DecisionLog {
+  const primarySubTask = task.sub_tasks?.[0];
+  const toolCalls = (task.sub_tasks || []).flatMap((subTask) =>
+    (subTask.tool_events || []).map((event) => ({
+      id: String(event.id ?? `${event.sub_task_id}:${event.tool_name}:${event.ts}`),
+      timestamp: event.ts,
+      tool_name: event.tool_name,
+      input: parseJSONRecord(event.input_json),
+      status: mapUnifiedStatus(event.status),
+      duration_ms: 0,
+      chat_id: task.chat_id,
+      thread_id: task.thread_id,
+      error: event.status === "error" || event.status === "failed" ? event.output_json : "",
+    }))
+  );
+
+  return normalizeDecision({
+    id: task.id,
+    timestamp: task.started_at,
+    session_id: task.id,
+    project_path: task.project_dir,
+    user_prompt: task.goal,
+    agent_response: primarySubTask?.result_text || "",
+    tool_calls: toolCalls,
+    task_type: task.engine || "task",
+    outcome: {
+      success: isUnifiedSuccess(task.status),
+      error_message: isUnifiedSuccess(task.status) ? "" : task.status,
+      severity: "SEVERITY_UNSPECIFIED",
+    },
+    duration_ms: durationMs(task.started_at, task.ended_at),
+    tokens_input: task.total_input_tokens || 0,
+    tokens_output: task.total_output_tokens || 0,
+    cost_usd: task.total_cost_usd || 0,
+    chat_id: task.chat_id,
+    thread_id: task.thread_id,
+    source: "unknown",
+    model: primarySubTask?.model || task.backend,
+    routing_reason: primarySubTask?.routing_reason,
+    routing_latency_ms: primarySubTask?.routing_latency_ms,
+    unified_task: task,
+  });
+}
+
+function unifiedTasksToDecisions(tasks?: UnifiedTask[]): DecisionLog[] {
+  return (tasks || []).map(unifiedTaskToDecision);
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -98,39 +172,30 @@ export const api = {
       success_rate: number;
     }>("/api/tools/executions"),
 
-  // ========== Decisions ==========
-  /** Get recent decisions from in-memory logger (no time range) */
-  getRecentDecisions: async (params?: { limit?: number }) => {
-    const { limit = 50 } = params || {};
-    const qs = buildQuery({ limit });
-    const res = await fetchJson<{ decisions?: DecisionLog[]; total?: number; timestamp: string }>(
-      `/api/decisions/recent${qs}`
-    );
-    res.decisions = normalizeDecisions(res.decisions);
-    return res;
-  },
-
-  /** Get decisions within a specific time range from database */
-  getDecisionsByRange: async (params: TimeRangeQuery) => {
-    const { limit = 2000, offset = 0, startTime, endTime, source } = params;
-
-    // If date range not provided, query all history
-    const now = new Date();
-    const finalStartTime = startTime || '2020-01-01T00:00:00Z';
-    const finalEndTime = endTime || now.toISOString();
-
+  /** Get task-centric execution graphs from the unified #114 schema */
+  getUnifiedTasks: (params: TimeRangeQuery & { projectDir?: string; status?: string } = {}) => {
+    const { limit = 100, offset = 0, startTime, endTime, projectDir, status } = params;
     const qs = buildQuery({
       limit,
       offset,
-      start_time: finalStartTime,
-      end_time: finalEndTime,
-      source,
+      start_time: startTime,
+      end_time: endTime,
+      project_dir: projectDir,
+      status,
     });
-    const res = await fetchJson<{ decisions?: DecisionLog[]; total?: number; timestamp: string }>(
-      `/api/decisions/range${qs}`
+    return fetchJson<{ tasks?: UnifiedTask[]; total?: number; timestamp: string }>(
+      `/api/tasks${qs}`
     );
-    res.decisions = normalizeDecisions(res.decisions);
-    return res;
+  },
+
+  /** Compatibility view for existing dashboard widgets while storage migrates to tasks. */
+  getTaskDecisions: async (params: TimeRangeQuery & { projectDir?: string; status?: string } = {}) => {
+    const res = await api.getUnifiedTasks(params);
+    return {
+      decisions: unifiedTasksToDecisions(res.tasks),
+      total: res.total,
+      timestamp: res.timestamp,
+    };
   },
 
   // ========== Multi-Agent ==========

@@ -66,7 +66,8 @@ var ErrNoTask = fmt.Errorf("hermes: no task found")
 
 // SQLiteTaskStore implements TaskStateStore backed by SQLite.
 type SQLiteTaskStore struct {
-	db *sql.DB
+	db                  *sql.DB
+	onUnifiedTaskUpdate func(taskID string)
 }
 
 // NewSQLiteTaskStore creates and migrates the hermes SQLite tables.
@@ -77,6 +78,12 @@ func NewSQLiteTaskStore(db *sql.DB) (*SQLiteTaskStore, error) {
 		return nil, fmt.Errorf("hermes store migration: %w", err)
 	}
 	return s, nil
+}
+
+// SetUnifiedTaskUpdateHook registers a best-effort callback fired after the
+// Hermes legacy tables have been mirrored into the unified #114 tables.
+func (s *SQLiteTaskStore) SetUnifiedTaskUpdateHook(fn func(taskID string)) {
+	s.onUnifiedTaskUpdate = fn
 }
 
 // migrate creates all hermes tables if they don't exist.
@@ -115,6 +122,81 @@ func (s *SQLiteTaskStore) migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_hermes_artifacts_task
 			ON hermes_task_artifacts(task_id)`,
+		`CREATE TABLE IF NOT EXISTS tasks (
+			id                  TEXT PRIMARY KEY,
+			chat_id             INTEGER NOT NULL DEFAULT 0,
+			thread_id           INTEGER NOT NULL DEFAULT 0,
+			project_dir         TEXT NOT NULL DEFAULT '',
+			goal                TEXT NOT NULL DEFAULT '',
+			engine              TEXT NOT NULL DEFAULT '',
+			backend             TEXT NOT NULL DEFAULT '',
+			status              TEXT NOT NULL DEFAULT '',
+			started_at          TEXT NOT NULL,
+			ended_at            TEXT,
+			total_input_tokens  INTEGER NOT NULL DEFAULT 0,
+			total_output_tokens INTEGER NOT NULL DEFAULT 0,
+			total_cost_usd      REAL NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_started_at ON tasks(started_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_chat_thread ON tasks(chat_id, thread_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_project_dir ON tasks(project_dir)`,
+		`CREATE TABLE IF NOT EXISTS sub_tasks (
+			id                 TEXT PRIMARY KEY,
+			task_id            TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			idx                INTEGER NOT NULL DEFAULT 0,
+			description        TEXT NOT NULL DEFAULT '',
+			model              TEXT NOT NULL DEFAULT '',
+			status             TEXT NOT NULL DEFAULT '',
+			result_text        TEXT NOT NULL DEFAULT '',
+			input_tokens       INTEGER NOT NULL DEFAULT 0,
+			output_tokens      INTEGER NOT NULL DEFAULT 0,
+			cost_usd           REAL NOT NULL DEFAULT 0,
+			started_at         TEXT NOT NULL,
+			ended_at           TEXT,
+			routing_reason     TEXT NOT NULL DEFAULT '',
+			routing_latency_ms INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_sub_tasks_task_idx ON sub_tasks(task_id, idx)`,
+		`CREATE TABLE IF NOT EXISTS tool_events (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			sub_task_id TEXT NOT NULL REFERENCES sub_tasks(id) ON DELETE CASCADE,
+			tool_name   TEXT NOT NULL DEFAULT '',
+			input_json  TEXT NOT NULL DEFAULT '{}',
+			output_json TEXT NOT NULL DEFAULT '{}',
+			ts          TEXT NOT NULL,
+			status      TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_tool_events_sub_task ON tool_events(sub_task_id)`,
+		`CREATE TABLE IF NOT EXISTS artifacts (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			sub_task_id TEXT NOT NULL REFERENCES sub_tasks(id) ON DELETE CASCADE,
+			path        TEXT NOT NULL,
+			hash        TEXT NOT NULL DEFAULT ''
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_artifacts_sub_task ON artifacts(sub_task_id)`,
+		`CREATE TABLE IF NOT EXISTS review_results (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_id         TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+			reviewer_model  TEXT NOT NULL DEFAULT '',
+			verdict         TEXT NOT NULL DEFAULT '',
+			overall_score   INTEGER NOT NULL DEFAULT 0,
+			feedback_text   TEXT NOT NULL DEFAULT '',
+			issue_tags      TEXT NOT NULL DEFAULT '[]',
+			input_tokens    INTEGER NOT NULL DEFAULT 0,
+			output_tokens   INTEGER NOT NULL DEFAULT 0,
+			cost_usd        REAL NOT NULL DEFAULT 0,
+			created_at      TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_review_results_task ON review_results(task_id)`,
+		`CREATE TABLE IF NOT EXISTS review_subtask_results (
+			id          INTEGER PRIMARY KEY AUTOINCREMENT,
+			review_id   INTEGER NOT NULL REFERENCES review_results(id) ON DELETE CASCADE,
+			sub_task_id TEXT NOT NULL REFERENCES sub_tasks(id) ON DELETE CASCADE,
+			score       INTEGER NOT NULL DEFAULT 0,
+			feedback    TEXT NOT NULL DEFAULT '',
+			issue_tags  TEXT NOT NULL DEFAULT '[]'
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_review_subtask_results_review ON review_subtask_results(review_id)`,
 	}
 
 	return s.execWithRetry(func() error {
@@ -167,7 +249,14 @@ func (s *SQLiteTaskStore) CreateTask(task TaskState) (TaskState, error) {
 			task.CreatedAt.Format(time.RFC3339),
 			task.UpdatedAt.Format(time.RFC3339),
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		if err := s.upsertUnifiedTask(task, nil); err != nil {
+			return err
+		}
+		s.broadcastUnifiedTask(task.ID)
+		return nil
 	})
 }
 
@@ -201,7 +290,14 @@ func (s *SQLiteTaskStore) StorePlan(taskID string, plan []SubTask) error {
 			`UPDATE hermes_task_states SET plan_json = ?, updated_at = ? WHERE id = ?`,
 			string(planJSON), time.Now().Format(time.RFC3339), taskID,
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		if err := s.replaceUnifiedSubTasks(taskID, plan); err != nil {
+			return err
+		}
+		s.broadcastUnifiedTask(taskID)
+		return nil
 	})
 }
 
@@ -233,7 +329,14 @@ func (s *SQLiteTaskStore) UpdateSubTask(taskID string, idx int, status SubTaskSt
 			`UPDATE hermes_task_states SET plan_json = ?, updated_at = ? WHERE id = ?`,
 			string(updated), time.Now().Format(time.RFC3339), taskID,
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		if err := s.upsertUnifiedSubTask(taskID, idx, plan[idx]); err != nil {
+			return err
+		}
+		s.broadcastUnifiedTask(taskID)
+		return nil
 	})
 }
 
@@ -243,7 +346,14 @@ func (s *SQLiteTaskStore) AdvanceTask(taskID string, nextIdx int, status TaskSta
 			`UPDATE hermes_task_states SET current_idx = ?, status = ?, updated_at = ? WHERE id = ?`,
 			nextIdx, string(status), time.Now().Format(time.RFC3339), taskID,
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		if err := s.updateUnifiedTaskStatus(taskID, status); err != nil {
+			return err
+		}
+		s.broadcastUnifiedTask(taskID)
+		return nil
 	})
 }
 
@@ -255,7 +365,14 @@ func (s *SQLiteTaskStore) AppendArtifact(taskID string, artifact Artifact) error
 			taskID, artifact.Path, artifact.Hash, artifact.SubTaskID,
 			time.Now().Format(time.RFC3339),
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		if err := s.insertUnifiedArtifact(artifact); err != nil {
+			return err
+		}
+		s.broadcastUnifiedTask(taskID)
+		return nil
 	})
 }
 
@@ -285,7 +402,14 @@ func (s *SQLiteTaskStore) MarkInterrupted(taskID string, messageID int64) error 
 			`UPDATE hermes_task_states SET status = 'interrupted', interrupted_by = ?, updated_at = ? WHERE id = ?`,
 			messageID, time.Now().Format(time.RFC3339), taskID,
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		if err := s.updateUnifiedTaskStatus(taskID, TaskStatusInterrupted); err != nil {
+			return err
+		}
+		s.broadcastUnifiedTask(taskID)
+		return nil
 	})
 }
 
@@ -295,7 +419,14 @@ func (s *SQLiteTaskStore) MarkStatus(taskID string, status TaskStatus) error {
 			`UPDATE hermes_task_states SET status = ?, updated_at = ? WHERE id = ?`,
 			string(status), time.Now().Format(time.RFC3339), taskID,
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		if err := s.updateUnifiedTaskStatus(taskID, status); err != nil {
+			return err
+		}
+		s.broadcastUnifiedTask(taskID)
+		return nil
 	})
 }
 
@@ -388,7 +519,14 @@ func (s *SQLiteTaskStore) AddModelUsage(taskID, model string, inputTokens, outpu
 			`UPDATE hermes_task_states SET model_usages = ?, updated_at = ? WHERE id = ?`,
 			string(updated), time.Now().Format(time.RFC3339), taskID,
 		)
-		return err
+		if err != nil {
+			return err
+		}
+		if err := s.updateUnifiedTaskUsage(taskID, usages); err != nil {
+			return err
+		}
+		s.broadcastUnifiedTask(taskID)
+		return nil
 	})
 }
 
@@ -561,6 +699,152 @@ func (s *SQLiteTaskStore) loadArtifacts(taskID string) ([]Artifact, error) {
 		artifacts = append(artifacts, a)
 	}
 	return artifacts, rows.Err()
+}
+
+// ── unified task mirror (#114) ────────────────────────────────────────────────
+
+func (s *SQLiteTaskStore) upsertUnifiedTask(task TaskState, endedAt *time.Time) error {
+	startedAt := task.CreatedAt
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	totalIn, totalOut := totalModelUsage(task.ModelUsages)
+	_, err := s.db.Exec(`
+		INSERT INTO tasks
+			(id, chat_id, thread_id, project_dir, goal, engine, backend, status,
+			 started_at, ended_at, total_input_tokens, total_output_tokens, total_cost_usd)
+		VALUES (?, ?, 0, '', ?, 'plan-execute', '', ?, ?, ?, ?, ?, 0)
+		ON CONFLICT(id) DO UPDATE SET
+			chat_id = excluded.chat_id,
+			goal = excluded.goal,
+			engine = excluded.engine,
+			status = excluded.status,
+			started_at = excluded.started_at,
+			ended_at = excluded.ended_at,
+			total_input_tokens = excluded.total_input_tokens,
+			total_output_tokens = excluded.total_output_tokens`,
+		task.ID, task.ChatID, task.Goal, string(task.Status),
+		startedAt.Format(time.RFC3339Nano), formatUnifiedTime(endedAt), totalIn, totalOut,
+	)
+	return err
+}
+
+func (s *SQLiteTaskStore) replaceUnifiedSubTasks(taskID string, plan []SubTask) error {
+	if _, err := s.db.Exec(`DELETE FROM sub_tasks WHERE task_id = ?`, taskID); err != nil {
+		return err
+	}
+	for idx, subTask := range plan {
+		if err := s.upsertUnifiedSubTask(taskID, idx, subTask); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *SQLiteTaskStore) upsertUnifiedSubTask(taskID string, idx int, subTask SubTask) error {
+	subTaskID := subTask.ID
+	if subTaskID == "" {
+		subTaskID = fmt.Sprintf("%s:%d", taskID, idx+1)
+	}
+	now := time.Now()
+	var endedAt *time.Time
+	if isTerminalSubTask(subTask.Status) {
+		endedAt = &now
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO sub_tasks
+			(id, task_id, idx, description, model, status, result_text, input_tokens,
+			 output_tokens, cost_usd, started_at, ended_at, routing_reason, routing_latency_ms)
+		VALUES (?, ?, ?, ?, '', ?, ?, ?, 0, 0, ?, ?, '', 0)
+		ON CONFLICT(id) DO UPDATE SET
+			idx = excluded.idx,
+			description = excluded.description,
+			status = excluded.status,
+			result_text = excluded.result_text,
+			input_tokens = excluded.input_tokens,
+			ended_at = excluded.ended_at`,
+		subTaskID, taskID, idx, subTask.Description, string(subTask.Status),
+		subTask.Result, subTask.TokensUsed, now.Format(time.RFC3339Nano),
+		formatUnifiedTime(endedAt),
+	)
+	return err
+}
+
+func (s *SQLiteTaskStore) insertUnifiedArtifact(artifact Artifact) error {
+	subTaskID := artifact.SubTaskID
+	if subTaskID == "" {
+		return nil
+	}
+	_, err := s.db.Exec(`
+		INSERT INTO artifacts (sub_task_id, path, hash)
+		VALUES (?, ?, ?)`,
+		subTaskID, artifact.Path, artifact.Hash,
+	)
+	return err
+}
+
+func (s *SQLiteTaskStore) updateUnifiedTaskStatus(taskID string, status TaskStatus) error {
+	var endedAt *time.Time
+	if isTerminalTask(status) {
+		now := time.Now()
+		endedAt = &now
+	}
+	_, err := s.db.Exec(`
+		UPDATE tasks SET status = ?, ended_at = COALESCE(?, ended_at)
+		WHERE id = ?`,
+		string(status), formatUnifiedTime(endedAt), taskID,
+	)
+	return err
+}
+
+func (s *SQLiteTaskStore) updateUnifiedTaskUsage(taskID string, usages []ModelUsage) error {
+	totalIn, totalOut := totalModelUsage(usages)
+	_, err := s.db.Exec(`
+		UPDATE tasks SET total_input_tokens = ?, total_output_tokens = ?
+		WHERE id = ?`,
+		totalIn, totalOut, taskID,
+	)
+	return err
+}
+
+func totalModelUsage(usages []ModelUsage) (int, int) {
+	var totalIn, totalOut int
+	for _, usage := range usages {
+		totalIn += usage.InputTokens
+		totalOut += usage.OutputTokens
+	}
+	return totalIn, totalOut
+}
+
+func isTerminalTask(status TaskStatus) bool {
+	switch status {
+	case TaskStatusDone, TaskStatusFailed, TaskStatusInterrupted:
+		return true
+	default:
+		return false
+	}
+}
+
+func isTerminalSubTask(status SubTaskStatus) bool {
+	switch status {
+	case SubTaskDone, SubTaskFailed, SubTaskSkipped:
+		return true
+	default:
+		return false
+	}
+}
+
+func formatUnifiedTime(t *time.Time) any {
+	if t == nil || t.IsZero() {
+		return sql.NullString{}
+	}
+	return t.Format(time.RFC3339Nano)
+}
+
+func (s *SQLiteTaskStore) broadcastUnifiedTask(taskID string) {
+	if s.onUnifiedTaskUpdate != nil {
+		s.onUnifiedTaskUpdate(taskID)
+	}
 }
 
 // ── execWithRetry ─────────────────────────────────────────────────────────────
