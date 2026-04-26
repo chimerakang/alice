@@ -791,11 +791,17 @@ func (s *SQLiteStorage) broadcastUnifiedTask(taskID string) {
 	}
 }
 
+// unifiedDecisionTaskID derives a stable, per-row task ID.
+// A single Claude session spans many user turns (each producing its own
+// decision_logs row), so SessionID alone is insufficient — keying on it would
+// cause INSERT OR REPLACE to collapse all turns into one. Include the
+// timestamp to make each decision_log row a distinct task in the unified store.
 func unifiedDecisionTaskID(decision DecisionLog) string {
+	ts := decision.Timestamp.UTC().Format("20060102T150405.000000000Z")
 	if decision.SessionID != "" {
-		return "decision:" + decision.SessionID
+		return "decision:" + decision.SessionID + ":" + ts
 	}
-	return "decision:" + decision.Timestamp.UTC().Format("20060102T150405.000000000Z")
+	return "decision:" + ts
 }
 
 func backendForDecisionModel(model string) string {

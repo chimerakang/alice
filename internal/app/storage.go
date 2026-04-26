@@ -763,7 +763,7 @@ func (s *SQLiteStorage) DeleteDecisionLogsBySessionID(sessionID string) error {
 	if _, err := s.db.Exec(`DELETE FROM decision_logs WHERE session_id = ?`, sessionID); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`DELETE FROM tasks WHERE id = ?`, "decision:"+sessionID)
+	_, err := s.db.Exec(`DELETE FROM tasks WHERE id LIKE ?`, "decision:"+sessionID+":%")
 	return err
 }
 

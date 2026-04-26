@@ -55,11 +55,14 @@ func TestInsertDecisionLogWritesUnifiedTaskGraph(t *testing.T) {
 	err = s.db.QueryRow(`
 		SELECT id, chat_id, thread_id, goal, engine, backend, status,
 		       total_input_tokens, total_output_tokens
-		FROM tasks WHERE id = ?`, "decision:sess-unified").
+		FROM tasks WHERE id LIKE ?`, "decision:sess-unified:%").
 		Scan(&task.id, &task.chatID, &task.threadID, &task.goal, &task.engine,
 			&task.backend, &task.status, &task.inputTokens, &task.outputTokens)
 	if err != nil {
 		t.Fatalf("query task: %v", err)
+	}
+	if !strings.HasPrefix(task.id, "decision:sess-unified:") {
+		t.Fatalf("task id should embed timestamp: %s", task.id)
 	}
 	if task.engine != "direct" || task.backend != "codex" || task.status != "done" {
 		t.Fatalf("unexpected task fields: %+v", task)
@@ -78,7 +81,7 @@ func TestInsertDecisionLogWritesUnifiedTaskGraph(t *testing.T) {
 	if len(graphs) != 1 {
 		t.Fatalf("graph count: got %d, want 1", len(graphs))
 	}
-	if graphs[0].ID != "decision:sess-unified" || len(graphs[0].SubTasks) != 1 {
+	if !strings.HasPrefix(graphs[0].ID, "decision:sess-unified:") || len(graphs[0].SubTasks) != 1 {
 		t.Fatalf("unexpected graph shape: %+v", graphs[0])
 	}
 	if len(graphs[0].SubTasks[0].ToolEvents) != 1 || len(graphs[0].SubTasks[0].Artifacts) != 1 {
@@ -97,7 +100,7 @@ func TestInsertDecisionLogWritesUnifiedTaskGraph(t *testing.T) {
 	var routingLatency int
 	err = s.db.QueryRow(`
 		SELECT model, result_text, routing_reason, routing_latency_ms
-		FROM sub_tasks WHERE id = ?`, "decision:sess-unified:1").
+		FROM sub_tasks WHERE id = ?`, task.id+":1").
 		Scan(&subModel, &subResult, &routingReason, &routingLatency)
 	if err != nil {
 		t.Fatalf("query sub_task: %v", err)
