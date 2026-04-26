@@ -1652,12 +1652,13 @@ func (t *TelegramBot) handleHermesStatsCommand(key chatKey, parts []string) {
 
 		windowEnd := time.Now().UTC()
 		windowStart := windowEnd.Add(-7 * 24 * time.Hour)
-		report, err := globalStorage.GetPlannerRulesWeeklyReport(windowStart, windowEnd)
+		lang := t.getChatLanguage(key.chatID)
+		report, err := globalStorage.GetPlannerRulesWeeklyReport(windowStart, windowEnd, t.i18n, lang)
 		if err != nil {
 			t.send(key, fmt.Sprintf("❌ 無法產生 review 週報：%v", err))
 			return
 		}
-		t.send(key, FormatPlannerRulesWeeklyReport(report))
+		t.send(key, FormatPlannerRulesWeeklyReport(t.i18n, lang, report))
 		return
 	}
 

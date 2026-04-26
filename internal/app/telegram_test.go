@@ -297,15 +297,18 @@ func TestHandleHermesStatsCommandWeekQueuesWeeklyReviewReport(t *testing.T) {
 	}
 
 	bot := &TelegramBot{
-		config:       &Config{Hermes: HermesConfig{Enabled: true}},
-		messageQueue: make(chan *TelegramMessage, 10),
+		config:          &Config{Hermes: HermesConfig{Enabled: true}},
+		i18n:            newTestI18nManager(t),
+		messageQueue:    make(chan *TelegramMessage, 10),
+		langPreferences: map[int64]string{},
 	}
+	bot.setChatlanguage(key.chatID, "zh-TW")
 	bot.handleHermesStatsCommand(key, []string{"/hermes-stats", "week"})
 
 	select {
 	case msg := <-bot.messageQueue:
 		text, _ := msg.Params["text"].(string)
-		if !strings.Contains(text, "Hermes Review 週報") || !strings.Contains(text, "missing_validation") {
+		if !strings.Contains(text, "Hermes Review 週報") || !strings.Contains(text, "missing_validation") || !strings.Contains(text, "Planner 建議") {
 			t.Fatalf("unexpected message text:\n%s", text)
 		}
 	case <-time.After(time.Second):

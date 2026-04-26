@@ -37,7 +37,7 @@ type PlannerRulesWeeklyReport struct {
 
 // GetPlannerRulesWeeklyReport aggregates recent review_results into a human-reviewable
 // planner tuning report for /hermes-stats week.
-func (s *SQLiteStorage) GetPlannerRulesWeeklyReport(windowStart, windowEnd time.Time) (PlannerRulesWeeklyReport, error) {
+func (s *SQLiteStorage) GetPlannerRulesWeeklyReport(windowStart, windowEnd time.Time, i18n *I18nManager, lang string) (PlannerRulesWeeklyReport, error) {
 	if windowEnd.IsZero() {
 		windowEnd = time.Now().UTC()
 	}
@@ -128,7 +128,7 @@ func (s *SQLiteStorage) GetPlannerRulesWeeklyReport(windowStart, windowEnd time.
 	}
 
 	report.TopIssueTags = topPlannerRuleIssueTags(tagCounts, 3)
-	report.Recommendations = plannerRuleRecommendations(report.TopIssueTags, report.ReviewCount)
+	report.Recommendations = plannerRuleRecommendations(i18n, lang, report.TopIssueTags, report.ReviewCount)
 	return report, nil
 }
 
@@ -182,56 +182,90 @@ func topPlannerRuleIssueTags(tagCounts map[string]*plannerRuleTagCounter, limit 
 	return stats
 }
 
-func plannerRuleRecommendations(tags []PlannerRulesIssueTagStat, reviewCount int) []string {
+func plannerRuleRecommendations(i18n *I18nManager, lang string, tags []PlannerRulesIssueTagStat, reviewCount int) []string {
 	if reviewCount == 0 {
-		return []string{"近 7 天沒有 review_results，先累積樣本後再調整 Planner 規則。"}
+		return []string{plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_no_reviews", nil)}
 	}
 
 	recommendations := make([]string, 0, len(tags)+1)
 	if reviewCount < 10 {
-		recommendations = append(recommendations, fmt.Sprintf("樣本數僅 %d 筆，建議先觀察到至少 10 筆任務再固化 Planner 規則。", reviewCount))
+		recommendations = append(recommendations, plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_small_sample", map[string]string{
+			"review_count": fmt.Sprintf("%d", reviewCount),
+		}))
 	}
 	for _, tag := range tags {
 		switch tag.Tag {
 		case "ambiguous_goal":
-			recommendations = append(recommendations, "強化 Planner intake：子任務開始前先重述成功條件，若目標模糊則要求 Executor 先提出澄清問題。")
+			recommendations = append(recommendations, plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_rec_ambiguous_goal", nil))
 		case "missing_context":
-			recommendations = append(recommendations, "在 Planner rules 補上 context checklist，強制附上關聯檔案、Issue 摘要、最近失敗訊息與驗證命令。")
+			recommendations = append(recommendations, plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_rec_missing_context", nil))
 		case "wrong_tool_hint":
-			recommendations = append(recommendations, "調整 tool hints 範本：把搜尋、讀檔、建置、測試的推薦工具寫死到 prompt，減少模型自行猜工具。")
+			recommendations = append(recommendations, plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_rec_wrong_tool_hint", nil))
 		case "underspecified_input":
-			recommendations = append(recommendations, "要求 Planner 交付更可執行的輸入，至少包含修改範圍、限制條件、驗證方式與禁止觸碰區域。")
+			recommendations = append(recommendations, plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_rec_underspecified_input", nil))
 		case "missing_validation":
-			recommendations = append(recommendations, "把驗證步驟列為必填欄位；若子任務產出程式碼但未跑對應測試或 build，Review 應直接標記 partial/fail。")
+			recommendations = append(recommendations, plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_rec_missing_validation", nil))
 		default:
-			recommendations = append(recommendations, fmt.Sprintf("檢查 `%s` 高頻原因，必要時把對應防呆規則前移到 Planner prompt。", tag.Tag))
+			recommendations = append(recommendations, plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_rec_generic", map[string]string{
+				"tag": tag.Tag,
+			}))
 		}
 	}
 	return recommendations
 }
 
 // FormatPlannerRulesWeeklyReport renders the weekly tuner report for Telegram/chat output.
-func FormatPlannerRulesWeeklyReport(report PlannerRulesWeeklyReport) string {
+func FormatPlannerRulesWeeklyReport(i18n *I18nManager, lang string, report PlannerRulesWeeklyReport) string {
 	var b strings.Builder
-	b.WriteString("📊 Hermes Review 週報（近 7 天）\n")
-	b.WriteString(fmt.Sprintf("期間：%s ~ %s\n", report.WindowStart.Format("2006-01-02"), report.WindowEnd.Format("2006-01-02")))
-	b.WriteString(fmt.Sprintf("Review 數：%d | 子任務複審數：%d | 平均分：%.1f\n", report.ReviewCount, report.ReviewedSubTaskCount, report.AverageOverallScore))
-	b.WriteString(fmt.Sprintf("Verdict：pass=%d partial=%d fail=%d\n",
-		report.VerdictCounts["pass"], report.VerdictCounts["partial"], report.VerdictCounts["fail"]))
+	b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_title", nil))
+	b.WriteString("\n")
+	b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_period", map[string]string{
+		"start": report.WindowStart.Format("2006-01-02"),
+		"end":   report.WindowEnd.Format("2006-01-02"),
+	}))
+	b.WriteString("\n")
+	b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_summary", map[string]string{
+		"review_count":  fmt.Sprintf("%d", report.ReviewCount),
+		"subtask_count": fmt.Sprintf("%d", report.ReviewedSubTaskCount),
+		"average_score": fmt.Sprintf("%.1f", report.AverageOverallScore),
+	}))
+	b.WriteString("\n")
+	b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_verdicts", map[string]string{
+		"pass":    fmt.Sprintf("%d", report.VerdictCounts["pass"]),
+		"partial": fmt.Sprintf("%d", report.VerdictCounts["partial"]),
+		"fail":    fmt.Sprintf("%d", report.VerdictCounts["fail"]),
+	}))
+	b.WriteString("\n")
 
-	b.WriteString("Top issue tags：")
+	b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_top_issue_tags_title", nil))
 	if len(report.TopIssueTags) == 0 {
-		b.WriteString("無\n")
+		b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_no_top_issue_tags", nil))
+		b.WriteString("\n")
 	} else {
 		b.WriteString("\n")
 		for i, tag := range report.TopIssueTags {
-			b.WriteString(fmt.Sprintf("%d. %s (%d 次；task=%d, subtask=%d)\n", i+1, tag.Tag, tag.Count, tag.TaskCount, tag.SubTaskCount))
+			b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_issue_tag_item", map[string]string{
+				"index":         fmt.Sprintf("%d", i+1),
+				"tag":           tag.Tag,
+				"count":         fmt.Sprintf("%d", tag.Count),
+				"task_count":    fmt.Sprintf("%d", tag.TaskCount),
+				"subtask_count": fmt.Sprintf("%d", tag.SubTaskCount),
+			}))
+			b.WriteString("\n")
 		}
 	}
 
-	b.WriteString("Planner 建議：\n")
+	b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_recommendations_title", nil))
+	b.WriteString("\n")
 	for i, rec := range report.Recommendations {
 		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, rec))
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func plannerWeeklyReportMessage(i18n *I18nManager, lang, key string, vars map[string]string) string {
+	if i18n == nil {
+		return key
+	}
+	return i18n.GetMessage(lang, key, vars)
 }

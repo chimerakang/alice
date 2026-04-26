@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -351,7 +352,9 @@ func TestGetPlannerRulesWeeklyReportAggregatesTopIssueTags(t *testing.T) {
 		t.Fatalf("InsertUnifiedReviewSubTaskResult(2): %v", err)
 	}
 
-	report, err := s.GetPlannerRulesWeeklyReport(now.Add(-7*24*time.Hour), now)
+	i18n := newTestI18nManager(t)
+
+	report, err := s.GetPlannerRulesWeeklyReport(now.Add(-7*24*time.Hour), now, i18n, "zh-TW")
 	if err != nil {
 		t.Fatalf("GetPlannerRulesWeeklyReport: %v", err)
 	}
@@ -374,11 +377,76 @@ func TestGetPlannerRulesWeeklyReportAggregatesTopIssueTags(t *testing.T) {
 	if report.TopIssueTags[1].Tag != "missing_validation" || report.TopIssueTags[1].Count != 2 {
 		t.Fatalf("top issue tag[1]: %+v", report.TopIssueTags[1])
 	}
-	if got := FormatPlannerRulesWeeklyReport(report); !strings.Contains(got, "Top issue tags") || !strings.Contains(got, "missing_context") {
+	if got := FormatPlannerRulesWeeklyReport(i18n, "zh-TW", report); !strings.Contains(got, "Top issue tags：") || !strings.Contains(got, "missing_context") {
 		t.Fatalf("formatted report missing expected content:\n%s", got)
 	}
 	if len(report.Recommendations) == 0 {
 		t.Fatal("expected recommendations")
+	}
+	if !strings.Contains(report.Recommendations[0], "樣本數僅") {
+		t.Fatalf("expected localized recommendation, got: %s", report.Recommendations[0])
+	}
+}
+
+func TestFormatPlannerRulesWeeklyReportEnglish(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	i18n := newTestI18nManager(t)
+
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:        "task-weekly-en",
+		Goal:      "english weekly report",
+		Engine:    "plan-execute",
+		Backend:   "claude",
+		Status:    "done",
+		StartedAt: now,
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+		ID:          "task-weekly-en:s1",
+		TaskID:      "task-weekly-en",
+		Idx:         0,
+		Description: "review step",
+		Status:      "done",
+		StartedAt:   now,
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedSubTask: %v", err)
+	}
+
+	reviewID, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        "task-weekly-en",
+		ReviewerModel: "gpt-5.5",
+		Verdict:       "partial",
+		OverallScore:  81,
+		FeedbackText:  "needs clearer context",
+		IssueTags:     []string{"missing_context"},
+		CreatedAt:     now,
+	})
+	if err != nil {
+		t.Fatalf("InsertUnifiedReviewResult: %v", err)
+	}
+	if err := s.InsertUnifiedReviewSubTaskResult(UnifiedReviewSubTaskResult{
+		ReviewID:  reviewID,
+		SubTaskID: "task-weekly-en:s1",
+		Score:     80,
+		Feedback:  "context incomplete",
+		IssueTags: []string{"ambiguous_goal"},
+	}); err != nil {
+		t.Fatalf("InsertUnifiedReviewSubTaskResult: %v", err)
+	}
+
+	report, err := s.GetPlannerRulesWeeklyReport(now.Add(-7*24*time.Hour), now, i18n, "en")
+	if err != nil {
+		t.Fatalf("GetPlannerRulesWeeklyReport: %v", err)
+	}
+
+	got := FormatPlannerRulesWeeklyReport(i18n, "en", report)
+	if !strings.Contains(got, "Hermes Review Weekly Report") || !strings.Contains(got, "Planner Recommendations:") {
+		t.Fatalf("formatted english report missing expected content:\n%s", got)
+	}
+	if len(report.Recommendations) == 0 || !strings.Contains(report.Recommendations[0], "Only") {
+		t.Fatalf("expected localized english recommendation, got: %+v", report.Recommendations)
 	}
 }
 
@@ -391,4 +459,14 @@ func assertCount(t *testing.T, db *sql.DB, table string, want int) {
 	if got != want {
 		t.Fatalf("count %s: got %d, want %d", table, got, want)
 	}
+}
+
+func newTestI18nManager(t *testing.T) *I18nManager {
+	t.Helper()
+
+	i18n, err := NewI18nManager(filepath.Join("..", "..", "locales"), "en")
+	if err != nil {
+		t.Fatalf("NewI18nManager: %v", err)
+	}
+	return i18n
 }
