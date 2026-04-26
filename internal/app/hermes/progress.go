@@ -81,7 +81,9 @@ func (r *TextProgressReporter) OnSubTaskStart(idx, total int, task SubTask) {
 }
 
 func (r *TextProgressReporter) OnSubTaskDone(idx, total int, task SubTask, success bool, result string) {
-	if r.verbosity < VerbosityNormal {
+	// Always notify when there is only one sub-task — otherwise the user sees
+	// the start message and then silence until OnDone, which looks like a hang.
+	if r.verbosity < VerbosityNormal && total > 1 {
 		return
 	}
 	icon := "✅"

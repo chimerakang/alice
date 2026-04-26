@@ -83,6 +83,8 @@ Config 從 `config.json` 載入（範本見 `config.example.json`），可用 en
 |------|------|
 | Dynamic Model Routing（sticky session、triage、commands、Web API） | [docs/DYNAMIC_MODEL_ROUTING.md](docs/DYNAMIC_MODEL_ROUTING.md) |
 | Deployment architecture、startup sequence、監控 stack | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
+| Hermes GPT tier / Codex backend（`ai_backend: "multi"`、`/ghermes`、已知限制） | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
+| Hermes prompt rules（Codex planner / executor JSON 與工具限制） | [internal/app/hermes/prompts/planner_rules_codex.md](internal/app/hermes/prompts/planner_rules_codex.md)、[internal/app/hermes/prompts/executor_rules_codex.md](internal/app/hermes/prompts/executor_rules_codex.md) |
 | i18n 多國語系規範（新增 user-facing 文字時觸發） | skill `alice-i18n` + [docs/i18n_guide.md](docs/i18n_guide.md) |
 | Task & Issue Management（milestone、MASTER_TASKS.md） | skills `/task-sync`、`/tasks`、`/task-add`、`/task-status` |
 | Dashboard、WebSocket、Storage、Git integration | [docs/DASHBOARD.md](docs/DASHBOARD.md)、[docs/WEBSOCKET_REALTIME.md](docs/WEBSOCKET_REALTIME.md)、[docs/STORAGE_PERSISTENCE.md](docs/STORAGE_PERSISTENCE.md)、[docs/GIT_INTEGRATION.md](docs/GIT_INTEGRATION.md) |

@@ -80,15 +80,39 @@ func DefaultPromptBuilder() *PromptBuilder {
 // LoadPromptBuilder loads rules from <dir>/planner_rules.md and <dir>/executor_rules.md.
 // If a file is missing or unreadable, the embedded default for that role is used instead.
 func LoadPromptBuilder(dir string) *PromptBuilder {
+	return LoadPromptBuilderForTier(dir, "")
+}
+
+// LoadPromptBuilderForTier loads role rules from the prompts directory, optionally
+// preferring tier-specific variants before falling back to the default filenames.
+// For tier == "codex", it tries *_rules_codex.md first, then the default files.
+func LoadPromptBuilderForTier(dir string, tier string) *PromptBuilder {
 	pb := DefaultPromptBuilder()
 
-	if rules, err := readMD(filepath.Join(dir, "planner_rules.md")); err == nil {
+	if rules, err := loadRulesForRole(dir, "planner", tier); err == nil {
 		pb.plannerRules = rules
 	}
-	if rules, err := readMD(filepath.Join(dir, "executor_rules.md")); err == nil {
+	if rules, err := loadRulesForRole(dir, "executor", tier); err == nil {
 		pb.executorRules = rules
 	}
 	return pb
+}
+
+func loadRulesForRole(dir string, role string, tier string) (string, error) {
+	for _, name := range promptRuleCandidates(role, tier) {
+		if rules, err := readMD(filepath.Join(dir, name)); err == nil {
+			return rules, nil
+		}
+	}
+	return "", fmt.Errorf("no prompt rules found for role %q in %s", role, dir)
+}
+
+func promptRuleCandidates(role string, tier string) []string {
+	base := role + "_rules.md"
+	if strings.EqualFold(strings.TrimSpace(tier), "codex") {
+		return []string{role + "_rules_codex.md", base}
+	}
+	return []string{base}
 }
 
 func readMD(path string) (string, error) {

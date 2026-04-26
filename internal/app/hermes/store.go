@@ -302,7 +302,7 @@ func (s *SQLiteTaskStore) MarkStatus(taskID string, status TaskStatus) error {
 func (s *SQLiteTaskStore) ResetBudgetStartedAt(taskID string, t time.Time) error {
 	return s.execWithRetry(func() error {
 		var raw string
-		err := s.db.QueryRow(`SELECT budget FROM hermes_task_states WHERE id = ?`, taskID).Scan(&raw)
+		err := s.db.QueryRow(`SELECT token_budget FROM hermes_task_states WHERE id = ?`, taskID).Scan(&raw)
 		if err != nil {
 			return err
 		}
@@ -316,7 +316,7 @@ func (s *SQLiteTaskStore) ResetBudgetStartedAt(taskID string, t time.Time) error
 			return err
 		}
 		_, err = s.db.Exec(
-			`UPDATE hermes_task_states SET budget = ?, updated_at = ? WHERE id = ?`,
+			`UPDATE hermes_task_states SET token_budget = ?, updated_at = ? WHERE id = ?`,
 			string(updated), time.Now().Format(time.RFC3339), taskID,
 		)
 		return err

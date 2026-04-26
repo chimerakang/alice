@@ -10,9 +10,9 @@ import (
 
 // MessageContent 統一的訊息內容結構
 type MessageContent struct {
-	Text      string   `json:"text"`                // 文字內容
-	Images    []string `json:"images,omitempty"`    // 圖片檔案路徑列表
-	Caption   string   `json:"caption,omitempty"`   // 圖片說明文字
+	Text      string   `json:"text"`                 // 文字內容
+	Images    []string `json:"images,omitempty"`     // 圖片檔案路徑列表
+	Caption   string   `json:"caption,omitempty"`    // 圖片說明文字
 	MessageID string   `json:"message_id,omitempty"` // 訊息 ID
 }
 
@@ -111,8 +111,9 @@ func (ea *EnhancedAgent) runWithFiles(ctx context.Context, message string, image
 	}
 
 	ps := ea.Agent.current()
+	sessionID := ps.ctx.Session(BackendClaude)
 	log.Printf("[enhanced-agent] calling CLI with %d files, session=%s, project=%s",
-		len(imagePaths), ps.sessionID, ea.Agent.projectDir)
+		len(imagePaths), sessionID, ea.Agent.projectDir)
 
 	if onUpdate != nil {
 		onUpdate("🤖 Claude 正在分析圖片內容...", false)
@@ -121,7 +122,7 @@ func (ea *EnhancedAgent) runWithFiles(ctx context.Context, message string, image
 	// 嘗試使用流式 API（如果支援的話）
 	if len(imagePaths) == 1 {
 		// 單張圖片，使用非流式 API 確保穩定性
-		resp, err := enhancedClient.CallWithFiles(ctx, message, imagePaths, ea.Agent.projectDir, ps.sessionID)
+		resp, err := enhancedClient.CallWithFiles(ctx, message, imagePaths, ea.Agent.projectDir, sessionID)
 		if err != nil {
 			return "", fmt.Errorf("enhanced CLI call error: %w", err)
 		}
@@ -129,11 +130,12 @@ func (ea *EnhancedAgent) runWithFiles(ctx context.Context, message string, image
 		if resp.IsError {
 			return "", fmt.Errorf("Claude analysis error: %s", resp.Result)
 		}
+		ps.ctx.SetSession(BackendClaude, resp.SessionID)
 
 		return resp.Result, nil
 	} else {
 		// 多張圖片，使用流式 API 提供進度回饋
-		resp, err := enhancedClient.CallStreamWithFiles(ctx, message, imagePaths, ea.Agent.projectDir, ps.sessionID,
+		resp, err := enhancedClient.CallStreamWithFiles(ctx, message, imagePaths, ea.Agent.projectDir, sessionID,
 			func(toolName string, toolInput map[string]interface{}) {
 				// 工具使用回調
 				if onUpdate != nil {
@@ -166,6 +168,7 @@ func (ea *EnhancedAgent) runWithFiles(ctx context.Context, message string, image
 		if resp.IsError {
 			return "", fmt.Errorf("Claude analysis error: %s", resp.Result)
 		}
+		ps.ctx.SetSession(BackendClaude, resp.SessionID)
 
 		return resp.Result, nil
 	}

@@ -83,6 +83,50 @@ func TestLoadPromptBuilder_MissingDirFallsBack(t *testing.T) {
 	}
 }
 
+func TestLoadPromptBuilderForTier_CodexPrefersVariant(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(dir, "planner_rules.md"), []byte("default planner"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "planner_rules_codex.md"), []byte("codex planner"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "executor_rules.md"), []byte("default executor"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "executor_rules_codex.md"), []byte("codex executor"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pb := LoadPromptBuilderForTier(dir, "codex")
+	if got := pb.ForRole(RolePlanner); got != "codex planner" {
+		t.Errorf("planner rules = %q, want codex variant", got)
+	}
+	if got := pb.ForRole(RoleExecutor); got != "codex executor" {
+		t.Errorf("executor rules = %q, want codex variant", got)
+	}
+}
+
+func TestLoadPromptBuilderForTier_CodexFallsBackToDefault(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(dir, "planner_rules.md"), []byte("default planner"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "executor_rules.md"), []byte("default executor"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pb := LoadPromptBuilderForTier(dir, "codex")
+	if got := pb.ForRole(RolePlanner); got != "default planner" {
+		t.Errorf("planner rules = %q, want default fallback", got)
+	}
+	if got := pb.ForRole(RoleExecutor); got != "default executor" {
+		t.Errorf("executor rules = %q, want default fallback", got)
+	}
+}
+
 func TestRole_String(t *testing.T) {
 	tests := []struct {
 		role Role

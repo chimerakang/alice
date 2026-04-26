@@ -443,3 +443,34 @@ func TestFileBackedStore_RoundTrip(t *testing.T) {
 		t.Errorf("goal mismatch after file round-trip")
 	}
 }
+
+// ── ResetBudgetStartedAt ───────────────────────────────────────────────────────
+
+func TestResetBudgetStartedAt(t *testing.T) {
+	store := newTestStore(t)
+	task := makeTask("task-budget", 42)
+	oldTime := time.Now().Add(-10 * time.Minute)
+	task.TokenBudget.StartedAt = oldTime
+
+	created, err := store.CreateTask(task)
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	newTime := time.Now()
+	if err := store.ResetBudgetStartedAt("task-budget", newTime); err != nil {
+		t.Fatalf("ResetBudgetStartedAt: %v", err)
+	}
+
+	got, err := store.GetTask("task-budget")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+
+	if got.TokenBudget.StartedAt.Unix() != newTime.Unix() {
+		t.Errorf("TokenBudget.StartedAt not updated: got %v, want %v", got.TokenBudget.StartedAt, newTime)
+	}
+	if got.TokenBudget.MaxTotalTokens != created.TokenBudget.MaxTotalTokens {
+		t.Errorf("TokenBudget.MaxTotalTokens corrupted after reset")
+	}
+}

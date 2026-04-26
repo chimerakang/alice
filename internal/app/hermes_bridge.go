@@ -33,11 +33,12 @@ func makePlanFn(client Client, model string) hermes.CallPlanFunc {
 }
 
 // makeExecFn returns a hermes.CallStreamFunc backed by the given Client and model.
-// Each invocation is a fresh CLI session (no sessionID reuse — Executor cold-starts).
+// The caller owns session reuse; this adapter just forwards the input session ID
+// and returns the effective session ID reported by the CLI.
 func makeExecFn(client Client, model string) hermes.CallStreamFunc {
-	return func(ctx context.Context, prompt, projectDir string, onContent func(string)) (result string, inTokens, outTokens int, validationErr string, err error) {
+	return func(ctx context.Context, prompt, projectDir, sessionID string, onContent func(string)) (result, effectiveSessionID string, inTokens, outTokens int, validationErr string, err error) {
 		var collected strings.Builder
-		resp, callErr := client.CallStream(ctx, prompt, projectDir, "" /*no session*/, model,
+		resp, callErr := client.CallStream(ctx, prompt, projectDir, sessionID, model,
 			nil, // onToolUse: hooks run inside CLI; we don't intercept here
 			func(contentType, t string) {
 				if contentType == "text" {
@@ -49,11 +50,15 @@ func makeExecFn(client Client, model string) hermes.CallStreamFunc {
 			},
 		)
 		if callErr != nil {
-			return "", 0, 0, "", callErr
+			return "", sessionID, 0, 0, "", callErr
 		}
 		text := collected.String()
 		if text == "" {
 			text = resp.TextContent
+		}
+		effectiveSessionID = resp.SessionID
+		if effectiveSessionID == "" {
+			effectiveSessionID = sessionID
 		}
 		// validation_error is surfaced via resp.Result when a post-hook fails
 		// (hooks attach it to the result; CLI returns it in the final text or error)
@@ -62,6 +67,6 @@ func makeExecFn(client Client, model string) hermes.CallStreamFunc {
 		if resp.IsError && strings.Contains(resp.Result, "validation_error") {
 			valErr = resp.Result
 		}
-		return text, resp.Usage.InputTokens, resp.Usage.OutputTokens, valErr, nil
+		return text, effectiveSessionID, resp.Usage.InputTokens, resp.Usage.OutputTokens, valErr, nil
 	}
 }

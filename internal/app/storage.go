@@ -1860,3 +1860,26 @@ func (s *SQLiteStorage) RecordPromptClassification(rec PromptClassificationRecor
 		return err
 	})
 }
+
+// ListPromptClassifications returns the most recent rows from prompt_classifications, newest first.
+func (s *SQLiteStorage) ListPromptClassifications(limit int) ([]PromptClassificationRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT session_id, timestamp, source, cwd, prompt_snippet, prompt_length, classification, matched_rule
+		FROM prompt_classifications
+		ORDER BY timestamp DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var recs []PromptClassificationRecord
+	for rows.Next() {
+		var r PromptClassificationRecord
+		if err := rows.Scan(&r.SessionID, &r.Timestamp, &r.Source, &r.CWD, &r.PromptSnippet, &r.PromptLength, &r.Classification, &r.MatchedRule); err != nil {
+			return nil, err
+		}
+		recs = append(recs, r)
+	}
+	return recs, rows.Err()
+}

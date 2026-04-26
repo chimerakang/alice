@@ -24,26 +24,26 @@ type TokenStats struct {
 
 // CostSavingsReport 成本節省報告（用於 Dashboard 展示）
 type CostSavingsReport struct {
-	PeriodHours       int                            `json:"period_hours"`
-	StartTime         time.Time                      `json:"start_time"`
-	EndTime           time.Time                      `json:"end_time"`
-	ActualCost        float64                        `json:"actual_cost"`        // 實際花費
-	DefaultModelCost  float64                        `json:"default_model_cost"` // 假設全用預設模型花費
-	SavingsCost       float64                        `json:"savings_cost"`       // 節省金額
-	SavingsPercent    float64                        `json:"savings_percent"`    // 節省百分比
-	TotalRequests     int                            `json:"total_requests"`
-	ByModel           map[string]ModelCostBreakdown  `json:"by_model"`
-	RoutingMethodStat map[string]int                 `json:"routing_method_stat"`
+	PeriodHours       int                           `json:"period_hours"`
+	StartTime         time.Time                     `json:"start_time"`
+	EndTime           time.Time                     `json:"end_time"`
+	ActualCost        float64                       `json:"actual_cost"`        // 實際花費
+	DefaultModelCost  float64                       `json:"default_model_cost"` // 假設全用預設模型花費
+	SavingsCost       float64                       `json:"savings_cost"`       // 節省金額
+	SavingsPercent    float64                       `json:"savings_percent"`    // 節省百分比
+	TotalRequests     int                           `json:"total_requests"`
+	ByModel           map[string]ModelCostBreakdown `json:"by_model"`
+	RoutingMethodStat map[string]int                `json:"routing_method_stat"`
 }
 
 // ModelCostBreakdown 按模型的成本分解
 type ModelCostBreakdown struct {
-	Calls           int     `json:"calls"`
-	ActualCost      float64 `json:"actual_cost"`
-	WouldHaveCost   float64 `json:"would_have_cost"`   // 假設用預設模型的成本
-	Saved           float64 `json:"saved"`             // 節省金額
-	InputTokens     int     `json:"input_tokens"`
-	OutputTokens    int     `json:"output_tokens"`
+	Calls         int     `json:"calls"`
+	ActualCost    float64 `json:"actual_cost"`
+	WouldHaveCost float64 `json:"would_have_cost"` // 假設用預設模型的成本
+	Saved         float64 `json:"saved"`           // 節省金額
+	InputTokens   int     `json:"input_tokens"`
+	OutputTokens  int     `json:"output_tokens"`
 }
 
 // ToolExecution represents a single tool execution event
@@ -76,9 +76,9 @@ type DecisionLog struct {
 	TokensUsed      TokenStats             `json:"tokens_used"`
 	GitCommitHash   string                 `json:"git_commit_hash,omitempty"`
 	GitBranch       string                 `json:"git_branch,omitempty"`
-	Source          string                 `json:"source"` // "telegram", "terminal", "vscode", "unknown"
-	Model           string                 `json:"model"` // NEW: "haiku", "sonnet", "opus"
-	RoutingReason   string                 `json:"routing_reason"` // NEW: "user_command", "ai_router", "static_rule", "default"
+	Source          string                 `json:"source"`             // "telegram", "terminal", "vscode", "unknown"
+	Model           string                 `json:"model"`              // NEW: "haiku", "sonnet", "opus"
+	RoutingReason   string                 `json:"routing_reason"`     // NEW: "user_command", "ai_router", "static_rule", "default"
 	RoutingLatency  int                    `json:"routing_latency_ms"` // NEW: 路由判斷耗時 (ms)
 }
 
@@ -330,34 +330,26 @@ func (dl *DecisionLogger) SearchDecisions(projectPath string, taskType string, s
 	return results
 }
 
-// contextMessage 保存單輪對話（用於 context bridge）
-type contextMessage struct {
-	Role    string // "user" or "assistant"
-	Content string // truncated to 500 chars
-}
-
 // projectState 保存單一專案的對話狀態
 type projectState struct {
-	sessionID        string
+	ctx              *ChatContext
 	stats            TokenStats
-	lastActivity     time.Time
-	createdAt        time.Time
-	lastTotalCostUSD float64          // CLI's cumulative cost from last call (for delta calculation)
-	recentMessages   []contextMessage // last 5 exchanges for context bridge on model switch
+	lastTotalCostUSD float64 // CLI's cumulative cost from last call (for delta calculation)
 }
 
 type Agent struct {
-	client                Client
-	projectDir            string
-	projects              map[string]*projectState // projectDir → state
-	chatID                int64                    // Telegram chat ID
-	threadID              int                      // Telegram thread ID (for forum topics)
-	currentModelOverride  string                   // Current model override for this agent (for dynamic routing)
-	lastUsedModel         string                   // Last model used (for session continuity)
-	enablePlanMode        bool                     // OpusPlan: enable two-phase plan+execute
-	planModel             string                   // OpusPlan: model for planning phase (e.g. Opus)
-	executeModel          string                   // OpusPlan: model for execution phase (e.g. Sonnet)
-	cliTimeoutMinutes int // CLI 執行逾時（分鐘），0=無限制
+	client               Client
+	projectDir           string
+	projects             map[string]*projectState // projectDir → state
+	chatID               int64                    // Telegram chat ID
+	threadID             int                      // Telegram thread ID (for forum topics)
+	currentModelOverride string                   // Current model override for this agent (for dynamic routing)
+	lastUsedModel        string                   // Last model used (for session continuity)
+	chatContext          *ChatContext             // Shared conversation state across Agent/Hermes
+	enablePlanMode       bool                     // OpusPlan: enable two-phase plan+execute
+	planModel            string                   // OpusPlan: model for planning phase (e.g. Opus)
+	executeModel         string                   // OpusPlan: model for execution phase (e.g. Sonnet)
+	cliTimeoutMinutes    int                      // CLI 執行逾時（分鐘），0=無限制
 	// Abort control
 	cancelFunc context.CancelFunc // 取消正在執行的 CLI 子程序
 	cancelMu   sync.Mutex         // 保護 cancelFunc 的併發存取
@@ -365,12 +357,20 @@ type Agent struct {
 }
 
 func NewAgent(client Client, projectDir string, chatID int64, threadID int) *Agent {
+	return NewAgentWithContext(client, NewChatContext(chatID, threadID, projectDir))
+}
+
+func NewAgentWithContext(client Client, chatCtx *ChatContext) *Agent {
+	if chatCtx == nil {
+		chatCtx = NewChatContext(0, 0, "")
+	}
 	return &Agent{
-		client:     client,
-		projectDir: projectDir,
-		projects:   make(map[string]*projectState),
-		chatID:     chatID,
-		threadID:   threadID,
+		client:      client,
+		projectDir:  chatCtx.ProjectDir,
+		projects:    make(map[string]*projectState),
+		chatID:      chatCtx.ChatID,
+		threadID:    chatCtx.ThreadID,
+		chatContext: chatCtx,
 	}
 }
 
@@ -460,10 +460,12 @@ func (a *Agent) current() *projectState {
 	if ps, ok := a.projects[a.projectDir]; ok {
 		return ps
 	}
-	now := time.Now()
+	if a.chatContext == nil {
+		a.chatContext = NewChatContext(a.chatID, a.threadID, a.projectDir)
+	}
+	a.chatContext.ProjectDir = a.projectDir
 	ps := &projectState{
-		createdAt:    now,
-		lastActivity: now,
+		ctx: a.chatContext,
 	}
 	a.projects[a.projectDir] = ps
 	return ps
@@ -522,20 +524,27 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		log.Printf("[telegram] model routing: message=%q selected=%s reason=%s latency=%dms", msgPreview, selectedModel, routingReason, routingLatency)
 	}
 
-	// If model changed, inject context bridge then start fresh session
-	if selectedModel != "" && selectedModel != a.lastUsedModel && a.lastUsedModel != "" {
-		bridge := buildContextBridge(ps.recentMessages)
-		if bridge != "" {
-			userMessage = bridge + userMessage
-			log.Printf("[agent] context bridge injected (%d recent messages)", len(ps.recentMessages))
-		}
-		ps.sessionID = "" // Force new session when model changes
-	}
-	a.lastUsedModel = selectedModel
-	if a.lastUsedModel == "" {
-		a.lastUsedModel = a.client.GetModel() // Use default if no model selected
+	if selectedModel == "" {
+		selectedModel = a.client.GetModel() // Use default if no model selected
 		routingReason = "default"
 	}
+	selectedBackend := BackendKindForModel(selectedModel)
+	previousBackend := ps.ctx.LastBackend
+
+	// If model changed, bridge recent messages. Native sessions are kept per
+	// backend; same-backend model changes still start a fresh session.
+	if selectedModel != a.lastUsedModel && a.lastUsedModel != "" {
+		bridge := buildContextBridge(ps.ctx.RecentMessagesSnapshot())
+		if bridge != "" {
+			userMessage = bridge + userMessage
+			log.Printf("[agent] context bridge injected (%d recent messages)", len(ps.ctx.RecentMsgs))
+		}
+		if selectedBackend == previousBackend {
+			ps.ctx.ClearSession(selectedBackend)
+		}
+	}
+	a.lastUsedModel = selectedModel
+	ps.ctx.LastBackend = selectedBackend
 
 	// Inject matching auto-skills into user message as context
 	if globalSkillManager != nil {
@@ -547,7 +556,8 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		}
 	}
 
-	log.Printf("[agent] calling CLI (stream), session=%s, project=%s, model=%s routing_reason=%s", ps.sessionID, a.projectDir, a.lastUsedModel, routingReason)
+	sessionID := ps.ctx.Session(selectedBackend)
+	log.Printf("[agent] calling CLI (stream), session=%s, project=%s, model=%s routing_reason=%s", sessionID, a.projectDir, a.lastUsedModel, routingReason)
 
 	// Pre-generate decision ID so checkpoints created during streaming
 	// can reference the decision that will be created after streaming completes.
@@ -575,40 +585,40 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 			toolCallsForDecision = nil
 		}
 
-		resp, err = a.client.CallStream(ctx, userMessage, a.projectDir, ps.sessionID, a.lastUsedModel, func(toolName string, toolInput map[string]interface{}) {
-		// Check if we should create a checkpoint before executing this tool
-		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
+		resp, err = a.client.CallStream(ctx, userMessage, a.projectDir, sessionID, a.lastUsedModel, func(toolName string, toolInput map[string]interface{}) {
+			// Check if we should create a checkpoint before executing this tool
+			a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
 
-		// Log tool execution start
-		globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID, a.projectDir)
+			// Log tool execution start
+			globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID, a.projectDir)
 
-		// Track this tool call for decision logging
-		toolExecution := ToolExecution{
-			Timestamp:   time.Now(),
-			ToolName:    toolName,
-			Input:       toolInput,
-			Status:      "executed", // Mark as executed immediately for decision log
-			ChatID:      a.chatID,
-			ThreadID:    a.threadID,
-			ProjectPath: a.projectDir,
-		}
-		toolCallsForDecision = append(toolCallsForDecision, toolExecution)
-
-		if onUpdate != nil {
-			msg := formatToolUpdate(toolName, toolInput)
-			if msg != "" {
-				onUpdate(msg, true)
+			// Track this tool call for decision logging
+			toolExecution := ToolExecution{
+				Timestamp:   time.Now(),
+				ToolName:    toolName,
+				Input:       toolInput,
+				Status:      "executed", // Mark as executed immediately for decision log
+				ChatID:      a.chatID,
+				ThreadID:    a.threadID,
+				ProjectPath: a.projectDir,
 			}
-		}
-	}, func(contentType, text string) {
-		if onUpdate == nil || text == "" {
-			return
-		}
-		switch contentType {
-		case "thinking", "text":
-			// Don't send streaming previews - full response is sent at completion
-		}
-	})
+			toolCallsForDecision = append(toolCallsForDecision, toolExecution)
+
+			if onUpdate != nil {
+				msg := formatToolUpdate(toolName, toolInput)
+				if msg != "" {
+					onUpdate(msg, true)
+				}
+			}
+		}, func(contentType, text string) {
+			if onUpdate == nil || text == "" {
+				return
+			}
+			switch contentType {
+			case "thinking", "text":
+				// Don't send streaming previews - full response is sent at completion
+			}
+		})
 
 		if err == nil {
 			break
@@ -617,7 +627,8 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		if isRetryableError(err) && attempt < maxRetries {
 			log.Printf("[agent] retryable error detected: %v", err)
 			if resp != nil && resp.SessionID != "" {
-				ps.sessionID = resp.SessionID
+				ps.ctx.SetSession(selectedBackend, resp.SessionID)
+				sessionID = resp.SessionID
 			}
 			continue
 		}
@@ -631,7 +642,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		if resp != nil {
 			partialText = resp.TextContent
 			if resp.SessionID != "" {
-				ps.sessionID = resp.SessionID
+				ps.ctx.SetSession(selectedBackend, resp.SessionID)
 			}
 			deltaCost = resp.TotalCostUSD - ps.lastTotalCostUSD
 			ps.lastTotalCostUSD = resp.TotalCostUSD
@@ -640,14 +651,14 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 			ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
 			ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
 			ps.stats.TotalCostUSD += deltaCost
-			ps.lastActivity = time.Now()
+			ps.ctx.LastActivity = time.Now()
 		}
 		a.logDecision(userMessage, partialText, toolCallsForDecision, startTime, resp, err, routingReason, routingLatency, deltaCost)
 		return partialText, fmt.Errorf("CLI call failed: %w", err)
 	}
 
 	// 保存 session ID 以便下次 --resume
-	ps.sessionID = resp.SessionID
+	ps.ctx.SetSession(selectedBackend, resp.SessionID)
 
 	// Calculate cost delta (CLI's TotalCostUSD is session-cumulative)
 	deltaCost := resp.TotalCostUSD - ps.lastTotalCostUSD
@@ -658,7 +669,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
 	ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
 	ps.stats.TotalCostUSD += deltaCost
-	ps.lastActivity = time.Now()
+	ps.ctx.LastActivity = time.Now()
 
 	log.Printf("[agent] done: turns=%d tokens_in=%d tokens_out=%d cost=$%.4f (delta from $%.4f) session=%s",
 		resp.NumTurns, resp.Usage.InputTokens, resp.Usage.OutputTokens,
@@ -759,8 +770,10 @@ Original user request: %s
 Execute the plan above. Follow the steps precisely.`, planText, userMessage)
 
 	// Force new session for execution phase (different model)
-	ps.sessionID = ""
+	executeBackend := BackendKindForModel(a.executeModel)
+	ps.ctx.ClearSession(executeBackend)
 	a.lastUsedModel = a.executeModel
+	ps.ctx.LastBackend = executeBackend
 
 	log.Printf("[agent] OpusPlan phase 2: calling execute model=%s, project=%s", a.executeModel, a.projectDir)
 
@@ -768,7 +781,7 @@ Execute the plan above. Follow the steps precisely.`, planText, userMessage)
 	currentDecisionID := generateDecisionID(a.chatID, a.threadID, startTime)
 	var toolCallsForDecision []ToolExecution
 
-	execResp, execErr := a.client.CallStream(ctx, executeMessage, a.projectDir, ps.sessionID, a.executeModel, func(toolName string, toolInput map[string]interface{}) {
+	execResp, execErr := a.client.CallStream(ctx, executeMessage, a.projectDir, ps.ctx.Session(executeBackend), a.executeModel, func(toolName string, toolInput map[string]interface{}) {
 		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
 		globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID, a.projectDir)
 
@@ -797,7 +810,7 @@ Execute the plan above. Follow the steps precisely.`, planText, userMessage)
 	var totalResp *CLIResponse
 	if execResp != nil {
 		totalResp = execResp
-		ps.sessionID = execResp.SessionID
+		ps.ctx.SetSession(executeBackend, execResp.SessionID)
 
 		// Calculate execution phase cost (this is a new session, so TotalCostUSD is session-only)
 		execCost := execResp.TotalCostUSD
@@ -808,7 +821,7 @@ Execute the plan above. Follow the steps precisely.`, planText, userMessage)
 		ps.stats.TotalInputTokens += planInputTokens + int64(execResp.Usage.InputTokens)
 		ps.stats.TotalOutputTokens += planOutputTokens + int64(execResp.Usage.OutputTokens)
 		ps.stats.TotalCostUSD += planCost + execCost
-		ps.lastActivity = time.Now()
+		ps.ctx.LastActivity = time.Now()
 
 		log.Printf("[agent] OpusPlan complete: plan_cost=$%.4f exec_cost=$%.4f total_cost=$%.4f exec_turns=%d",
 			planCost, execCost, planCost+execCost, execResp.NumTurns)
@@ -821,7 +834,7 @@ Execute the plan above. Follow the steps precisely.`, planText, userMessage)
 		ps.stats.TotalInputTokens += planInputTokens
 		ps.stats.TotalOutputTokens += planOutputTokens
 		ps.stats.TotalCostUSD += planCost
-		ps.lastActivity = time.Now()
+		ps.ctx.LastActivity = time.Now()
 
 		a.logDecision(userMessage, "", toolCallsForDecision, startTime, nil, execErr, "opus_plan", 0, planCost)
 		return "", fmt.Errorf("OpusPlan execution phase failed: %w", execErr)
@@ -854,13 +867,16 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 		selectedModel = a.client.GetModel()
 	}
 	a.lastUsedModel = selectedModel
+	selectedBackend := BackendKindForModel(selectedModel)
+	ps.ctx.LastBackend = selectedBackend
 
-	log.Printf("[agent] runDirect: session=%s, project=%s, model=%s", ps.sessionID, a.projectDir, selectedModel)
+	sessionID := ps.ctx.Session(selectedBackend)
+	log.Printf("[agent] runDirect: session=%s, project=%s, model=%s", sessionID, a.projectDir, selectedModel)
 
 	currentDecisionID := generateDecisionID(a.chatID, a.threadID, startTime)
 	var toolCallsForDecision []ToolExecution
 
-	resp, err := a.client.CallStream(ctx, userMessage, a.projectDir, ps.sessionID, selectedModel, func(toolName string, toolInput map[string]interface{}) {
+	resp, err := a.client.CallStream(ctx, userMessage, a.projectDir, sessionID, selectedModel, func(toolName string, toolInput map[string]interface{}) {
 		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
 		globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID, a.projectDir)
 
@@ -889,7 +905,7 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 		if resp != nil {
 			partialText = resp.TextContent
 			if resp.SessionID != "" {
-				ps.sessionID = resp.SessionID
+				ps.ctx.SetSession(selectedBackend, resp.SessionID)
 			}
 			deltaCost = resp.TotalCostUSD - ps.lastTotalCostUSD
 			ps.lastTotalCostUSD = resp.TotalCostUSD
@@ -897,20 +913,20 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 			ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
 			ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
 			ps.stats.TotalCostUSD += deltaCost
-			ps.lastActivity = time.Now()
+			ps.ctx.LastActivity = time.Now()
 		}
 		a.logDecision(userMessage, partialText, toolCallsForDecision, startTime, resp, err, "opus_plan_fallback", 0, deltaCost)
 		return partialText, fmt.Errorf("CLI call failed: %w", err)
 	}
 
-	ps.sessionID = resp.SessionID
+	ps.ctx.SetSession(selectedBackend, resp.SessionID)
 	deltaCost := resp.TotalCostUSD - ps.lastTotalCostUSD
 	ps.lastTotalCostUSD = resp.TotalCostUSD
 	ps.stats.APICallCount++
 	ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
 	ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
 	ps.stats.TotalCostUSD += deltaCost
-	ps.lastActivity = time.Now()
+	ps.ctx.LastActivity = time.Now()
 
 	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil, "opus_plan_fallback", 0, deltaCost)
 	addToRecentMessages(ps, userMessage, resp.Result)
@@ -935,22 +951,10 @@ func isRetryableError(err error) bool {
 
 // addToRecentMessages 儲存最近一輪對話（最多保留 5 輪）
 func addToRecentMessages(ps *projectState, userMsg, assistantMsg string) {
-	const maxLen = 500
-	truncate := func(s string) string {
-		runes := []rune(s)
-		if len(runes) > maxLen {
-			return string(runes[:maxLen]) + "..."
-		}
-		return s
+	if ps == nil || ps.ctx == nil {
+		return
 	}
-	ps.recentMessages = append(ps.recentMessages,
-		contextMessage{Role: "user", Content: truncate(userMsg)},
-		contextMessage{Role: "assistant", Content: truncate(assistantMsg)},
-	)
-	// Keep only last 5 exchanges (10 messages)
-	if len(ps.recentMessages) > 10 {
-		ps.recentMessages = ps.recentMessages[len(ps.recentMessages)-10:]
-	}
+	ps.ctx.AddRecentMessage(userMsg, assistantMsg)
 }
 
 // buildContextBridge 從最近對話記錄產生上下文摘要
@@ -1024,16 +1028,29 @@ func formatToolUpdate(name string, input map[string]interface{}) string {
 // Reset clears the current project's session and stats
 func (a *Agent) Reset() {
 	delete(a.projects, a.projectDir)
+	if a.chatContext != nil {
+		a.chatContext.Sessions = make(map[BackendKind]string)
+		a.chatContext.RecentMsgs = nil
+		a.chatContext.LastActivity = time.Now()
+	}
 }
 
 // ClearSession resets only the session ID, forcing fresh Claude Code context on next run while preserving usage stats
 func (a *Agent) ClearSession() {
-	a.current().sessionID = ""
+	ps := a.current()
+	ps.ctx.ClearSession(ps.ctx.LastBackend)
+}
+
+func (a *Agent) ClearSessionForModel(model string) {
+	a.current().ctx.ClearSession(BackendKindForModel(model))
 }
 
 // SetProject switches the working directory (preserves all project sessions)
 func (a *Agent) SetProject(dir string) {
 	a.projectDir = dir
+	if a.chatContext != nil {
+		a.chatContext.ProjectDir = dir
+	}
 }
 
 // Stats returns the current project's token usage statistics
@@ -1043,7 +1060,17 @@ func (a *Agent) Stats() TokenStats {
 
 // SessionID returns the current project's CLI session ID
 func (a *Agent) SessionID() string {
-	return a.current().sessionID
+	ps := a.current()
+	return ps.ctx.Session(ps.ctx.LastBackend)
+}
+
+// SessionIDForModel returns the native session for a model's backend.
+func (a *Agent) SessionIDForModel(model string) string {
+	return a.current().ctx.Session(BackendKindForModel(model))
+}
+
+func (a *Agent) LastBackend() BackendKind {
+	return a.current().ctx.LastBackend
 }
 
 // ProjectDir returns the current project directory
@@ -1053,17 +1080,30 @@ func (a *Agent) ProjectDir() string {
 
 // LastActivity returns when the agent was last active
 func (a *Agent) LastActivity() time.Time {
-	return a.current().lastActivity
+	return a.current().ctx.LastActivity
+}
+
+// AddRecentMessage appends one user/assistant exchange to the conversation
+// bridge so Hermes follow-up turns can reference the previous task result.
+func (a *Agent) AddRecentMessage(userMsg, assistantMsg string) {
+	ps := a.current()
+	addToRecentMessages(ps, userMsg, assistantMsg)
+}
+
+// RecentMessagesSnapshot returns a copy of the recent conversation bridge state.
+func (a *Agent) RecentMessagesSnapshot() []contextMessage {
+	ps := a.current()
+	return ps.ctx.RecentMessagesSnapshot()
 }
 
 // CreatedAt returns when the agent session was created
 func (a *Agent) CreatedAt() time.Time {
-	return a.current().createdAt
+	return a.current().ctx.CreatedAt
 }
 
 // IsActive returns true if the agent has been active within the last hour
 func (a *Agent) IsActive() bool {
-	return time.Since(a.current().lastActivity) < time.Hour
+	return time.Since(a.current().ctx.LastActivity) < time.Hour
 }
 
 // ProjectCount returns the number of projects this agent has worked with
@@ -1105,11 +1145,11 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 
 	// Create context map
 	context := map[string]interface{}{
-		"turns":         0,
-		"project_dir":   a.projectDir,
-		"model":         a.client.GetModel(),
-		"tool_count":    len(toolCalls),
-		"has_error":     err != nil,
+		"turns":       0,
+		"project_dir": a.projectDir,
+		"model":       a.client.GetModel(),
+		"tool_count":  len(toolCalls),
+		"has_error":   err != nil,
 	}
 
 	if resp != nil {
@@ -1136,7 +1176,7 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 	// Create decision log
 	decision := DecisionLog{
 		Timestamp:       startTime,
-		SessionID:       ps.sessionID,
+		SessionID:       ps.ctx.Session(ps.ctx.LastBackend),
 		ProjectPath:     a.projectDir,
 		ChatID:          a.chatID,
 		ThreadID:        a.threadID,
@@ -1150,7 +1190,7 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 		TokensUsed:      tokenStats,
 		Source:          "telegram",
 		Model:           ExtractModelShortName(a.lastUsedModel), // 使用的模型
-		RoutingReason:   routingReason,                         // 路由原因
+		RoutingReason:   routingReason,                          // 路由原因
 		RoutingLatency:  routingLatency,                         // 路由延遲 (ms)
 	}
 
@@ -1268,12 +1308,12 @@ func (a *Agent) filterSensitiveData(text string) string {
 		pattern     string
 		replacement string
 	}{
-		{`sk-[a-zA-Z0-9-_]{20,}`, "[API_KEY_MASKED]"},                    // API keys
+		{`sk-[a-zA-Z0-9-_]{20,}`, "[API_KEY_MASKED]"},                        // API keys
 		{`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`, "[EMAIL_MASKED]"}, // Email addresses
-		{`\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b`, "[CARD_MASKED]"},       // Credit card numbers
-		{`password\s*[:=]\s*\S+`, "password: [MASKED]"},                       // Passwords
-		{`token\s*[:=]\s*\S+`, "token: [MASKED]"},                             // Tokens
-		{`secret\s*[:=]\s*\S+`, "secret: [MASKED]"},                           // Secrets
+		{`\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b`, "[CARD_MASKED]"},      // Credit card numbers
+		{`password\s*[:=]\s*\S+`, "password: [MASKED]"},                      // Passwords
+		{`token\s*[:=]\s*\S+`, "token: [MASKED]"},                            // Tokens
+		{`secret\s*[:=]\s*\S+`, "secret: [MASKED]"},                          // Secrets
 	}
 
 	filteredText := text

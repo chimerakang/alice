@@ -7,16 +7,17 @@ import (
 )
 
 // CallStreamFunc is the calling convention the Executor uses to invoke the CLI.
-// Each call is a cold-start (no session reuse). Returns: result text, input tokens,
-// output tokens, validation error (from hooks), error.
+// The caller supplies the session ID to resume, and the implementation returns the
+// effective session ID to keep using for the next sub-task.
 type CallStreamFunc func(
 	ctx context.Context,
-	prompt, projectDir string,
+	prompt, projectDir, sessionID string,
 	onContent func(text string),
-) (result string, inTokens, outTokens int, validationErr string, err error)
+) (result, effectiveSessionID string, inTokens, outTokens int, validationErr string, err error)
 
-// ExecutorSession manages cold-start Executor CLI sessions.
-// A new implicit CLI session is created for every sub-task.
+// ExecutorSession manages Executor CLI sessions.
+// The session ID is threaded through sub-tasks so resume-capable backends can
+// continue the same conversation when available.
 type ExecutorSession struct {
 	callFn     CallStreamFunc
 	coreRules  string // prepended to every executor prompt (from #99)
@@ -45,9 +46,11 @@ type ExecuteResult struct {
 }
 
 // Execute runs the current sub-task from state, retrying on validation failure.
-// Each attempt is a fresh cold-start Executor invocation.
-func (e *ExecutorSession) Execute(ctx context.Context, state TaskState, projectDir string) (ExecuteResult, error) {
+// Attempts reuse the latest session ID returned by the backend so resume-capable
+// clients can continue the same thread across retries.
+func (e *ExecutorSession) Execute(ctx context.Context, state TaskState, projectDir, sessionID string) (ExecuteResult, string, error) {
 	var res ExecuteResult
+	currentSessionID := sessionID
 
 	for attempt := 1; attempt <= e.maxRetries; attempt++ {
 		res.Attempts = attempt
@@ -63,11 +66,15 @@ func (e *ExecutorSession) Execute(ctx context.Context, state TaskState, projectD
 		}
 
 		var contentBuf strings.Builder
-		resultText, inT, outT, valErr, err := e.callFn(ctx, prompt, projectDir, func(text string) {
+		resultText, nextSessionID, inT, outT, valErr, err := e.callFn(ctx, prompt, projectDir, currentSessionID, func(text string) {
 			contentBuf.WriteString(text)
 		})
 		if err != nil {
-			return res, fmt.Errorf("executor attempt %d: %w", attempt, err)
+			return res, currentSessionID, fmt.Errorf("executor attempt %d: %w", attempt, err)
+		}
+
+		if nextSessionID != "" {
+			currentSessionID = nextSessionID
 		}
 
 		res.InputTokens += inT
@@ -80,11 +87,11 @@ func (e *ExecutorSession) Execute(ctx context.Context, state TaskState, projectD
 
 		if valErr == "" {
 			// Success path — no validator failure
-			return res, nil
+			return res, currentSessionID, nil
 		}
 		// Validation failed — loop with feedback unless at last attempt
 	}
 
 	// All attempts exhausted; return last result with validation error set
-	return res, nil
+	return res, currentSessionID, nil
 }

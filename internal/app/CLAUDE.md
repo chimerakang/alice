@@ -24,8 +24,6 @@
 | #3131 | " | 🔵 | Claude CLI Command Execution with Model Parameter Injection | ~502 |
 | #3130 | " | 🔵 | Agent Instantiation Points in Codebase | ~425 |
 | #3128 | 2:37 AM | 🔵 | CLIClient Injection Pattern in TelegramBot | ~431 |
-| #3127 | " | 🔵 | Model Reference Points in Telegram Bot Layer | ~410 |
-| #3126 | 2:36 AM | 🔵 | Telegram Message Handler Entry Point for User Requests | ~615 |
 
 ### Feb 23, 2026
 
@@ -80,4 +78,11 @@
 | #8506 | 12:42 AM | 🔵 | Agent model override mechanism and default configuration | ~468 |
 | #8505 | " | 🔵 | Model routing architecture and user preference system analysis | ~559 |
 | #8504 | " | 🔵 | Issue #93: Model routing session context loss investigation | ~483 |
+
+### Apr 26, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #10516 | 4:43 PM | 🔵 | Hermes 上下文修復採文字橋接，未實作 Codex thread resume | ~410 |
+| #10512 | " | 🔴 | Hermes 模式跨輪對話上下文注入機制 | ~337 |
 </claude-mem-context>

@@ -23,8 +23,8 @@ type CoordinatorConfig struct {
 	// ExecutorModel" — the legacy single-model behaviour.
 	HeavyExecutorModel string
 
-	ProjectDir    string
-	ChatID        int64
+	ProjectDir string
+	ChatID     int64
 
 	MaxRetriesPerSubtask  int
 	MaxPlannerJSONRetries int
@@ -38,16 +38,27 @@ type CoordinatorConfig struct {
 	// PlannerRules is prepended to the plannerSystemPrompt on every Plan() call.
 	// When empty, only the embedded plannerSystemPrompt is used.
 	PlannerRules string
+	// PlannerSessionID seeds the Planner's CLI --resume session ID for a new task.
+	PlannerSessionID string
+	// ExecutorSessionID seeds the Executor's thread resume ID for a new task.
+	// When non-empty the first sub-task resumes from this session instead of starting fresh.
+	ExecutorSessionID string
 	// ExecutorRules is passed as coreRules to BuildExecutorPrompt on every Execute() call.
 	ExecutorRules string
 
 	// GitHub integration
-	GithubIssueNumber int        // 0 = no issue linked
-	GithubCfg         GithubCfg  // GitHub notification settings
+	GithubIssueNumber int       // 0 = no issue linked
+	GithubCfg         GithubCfg // GitHub notification settings
 
 	// PostCompletionHook is called (in a goroutine) after the task finishes,
 	// regardless of success or failure. Nil means no hook.
 	PostCompletionHook func(ctx context.Context)
+
+	// OnDone is called synchronously after the task reaches a terminal state,
+	// receiving the final TaskState. Use this to persist results back to the
+	// caller (e.g. writing Hermes output into recentMessages for follow-ups).
+	// Nil means no callback.
+	OnDone func(ctx context.Context, state TaskState)
 
 	// ContinueCh is an optional channel the Telegram handler can signal to resume
 	// execution after a budget warning. When nil, a budget-exceeded event kills the
@@ -71,11 +82,12 @@ type Coordinator struct {
 	progress      ProgressReporter
 	hooks         *HookRegistry
 
-	mu          sync.Mutex
-	taskID      string
-	cancelFn    context.CancelFunc
-	interrupted bool               // true after InterruptWith is called
-	msgQueue    []int64            // queued Telegram message IDs (queue policy)
+	mu                sync.Mutex
+	taskID            string
+	cancelFn          context.CancelFunc
+	executorSessionID string
+	interrupted       bool    // true after InterruptWith is called
+	msgQueue          []int64 // queued Telegram message IDs (queue policy)
 }
 
 // NewCoordinator creates a ready-to-use Coordinator.
@@ -105,6 +117,9 @@ func NewCoordinator(
 		store:    store,
 		progress: progress,
 		hooks:    hooks,
+	}
+	if cfg.PlannerSessionID != "" {
+		c.planner.sessionID = cfg.PlannerSessionID
 	}
 	if execFnHeavy != nil && cfg.HeavyExecutorModel != "" {
 		c.executorHeavy = NewExecutorSession(execFnHeavy, cfg.ExecutorRules, cfg.MaxRetriesPerSubtask)
@@ -169,6 +184,7 @@ func (c *Coordinator) Start(ctx context.Context, goal string) (taskID string, er
 
 	c.mu.Lock()
 	c.taskID = created.ID
+	c.executorSessionID = c.cfg.ExecutorSessionID
 	runCtx, cancel := context.WithCancel(ctx)
 	c.cancelFn = cancel
 	c.interrupted = false
@@ -226,6 +242,7 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 		c.mu.Lock()
 		c.cancelFn = nil
 		c.taskID = ""
+		c.executorSessionID = ""
 		c.mu.Unlock()
 	}()
 
@@ -235,10 +252,10 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 	// ~10s of cold-start latency for status checks, single git commands, and
 	// other one-shot work.
 	var (
-		tasks            []SubTask
-		planIn, planOut  int
-		err              error
-		plannerSkipped   bool
+		tasks           []SubTask
+		planIn, planOut int
+		err             error
+		plannerSkipped  bool
 	)
 	if ClassifyGoal(goal) == GoalSimple {
 		tasks = []SubTask{{
@@ -498,6 +515,16 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 		}
 	}
 
+	// Attach the final executor session ID so the caller can persist it for the next task.
+	c.mu.Lock()
+	finalState.ExecutorSessionID = c.executorSessionID
+	c.mu.Unlock()
+
+	// Notify caller with final state (e.g. write result back to recentMessages).
+	if c.cfg.OnDone != nil {
+		c.cfg.OnDone(ctx, finalState)
+	}
+
 	// Post-completion: run optional hook (e.g. /task-sync)
 	if c.cfg.PostCompletionHook != nil {
 		go c.cfg.PostCompletionHook(ctx)
@@ -571,7 +598,18 @@ func (c *Coordinator) runOneSubTask(
 	s.CurrentIdx = idx
 
 	executor, executorModel := c.pickExecutor(subTask)
-	result, execErr := executor.Execute(ctx, s, c.cfg.ProjectDir)
+	c.mu.Lock()
+	sessionID := c.executorSessionID
+	c.mu.Unlock()
+
+	result, nextSessionID, execErr := executor.Execute(ctx, s, c.cfg.ProjectDir, sessionID)
+	if nextSessionID != "" {
+		c.mu.Lock()
+		if c.executorSessionID == sessionID {
+			c.executorSessionID = nextSessionID
+		}
+		c.mu.Unlock()
+	}
 
 	execTokens := result.InputTokens + result.OutputTokens
 	_ = c.store.AddTokenUsage(taskID, execTokens)

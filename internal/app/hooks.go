@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -263,6 +264,18 @@ func (wi *WebInterface) handleUserPromptSubmit(w http.ResponseWriter, r *http.Re
 			if custom := os.Getenv("ALICE_VSCODE_BLOCK_REASON"); custom != "" {
 				reason = custom
 			}
+			// Phase 2: broadcast block event via WebSocket so the dashboard and any
+			// registered listeners (e.g. future TG notifier) can surface the intercept.
+			if globalWebSocketHub != nil {
+				globalWebSocketHub.BroadcastEvent("hook_prompt_blocked", map[string]interface{}{
+					"session_id":     payload.SessionID,
+					"source":         source,
+					"classification": string(result.Complexity),
+					"matched_rule":   result.MatchedRule,
+					"reason":         reason,
+					"timestamp":      time.Now(),
+				})
+			}
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"decision": "block",
 				"reason":   reason,
@@ -272,6 +285,43 @@ func (wi *WebInterface) handleUserPromptSubmit(w http.ResponseWriter, r *http.Re
 
 		// Observe mode / dry-run: return empty object so Claude Code proceeds unchanged.
 		json.NewEncoder(w).Encode(map[string]interface{}{})
+	})(w, r)
+}
+
+// handlePromptClassifications serves GET /api/hooks/prompt-classifications.
+// Returns recent PromptClassificationRecord rows (newest first) so the dashboard
+// can visualise classifier accuracy for Issue #104 Phase 1 evaluation.
+func (wi *WebInterface) handlePromptClassifications(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		limit := 100
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if n, err := strconv.Atoi(l); err == nil && n > 0 && n <= 1000 {
+				limit = n
+			}
+		}
+		if globalStorage == nil {
+			json.NewEncoder(w).Encode([]PromptClassificationRecord{})
+			return
+		}
+		sqliteStorage, ok := globalStorage.(*SQLiteStorage)
+		if !ok {
+			http.Error(w, `{"error":"storage unavailable"}`, http.StatusServiceUnavailable)
+			return
+		}
+		recs, err := sqliteStorage.ListPromptClassifications(limit)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+		if recs == nil {
+			recs = []PromptClassificationRecord{}
+		}
+		json.NewEncoder(w).Encode(recs)
 	})(w, r)
 }
 

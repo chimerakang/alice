@@ -96,6 +96,58 @@ sudo systemctl status alice
 | `ALLOWED_IPS` | Allowed IP addresses | - | ❌ |
 | `DATA_RETENTION_DAYS` | Data retention period | `30` | ❌ |
 
+### Multi-Backend Hermes Configuration
+
+Use `ai_backend: "multi"` when you want a single Alice instance to serve both the default Claude tier and the GPT/Codex tier used by `/ghermes`.
+
+```json
+{
+  "ai_backend": "multi",
+  "model": "sonnet",
+  "model_routing": {
+    "codex_smart_model": "gpt-5.4"
+  },
+  "multimedia": {
+    "openai_api_key": "sk-..."
+  },
+  "hermes": {
+    "enabled": true,
+    "prompts_dir": "internal/app/hermes/prompts"
+  }
+}
+```
+
+OpenAI key resolution for the Codex backend follows this order:
+
+1. `OPENAI_API_KEY` environment variable
+2. `multimedia.openai_api_key` in `config.json`
+
+If both are present, `OPENAI_API_KEY` wins. If neither is present, Alice still starts in `ai_backend: "multi"` mode, but the Codex/GPT tier is disabled and `/ghermes`-family commands will be rejected at runtime.
+
+### `/hermes` vs `/ghermes`
+
+Use `/hermes` for the default Claude tier and `/ghermes` for the GPT/Codex tier. Both commands enter the same Hermes planner-executor workflow and can target GitHub Issues, but they route to different model backends.
+
+| Command | Backend | When to use |
+|---------|---------|-------------|
+| `/hermes` | Claude tier | Default choice when your deployment only has Anthropic configured, or when you want the standard Claude-backed Hermes path. |
+| `/ghermes` | GPT/Codex tier | Use when `ai_backend` is `multi` and an OpenAI key is available, especially for validating or running the Codex-specific Hermes path. |
+
+Operational notes:
+
+- `/ghermes` requires `ai_backend: "multi"`; it is intentionally unavailable on `claude`, `api`, or other single-backend modes.
+- `/hermes` remains the safer default for general deployments because it does not depend on the Codex backend being enabled.
+- For issue-driven runs such as `/hermes #107` or `/ghermes #107`, GitHub checklist sync and Hermes lifecycle behavior are the same; the difference is only the model tier selected underneath.
+
+### Codex Tier Known Limitations
+
+When routing Hermes through `/ghermes`, keep these Codex backend constraints in mind:
+
+- The executor toolset is limited to shell-style command execution; do not assume file edit, web fetch, or other MCP tools are available.
+- Session resume is not guaranteed across machines, so resumed runs should not depend on prior local shell state.
+- There is no direct `--max-turns` equivalent flag for Codex runs; rely on prompt-side guardrails and bounded task descriptions.
+- Planner tool isolation is prompt-enforced only; `codexPlanGuard` reduces misuse risk but does not provide a hard runtime sandbox.
+
 ### Security Configuration
 
 ```bash

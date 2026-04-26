@@ -20,6 +20,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	appengine "claude-tg-agent/internal/app/engine"
 	"claude-tg-agent/internal/app/hermes"
 	"claude-tg-agent/internal/app/security"
 )
@@ -81,31 +82,31 @@ type TelegramMessage struct {
 }
 
 type TelegramBot struct {
-	agents        map[chatKey]*Agent // 每個 chat/topic 一個 agent
-	agentsMu      sync.RWMutex       // 保護 agents map 的讀寫鎖
-	client        Client
-	allowIDs      map[int64]bool // 白名單
-	config        *Config
-	i18n          *I18nManager   // 多國語系管理器
+	agents   map[chatKey]*Agent // 每個 chat/topic 一個 agent
+	agentsMu sync.RWMutex       // 保護 agents map 的讀寫鎖
+	client   Client
+	allowIDs map[int64]bool // 白名單
+	config   *Config
+	i18n     *I18nManager // 多國語系管理器
 
 	// 媒體批次處理
-	mediaBatches  map[string]*MediaBatch // mediaGroupID 或 chatKey 作為 key
-	batchMu       sync.RWMutex           // 保護 mediaBatches map
-	batchTimeout  time.Duration          // 批次收集超時時間
+	mediaBatches map[string]*MediaBatch // mediaGroupID 或 chatKey 作為 key
+	batchMu      sync.RWMutex           // 保護 mediaBatches map
+	batchTimeout time.Duration          // 批次收集超時時間
 
 	// Rate limiting and message queue
-	messageQueue  chan *TelegramMessage  // 訊息佇列
-	queueCtx      context.Context        // 佇列上下文
-	queueCancel   context.CancelFunc     // 佇列取消函數
-	rateLimiter   *time.Ticker          // 速率限制器
+	messageQueue chan *TelegramMessage // 訊息佇列
+	queueCtx     context.Context       // 佇列上下文
+	queueCancel  context.CancelFunc    // 佇列取消函數
+	rateLimiter  *time.Ticker          // 速率限制器
 
 	// Model routing preferences per chat/thread
-	modelPreferences map[chatKey]string // "fast", "deep", or ""
-	prefMu           sync.RWMutex       // Protect model preferences
+	chatContexts map[chatKey]*ChatContext // Shared conversation state per chat/topic
+	prefMu       sync.RWMutex             // Protect chat context preferences
 
 	// Language preferences per chat
 	langPreferences map[int64]string // chatID -> language code
-	langPrefMu      sync.RWMutex    // Protect language preferences
+	langPrefMu      sync.RWMutex     // Protect language preferences
 
 	// Track last used Topic for each chat (for @mention recovery when threadID=0)
 	lastUsedThreadID map[int64]int // chatID -> last non-zero threadID
@@ -115,16 +116,61 @@ type TelegramBot struct {
 	screenshotManager *ScreenshotManager
 
 	// Hermes Brain-Executor coordinators (per chat)
-	hermesCoords   map[chatKey]*hermesCoord
-	hermesMu       sync.RWMutex
+	hermesCoords map[chatKey]*hermesCoord
+	hermesMu     sync.RWMutex
 }
+
+type telegramProgressSink struct {
+	onUpdate func(string, bool)
+}
+
+func newTelegramProgressSink(onUpdate func(string, bool)) appengine.ProgressSink {
+	return &telegramProgressSink{onUpdate: onUpdate}
+}
+
+func (s *telegramProgressSink) OnSubTaskStart(idx, total int, desc string) {
+	// Agent.Run already emits the user-facing initial status. Keep this event
+	// structural so Telegram does not send the raw user prompt as a status.
+}
+
+func (s *telegramProgressSink) OnToolUse(tool string, input map[string]any) {
+	if s.onUpdate != nil && tool != "" {
+		s.onUpdate(tool, true)
+	}
+}
+
+func (s *telegramProgressSink) OnContent(kind, text string) {
+	if s.onUpdate == nil || text == "" {
+		return
+	}
+	s.onUpdate(text, kind != "status")
+}
+
+func (s *telegramProgressSink) OnSubTaskDone(idx int, result string) {}
+
+func (s *telegramProgressSink) OnComplete(summary string) {}
+
+const (
+	hermesPreviousContextHeader = "[Previous conversation context]"
+	hermesCurrentRequestHeader  = "[Current request]"
+	hermesContextMaxChars       = 2000
+)
+
+var hermesFetchIssue = hermes.FetchIssue
 
 // hermesCoord bundles the coordinator and its enabled flag for a single chat.
 type hermesCoord struct {
-	coord      interface{ TaskID() string; IsRunning() bool }
-	enabled    bool
-	tier       string        // "" or "claude" → Claude tier; "codex" → GPT tier (set by /ghermes)
-	continueCh chan struct{} // non-nil when coordinator is paused on a budget warning
+	coord interface {
+		TaskID() string
+		IsRunning() bool
+	}
+	enabled             bool
+	tier                string        // "" or "claude" → Claude tier; "codex" → GPT tier (set by /ghermes)
+	plannerSessionID    string        // cached Planner --resume session for the current tier
+	plannerSessionTier  string        // tier that produced plannerSessionID
+	executorSessionID   string        // cached Executor thread resume ID for the current tier
+	executorSessionTier string        // tier that produced executorSessionID
+	continueCh          chan struct{} // non-nil when coordinator is paused on a budget warning
 }
 
 func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
@@ -180,7 +226,7 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 		rateLimiter:  time.NewTicker(500 * time.Millisecond), // 2 messages per second
 
 		// Model routing preferences
-		modelPreferences: make(map[chatKey]string),
+		chatContexts:     make(map[chatKey]*ChatContext),
 		langPreferences:  make(map[int64]string),
 		lastUsedThreadID: make(map[int64]int), // Track last used Topic for @mention recovery
 
@@ -268,10 +314,28 @@ func (t *TelegramBot) getAgent(key chatKey) *Agent {
 		}
 	}
 
-	agent := NewAgent(t.client, projectDir, key.chatID, key.threadID)
+	agent := NewAgentWithContext(t.client, t.getChatContext(key, projectDir))
 	agent.cliTimeoutMinutes = t.config.CLITimeoutMinutes
 	t.agents[key] = agent
 	return agent
+}
+
+func (t *TelegramBot) getChatContext(key chatKey, projectDir string) *ChatContext {
+	t.prefMu.Lock()
+	defer t.prefMu.Unlock()
+
+	if t.chatContexts == nil {
+		t.chatContexts = make(map[chatKey]*ChatContext)
+	}
+	ctx := t.chatContexts[key]
+	if ctx == nil {
+		ctx = NewChatContext(key.chatID, key.threadID, projectDir)
+		t.chatContexts[key] = ctx
+	}
+	if projectDir != "" {
+		ctx.ProjectDir = projectDir
+	}
+	return ctx
 }
 
 // GetAgentsSafely 安全地獲取所有 agents 的副本，供 Web 介面使用
@@ -299,7 +363,10 @@ func (t *TelegramBot) GetAgentCount() int {
 func (t *TelegramBot) getUserModelPreference(key chatKey) string {
 	t.prefMu.RLock()
 	defer t.prefMu.RUnlock()
-	return t.modelPreferences[key]
+	if ctx := t.chatContexts[key]; ctx != nil {
+		return string(ctx.Pref)
+	}
+	return ""
 }
 
 // setUserModelPreference 安全地設定用戶的模型偏好設定
@@ -307,11 +374,15 @@ func (t *TelegramBot) getUserModelPreference(key chatKey) string {
 func (t *TelegramBot) setUserModelPreference(key chatKey, mode string) {
 	t.prefMu.Lock()
 	defer t.prefMu.Unlock()
-	if mode == "" {
-		delete(t.modelPreferences, key)
-	} else {
-		t.modelPreferences[key] = mode
+	if t.chatContexts == nil {
+		t.chatContexts = make(map[chatKey]*ChatContext)
 	}
+	ctx := t.chatContexts[key]
+	if ctx == nil {
+		ctx = NewChatContext(key.chatID, key.threadID, t.config.DefaultProjectDir)
+		t.chatContexts[key] = ctx
+	}
+	ctx.Pref = ModelPreference(mode)
 }
 
 // handleSavingsCommand 處理 /savings 指令 - 顯示本週路由統計和節省金額
@@ -457,8 +528,8 @@ func (t *TelegramBot) Start() {
 					MediaGroupID string      `json:"media_group_id"`
 				} `json:"message"`
 				CallbackQuery *struct {
-					ID      string `json:"id"`
-					From    *struct {
+					ID   string `json:"id"`
+					From *struct {
 						ID int64 `json:"id"`
 					} `json:"from"`
 					Message *struct {
@@ -643,6 +714,10 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	// Hermes mode: route to Brain-Executor coordinator instead of normal agent
 	if t.isHermesEnabled(key) {
 		projectDir := t.getAgent(key).ProjectDir()
+		if issueNum, ok := ParseIssueNumber(text); ok {
+			go t.startHermesFromIssue(key, issueNum, projectDir)
+			return
+		}
 		go t.startHermesTask(key, text, projectDir)
 		return
 	}
@@ -815,14 +890,16 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			}, createUpdateCallback())
 		} else {
 			// Fall back to regular agent
-			response, err = agent.Run(userMessage, createUpdateCallback())
+			result, runErr := appengine.NewDirectEngine(agent).Run(context.Background(), userMessage, agent.chatContext, newTelegramProgressSink(createUpdateCallback()))
+			response, err = result.Text, runErr
 		}
 	} else if agent.IsPlanMode() {
 		// OpusPlan two-phase execution
 		response, err = agent.RunWithPlan(userMessage, createUpdateCallback())
 	} else {
 		// Regular single agent execution
-		response, err = agent.Run(userMessage, createUpdateCallback())
+		result, runErr := appengine.NewDirectEngine(agent).Run(context.Background(), userMessage, agent.chatContext, newTelegramProgressSink(createUpdateCallback()))
+		response, err = result.Text, runErr
 	}
 
 	// Remove stop button after completion
@@ -1240,7 +1317,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			return
 		}
 		agent := t.getAgent(key)
-		hasSession := agent.SessionID() != ""
+		hasSession := agent.LastBackend() == BackendClaude && agent.SessionIDForModel(t.config.ModelRouting.FastModel) != ""
 		t.setUserModelPreference(key, "fast")
 		agent.SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_fast", map[string]string{"model": t.config.ModelRouting.FastModel})
@@ -1255,7 +1332,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			return
 		}
 		agent := t.getAgent(key)
-		hasSession := agent.SessionID() != ""
+		hasSession := agent.LastBackend() == BackendClaude && agent.SessionIDForModel(t.config.ModelRouting.SmartModel) != ""
 		t.setUserModelPreference(key, "smart")
 		agent.SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_smart", map[string]string{"model": t.config.ModelRouting.SmartModel})
@@ -1270,7 +1347,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			return
 		}
 		agent := t.getAgent(key)
-		hasSession := agent.SessionID() != ""
+		hasSession := agent.LastBackend() == BackendClaude && agent.SessionIDForModel(t.config.ModelRouting.DeepModel) != ""
 		t.setUserModelPreference(key, "deep")
 		agent.SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_deep", map[string]string{"model": t.config.ModelRouting.DeepModel})
@@ -1288,16 +1365,9 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			return
 		}
 		agent := t.getAgent(key)
-		hasSession := agent.SessionID() != ""
-		if hasSession {
-			agent.ClearSession() // isolate backend: GPT tier uses different session state
-		}
 		t.setUserModelPreference(key, "gpt-fast")
 		agent.SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_gpt_fast", map[string]string{"model": t.config.ModelRouting.CodexFastModel})
-		if hasSession {
-			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
-		}
 		t.send(key, msg)
 
 	case "/gsmart":
@@ -1309,16 +1379,9 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			return
 		}
 		agent := t.getAgent(key)
-		hasSession := agent.SessionID() != ""
-		if hasSession {
-			agent.ClearSession() // isolate backend: GPT tier uses different session state
-		}
 		t.setUserModelPreference(key, "gpt-smart")
 		agent.SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_gpt_smart", map[string]string{"model": t.config.ModelRouting.CodexSmartModel})
-		if hasSession {
-			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
-		}
 		t.send(key, msg)
 
 	case "/gdeep":
@@ -1330,16 +1393,9 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			return
 		}
 		agent := t.getAgent(key)
-		hasSession := agent.SessionID() != ""
-		if hasSession {
-			agent.ClearSession() // isolate backend: GPT tier uses different session state
-		}
 		t.setUserModelPreference(key, "gpt-deep")
 		agent.SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_gpt_deep", map[string]string{"model": t.config.ModelRouting.CodexDeepModel})
-		if hasSession {
-			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
-		}
 		t.send(key, msg)
 
 	case "/auto":
@@ -1468,6 +1524,24 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 //	/hermes status   — show current coordinator state
 //	/hermes stop     — cancel current task and disable Hermes mode
 //	/ghermes         — same as above but on the GPT/Codex tier
+//
+// findIssueRefInArgs scans command args for the first token shaped like #N and
+// returns its parsed number plus the original token. Allows /ghermes 處理 #109
+// to be treated like /ghermes #109.
+func findIssueRefInArgs(args []string) (int, string, bool) {
+	for _, a := range args {
+		if !strings.HasPrefix(a, "#") {
+			continue
+		}
+		num := 0
+		if _, err := fmt.Sscanf(strings.TrimPrefix(a, "#"), "%d", &num); err != nil {
+			return 0, a, true
+		}
+		return num, a, true
+	}
+	return 0, "", false
+}
+
 func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier string) {
 	if !t.config.Hermes.Enabled {
 		t.send(key, "Hermes 模式未啟用。請在 config.json 中設定 hermes.enabled = true。")
@@ -1479,25 +1553,17 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 		sub = strings.ToLower(parts[1])
 	}
 
-	// /hermes #N — fetch GitHub Issue and start task immediately
-	if len(parts) > 1 && strings.HasPrefix(parts[1], "#") {
-		numStr := strings.TrimPrefix(parts[1], "#")
-		issueNum := 0
-		fmt.Sscanf(numStr, "%d", &issueNum)
+	// /hermes #N — fetch GitHub Issue and start task immediately.
+	// Also accepts /hermes <verb> #N (e.g. /ghermes 處理 #109) by scanning all args
+	// for the first #N token.
+	if issueNum, raw, ok := findIssueRefInArgs(parts[1:]); ok {
 		if issueNum <= 0 {
-			t.send(key, fmt.Sprintf("❌ 無效的 Issue 編號：%s", parts[1]))
+			t.send(key, fmt.Sprintf("❌ 無效的 Issue 編號：%s", raw))
 			return
 		}
 		t.send(key, fmt.Sprintf("🔍 正在讀取 GitHub Issue #%d…", issueNum))
 		projectDir := t.getAgent(key).ProjectDir()
-		// Record tier on the coord so startHermesFromIssue → startHermesTaskWithIssue
-		// picks up the right model tier via hermesTierFor.
-		t.hermesMu.Lock()
-		if t.hermesCoords[key] == nil {
-			t.hermesCoords[key] = &hermesCoord{enabled: true}
-		}
-		t.hermesCoords[key].tier = tier
-		t.hermesMu.Unlock()
+		t.setHermesTier(key, tier)
 		go t.startHermesFromIssue(key, issueNum, projectDir)
 		return
 	}
@@ -1540,8 +1606,13 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 		t.send(key, "Hermes 模式已停用，切回一般模式。")
 
 	default:
+		t.setHermesTier(key, tier)
 		t.hermesMu.Lock()
-		t.hermesCoords[key] = &hermesCoord{enabled: true, tier: tier}
+		if hc := t.hermesCoords[key]; hc != nil {
+			hc.enabled = true
+		} else {
+			t.hermesCoords[key] = &hermesCoord{enabled: true, tier: tier}
+		}
 		t.hermesMu.Unlock()
 		if tier == "codex" {
 			t.send(key, "✅ Hermes 模式已啟用（GPT tier）。\n\n正在載入待處理 Issues…")
@@ -1620,7 +1691,7 @@ func (t *TelegramBot) trySignalBudgetContinue(key chatKey, text string) bool {
 // startHermesFromIssue fetches a GitHub Issue and starts a Hermes task from it.
 func (t *TelegramBot) startHermesFromIssue(key chatKey, issueNumber int, projectDir string) {
 	ctx := context.Background()
-	issue, err := hermes.FetchIssue(ctx, projectDir, issueNumber)
+	issue, err := hermesFetchIssue(ctx, projectDir, issueNumber)
 	if err != nil {
 		t.send(key, fmt.Sprintf("❌ 無法讀取 Issue #%d：%v", issueNumber, err))
 		return
@@ -1659,13 +1730,189 @@ func (t *TelegramBot) startHermesFromIssue(key chatKey, issueNumber int, project
 // startHermesTask launches a Hermes coordinator for the given goal on the Claude tier.
 // Uses context.Background() so the task survives handler cancellation.
 func (t *TelegramBot) startHermesTask(key chatKey, goal, projectDir string) {
-	t.startHermesTaskWithIssueTier(key, goal, projectDir, 0, HermesBudgetConfig{}, GithubIntegrationConfig{}, t.hermesTierFor(key))
+	t.startHermesTaskWithIssueTier(key, t.buildHermesGoalWithContext(key, goal), projectDir, 0, HermesBudgetConfig{}, GithubIntegrationConfig{}, t.hermesTierFor(key))
 }
 
 // startHermesTaskWithIssue preserves the original signature for callers that don't
 // care about tier — defaults to whatever tier the chat's hermesCoord is on.
 func (t *TelegramBot) startHermesTaskWithIssue(key chatKey, goal, projectDir string, issueNumber int, budgetOverride HermesBudgetConfig, ghIntegration GithubIntegrationConfig) {
-	t.startHermesTaskWithIssueTier(key, goal, projectDir, issueNumber, budgetOverride, ghIntegration, t.hermesTierFor(key))
+	t.startHermesTaskWithIssueTier(key, t.buildHermesGoalWithContext(key, goal), projectDir, issueNumber, budgetOverride, ghIntegration, t.hermesTierFor(key))
+}
+
+func (t *TelegramBot) buildHermesGoalWithContext(key chatKey, currentRequest string) string {
+	currentRequest = strings.TrimSpace(currentRequest)
+	if currentRequest == "" {
+		return currentRequest
+	}
+
+	taskHistory := t.loadHermesContextTasks(key.chatID, currentRequest)
+	var recentMessages []contextMessage
+	recentMessages = t.getChatContext(key, "").RecentMessagesSnapshot()
+	return composeHermesGoalWithContext(currentRequest, taskHistory, recentMessages)
+}
+
+func (t *TelegramBot) loadHermesContextTasks(chatID int64, currentRequest string) []hermes.TaskState {
+	store := buildHermesTaskStore()
+	if store == nil {
+		return nil
+	}
+
+	var tasks []hermes.TaskState
+	active, err := store.GetActiveTaskForChat(chatID)
+	switch {
+	case err == nil:
+		tasks = append(tasks, active)
+	case err != nil && err != hermes.ErrNoTask:
+		log.Printf("[hermes] failed to load active task context for chat %d: %v", chatID, err)
+	}
+
+	history, err := store.ListTasksForChat(chatID, 3)
+	if err != nil {
+		log.Printf("[hermes] failed to list task context for chat %d: %v", chatID, err)
+		return tasks
+	}
+
+	currentNorm := normalizeHermesGoal(currentRequest)
+	seen := make(map[string]struct{}, len(tasks))
+	for _, task := range tasks {
+		seen[task.ID] = struct{}{}
+	}
+	for _, task := range history {
+		if _, ok := seen[task.ID]; ok {
+			continue
+		}
+		if normalizeHermesGoal(extractHermesActionableGoal(task.Goal)) == currentNorm {
+			continue
+		}
+		tasks = append(tasks, task)
+		if len(tasks) >= 2 {
+			break
+		}
+	}
+
+	return tasks
+}
+
+func composeHermesGoalWithContext(currentRequest string, tasks []hermes.TaskState, recentMessages []contextMessage) string {
+	currentRequest = strings.TrimSpace(currentRequest)
+	if currentRequest == "" {
+		return ""
+	}
+
+	var sections []string
+	if taskSection := buildHermesTaskContextSection(tasks); taskSection != "" {
+		sections = append(sections, taskSection)
+	}
+	if bridge := strings.TrimSpace(buildContextBridge(recentMessages)); bridge != "" {
+		sections = append(sections, clampHermesContext(bridge, hermesContextMaxChars))
+	}
+	if len(sections) == 0 {
+		return currentRequest
+	}
+
+	var sb strings.Builder
+	sb.WriteString(hermesPreviousContextHeader)
+	sb.WriteString("\n")
+	for i, section := range sections {
+		if i > 0 {
+			sb.WriteString("\n\n")
+		}
+		sb.WriteString(section)
+	}
+	sb.WriteString("\n\n")
+	sb.WriteString(hermesCurrentRequestHeader)
+	sb.WriteString("\n")
+	sb.WriteString(currentRequest)
+	return sb.String()
+}
+
+func buildHermesTaskContextSection(tasks []hermes.TaskState) string {
+	if len(tasks) == 0 {
+		return ""
+	}
+
+	var sections []string
+	for _, task := range tasks {
+		goal := strings.TrimSpace(extractHermesActionableGoal(task.Goal))
+		summary := strings.TrimSpace(buildHermesTaskSummary(task))
+		if goal == "" && summary == "" {
+			continue
+		}
+
+		var sb strings.Builder
+		sb.WriteString("Recent Hermes task")
+		if !task.UpdatedAt.IsZero() {
+			sb.WriteString(" (")
+			sb.WriteString(task.UpdatedAt.Format(time.RFC3339))
+			sb.WriteString(")")
+		}
+		sb.WriteString(":\n")
+		if goal != "" {
+			sb.WriteString("User: ")
+			sb.WriteString(clampHermesContext(goal, hermesContextMaxChars))
+			sb.WriteString("\n")
+		}
+		if summary != "" {
+			sb.WriteString("Assistant: ")
+			sb.WriteString(clampHermesContext(summary, hermesContextMaxChars))
+		}
+		sections = append(sections, strings.TrimSpace(sb.String()))
+	}
+
+	return strings.Join(sections, "\n\n")
+}
+
+func buildHermesTaskSummary(task hermes.TaskState) string {
+	if task.Accumulated != "" {
+		return task.Accumulated
+	}
+
+	lines := make([]string, 0, len(task.Plan))
+	for _, sub := range task.Plan {
+		result := strings.TrimSpace(sub.Result)
+		if result != "" {
+			lines = append(lines, result)
+			continue
+		}
+		if sub.Status == hermes.SubTaskDone {
+			lines = append(lines, sub.Description)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func extractHermesActionableGoal(goal string) string {
+	goal = strings.TrimSpace(goal)
+	if goal == "" {
+		return ""
+	}
+
+	idx := strings.LastIndex(goal, hermesCurrentRequestHeader)
+	if idx < 0 {
+		return goal
+	}
+
+	actionable := strings.TrimSpace(goal[idx+len(hermesCurrentRequestHeader):])
+	if actionable == "" {
+		return goal
+	}
+	return actionable
+}
+
+func normalizeHermesGoal(goal string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(goal)), " ")
+}
+
+func clampHermesContext(s string, maxRunes int) string {
+	if maxRunes <= 0 {
+		return strings.TrimSpace(s)
+	}
+	s = strings.TrimSpace(s)
+	runes := []rune(s)
+	if len(runes) <= maxRunes {
+		return s
+	}
+	return strings.TrimSpace(string(runes[:maxRunes])) + "..."
 }
 
 // hermesTierFor returns the active Hermes tier for this chat ("" or "codex"),
@@ -1679,9 +1926,108 @@ func (t *TelegramBot) hermesTierFor(key chatKey) string {
 	return ""
 }
 
+// setHermesTier updates the active tier for a chat and clears cached Planner
+// resume state when the backend changes.
+func (t *TelegramBot) setHermesTier(key chatKey, tier string) {
+	t.hermesMu.Lock()
+	defer t.hermesMu.Unlock()
+
+	hc := t.hermesCoords[key]
+	if hc == nil {
+		hc = &hermesCoord{enabled: true}
+		t.hermesCoords[key] = hc
+	}
+	if hc.tier != tier {
+		hc.plannerSessionID = ""
+		hc.plannerSessionTier = ""
+		hc.executorSessionID = ""
+		hc.executorSessionTier = ""
+	}
+	hc.tier = tier
+}
+
+// plannerSessionForTier returns the cached Planner --resume session if it was
+// produced by the currently active tier.
+func (t *TelegramBot) plannerSessionForTier(key chatKey, tier string) string {
+	t.hermesMu.RLock()
+	defer t.hermesMu.RUnlock()
+
+	hc := t.hermesCoords[key]
+	if hc == nil || hc.plannerSessionID == "" {
+		return ""
+	}
+	if hc.tier != tier || hc.plannerSessionTier != tier {
+		return ""
+	}
+	return hc.plannerSessionID
+}
+
+// recordPlannerSession caches the latest Planner --resume session for the tier
+// that produced it. If the user already switched tiers, the cache is left alone.
+func (t *TelegramBot) recordPlannerSession(key chatKey, tier, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+
+	t.hermesMu.Lock()
+	defer t.hermesMu.Unlock()
+
+	hc := t.hermesCoords[key]
+	if hc == nil {
+		hc = &hermesCoord{enabled: true}
+		t.hermesCoords[key] = hc
+	}
+	if hc.tier != tier {
+		return
+	}
+	hc.plannerSessionID = sessionID
+	hc.plannerSessionTier = tier
+}
+
+// executorSessionForTier returns the cached Executor thread resume ID if it was
+// produced by the currently active tier.
+func (t *TelegramBot) executorSessionForTier(key chatKey, tier string) string {
+	t.hermesMu.RLock()
+	defer t.hermesMu.RUnlock()
+
+	hc := t.hermesCoords[key]
+	if hc == nil || hc.executorSessionID == "" {
+		return ""
+	}
+	if hc.tier != tier || hc.executorSessionTier != tier {
+		return ""
+	}
+	return hc.executorSessionID
+}
+
+// recordExecutorSession caches the latest Executor thread resume ID for the tier
+// that produced it. If the user already switched tiers, the cache is left alone.
+func (t *TelegramBot) recordExecutorSession(key chatKey, tier, sessionID string) {
+	if sessionID == "" {
+		return
+	}
+
+	t.hermesMu.Lock()
+	defer t.hermesMu.Unlock()
+
+	hc := t.hermesCoords[key]
+	if hc == nil {
+		hc = &hermesCoord{enabled: true}
+		t.hermesCoords[key] = hc
+	}
+	if hc.tier != tier {
+		return
+	}
+	hc.executorSessionID = sessionID
+	hc.executorSessionTier = tier
+}
+
 // startHermesTaskWithIssueTier is the common implementation that selects models
 // based on the tier ("" or "claude" → Claude; "codex" → GPT/Codex).
 func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir string, issueNumber int, budgetOverride HermesBudgetConfig, ghIntegration GithubIntegrationConfig, tier string) {
+	// Update tier and clear session IDs if tier changed (Issue #109)
+	t.setHermesTier(key, tier)
+
 	ctx := context.Background()
 	cfg := HermesDefaults(t.config.Hermes)
 
@@ -1731,6 +2077,9 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		t.send(key, text)
 	})
 
+	plannerSessionID := t.plannerSessionForTier(key, tier)
+	executorSessionID := t.executorSessionForTier(key, tier)
+
 	// Budget: use override (from complexity label) or config default
 	budgetTokens := cfg.Budget.MaxTotalTokens
 	budgetSecs := cfg.Budget.MaxWallclockSeconds
@@ -1751,7 +2100,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	if promptsDir == "" {
 		promptsDir = "internal/app/hermes/prompts"
 	}
-	pb := hermes.LoadPromptBuilder(promptsDir)
+	pb := hermes.LoadPromptBuilderForTier(promptsDir, tier)
 
 	// Build GitHub integration config for coordinator
 	ghCfg := hermes.GithubCfg{
@@ -1786,10 +2135,21 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		ProgressVerbosity:     verbosity,
 		Budget:                budget,
 		PlannerRules:          pb.ForRole(hermes.RolePlanner),
+		PlannerSessionID:      plannerSessionID,
+		ExecutorSessionID:     executorSessionID,
 		ExecutorRules:         pb.ForRole(hermes.RoleExecutor),
 		GithubIssueNumber:     issueNumber,
 		GithubCfg:             ghCfg,
 		PostCompletionHook:    t.buildTaskSyncHook(ghIntegration.TriggerTaskSync, projectDir),
+	}
+
+	onDoneHook := t.buildHermesOnDoneHook(key, goal)
+	coordCfg.OnDone = func(doneCtx context.Context, state hermes.TaskState) {
+		t.recordPlannerSession(key, tier, state.PlannerSessionID)
+		t.recordExecutorSession(key, tier, state.ExecutorSessionID)
+		if onDoneHook != nil {
+			onDoneHook(doneCtx, state)
+		}
 	}
 
 	// Use a noop store when no DB is available yet (wired fully in #97→#98 integration)
@@ -1829,6 +2189,32 @@ func (t *TelegramBot) buildTaskSyncHook(triggerSync bool, projectDir string) fun
 		} else {
 			log.Printf("[hermes] task-sync completed")
 		}
+	}
+}
+
+// buildHermesOnDoneHook returns a callback that writes the Hermes task result
+// back into the agent's recentMessages so the next follow-up turn can
+// reference what the previous Hermes task actually did (Issue #108).
+func (t *TelegramBot) buildHermesOnDoneHook(key chatKey, originalGoal string) func(ctx context.Context, state hermes.TaskState) {
+	return func(_ context.Context, state hermes.TaskState) {
+		summary := state.Accumulated
+		if summary == "" {
+			// Fall back to sub-task results if no rolled-up summary exists.
+			var parts []string
+			for _, sub := range state.Plan {
+				if sub.Result != "" {
+					parts = append(parts, sub.Result)
+				}
+			}
+			if len(parts) > 0 {
+				summary = strings.Join(parts, "\n")
+			}
+		}
+		if summary == "" {
+			return
+		}
+		t.getChatContext(key, "").AddRecentMessage(originalGoal, summary)
+		log.Printf("[hermes] wrote task result back to recentMessages for chat %d (%d chars)", key.chatID, len(summary))
 	}
 }
 
@@ -1924,8 +2310,8 @@ func (t *TelegramBot) sendMessageDirect(msg *TelegramMessage) bool {
 	// Handle 429 Rate Limiting
 	if resp.StatusCode == 429 {
 		var errorResp struct {
-			OK          bool `json:"ok"`
-			ErrorCode   int  `json:"error_code"`
+			OK          bool   `json:"ok"`
+			ErrorCode   int    `json:"error_code"`
 			Description string `json:"description"`
 			Parameters  struct {
 				RetryAfter int `json:"retry_after"`
@@ -2030,8 +2416,8 @@ func (t *TelegramBot) sendMessageSync(method string, params map[string]interface
 	// Handle 429 Rate Limiting
 	if resp.StatusCode == 429 {
 		var errorResp struct {
-			OK          bool `json:"ok"`
-			ErrorCode   int  `json:"error_code"`
+			OK          bool   `json:"ok"`
+			ErrorCode   int    `json:"error_code"`
 			Description string `json:"description"`
 			Parameters  struct {
 				RetryAfter int `json:"retry_after"`
@@ -2222,15 +2608,15 @@ func tgCellWidth(s string) int {
 	for _, r := range s {
 		switch {
 		case r >= 0x1100 && r <= 0x115F, // Hangul Jamo
-			r >= 0x2E80 && r <= 0x303F, // CJK Radicals/Symbols
-			r >= 0x3040 && r <= 0x33FF, // Japanese + CJK Symbols
-			r >= 0x3400 && r <= 0x4DBF, // CJK Extension A
-			r >= 0x4E00 && r <= 0x9FFF, // CJK Unified Ideographs
-			r >= 0xAC00 && r <= 0xD7AF, // Hangul Syllables
-			r >= 0xF900 && r <= 0xFAFF, // CJK Compatibility Ideographs
-			r >= 0xFE30 && r <= 0xFE6F, // CJK Compatibility Forms
-			r >= 0xFF01 && r <= 0xFF60, // Fullwidth Forms
-			r >= 0xFFE0 && r <= 0xFFE6, // Fullwidth Signs
+			r >= 0x2E80 && r <= 0x303F,   // CJK Radicals/Symbols
+			r >= 0x3040 && r <= 0x33FF,   // Japanese + CJK Symbols
+			r >= 0x3400 && r <= 0x4DBF,   // CJK Extension A
+			r >= 0x4E00 && r <= 0x9FFF,   // CJK Unified Ideographs
+			r >= 0xAC00 && r <= 0xD7AF,   // Hangul Syllables
+			r >= 0xF900 && r <= 0xFAFF,   // CJK Compatibility Ideographs
+			r >= 0xFE30 && r <= 0xFE6F,   // CJK Compatibility Forms
+			r >= 0xFF01 && r <= 0xFF60,   // Fullwidth Forms
+			r >= 0xFFE0 && r <= 0xFFE6,   // Fullwidth Signs
 			r >= 0x1F300 && r <= 0x1FAFF: // Emoji
 			w += 2
 		default:
@@ -2525,8 +2911,8 @@ func (t *TelegramBot) handleAgentsList(key chatKey) {
 	response := t.getLocalizedMessage(key.chatID, "multiagent_list_response", nil) + "\n\n"
 
 	agents := []struct {
-		name  string
-		key   string
+		name    string
+		key     string
 		descKey string
 	}{
 		{"General", "agent_general", "agent_general_desc"},
@@ -2744,11 +3130,11 @@ func (t *TelegramBot) sendDashboardWithWebApp(key chatKey, text string) {
 		"inline_keyboard": [][]map[string]interface{}{
 			{
 				{
-					"text": refreshText,
+					"text":          refreshText,
 					"callback_data": "refresh_dashboard",
 				},
 				{
-					"text": checkpointText,
+					"text":          checkpointText,
 					"callback_data": "show_checkpoints",
 				},
 			},
@@ -2896,7 +3282,7 @@ func (t *TelegramBot) runAgentWithStopButton(key chatKey, agent *Agent, prompt s
 	var statusMessageID int
 	var firstUpdate = true
 
-	response, err := agent.Run(prompt, func(update string, silent bool) {
+	updateCallback := func(update string, silent bool) {
 		if firstUpdate && !silent {
 			if msgID, msgErr := t.sendMessageWithStopButton(key, update); msgErr == nil {
 				statusMessageID = msgID
@@ -2911,7 +3297,9 @@ func (t *TelegramBot) runAgentWithStopButton(key chatKey, agent *Agent, prompt s
 				t.send(key, update)
 			}
 		}
-	})
+	}
+	result, err := appengine.NewDirectEngine(agent).Run(context.Background(), prompt, agent.chatContext, newTelegramProgressSink(updateCallback))
+	response := result.Text
 
 	// Remove stop button after completion
 	if statusMessageID != 0 {
@@ -3176,7 +3564,7 @@ func (t *TelegramBot) handleSendFile(key chatKey, filePath string) {
 	mediaType := inferMediaType(filePath)
 
 	// 發送檔案
-	if err := t.sendMediaFile(key, filePath, mediaType, "") ; err != nil {
+	if err := t.sendMediaFile(key, filePath, mediaType, ""); err != nil {
 		msgKey := "send_file_error"
 		msg := t.getLocalizedMessage(key.chatID, msgKey, map[string]string{
 			"{error}": err.Error(),
@@ -3252,7 +3640,6 @@ func (t *TelegramBot) handleTasks(key chatKey) {
 		t.send(key, errMsg)
 	}
 }
-
 
 // handlePhotoMessageBatch 處理圖片訊息，支援多張圖片批次處理
 func (t *TelegramBot) handlePhotoMessageBatch(key chatKey, userID int64, photo []PhotoSize, caption string, mediaGroupID string, messageID int) {
@@ -3462,23 +3849,23 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 			Description: fmt.Sprintf("Batch of %d photos received via Telegram", len(relativeImagePaths)),
 			UserID:      userID,
 			Details: map[string]interface{}{
-				"photo_count":  len(relativeImagePaths),
-				"has_caption":  caption != "",
-				"caption_len":  len(caption),
-				"chat_id":      key.chatID,
+				"photo_count": len(relativeImagePaths),
+				"has_caption": caption != "",
+				"caption_len": len(caption),
+				"chat_id":     key.chatID,
 			},
 		})
 
 		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
 			filteredCaption, detected := security.Global().DetectAndFilterPII(caption, true, &security.PIIDetectionContext{
-			ChatID:      key.chatID,
-			UserID:      userID,
-			MessageType: "photo",
-			SourceType:  "telegram",
-			ProjectPath: t.config.DefaultProjectDir,
-			MessageID:   messageID,
-		})
+				ChatID:      key.chatID,
+				UserID:      userID,
+				MessageType: "photo",
+				SourceType:  "telegram",
+				ProjectPath: t.config.DefaultProjectDir,
+				MessageID:   messageID,
+			})
 			if len(detected) > 0 {
 				// PII 事件已由 DetectAndFilterPII 自動記錄
 				msg := t.getLocalizedMessage(key.chatID, "photo_caption_pii", nil)
@@ -3609,25 +3996,25 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 			Description: "Photo message received via Telegram",
 			UserID:      userID,
 			Details: map[string]interface{}{
-				"file_size":    targetPhoto.FileSize,
-				"width":        targetPhoto.Width,
-				"height":       targetPhoto.Height,
-				"has_caption":  caption != "",
-				"caption_len":  len(caption),
-				"chat_id":      key.chatID,
+				"file_size":   targetPhoto.FileSize,
+				"width":       targetPhoto.Width,
+				"height":      targetPhoto.Height,
+				"has_caption": caption != "",
+				"caption_len": len(caption),
+				"chat_id":     key.chatID,
 			},
 		})
 
 		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
 			filteredCaption, detected := security.Global().DetectAndFilterPII(caption, true, &security.PIIDetectionContext{
-			ChatID:      key.chatID,
-			UserID:      userID,
-			MessageType: "photo",
-			SourceType:  "telegram",
-			ProjectPath: t.config.DefaultProjectDir,
-			MessageID:   messageID,
-		})
+				ChatID:      key.chatID,
+				UserID:      userID,
+				MessageType: "photo",
+				SourceType:  "telegram",
+				ProjectPath: t.config.DefaultProjectDir,
+				MessageID:   messageID,
+			})
 			if len(detected) > 0 {
 				msg := t.getLocalizedMessage(key.chatID, "photo_caption_pii", nil)
 				t.send(key, msg)
@@ -3726,25 +4113,25 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 			Description: "Photo message received via Telegram",
 			UserID:      userID,
 			Details: map[string]interface{}{
-				"file_size":    targetPhoto.FileSize,
-				"width":        targetPhoto.Width,
-				"height":       targetPhoto.Height,
-				"has_caption":  caption != "",
-				"caption_len":  len(caption),
-				"chat_id":      key.chatID,
+				"file_size":   targetPhoto.FileSize,
+				"width":       targetPhoto.Width,
+				"height":      targetPhoto.Height,
+				"has_caption": caption != "",
+				"caption_len": len(caption),
+				"chat_id":     key.chatID,
 			},
 		})
 
 		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
 			filteredCaption, detected := security.Global().DetectAndFilterPII(caption, true, &security.PIIDetectionContext{
-			ChatID:      key.chatID,
-			UserID:      userID,
-			MessageType: "photo",
-			SourceType:  "telegram",
-			ProjectPath: t.config.DefaultProjectDir,
-			MessageID:   messageID,
-		})
+				ChatID:      key.chatID,
+				UserID:      userID,
+				MessageType: "photo",
+				SourceType:  "telegram",
+				ProjectPath: t.config.DefaultProjectDir,
+				MessageID:   messageID,
+			})
 			if len(detected) > 0 {
 				piiMsg := t.getLocalizedMessage(key.chatID, "photo_caption_pii", nil)
 				t.send(key, piiMsg)
@@ -3783,7 +4170,6 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 		t.send(key, response)
 	}
 }
-
 
 // copyFile 複製檔案
 func copyFile(src, dst string) error {
@@ -4015,25 +4401,25 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 			Description: "Voice message received via Telegram",
 			UserID:      userID,
 			Details: map[string]interface{}{
-				"duration":     voice.Duration,
-				"file_size":    voice.FileSize,
-				"mime_type":    voice.MimeType,
-				"has_caption":  caption != "",
-				"caption_len":  len(caption),
-				"chat_id":      key.chatID,
+				"duration":    voice.Duration,
+				"file_size":   voice.FileSize,
+				"mime_type":   voice.MimeType,
+				"has_caption": caption != "",
+				"caption_len": len(caption),
+				"chat_id":     key.chatID,
 			},
 		})
 
 		// PII 檢測 caption (自動記錄事件)
 		if caption != "" {
 			filteredCaption, detected := security.Global().DetectAndFilterPII(caption, true, &security.PIIDetectionContext{
-			ChatID:      key.chatID,
-			UserID:      userID,
-			MessageType: "voice",
-			SourceType:  "telegram",
-			ProjectPath: t.config.DefaultProjectDir,
-			MessageID:   messageID,
-		})
+				ChatID:      key.chatID,
+				UserID:      userID,
+				MessageType: "voice",
+				SourceType:  "telegram",
+				ProjectPath: t.config.DefaultProjectDir,
+				MessageID:   messageID,
+			})
 			if len(detected) > 0 {
 				// 額外的 Telegram 上下文記錄 (降低嚴重性避免重複警告)
 				security.Global().LogSecurityEvent(security.SecurityEvent{
@@ -4048,7 +4434,7 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 					},
 				})
 				piiMsg := t.getLocalizedMessage(key.chatID, "voice_caption_pii_detected", nil)
-			t.send(key, piiMsg)
+				t.send(key, piiMsg)
 				caption = filteredCaption
 			}
 		}
@@ -4450,7 +4836,7 @@ func (t *TelegramBot) triageWithGPT4oMini(userMessage string) (string, error) {
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userMessage},
 		},
-		"max_tokens":   10,
+		"max_tokens":  10,
 		"temperature": 0,
 	}
 
@@ -4609,12 +4995,12 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 			Description: "Document file received via Telegram",
 			UserID:      userID,
 			Details: map[string]interface{}{
-				"file_name":    document.FileName,
-				"file_size":    document.FileSize,
-				"mime_type":    document.MimeType,
-				"has_caption":  caption != "",
-				"caption_len":  len(caption),
-				"chat_id":      key.chatID,
+				"file_name":   document.FileName,
+				"file_size":   document.FileSize,
+				"mime_type":   document.MimeType,
+				"has_caption": caption != "",
+				"caption_len": len(caption),
+				"chat_id":     key.chatID,
 			},
 		})
 	}
@@ -4791,10 +5177,10 @@ func (t *TelegramBot) isSimilarPath(target, candidate string) bool {
 
 	// 檢查常見的命名差異
 	variations := [][]string{
-		{"-", "_"},  // 連字號 vs 底線
-		{"_", "-"},  // 底線 vs 連字號
-		{" ", "_"},  // 空格 vs 底線
-		{" ", "-"},  // 空格 vs 連字號
+		{"-", "_"}, // 連字號 vs 底線
+		{"_", "-"}, // 底線 vs 連字號
+		{" ", "_"}, // 空格 vs 底線
+		{" ", "-"}, // 空格 vs 連字號
 	}
 
 	for _, variation := range variations {
@@ -4818,15 +5204,15 @@ func (t *TelegramBot) isSimilarPath(target, candidate string) bool {
 // detectProjectType 偵測專案類型
 func (t *TelegramBot) detectProjectType(chatID int64, projectPath string) string {
 	projectFiles := map[string]string{
-		"go.mod":        "Go",
-		"package.json":  "Node.js",
-		"Cargo.toml":    "Rust",
-		"requirements.txt": "Python",
-		"setup.py":      "Python",
-		"pom.xml":       "Java",
-		"Makefile":      "Make",
+		"go.mod":             "Go",
+		"package.json":       "Node.js",
+		"Cargo.toml":         "Rust",
+		"requirements.txt":   "Python",
+		"setup.py":           "Python",
+		"pom.xml":            "Java",
+		"Makefile":           "Make",
 		"docker-compose.yml": "Docker",
-		"Dockerfile":    "Docker",
+		"Dockerfile":         "Docker",
 	}
 
 	var detectedTypes []string
@@ -5529,9 +5915,10 @@ func (t *TelegramBot) handleModelCommand(key chatKey, parts []string) {
 	if modelRequiresCodex(modelName) && !t.codexTierAvailable(key) {
 		return
 	}
-	hasSession := agent.SessionID() != ""
+	targetBackend := BackendKindForModel(modelName)
+	hasSession := agent.LastBackend() == targetBackend && agent.SessionIDForModel(modelName) != ""
 	if hasSession {
-		agent.ClearSession() // isolate backend on cross-backend model switch
+		agent.ClearSessionForModel(modelName)
 	}
 	t.setUserModelPreference(key, modelName)
 	agent.SetPlanMode(false, "", "")
@@ -5626,4 +6013,3 @@ func (t *TelegramBot) handleBackendHealth(key chatKey) {
 
 	t.send(key, msg)
 }
-

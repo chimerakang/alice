@@ -42,6 +42,7 @@ type TaskState struct {
 	ID                string          `json:"id"`                 // UUID
 	ChatID            int64           `json:"chat_id"`            // Telegram chat
 	PlannerSessionID  string          `json:"planner_session_id"` // Claude Code --resume ID
+	ExecutorSessionID string          `json:"executor_session_id,omitempty"` // executor thread resume ID (transient, not persisted to DB)
 	Goal              string          `json:"goal"`
 	Plan              []SubTask       `json:"plan"`
 	CurrentIdx        int             `json:"current_idx"`
