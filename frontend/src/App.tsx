@@ -4,12 +4,14 @@ import { useAppStore } from "@/stores/appStore";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import Dashboard from "@/pages/Dashboard";
 import Timeline from "@/pages/Timeline";
+import Reviews from "@/pages/Reviews";
 import Checkpoints from "@/pages/Checkpoints";
 import Performance from "@/pages/Performance";
 import Security from "@/pages/Security";
 import {
   LayoutDashboard,
   Clock,
+  MessageSquareText,
   Camera,
   BarChart3,
   Shield,
@@ -20,6 +22,7 @@ import {
 const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/timeline", icon: Clock, label: "Timeline" },
+  { to: "/reviews", icon: MessageSquareText, label: "Reviews" },
   { to: "/checkpoints", icon: Camera, label: "Checkpoints" },
   { to: "/performance", icon: BarChart3, label: "Performance" },
   { to: "/security", icon: Shield, label: "Security" },
@@ -95,6 +98,7 @@ function AppLayout() {
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/timeline" element={<Timeline />} />
+            <Route path="/reviews" element={<Reviews />} />
             <Route path="/checkpoints" element={<Checkpoints />} />
             <Route path="/performance" element={<Performance />} />
             <Route path="/security" element={<Security />} />

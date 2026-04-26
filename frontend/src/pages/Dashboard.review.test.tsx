@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ReviewPanel } from "./Dashboard";
 
+type ReviewPanelReview = Parameters<typeof ReviewPanel>[0]["reviews"][number];
+
 vi.mock("@/components/StatusBadge", () => ({
   default: ({ children }: { children?: string }) => <span data-testid="status-badge">{children}</span>,
 }));
@@ -56,51 +58,49 @@ vi.mock("recharts", () => {
 });
 
 describe("ReviewPanel", () => {
-  it("renders review summary, tags, and recent review details", () => {
+  const baseReview = (overrides: Partial<ReviewPanelReview>): ReviewPanelReview => ({
+    key: "task-1|gpt-5.5|pass|90",
+    task_id: "task-1",
+    goal: "修正登入流程",
+    project_path: "/repo",
+    reviewer_model: "gpt-5.5",
+    verdict: "pass",
+    overall_score: 90,
+    issue_tags: ["missing_validation"],
+    feedback_text: "ok",
+    sub_task_results: [],
+    timestamp: "2026-04-26T12:00:00Z",
+    source: "stored",
+    advisory_retry: false,
+    retry_note: "暫無需重跑",
+    failing_subtasks: 0,
+    ...overrides,
+  });
+
+  it("renders review summary, tags, and sub-task scores when present", () => {
     const html = renderToStaticMarkup(
       <ReviewPanel
         liveConnected={true}
         reviews={[
-          {
-            key: "task-1|gpt-5.5|pass|90",
-            task_id: "task-1",
-            goal: "修正登入流程",
-            project_path: "/repo",
-            reviewer_model: "gpt-5.5",
-            verdict: "pass",
-            overall_score: 90,
-            issue_tags: ["missing_validation"],
-            feedback_text: "ok",
-            sub_task_results: [],
-            timestamp: "2026-04-26T12:00:00Z",
-            source: "stored",
-            advisory_retry: false,
-            retry_note: "暫無需重跑",
-            failing_subtasks: 0,
-          },
-          {
+          baseReview({}),
+          baseReview({
             key: "task-2|gpt-5.5|partial|70",
             task_id: "task-2",
             goal: "補 review 迴路",
-            project_path: "/repo",
-            reviewer_model: "gpt-5.5",
             verdict: "partial",
             overall_score: 70,
             issue_tags: ["missing_context", "missing_validation"],
             feedback_text: "needs follow-up",
-            sub_task_results: [],
             timestamp: "2026-04-26T13:00:00Z",
             source: "live",
             advisory_retry: true,
             retry_note: "建議人工評估後再決定是否重跑",
             failing_subtasks: 1,
-          },
-          {
+          }),
+          baseReview({
             key: "task-3|gpt-5.5|fail|50",
             task_id: "task-3",
             goal: "修正 webhook",
-            project_path: "/repo",
-            reviewer_model: "gpt-5.5",
             verdict: "fail",
             overall_score: 50,
             issue_tags: ["missing_context"],
@@ -119,7 +119,7 @@ describe("ReviewPanel", () => {
             advisory_retry: true,
             retry_note: "建議人工評估後再決定是否重跑",
             failing_subtasks: 1,
-          },
+          }),
         ]}
       />
     );
@@ -131,8 +131,52 @@ describe("ReviewPanel", () => {
     expect(html).toContain("Avg Score");
     expect(html).toContain("70.0");
     expect(html).toContain("Live");
+    expect(html).toContain("Sub-task 評分");
+    expect(html.match(/Sub-task 評分/g)?.length).toBe(1);
+    expect(html).toContain("60/100");
+    expect(html).toContain("Feedback");
+    expect(html).toContain("needs more context");
     expect(html).toContain("missing_context");
     expect(html).toContain("task-3:s1");
     expect(html).toContain("gpt-5.5");
+  });
+
+  it("keeps backward compatibility when sub_task_results is empty or missing", () => {
+    const emptyHtml = renderToStaticMarkup(
+      <ReviewPanel
+        liveConnected={false}
+        reviews={[
+          baseReview({
+            key: "task-empty|gpt-5.5|partial|72",
+            task_id: "task-empty",
+            verdict: "partial",
+            overall_score: 72,
+            sub_task_results: [],
+          }),
+        ]}
+      />
+    );
+
+    const missingHtml = renderToStaticMarkup(
+      <ReviewPanel
+        liveConnected={false}
+        reviews={[
+          {
+            ...baseReview({
+              key: "task-missing|gpt-5.5|partial|68",
+              task_id: "task-missing",
+              verdict: "partial",
+              overall_score: 68,
+            }),
+            sub_task_results: undefined,
+          } as unknown as ReviewPanelReview,
+        ]}
+      />
+    );
+
+    expect(emptyHtml).not.toContain("Sub-task 評分");
+    expect(emptyHtml).not.toContain("60/100");
+    expect(missingHtml).not.toContain("Sub-task 評分");
+    expect(missingHtml).not.toContain("60/100");
   });
 });

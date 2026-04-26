@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import type { TimeRangeQuery } from "@/lib/api";
 import { useAppStore } from "@/stores/appStore";
@@ -12,6 +13,7 @@ import StatusBadge from "@/components/StatusBadge";
 import MarkdownRenderer from "@/components/MarkdownRenderer";
 import DiffViewer from "@/components/DiffViewer";
 import ToolCallGantt from "@/components/ToolCallGantt";
+import ReviewSubTaskTable from "@/components/ReviewSubTaskTable";
 import {
   X,
   Clock,
@@ -69,17 +71,29 @@ function formatTimestamp(ts: string | { seconds: number; nanos?: number }): stri
   });
 }
 
+export function findFocusedDecision(
+  decisions: DecisionLog[],
+  focusTaskId: string
+): DecisionLog | null {
+  const normalizedFocusTaskId = focusTaskId.trim();
+  if (!normalizedFocusTaskId) return null;
+
+  return decisions.find((decision) => decision.id === normalizedFocusTaskId) || null;
+}
+
 /** Slide-over panel showing full decision detail with Gantt, Diff, and navigation */
-function DecisionDetail({
+export function DecisionDetail({
   decision,
   decisions,
   onClose,
   onNavigate,
+  openReviewsByDefault = false,
 }: {
   decision: DecisionLog;
   decisions: DecisionLog[];
   onClose: () => void;
   onNavigate: (d: DecisionLog) => void;
+  openReviewsByDefault?: boolean;
 }) {
   const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
   const [diffLoading, setDiffLoading] = useState(false);
@@ -318,7 +332,7 @@ function DecisionDetail({
           {decision.unified_task && decision.unified_task.reviews?.length > 0 && (
             <CollapsiblePanel
               title={`Reviews (${decision.unified_task.reviews.length})`}
-              defaultOpen={false}
+              defaultOpen={openReviewsByDefault}
               badge={
                 <BarChart3 className="w-3.5 h-3.5 text-accent" />
               }
@@ -346,6 +360,7 @@ function DecisionDetail({
                       </div>
                     )}
                     <p className="text-sm text-gray-300 whitespace-pre-wrap">{review.feedback_text || "—"}</p>
+                    <ReviewSubTaskTable subTaskResults={review.sub_task_results || []} />
                   </div>
                 ))}
               </div>
@@ -503,6 +518,7 @@ function DecisionDetail({
 
 export default function Timeline() {
   const { decisions: liveDecisions, wsConnected } = useAppStore();
+  const [searchParams] = useSearchParams();
   const [apiDecisions, setApiDecisions] = useState<DecisionLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -513,6 +529,7 @@ export default function Timeline() {
   const [dateRange, setDateRange] = useState<DateRange>({});
   const [sourceFilter, setSourceFilter] = useState("all");
   const [selectedDecision, setSelectedDecision] = useState<DecisionLog | null>(null);
+  const focusTaskId = searchParams.get("focus") || "";
 
   // Fetch task graphs from the unified #114 API with server-side pagination + time range.
   const fetchDecisions = useCallback(async (pageNum: number, range: DateRange, src: string) => {
@@ -606,6 +623,15 @@ export default function Timeline() {
       return true;
     });
   }, [displayDecisions, projectFilter, statusFilter, searchQuery, sourceFilter]);
+
+  useEffect(() => {
+    const match = findFocusedDecision(filtered, focusTaskId);
+    if (match) {
+      setSelectedDecision(match);
+    } else if (focusTaskId) {
+      setSelectedDecision(null);
+    }
+  }, [focusTaskId, filtered]);
 
   // Pagination — use server-side total_count for page calculation
   const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
@@ -777,10 +803,12 @@ export default function Timeline() {
       {/* Decision Detail slide-over */}
       {selectedDecision && (
         <DecisionDetail
+          key={selectedDecision.id}
           decision={selectedDecision}
           decisions={filtered}
           onClose={() => setSelectedDecision(null)}
           onNavigate={setSelectedDecision}
+          openReviewsByDefault={Boolean(focusTaskId)}
         />
       )}
     </div>

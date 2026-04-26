@@ -126,6 +126,7 @@ type UnifiedTaskQuery struct {
 	EndTime    *time.Time
 	ProjectDir string
 	Status     string
+	HasReview  *bool
 }
 
 func unifiedTaskTablesSQL() []string {
@@ -473,8 +474,8 @@ func (s *SQLiteStorage) CountUnifiedTasks(query UnifiedTaskQuery) (int64, error)
 }
 
 func unifiedTaskWhere(query UnifiedTaskQuery) (string, []any) {
-	clauses := make([]string, 0, 5)
-	args := make([]any, 0, 5)
+	clauses := make([]string, 0, 6)
+	args := make([]any, 0, 6)
 	if query.ID != "" {
 		clauses = append(clauses, "id = ?")
 		args = append(args, query.ID)
@@ -494,6 +495,13 @@ func unifiedTaskWhere(query UnifiedTaskQuery) (string, []any) {
 	if query.Status != "" {
 		clauses = append(clauses, "status = ?")
 		args = append(args, query.Status)
+	}
+	if query.HasReview != nil {
+		if *query.HasReview {
+			clauses = append(clauses, "EXISTS (SELECT 1 FROM review_results rr WHERE rr.task_id = tasks.id)")
+		} else {
+			clauses = append(clauses, "NOT EXISTS (SELECT 1 FROM review_results rr WHERE rr.task_id = tasks.id)")
+		}
 	}
 	if len(clauses) == 0 {
 		return "", args

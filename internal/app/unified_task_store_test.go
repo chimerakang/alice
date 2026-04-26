@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"database/sql"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -279,6 +281,113 @@ func TestStoreReviewRollsBackOnSubTaskInsertFailure(t *testing.T) {
 
 	assertCount(t, s.db, "review_results", 0)
 	assertCount(t, s.db, "review_subtask_results", 0)
+}
+
+func TestUnifiedTaskQueryHasReviewFiltersTasks(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:        "task-with-review",
+		Goal:      "reviewed task",
+		Engine:    "plan_execute",
+		Backend:   "claude",
+		Status:    "done",
+		StartedAt: now,
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask(reviewed): %v", err)
+	}
+	if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+		ID:          "task-with-review:s1",
+		TaskID:      "task-with-review",
+		Idx:         0,
+		Description: "review step",
+		Status:      "done",
+		StartedAt:   now,
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedSubTask(reviewed): %v", err)
+	}
+	if _, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        "task-with-review",
+		ReviewerModel: "gpt-5.5",
+		Verdict:       "pass",
+		OverallScore:  95,
+		FeedbackText:  "looks good",
+		IssueTags:     []string{"clear_goal"},
+		CreatedAt:     now,
+	}); err != nil {
+		t.Fatalf("InsertUnifiedReviewResult(reviewed): %v", err)
+	}
+
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:        "task-without-review",
+		Goal:      "plain task",
+		Engine:    "plan_execute",
+		Backend:   "claude",
+		Status:    "done",
+		StartedAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask(unreviewed): %v", err)
+	}
+
+	onlyReviewed, err := s.ListUnifiedTaskGraphs(UnifiedTaskQuery{Limit: 10, HasReview: boolPtr(true)})
+	if err != nil {
+		t.Fatalf("ListUnifiedTaskGraphs(has review): %v", err)
+	}
+	if len(onlyReviewed) != 1 || onlyReviewed[0].ID != "task-with-review" {
+		t.Fatalf("unexpected reviewed tasks: %+v", onlyReviewed)
+	}
+	reviewCount, err := s.CountUnifiedTasks(UnifiedTaskQuery{HasReview: boolPtr(true)})
+	if err != nil {
+		t.Fatalf("CountUnifiedTasks(has review): %v", err)
+	}
+	if reviewCount != 1 {
+		t.Fatalf("CountUnifiedTasks(has review): got %d, want 1", reviewCount)
+	}
+
+	onlyUnreviewed, err := s.ListUnifiedTaskGraphs(UnifiedTaskQuery{Limit: 10, HasReview: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("ListUnifiedTaskGraphs(no review): %v", err)
+	}
+	if len(onlyUnreviewed) != 1 || onlyUnreviewed[0].ID != "task-without-review" {
+		t.Fatalf("unexpected unreviewed tasks: %+v", onlyUnreviewed)
+	}
+	unreviewedCount, err := s.CountUnifiedTasks(UnifiedTaskQuery{HasReview: boolPtr(false)})
+	if err != nil {
+		t.Fatalf("CountUnifiedTasks(no review): %v", err)
+	}
+	if unreviewedCount != 1 {
+		t.Fatalf("CountUnifiedTasks(no review): got %d, want 1", unreviewedCount)
+	}
+}
+
+func TestParseUnifiedTaskQueryHasReview(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/tasks?has_review=true", nil)
+	query, err := parseUnifiedTaskQuery(req)
+	if err != nil {
+		t.Fatalf("parseUnifiedTaskQuery(true): %v", err)
+	}
+	if query.HasReview == nil || !*query.HasReview {
+		t.Fatalf("expected has_review=true, got %+v", query.HasReview)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tasks?has_review=false", nil)
+	query, err = parseUnifiedTaskQuery(req)
+	if err != nil {
+		t.Fatalf("parseUnifiedTaskQuery(false): %v", err)
+	}
+	if query.HasReview == nil || *query.HasReview {
+		t.Fatalf("expected has_review=false, got %+v", query.HasReview)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/tasks?has_review=maybe", nil)
+	if _, err := parseUnifiedTaskQuery(req); err == nil {
+		t.Fatal("parseUnifiedTaskQuery(invalid): expected error")
+	}
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
 
 func TestGetPlannerRulesWeeklyReportAggregatesTopIssueTags(t *testing.T) {

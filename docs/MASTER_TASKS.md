@@ -1,7 +1,7 @@
-# Master Tasks
+# Alice - Master Tasks
 
 > Auto-generated from GitHub Issues.
-> Last updated: 2026-04-26
+> Last updated: 2026-04-27
 > Run `/task-sync` to regenerate.
 
 ## Status Legend
@@ -1220,7 +1220,6 @@
 | | — 終端機顯示 CLI 即時輸出 | | ✅ |
 | | — 支援多 agent 輸出切換 | | ✅ |
 | | — 保持 OLED 黑化風格一致性 | | ✅ |
-| P2.7 | **🚀 Feature: Complete Dashboard, Monitoring & Checkpoint System** | [#14](https://github.com/chimerakang/alice/pull/14) | ✅ |
 
 ## P3 - Data Layer (✅ 100%)
 
@@ -1580,7 +1579,6 @@
 | [#4](https://github.com/chimerakang/alice/issues/4) | 📊 Performance Monitoring & Analytics | P2 - Monitoring | ✅ |
 | [#5](https://github.com/chimerakang/alice/issues/5) | 🔐 Security & Privacy Enhancements | P2 - Monitoring | ✅ |
 | [#12](https://github.com/chimerakang/alice/issues/12) | 🖥️ Dashboard Enhancement: Timeline & Terminal | P2 - Monitoring | ✅ |
-| [#14](https://github.com/chimerakang/alice/pull/14) | 🚀 Feature: Complete Dashboard, Monitoring & Checkpoint System | P2 - Monitoring | ✅ |
 | [#6](https://github.com/chimerakang/alice/issues/6) | 🚀 Deployment & DevOps Improvements | P3 - Data Layer | ✅ |
 | [#7](https://github.com/chimerakang/alice/issues/7) | 💾 Data Persistence Layer (SQLite) | P3 - Data Layer | ✅ |
 | [#8](https://github.com/chimerakang/alice/issues/8) | 🔌 WebSocket Real-time Dashboard Connection | P3 - Data Layer | ✅ |
@@ -1617,5 +1615,5 @@
 **Completed:** 61 ✅
 **In Progress:** 28 🔄
 
-**Last sync:** 2026-04-26 15:00 UTC
+**Last sync:** 2026-04-26 17:42 UTC
 

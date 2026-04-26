@@ -826,6 +826,18 @@ func parseUnifiedTaskQuery(r *http.Request) (UnifiedTaskQuery, error) {
 		ProjectDir: r.URL.Query().Get("project_dir"),
 		Status:     r.URL.Query().Get("status"),
 	}
+	if hasReview := r.URL.Query().Get("has_review"); hasReview != "" {
+		switch strings.ToLower(strings.TrimSpace(hasReview)) {
+		case "1", "true", "yes", "y":
+			value := true
+			query.HasReview = &value
+		case "0", "false", "no", "n":
+			value := false
+			query.HasReview = &value
+		default:
+			return query, fmt.Errorf("invalid has_review value: %q", hasReview)
+		}
+	}
 	if start := r.URL.Query().Get("start_time"); start != "" {
 		parsed, err := parseAPITime(start)
 		if err != nil {
