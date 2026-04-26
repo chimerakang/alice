@@ -47,17 +47,39 @@ func InitModelPricing(config *ModelPricingConfig) {
 }
 
 // ExtractModelShortName 從完整模型 ID 提取簡短名稱
-// 例如: "claude-opus-4-6" → "opus", "claude-haiku-4-5-20251001" → "haiku"
+// 例如:
+//
+//	claude-opus-4-6           → "opus"
+//	claude-haiku-4-5-20251001 → "haiku"
+//	gpt-5.5-pro               → "gpt-5.5"
+//	gpt-5.3-codex             → "codex"
+//	gpt-4o-mini               → "gpt-4o"
+//	o4-mini                   → "o4-mini"
 func ExtractModelShortName(fullModelID string) string {
-	// 嘗試匹配常見模型名稱
-	if strings.Contains(fullModelID, "opus") {
+	m := strings.ToLower(fullModelID)
+	switch {
+	case strings.Contains(m, "opus"):
 		return "opus"
-	}
-	if strings.Contains(fullModelID, "sonnet") {
+	case strings.Contains(m, "sonnet"):
 		return "sonnet"
-	}
-	if strings.Contains(fullModelID, "haiku") {
+	case strings.Contains(m, "haiku"):
 		return "haiku"
+	case strings.Contains(m, "codex"):
+		return "codex"
+	case strings.Contains(m, "gpt-5.5"):
+		return "gpt-5.5"
+	case strings.Contains(m, "gpt-5.4"):
+		return "gpt-5.4"
+	case strings.Contains(m, "gpt-4o"):
+		return "gpt-4o"
+	case strings.Contains(m, "gpt-4.1"):
+		return "gpt-4.1"
+	case strings.Contains(m, "gpt-"):
+		return "gpt"
+	case strings.HasPrefix(m, "o3"):
+		return "o3"
+	case strings.HasPrefix(m, "o4"):
+		return "o4-mini"
 	}
 	// 如果無法識別，返回完整 ID
 	return fullModelID

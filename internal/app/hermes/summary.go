@@ -115,17 +115,40 @@ func (s *TaskSummary) generateDetailed() string {
 }
 
 // formatModelLabel returns a short label for a model name.
+// Recognises both Claude (opus/sonnet/haiku) and Codex/GPT families
+// (gpt-5.5, gpt-4o, gpt-5.3-codex, o3, o4-mini, etc.).
 func formatModelLabel(model string) string {
-	if strings.Contains(model, "opus") {
+	m := strings.ToLower(model)
+	switch {
+	case strings.Contains(m, "opus"):
 		return "Opus"
-	}
-	if strings.Contains(model, "sonnet") {
+	case strings.Contains(m, "sonnet"):
 		return "Sonnet"
-	}
-	if strings.Contains(model, "haiku") {
+	case strings.Contains(m, "haiku"):
 		return "Haiku"
+	case strings.Contains(m, "codex"):
+		// e.g. gpt-5.3-codex
+		return "Codex"
+	case strings.Contains(m, "gpt-5.5"):
+		return "GPT-5.5"
+	case strings.Contains(m, "gpt-5.4"):
+		return "GPT-5.4"
+	case strings.Contains(m, "gpt-4o"):
+		return "GPT-4o"
+	case strings.Contains(m, "gpt-4.1"):
+		return "GPT-4.1"
+	case strings.Contains(m, "gpt-"):
+		// Generic GPT fallback for unseen versions
+		return "GPT"
+	case strings.HasPrefix(m, "o3"):
+		return "o3"
+	case strings.HasPrefix(m, "o4"):
+		return "o4-mini"
+	case model == "":
+		return "Unknown"
+	default:
+		return model
 	}
-	return "Unknown"
 }
 
 // formatNumber adds commas to a number for readability.
