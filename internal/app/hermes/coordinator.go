@@ -281,10 +281,15 @@ func (c *Coordinator) run(ctx context.Context, taskID, goal string) {
 		return
 	}
 
-	_ = c.store.AddTokenUsage(taskID, planIn+planOut)
-	_ = c.store.AddModelUsage(taskID, c.cfg.PlannerModel, planIn, planOut)
-	if sid := c.planner.SessionID(); sid != "" {
-		_ = c.store.UpdatePlannerSession(taskID, sid)
+	// Only record planner usage when the planner actually ran. Pre-Planner skip
+	// (simple-goal heuristic) bypasses the LLM entirely, so recording a zero-token
+	// call would pollute the per-model summary with phantom "1 call, 0 tokens" rows.
+	if !plannerSkipped {
+		_ = c.store.AddTokenUsage(taskID, planIn+planOut)
+		_ = c.store.AddModelUsage(taskID, c.cfg.PlannerModel, planIn, planOut)
+		if sid := c.planner.SessionID(); sid != "" {
+			_ = c.store.UpdatePlannerSession(taskID, sid)
+		}
 	}
 
 	// Complexity Gate enforcement: validate sub-task count
