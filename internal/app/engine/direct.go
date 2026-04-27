@@ -65,6 +65,9 @@ func (e *DirectEngine) Run(ctx context.Context, goal string, cc *ChatContext, pr
 	result := Result{
 		Text: text,
 	}
+	if metrics, ok := e.runner.(DirectRunnerMetrics); ok {
+		result.Model, result.InputTokens, result.OutputTokens = metrics.LastCallMetrics()
+	}
 	if err != nil {
 		result.Duration = time.Since(start)
 		return result, err

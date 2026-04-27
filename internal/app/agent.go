@@ -357,6 +357,15 @@ type Agent struct {
 	cancelFunc context.CancelFunc // 取消正在執行的 CLI 子程序
 	cancelMu   sync.Mutex         // 保護 cancelFunc 的併發存取
 	processing bool               // 是否正在處理請求
+
+	// Per-call metrics — populated at the end of every Run/runDirect.
+	// Read via LastCallMetrics() so PlanExecuteEngine can attribute Executor
+	// tokens to the actual model used (otherwise per-model breakdown only
+	// captures the Planner and labels Executor work as "Unknown").
+	lastCallMu      sync.Mutex
+	lastCallModel   string
+	lastCallInputT  int
+	lastCallOutputT int
 }
 
 func NewAgent(client Client, projectDir string, chatID int64, threadID int) *Agent {
@@ -684,7 +693,28 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	// Save exchange to recentMessages for context bridge on future model switches
 	addToRecentMessages(ps, userMessage, resp.Result)
 
+	a.recordLastCallMetrics(a.lastUsedModel, resp.Usage.InputTokens, resp.Usage.OutputTokens)
+
 	return resp.Result, nil
+}
+
+// recordLastCallMetrics stores the model and token totals from the most
+// recent CLI call so DirectEngine can pull them via LastCallMetrics().
+func (a *Agent) recordLastCallMetrics(model string, inTokens, outTokens int) {
+	a.lastCallMu.Lock()
+	defer a.lastCallMu.Unlock()
+	a.lastCallModel = model
+	a.lastCallInputT = inTokens
+	a.lastCallOutputT = outTokens
+}
+
+// LastCallMetrics returns the model and token totals from the most recent
+// Agent CLI call. Returns zero values when no call has been made yet.
+// Used by engine.DirectEngine via the MetricsProvider type assertion.
+func (a *Agent) LastCallMetrics() (model string, inTokens, outTokens int) {
+	a.lastCallMu.Lock()
+	defer a.lastCallMu.Unlock()
+	return a.lastCallModel, a.lastCallInputT, a.lastCallOutputT
 }
 
 // RunWithPlan executes a two-phase OpusPlan workflow:
@@ -852,6 +882,8 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 
 	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil, "opus_plan_fallback", 0, deltaCost)
 	addToRecentMessages(ps, userMessage, resp.Result)
+
+	a.recordLastCallMetrics(selectedModel, resp.Usage.InputTokens, resp.Usage.OutputTokens)
 
 	return resp.Result, nil
 }

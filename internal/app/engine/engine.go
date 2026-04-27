@@ -36,4 +36,17 @@ type Result struct {
 	OutputTokens int
 	Cost         float64
 	Duration     time.Duration
+	// Model is the actual model that produced Text (e.g. "claude-sonnet-4-5",
+	// "gpt-5.5"). Empty when the runner can't report it. PlanExecuteEngine
+	// uses this to attribute Executor tokens to the right model in the
+	// per-model breakdown summary.
+	Model string
+}
+
+// DirectRunnerMetrics is implemented by DirectRunners that can report the
+// model and token usage of their most recent Run() call. DirectEngine
+// type-asserts to this interface and populates Result.Model + tokens when
+// available — falling back to zero values for runners that don't implement it.
+type DirectRunnerMetrics interface {
+	LastCallMetrics() (model string, inTokens, outTokens int)
 }

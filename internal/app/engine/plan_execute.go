@@ -251,6 +251,14 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 		if err := e.store.UpdateSubTask(taskID, idx, hermes.SubTaskDone, text, result.InputTokens+result.OutputTokens); err != nil {
 			log.Printf("[plan_execute] UpdateSubTask(done) idx=%d: %v", idx, err)
 		}
+		if result.Model != "" && (result.InputTokens > 0 || result.OutputTokens > 0) {
+			if err := e.store.AddModelUsage(taskID, result.Model, result.InputTokens, result.OutputTokens); err != nil {
+				log.Printf("[plan_execute] AddModelUsage(executor) idx=%d model=%s: %v", idx, result.Model, err)
+			}
+			if err := e.store.AddTokenUsage(taskID, result.InputTokens+result.OutputTokens); err != nil {
+				log.Printf("[plan_execute] AddTokenUsage(executor) idx=%d: %v", idx, err)
+			}
+		}
 		e.reporter.OnSubTaskDone(idx, len(tasks), subTask, true, text)
 		completed++
 		tasks[idx].Status = hermes.SubTaskDone

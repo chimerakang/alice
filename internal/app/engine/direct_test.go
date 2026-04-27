@@ -22,6 +22,43 @@ func (r fakeDirectRunner) Run(userMessage string, onUpdate func(string, bool)) (
 	return "done", nil
 }
 
+type metricsRunner struct {
+	model    string
+	inTokens int
+	outToken int
+}
+
+func (m metricsRunner) Run(string, func(string, bool)) (string, error) {
+	return "ok", nil
+}
+
+func (m metricsRunner) LastCallMetrics() (string, int, int) {
+	return m.model, m.inTokens, m.outToken
+}
+
+func TestDirectEngine_PopulatesModelAndTokensFromMetricsProvider(t *testing.T) {
+	runner := metricsRunner{model: "claude-haiku-4-5", inTokens: 1234, outToken: 567}
+	engine := NewDirectEngine(runner)
+	res, err := engine.Run(context.Background(), "do thing", nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Model != "claude-haiku-4-5" || res.InputTokens != 1234 || res.OutputTokens != 567 {
+		t.Fatalf("expected metrics propagated, got %+v", res)
+	}
+}
+
+func TestDirectEngine_NoMetricsProviderLeavesZeroMetrics(t *testing.T) {
+	engine := NewDirectEngine(fakeDirectRunner{})
+	res, err := engine.Run(context.Background(), "do thing", nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.Model != "" || res.InputTokens != 0 || res.OutputTokens != 0 {
+		t.Fatalf("expected zero metrics for runner without provider, got %+v", res)
+	}
+}
+
 type recordingSink struct {
 	events []string
 }
