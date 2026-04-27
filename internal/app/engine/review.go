@@ -471,6 +471,20 @@ func (r ReviewResult) Validate() error {
 	if r.OverallScore < 0 || r.OverallScore > 100 {
 		return fmt.Errorf("overall_score out of range: %d", r.OverallScore)
 	}
+	// Reject verdict/score contradictions. Reviewer models occasionally return
+	// {"verdict":"pass","overall_score":0} or similar nonsense; without this
+	// guard the engine stored and notified the user with "pass (0/100)" — the
+	// verdict claimed success but the score said the opposite.
+	switch r.Verdict {
+	case VerdictPass:
+		if r.OverallScore < 70 {
+			return fmt.Errorf("verdict=pass requires overall_score >= 70 (got %d)", r.OverallScore)
+		}
+	case VerdictFail:
+		if r.OverallScore >= 70 {
+			return fmt.Errorf("verdict=fail requires overall_score < 70 (got %d)", r.OverallScore)
+		}
+	}
 	for _, subTask := range r.SubTaskResults {
 		if subTask.Score < 0 || subTask.Score > 100 {
 			return fmt.Errorf("sub-task %q score out of range: %d", subTask.SubTaskID, subTask.Score)

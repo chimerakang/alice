@@ -275,7 +275,7 @@ func TestPlanExecuteEngineRetriesBlockedSubTaskAndContinues(t *testing.T) {
 		results: []ReviewResult{
 			{
 				Verdict:      VerdictPass,
-				OverallScore: 61,
+				OverallScore: 75,
 				Feedback:     "補上 runtime validation",
 				IssueTags:    []ReviewTag{ReviewTagScopeCreep},
 			},
@@ -346,13 +346,13 @@ func TestPlanExecuteEngineMarksPartialAfterStrictRetryExhaustion(t *testing.T) {
 		results: []ReviewResult{
 			{
 				Verdict:      VerdictPass,
-				OverallScore: 58,
+				OverallScore: 75,
 				Feedback:     "加上 runtime validation",
 				IssueTags:    []ReviewTag{ReviewTagScopeCreep},
 			},
 			{
 				Verdict:      VerdictPass,
-				OverallScore: 57,
+				OverallScore: 75,
 				Feedback:     "仍然缺少 runtime validation",
 				IssueTags:    []ReviewTag{ReviewTagScopeCreep},
 			},
