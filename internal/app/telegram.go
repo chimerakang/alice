@@ -2191,6 +2191,14 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		}
 		t.send(key, msg)
 	}
+	onTaskRetry := func(_ context.Context, attempt, maxRetries int, review appengine.ReviewResult) {
+		nextAttempt := attempt + 2 // attempt is zero-based; user sees 1-based "next round"
+		total := maxRetries + 1
+		t.send(key, fmt.Sprintf(
+			"⚠️ 重審不通過（verdict=%s, %d/100）— 自動 re-plan 重新執行（第 %d/%d 輪）",
+			review.Verdict, review.OverallScore, nextAttempt, total,
+		))
+	}
 
 	// Use a noop store when no DB is available yet (wired fully in #97→#98 integration)
 	if taskStore == nil {
@@ -2228,6 +2236,8 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		StrictMode:            strictCfg,
 		OnReview:              onReview,
 		OnReviewSkipped:       onReviewSkipped,
+		OnTaskRetry:           onTaskRetry,
+		TaskRetry:             appengine.TaskRetryConfig(cfg.TaskRetry),
 		ContinueCh:            continueCh,
 		OnDone:                onDone,
 	}, planFn, direct, taskStore, reporter)

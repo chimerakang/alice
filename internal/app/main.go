@@ -134,6 +134,11 @@ type HermesConfig struct {
 	// Resource limits
 	Budget HermesBudgetConfig `json:"budget"`
 
+	// TaskRetry controls task-level re-plan retry on low review score.
+	// Disabled by default; opt in via "task_retry": {"enabled": true}.
+	// See engine.TaskRetryConfig for field semantics.
+	TaskRetry HermesTaskRetryConfig `json:"task_retry"`
+
 	// PromptsDir is the directory containing planner_rules.md and executor_rules.md.
 	// Defaults to "internal/app/hermes/prompts" relative to the working directory.
 	PromptsDir string `json:"prompts_dir"`
@@ -172,6 +177,15 @@ type GithubIntegrationConfig struct {
 type HermesBudgetConfig struct {
 	MaxTotalTokens      int `json:"max_total_tokens"`      // default 500000; 0 = unlimited
 	MaxWallclockSeconds int `json:"max_wallclock_seconds"` // default 600; 0 = unlimited
+}
+
+// HermesTaskRetryConfig is the JSON-config mirror of engine.TaskRetryConfig.
+// Keep fields aligned with engine.TaskRetryConfig — telegram.go converts
+// between the two via direct type conversion.
+type HermesTaskRetryConfig struct {
+	Enabled        bool `json:"enabled"`          // default false
+	ScoreThreshold int  `json:"score_threshold"`  // default 60 (applied in engine)
+	MaxTaskRetries int  `json:"max_task_retries"` // default 1 (applied in engine)
 }
 
 // HermesHooksConfig controls which tool execution hooks are active.

@@ -47,6 +47,7 @@ type PlanExecuteConfig struct {
 	ReviewMinSubTasks int
 	ReviewMode        ReviewMode
 	StrictMode        StrictModeConfig
+	TaskRetry         TaskRetryConfig
 	OnReview          func(ctx context.Context, state hermes.TaskState, review ReviewResult, notification ReviewNotification)
 	// OnReviewSkipped fires when the reviewer phase produced an unusable
 	// result (timeout, parse error, verdict/score contradiction, etc) and
@@ -54,6 +55,12 @@ type PlanExecuteConfig struct {
 	// Wire this so the user still sees that review was attempted but
 	// could not conclude — silent skips look like the review never ran.
 	OnReviewSkipped   func(ctx context.Context, state hermes.TaskState, reason error)
+	// OnTaskRetry fires after a review on attempt N triggers a re-plan.
+	// attempt is the zero-based index of the just-completed attempt; the
+	// retry that follows is attempt+1. maxRetries comes from TaskRetry
+	// config. Use this to tell the user the engine is restarting with
+	// re-plan, since OnReview is suppressed for non-final attempts.
+	OnTaskRetry       func(ctx context.Context, attempt, maxRetries int, review ReviewResult)
 
 	ContinueCh      chan struct{}
 	ContinueTimeout time.Duration
@@ -200,103 +207,166 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 		e.mu.Unlock()
 	}()
 
-	tasks, planIn, planOut, plannerSkipped, err := e.plan(ctx, goal)
-	if err != nil {
-		e.handlePlanningError(ctx, taskID, err)
-		return
+	retryCfg := e.cfg.TaskRetry
+	if retryCfg.Enabled {
+		retryCfg = retryCfg.WithDefaults()
 	}
-	if !plannerSkipped {
-		_ = e.store.AddTokenUsage(taskID, planIn+planOut)
-		_ = e.store.AddModelUsage(taskID, e.cfg.PlannerModel, planIn, planOut)
-		if sid := e.planner.SessionID(); sid != "" {
-			_ = e.store.UpdatePlannerSession(taskID, sid)
-		}
+	maxRetries := 0
+	if retryCfg.Enabled {
+		maxRetries = retryCfg.MaxTaskRetries
 	}
-	if len(tasks) > 15 {
-		e.reporter.OnError(fmt.Errorf("complexity violation: plan has %d sub-tasks (max 15)", len(tasks)))
-		_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
-		return
-	}
-	if err := e.store.StorePlan(taskID, tasks); err != nil {
-		e.reporter.OnError(fmt.Errorf("persist plan: %w", err))
-		_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
-		return
-	}
-	if err := e.store.MarkStatus(taskID, hermes.TaskStatusExecuting); err != nil {
-		e.reporter.OnError(err)
-		return
-	}
-	e.reporter.OnPlanReady(tasks)
-	state, _ := e.store.GetTask(taskID)
-	e.onPlanReady(ctx, state, tasks)
 
-	completed := 0
-	blockCount := 0
-	autoFixedCount := 0
-	reviewMode := e.reviewMode()
-	strictCfg := e.strictMode()
-	for idx := range tasks {
-		state, err := e.store.GetTask(taskID)
+	var (
+		prevReview     ReviewResult
+		prevPlan       []hermes.SubTask
+		lastTasks      []hermes.SubTask
+		lastCompleted  int
+		hadFinalReview bool
+	)
+
+	for attempt := 0; ; attempt++ {
+		currentGoal := goal
+		if attempt > 0 {
+			currentGoal = buildReplanGoal(goal, prevReview, prevPlan)
+			// Reset accumulated state so the new plan executes from scratch.
+			_ = e.store.UpdateAccumulated(taskID, "")
+		}
+
+		tasks, planIn, planOut, plannerSkipped, err := e.plan(ctx, currentGoal)
 		if err != nil {
-			e.reporter.OnError(err)
+			e.handlePlanningError(ctx, taskID, err)
+			return
+		}
+		if !plannerSkipped {
+			_ = e.store.AddTokenUsage(taskID, planIn+planOut)
+			_ = e.store.AddModelUsage(taskID, e.cfg.PlannerModel, planIn, planOut)
+			if sid := e.planner.SessionID(); sid != "" {
+				_ = e.store.UpdatePlannerSession(taskID, sid)
+			}
+		}
+		if len(tasks) > 15 {
+			e.reporter.OnError(fmt.Errorf("complexity violation: plan has %d sub-tasks (max 15)", len(tasks)))
 			_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
 			return
 		}
-		if !e.checkBudget(ctx, taskID, state) {
+		if err := e.store.StorePlan(taskID, tasks); err != nil {
+			e.reporter.OnError(fmt.Errorf("persist plan: %w", err))
+			_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
 			return
 		}
-		e.mu.Lock()
-		interrupted := e.interrupted
-		e.mu.Unlock()
-		if interrupted || ctx.Err() != nil {
+		if err := e.store.MarkStatus(taskID, hermes.TaskStatusExecuting); err != nil {
+			e.reporter.OnError(err)
 			return
 		}
+		e.reporter.OnPlanReady(tasks)
+		state, _ := e.store.GetTask(taskID)
+		e.onPlanReady(ctx, state, tasks)
 
-		subTask := tasks[idx]
-		finalStatus, finalText, finalTokens, success, subMetrics := e.executeSubTask(ctx, taskID, goal, state, tasks, idx, subTask, cc, reviewMode, strictCfg)
-		if subMetrics.blockedOnce {
-			blockCount++
-		}
-		if subMetrics.autoFixed {
-			autoFixedCount++
-		}
-		if finalStatus == hermes.SubTaskDone {
-			completed++
-			tasks[idx].Status = hermes.SubTaskDone
-			tasks[idx].Result = finalText
-			e.reporter.OnSubTaskDone(idx, len(tasks), subTask, true, finalText)
-			e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
+		completed := 0
+		blockCount := 0
+		autoFixedCount := 0
+		reviewMode := e.reviewMode()
+		strictCfg := e.strictMode()
+		for idx := range tasks {
+			state, err := e.store.GetTask(taskID)
+			if err != nil {
+				e.reporter.OnError(err)
+				_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+				return
+			}
+			if !e.checkBudget(ctx, taskID, state) {
+				return
+			}
+			e.mu.Lock()
+			interrupted := e.interrupted
+			e.mu.Unlock()
+			if interrupted || ctx.Err() != nil {
+				return
+			}
 
-			state, _ = e.store.GetTask(taskID)
-			updated, _ := hermes.AppendResult(state.Accumulated, finalText, completed, e.cfg.AccumulatedCfg)
-			_ = e.store.UpdateAccumulated(taskID, updated)
-		} else if finalStatus == hermes.SubTaskSkipped {
-			tasks[idx].Status = hermes.SubTaskSkipped
-			tasks[idx].Result = finalText
-			e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
-			e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
+			subTask := tasks[idx]
+			finalStatus, finalText, finalTokens, success, subMetrics := e.executeSubTask(ctx, taskID, goal, state, tasks, idx, subTask, cc, reviewMode, strictCfg)
+			if subMetrics.blockedOnce {
+				blockCount++
+			}
+			if subMetrics.autoFixed {
+				autoFixedCount++
+			}
+			if finalStatus == hermes.SubTaskDone {
+				completed++
+				tasks[idx].Status = hermes.SubTaskDone
+				tasks[idx].Result = finalText
+				e.reporter.OnSubTaskDone(idx, len(tasks), subTask, true, finalText)
+				e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
 
-			state, _ = e.store.GetTask(taskID)
-			updated, _ := hermes.AppendResult(state.Accumulated, finalText, completed, e.cfg.AccumulatedCfg)
-			_ = e.store.UpdateAccumulated(taskID, updated)
-		} else if !success {
-			tasks[idx].Status = hermes.SubTaskFailed
-			tasks[idx].Result = finalText
-			e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
-			e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
+				state, _ = e.store.GetTask(taskID)
+				updated, _ := hermes.AppendResult(state.Accumulated, finalText, completed, e.cfg.AccumulatedCfg)
+				_ = e.store.UpdateAccumulated(taskID, updated)
+			} else if finalStatus == hermes.SubTaskSkipped {
+				tasks[idx].Status = hermes.SubTaskSkipped
+				tasks[idx].Result = finalText
+				e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
+				e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
+
+				state, _ = e.store.GetTask(taskID)
+				updated, _ := hermes.AppendResult(state.Accumulated, finalText, completed, e.cfg.AccumulatedCfg)
+				_ = e.store.UpdateAccumulated(taskID, updated)
+			} else if !success {
+				tasks[idx].Status = hermes.SubTaskFailed
+				tasks[idx].Result = finalText
+				e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
+				e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
+			}
 		}
+
+		lastTasks = tasks
+		lastCompleted = completed
+
+		_ = e.store.MarkStatus(taskID, hermes.TaskStatusDone)
+		finalState, _ := e.store.GetTask(taskID)
+
+		// Per-subtask strict mode handles its own reviews — task-level
+		// retry only applies to per-task review mode.
+		if reviewMode != ReviewModePerTask {
+			break
+		}
+
+		// Run review with notify=false: the engine itself decides whether
+		// to surface the review or trigger a re-plan based on the result.
+		// Both OnReview and OnReviewSkipped are fired manually below so
+		// that retry attempts stay quiet on the user side.
+		review, reviewErr := e.runReview(ctx, finalState, ReviewModePerTask, -1, "", false, blockCount, autoFixedCount)
+
+		if reviewErr == nil && shouldRetryTask(review, retryCfg, attempt) {
+			if e.cfg.OnTaskRetry != nil {
+				e.cfg.OnTaskRetry(ctx, attempt, maxRetries, review)
+			}
+			prevReview = review
+			prevPlan = tasks
+			continue
+		}
+
+		// Final attempt — surface whichever outcome the reviewer produced.
+		switch {
+		case reviewErr != nil:
+			if e.cfg.OnReviewSkipped != nil {
+				e.cfg.OnReviewSkipped(ctx, finalState, reviewErr)
+			}
+		case review.Verdict != "" && e.cfg.OnReview != nil:
+			e.cfg.OnReview(ctx, finalState, review, BuildReviewNotification(finalState.ID, review))
+		}
+		hadFinalReview = true
+		break
 	}
 
-	_ = e.store.MarkStatus(taskID, hermes.TaskStatusDone)
+	_ = hadFinalReview // currently informational; reserved for future telemetry
+
 	finalState, _ := e.store.GetTask(taskID)
-	if reviewMode == ReviewModePerTask {
-		e.runReview(ctx, finalState, ReviewModePerTask, -1, "", true, blockCount, autoFixedCount)
-	}
 	e.reporter.OnDone(finalState)
 	if e.cfg.OnDone != nil {
 		e.cfg.OnDone(ctx, finalState)
 	}
-	e.onDone(ctx, finalState, completed, len(tasks))
+	e.onDone(ctx, finalState, lastCompleted, len(lastTasks))
 	if e.cfg.PostCompletionHook != nil {
 		go e.cfg.PostCompletionHook(ctx)
 	}
