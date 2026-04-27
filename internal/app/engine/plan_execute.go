@@ -301,9 +301,13 @@ func (e *PlanExecuteEngine) plan(ctx context.Context, goal string) ([]hermes.Sub
 
 func (e *PlanExecuteEngine) handlePlanningError(ctx context.Context, taskID string, err error) {
 	var jfail *hermes.ErrPlannerJSONFailed
-	if errors.As(err, &jfail) {
+	var empty *hermes.ErrPlannerEmptyPlan
+	switch {
+	case errors.As(err, &empty):
+		e.reporter.OnError(fmt.Errorf("Planner 判定無事可做（連續回空計畫）— 目標可能已完成或無法拆解。請檢查目前程式碼/Issue 狀態，必要時手動關閉 Issue 或調整目標描述。"))
+	case errors.As(err, &jfail):
 		e.reporter.OnError(fmt.Errorf("Planner JSON 解析失敗，降級回一般模式：%v", err))
-	} else {
+	default:
 		e.reporter.OnError(err)
 	}
 	_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)

@@ -160,6 +160,24 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 			return tasks, totalIn, totalOut, nil
 		}
 
+		// Empty plan is syntactically valid JSON but means "Planner found
+		// nothing to do" — distinct from a malformed-JSON failure. Give a
+		// targeted retry message so the Planner either confirms completion
+		// via a single verification sub-task or surfaces remaining work.
+		if parseErr == nil && len(tasks) == 0 {
+			if attempt < p.maxRetries {
+				prompt = "Your previous output was an empty JSON array, which means no sub-tasks. " +
+					"Every sub-task object MUST include all three required fields: `id` (string, e.g. \"verify-1\"), `description` (string), and `tool_hints` (array of strings). " +
+					"If the goal is already satisfied by the current state of the project, output exactly:\n" +
+					"```json\n" +
+					"[{\"id\":\"verify-1\",\"description\":\"Verify the goal is already satisfied. Inspect the relevant files, run the relevant build/test/grep commands, and report concrete evidence (file paths, line numbers, command output).\",\"tool_hints\":[\"Read\",\"Bash\"]}]\n" +
+					"```\n" +
+					"If there is real work remaining, list those sub-tasks now (each with id/description/tool_hints). Do not output an empty array again."
+				continue
+			}
+			return nil, totalIn, totalOut, &ErrPlannerEmptyPlan{Goal: goal}
+		}
+
 		if attempt < p.maxRetries {
 			prompt = fmt.Sprintf(
 				"Error: JSON parse failed on attempt %d. Your output was:\n%s\n\nOutput ONLY the JSON array in a ```json``` block.",
@@ -284,4 +302,20 @@ func (e *ErrPlannerJSONFailed) Error() string {
 		preview = preview[:200] + "..."
 	}
 	return fmt.Sprintf("planner JSON parse failed after retries; last output: %s", preview)
+}
+
+// ErrPlannerEmptyPlan is returned when the Planner repeatedly produces a
+// syntactically valid but empty plan, suggesting the goal is already
+// satisfied or the Planner cannot decompose it. Distinct from a JSON
+// parse failure.
+type ErrPlannerEmptyPlan struct {
+	Goal string
+}
+
+func (e *ErrPlannerEmptyPlan) Error() string {
+	preview := e.Goal
+	if len(preview) > 200 {
+		preview = preview[:200] + "..."
+	}
+	return fmt.Sprintf("planner returned empty plan after retries — goal may already be satisfied or undecomposable: %s", preview)
 }
