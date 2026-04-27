@@ -15,6 +15,17 @@ import (
 	"time"
 )
 
+// truncStderr clips stderr captures so log lines stay readable. Used only by
+// CallPlan diagnostics — it would never be called on hot paths.
+func truncStderr(s string) string {
+	const max = 500
+	s = strings.TrimSpace(s)
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
 // Client 定義統一的客戶端接口（支持 CLI 和 API）
 type Client interface {
 	Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error)
@@ -490,25 +501,26 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOver
 		finalResp.TextContent = strings.Join(textBlocks, "\n\n")
 	}
 
-	if err := cmd.Wait(); err != nil {
+	waitErr := cmd.Wait()
+	if waitErr != nil {
 		if ctx.Err() == context.Canceled {
 			return nil, fmt.Errorf("agent aborted by user")
 		}
 		if finalResp != nil {
-			log.Printf("[cli] CallPlan CLI exited with error but streaming captured result (is_error=%v)", finalResp.IsError)
+			log.Printf("[cli] CallPlan CLI exited with error but streaming captured result (is_error=%v, exit=%v, stderr=%q)", finalResp.IsError, waitErr, truncStderr(stderrBuf.String()))
 			if !finalResp.IsError {
 				finalResp.IsError = true
 			}
 		} else {
-			if _, ok := err.(*exec.ExitError); ok {
-				return nil, fmt.Errorf("claude CLI error: %s", stderrBuf.String())
+			if _, ok := waitErr.(*exec.ExitError); ok {
+				return nil, fmt.Errorf("claude CLI error (exit=%v): %s", waitErr, stderrBuf.String())
 			}
-			return nil, fmt.Errorf("claude CLI exec: %w", err)
+			return nil, fmt.Errorf("claude CLI exec: %w", waitErr)
 		}
 	}
 
 	if finalResp == nil {
-		return nil, fmt.Errorf("no result event in stream output")
+		return nil, fmt.Errorf("no result event in stream output (stderr=%q)", truncStderr(stderrBuf.String()))
 	}
 
 	// Record performance metrics
@@ -522,7 +534,19 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOver
 	RecordAPICall(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, 0, projectDir, errorType, ExtractModelShortName(model))
 
 	if finalResp.IsError {
-		return finalResp, fmt.Errorf("CLI returned error: %s", finalResp.Result)
+		// Result is sometimes empty when the CLI errors before producing
+		// content; surface stderr and the wait-error to give the user a hint.
+		detail := strings.TrimSpace(finalResp.Result)
+		if detail == "" {
+			detail = strings.TrimSpace(stderrBuf.String())
+		}
+		if detail == "" && waitErr != nil {
+			detail = waitErr.Error()
+		}
+		if detail == "" {
+			detail = "(empty CLI error — check claude CLI auth, network, or prompt size)"
+		}
+		return finalResp, fmt.Errorf("CLI returned error: %s", detail)
 	}
 
 	return finalResp, nil
