@@ -3,21 +3,35 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"claude-tg-agent/internal/app/hermes"
 )
 
-// Verdict is the normalized overall review outcome.
-type Verdict string
+// ReviewVerdict is the normalized overall review outcome for strict review.
+// Legacy advisory verdicts (partial/fail) are kept for backward compatibility.
+type ReviewVerdict string
 
 const (
-	VerdictPass    Verdict = "pass"
-	VerdictFail    Verdict = "fail"
-	VerdictPartial Verdict = "partial"
+	ReviewVerdictAllow   ReviewVerdict = "allow"
+	ReviewVerdictBlock   ReviewVerdict = "block"
+	ReviewVerdictPass    ReviewVerdict = "pass"
+	ReviewVerdictFail    ReviewVerdict = "fail"
+	ReviewVerdictPartial ReviewVerdict = "partial"
+
+	VerdictAllow   = ReviewVerdictAllow
+	VerdictBlock   = ReviewVerdictBlock
+	VerdictPass    = ReviewVerdictPass
+	VerdictFail    = ReviewVerdictFail
+	VerdictPartial = ReviewVerdictPartial
 )
+
+// Verdict is kept as a compatibility alias for older callers.
+type Verdict = ReviewVerdict
 
 // ReviewPhase evaluates a completed execution and returns advisory feedback.
 type ReviewPhase interface {
@@ -50,32 +64,51 @@ type ReviewSubTaskInput struct {
 	ToolHints   []string `json:"tool_hints,omitempty"`
 }
 
-// ReviewTag describes a categorized issue surfaced by the reviewer.
-type ReviewTag string
+// ReviewIssueTag describes a categorized issue surfaced by the reviewer.
+type ReviewIssueTag string
 
 const (
-	ReviewTagAmbiguousGoal       ReviewTag = "ambiguous_goal"
-	ReviewTagMissingContext      ReviewTag = "missing_context"
-	ReviewTagWrongToolHint       ReviewTag = "wrong_tool_hint"
-	ReviewTagUnderspecifiedInput ReviewTag = "underspecified_input"
-	ReviewTagMissingValidation   ReviewTag = "missing_validation"
+	ReviewIssueTagAmbiguousGoal               ReviewIssueTag = "ambiguous_goal"
+	ReviewIssueTagMissingContext              ReviewIssueTag = "missing_context"
+	ReviewIssueTagWrongToolHint               ReviewIssueTag = "wrong_tool_hint"
+	ReviewIssueTagUnderspecifiedInput         ReviewIssueTag = "underspecified_input"
+	ReviewIssueTagMissingValidation           ReviewIssueTag = "missing_validation"
+	ReviewIssueTagMissingRuntimeValidation    ReviewIssueTag = "missing_runtime_validation"
+	ReviewIssueTagRuntimePackagingNotVerified ReviewIssueTag = "runtime_packaging_not_verified"
+	ReviewIssueTagScopeCreep                  ReviewIssueTag = "scope_creep"
+	ReviewIssueTagIncompleteTraceability      ReviewIssueTag = "incomplete_traceability"
+	ReviewIssueTagLimitedTestCoverage         ReviewIssueTag = "limited_test_coverage"
+
+	ReviewTagAmbiguousGoal               = ReviewIssueTagAmbiguousGoal
+	ReviewTagMissingContext              = ReviewIssueTagMissingContext
+	ReviewTagWrongToolHint               = ReviewIssueTagWrongToolHint
+	ReviewTagUnderspecifiedInput         = ReviewIssueTagUnderspecifiedInput
+	ReviewTagMissingValidation           = ReviewIssueTagMissingValidation
+	ReviewTagMissingRuntimeValidation    = ReviewIssueTagMissingRuntimeValidation
+	ReviewTagRuntimePackagingNotVerified = ReviewIssueTagRuntimePackagingNotVerified
+	ReviewTagScopeCreep                  = ReviewIssueTagScopeCreep
+	ReviewTagIncompleteTraceability      = ReviewIssueTagIncompleteTraceability
+	ReviewTagLimitedTestCoverage         = ReviewIssueTagLimitedTestCoverage
 )
+
+// ReviewTag is kept as a compatibility alias for older callers.
+type ReviewTag = ReviewIssueTag
 
 // ReviewSubTaskResult captures reviewer feedback for one sub-task.
 type ReviewSubTaskResult struct {
-	SubTaskID string      `json:"sub_task_id"`
-	Score     int         `json:"score"`
-	Feedback  string      `json:"feedback"`
-	IssueTags []ReviewTag `json:"issue_tags"`
+	SubTaskID string           `json:"sub_task_id"`
+	Score     int              `json:"score"`
+	Feedback  string           `json:"feedback"`
+	IssueTags []ReviewIssueTag `json:"issue_tags"`
 }
 
 // ReviewResult is the normalized output returned by ReviewPhase.
 type ReviewResult struct {
 	ReviewerModel  string                `json:"reviewer_model,omitempty"`
-	Verdict        Verdict               `json:"verdict"`
+	Verdict        ReviewVerdict         `json:"verdict"`
 	OverallScore   int                   `json:"overall_score"`
 	Feedback       string                `json:"feedback"`
-	IssueTags      []ReviewTag           `json:"issue_tags"`
+	IssueTags      []ReviewIssueTag      `json:"issue_tags"`
 	SubTaskResults []ReviewSubTaskResult `json:"sub_task_results"`
 	InputTokens    int                   `json:"input_tokens,omitempty"`
 	OutputTokens   int                   `json:"output_tokens,omitempty"`
@@ -84,14 +117,213 @@ type ReviewResult struct {
 
 // ReviewNotification is a compact summary for user-facing notifications.
 type ReviewNotification struct {
-	TaskID          string      `json:"task_id"`
-	ReviewerModel   string      `json:"reviewer_model,omitempty"`
-	Verdict         Verdict     `json:"verdict"`
-	OverallScore    int         `json:"overall_score"`
-	IssueTags       []ReviewTag `json:"issue_tags,omitempty"`
-	AdvisoryRetry   bool        `json:"advisory_retry"`
-	FailingSubTasks int         `json:"failing_subtasks"`
-	RetryNote       string      `json:"retry_note,omitempty"`
+	TaskID          string           `json:"task_id"`
+	ReviewerModel   string           `json:"reviewer_model,omitempty"`
+	Verdict         ReviewVerdict    `json:"verdict"`
+	OverallScore    int              `json:"overall_score"`
+	IssueTags       []ReviewIssueTag `json:"issue_tags,omitempty"`
+	AdvisoryRetry   bool             `json:"advisory_retry"`
+	FailingSubTasks int              `json:"failing_subtasks"`
+	RetryNote       string           `json:"retry_note,omitempty"`
+}
+
+// StrictModeConfig controls hard-gate review behavior.
+type StrictModeConfig struct {
+	Enabled          bool
+	BlockTags        []ReviewIssueTag
+	MaxRetriesPerSub int
+	ReviewTimeout    time.Duration
+	OpponentBackend  BackendKind
+}
+
+// StrictReviewDecision summarizes strict-mode gating for a review.
+type StrictReviewDecision struct {
+	Verdict     ReviewVerdict    `json:"verdict"`
+	MatchedTags []ReviewIssueTag `json:"matched_tags,omitempty"`
+	BlockTags   []ReviewIssueTag `json:"block_tags,omitempty"`
+	TimedOut    bool             `json:"timed_out,omitempty"`
+	UsedBackend BackendKind      `json:"used_backend,omitempty"`
+	Retryable   bool             `json:"retryable"`
+}
+
+var DefaultStrictBlockTags = []ReviewIssueTag{
+	ReviewIssueTagMissingValidation,
+	ReviewIssueTagMissingRuntimeValidation,
+	ReviewIssueTagRuntimePackagingNotVerified,
+	ReviewIssueTagScopeCreep,
+	ReviewIssueTagIncompleteTraceability,
+}
+
+// DefaultStrictModeConfig returns the hard-gate defaults described by #124.
+func DefaultStrictModeConfig() StrictModeConfig {
+	return StrictModeConfig{
+		BlockTags:        append([]ReviewIssueTag(nil), DefaultStrictBlockTags...),
+		MaxRetriesPerSub: 2,
+		ReviewTimeout:    30 * time.Second,
+		OpponentBackend:  BackendAuto,
+	}
+}
+
+// WithDefaults fills zero-value fields with the default strict mode settings.
+func (c StrictModeConfig) WithDefaults() StrictModeConfig {
+	if len(c.BlockTags) == 0 {
+		c.BlockTags = append([]ReviewIssueTag(nil), DefaultStrictBlockTags...)
+	}
+	if c.MaxRetriesPerSub <= 0 {
+		c.MaxRetriesPerSub = 2
+	}
+	if c.ReviewTimeout <= 0 {
+		c.ReviewTimeout = 30 * time.Second
+	}
+	if c.OpponentBackend != BackendAuto && c.OpponentBackend != BackendCodex {
+		c.OpponentBackend = BackendAuto
+	}
+	return c
+}
+
+func (c StrictModeConfig) blockTagSet() map[ReviewIssueTag]struct{} {
+	c = c.WithDefaults()
+	set := make(map[ReviewIssueTag]struct{}, len(c.BlockTags))
+	for _, tag := range c.BlockTags {
+		set[tag] = struct{}{}
+	}
+	return set
+}
+
+// ReviewTags returns the de-duplicated union of overall and sub-task issue tags.
+func ReviewTags(review ReviewResult) []ReviewIssueTag {
+	seen := make(map[ReviewIssueTag]struct{})
+	out := make([]ReviewIssueTag, 0, len(review.IssueTags))
+	add := func(tags []ReviewIssueTag) {
+		for _, tag := range tags {
+			if tag == "" {
+				continue
+			}
+			if _, ok := seen[tag]; ok {
+				continue
+			}
+			seen[tag] = struct{}{}
+			out = append(out, tag)
+		}
+	}
+	add(review.IssueTags)
+	for _, subTask := range review.SubTaskResults {
+		add(subTask.IssueTags)
+	}
+	return out
+}
+
+// ReviewDecisionFromStrictTags maps reviewer output to a hard-gate verdict.
+func ReviewDecisionFromStrictTags(review ReviewResult, cfg StrictModeConfig) StrictReviewDecision {
+	cfg = cfg.WithDefaults()
+	if !cfg.Enabled {
+		return StrictReviewDecision{
+			Verdict:   VerdictPass,
+			Retryable: false,
+		}
+	}
+
+	tags := ReviewTags(review)
+	blockTags := strictMatchedBlockTags(tags, cfg.blockTagSet())
+	decision := StrictReviewDecision{
+		MatchedTags: tags,
+		BlockTags:   append([]ReviewIssueTag(nil), blockTags...),
+		UsedBackend: cfg.OpponentBackend,
+	}
+	if len(blockTags) > 0 {
+		decision.Verdict = VerdictBlock
+		decision.Retryable = true
+		return decision
+	}
+	decision.Verdict = VerdictAllow
+	return decision
+}
+
+func strictMatchedBlockTags(tags []ReviewIssueTag, blockSet map[ReviewIssueTag]struct{}) []ReviewIssueTag {
+	matches := make([]ReviewIssueTag, 0)
+	for _, tag := range tags {
+		if _, ok := blockSet[tag]; ok {
+			matches = append(matches, tag)
+		}
+	}
+	return matches
+}
+
+// ResolveStrictReviewBackend chooses the review backend, preferring the opposite
+// backend when available and falling back to the executor backend when not.
+func ResolveStrictReviewBackend(executor BackendKind, cfg StrictModeConfig, available ...BackendKind) BackendKind {
+	cfg = cfg.WithDefaults()
+	if !cfg.Enabled {
+		return executor
+	}
+
+	preferred := cfg.OpponentBackend
+	if preferred == BackendAuto {
+		preferred = oppositeBackend(executor)
+	}
+	if preferred == BackendClaude || preferred == BackendCodex {
+		if backendAvailable(preferred, available...) {
+			return preferred
+		}
+	}
+	if backendAvailable(executor, available...) {
+		return executor
+	}
+	if preferred == BackendClaude || preferred == BackendCodex {
+		return preferred
+	}
+	return executor
+}
+
+func backendAvailable(backend BackendKind, available ...BackendKind) bool {
+	if len(available) == 0 {
+		return true
+	}
+	for _, candidate := range available {
+		if candidate == backend {
+			return true
+		}
+	}
+	return false
+}
+
+func oppositeBackend(backend BackendKind) BackendKind {
+	switch backend {
+	case BackendClaude:
+		return BackendCodex
+	case BackendCodex:
+		return BackendClaude
+	default:
+		return BackendClaude
+	}
+}
+
+// ReviewPhaseWithTimeout wraps a review call with a hard timeout. When the
+// timeout is hit, callers can treat the result as advisory pass.
+func ReviewPhaseWithTimeout(ctx context.Context, phase ReviewPhase, req ReviewRequest, timeout time.Duration) (ReviewResult, error) {
+	if phase == nil {
+		return ReviewResult{}, fmt.Errorf("review phase is not configured")
+	}
+	if timeout <= 0 {
+		return phase.Review(ctx, req)
+	}
+
+	reviewCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	result, err := phase.Review(reviewCtx, req)
+	if err == nil {
+		return result, nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(reviewCtx.Err(), context.DeadlineExceeded) {
+		return ReviewResult{Verdict: VerdictPass}, fmt.Errorf("review timeout after %s: %w", timeout, err)
+	}
+	return result, err
+}
+
+// IsStrictRetryable reports whether a review should be retried under strict mode.
+func IsStrictRetryable(decision StrictReviewDecision) bool {
+	return decision.Verdict == VerdictBlock
 }
 
 // BuildReviewNotification normalizes a review into a concise summary.
@@ -109,7 +341,7 @@ func BuildReviewNotification(taskID string, review ReviewResult) ReviewNotificat
 		Verdict:         review.Verdict,
 		OverallScore:    review.OverallScore,
 		IssueTags:       append([]ReviewTag(nil), review.IssueTags...),
-		AdvisoryRetry:   review.Verdict != VerdictPass || failingSubTasks > 0,
+		AdvisoryRetry:   review.Verdict != VerdictPass && review.Verdict != VerdictAllow || failingSubTasks > 0,
 		FailingSubTasks: failingSubTasks,
 	}
 	if notification.AdvisoryRetry {
@@ -193,7 +425,7 @@ func BuildReviewPrompt(req ReviewRequest) string {
 	b.WriteString("Rules:\n")
 	b.WriteString("- overall_score and every sub-task score must be integers from 0 to 100.\n")
 	b.WriteString("- verdict must be one of pass, partial, fail.\n")
-	b.WriteString("- issue_tags must be JSON arrays of snake_case labels such as ambiguous_goal, missing_context, wrong_tool_hint, underspecified_input, missing_validation.\n")
+	b.WriteString("- issue_tags must be JSON arrays of snake_case labels such as ambiguous_goal, missing_context, wrong_tool_hint, underspecified_input, missing_validation, missing_runtime_validation, runtime_packaging_not_verified, scope_creep, incomplete_traceability.\n")
 	b.WriteString("- Give specific feedback tied to the goal, plan, sub-task result quality, and artifacts.\n")
 	b.WriteString("- Mark pass only when the goal appears satisfied and no material risks remain.\n")
 	b.WriteString("- If context is insufficient, say so explicitly and add the relevant issue_tags.\n")
@@ -223,7 +455,7 @@ func ReviewInputsFromPlan(plan []hermes.SubTask) []ReviewSubTaskInput {
 
 func (v Verdict) Valid() bool {
 	switch v {
-	case VerdictPass, VerdictFail, VerdictPartial:
+	case VerdictAllow, VerdictBlock, VerdictPass, VerdictFail, VerdictPartial:
 		return true
 	default:
 		return false

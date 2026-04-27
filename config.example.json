@@ -60,6 +60,24 @@
   "data_retention_days": 30,
   "enable_data_cleanup": true,
 
+  "hermes": {
+    "enabled": false,
+    "strict_mode_enabled": false,
+    "auto_route_complex": false,
+    "budget": {
+      "max_total_tokens": 500000,
+      "max_wallclock_seconds": 3600
+    },
+    "summary": {
+      "enabled": false,
+      "verbosity": "minimal",
+      "include_cost_estimate": false,
+      "targets": [
+        "telegram"
+      ]
+    }
+  },
+
   "security": {
     "enable_rate_limiting": true,
     "rate_limit_rpm": 60,

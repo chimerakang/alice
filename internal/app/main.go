@@ -96,6 +96,9 @@ type HermesConfig struct {
 	Enabled bool              `json:"enabled"`
 	Hooks   HermesHooksConfig `json:"hooks"`
 
+	// StrictModeEnabled enables hard review gating by default.
+	StrictModeEnabled bool `json:"strict_mode_enabled"`
+
 	// Model overrides (defaults to ModelRoutingConfig values when empty)
 	PlannerModel  string `json:"planner_model"`  // e.g. "claude-opus-4-7"
 	ExecutorModel string `json:"executor_model"` // e.g. "claude-haiku-4-5-20251001"
@@ -208,15 +211,8 @@ func HermesDefaults(cfg HermesConfig) HermesConfig {
 	if cfg.ProgressVerbosity == "" {
 		cfg.ProgressVerbosity = "normal"
 	}
-	if cfg.Budget.MaxTotalTokens == 0 {
-		cfg.Budget.MaxTotalTokens = 500_000
-	}
-	if cfg.Budget.MaxWallclockSeconds == 0 {
-		// Bumped from 600s to 3600s after operators reported real implementation
-		// tasks (multi-file edits + build + test) routinely needed > 10 minutes.
-		// Set to 0 explicitly in config.json to disable the wallclock cap entirely.
-		cfg.Budget.MaxWallclockSeconds = 3600
-	}
+	// Budget defaults intentionally not filled in: 0 means unlimited and
+	// must flow through unchanged. Operators set explicit caps in config.json.
 	if cfg.Summary.Verbosity == "" {
 		cfg.Summary.Verbosity = "minimal"
 	}

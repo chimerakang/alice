@@ -16,6 +16,13 @@ import (
 
 // PlanExecuteConfig holds the runtime configuration for a Hermes-style
 // plan-execute run backed by DirectEngine for each sub-task.
+type ReviewMode string
+
+const (
+	ReviewModePerTask    ReviewMode = "per_task"
+	ReviewModePerSubTask ReviewMode = "per_subtask"
+)
+
 type PlanExecuteConfig struct {
 	PlannerModel string
 	ProjectDir   string
@@ -37,6 +44,8 @@ type PlanExecuteConfig struct {
 	ReviewStore       ReviewResultStore
 	DisableReview     bool
 	ReviewMinSubTasks int
+	ReviewMode        ReviewMode
+	StrictMode        StrictModeConfig
 	OnReview          func(ctx context.Context, state hermes.TaskState, review ReviewResult, notification ReviewNotification)
 
 	ContinueCh      chan struct{}
@@ -215,6 +224,8 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 	e.onPlanReady(ctx, state, tasks)
 
 	completed := 0
+	reviewMode := e.reviewMode()
+	strictCfg := e.strictMode()
 	for idx := range tasks {
 		state, err := e.store.GetTask(taskID)
 		if err != nil {
@@ -233,46 +244,39 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 		}
 
 		subTask := tasks[idx]
-		e.reporter.OnSubTaskStart(idx, len(tasks), subTask)
-		if err := e.store.UpdateSubTask(taskID, idx, hermes.SubTaskInProgress, "", 0); err != nil {
-			log.Printf("[plan_execute] UpdateSubTask(in_progress) idx=%d: %v", idx, err)
-		}
+		finalStatus, finalText, finalTokens, success := e.executeSubTask(ctx, taskID, goal, state, tasks, idx, subTask, cc, reviewMode, strictCfg)
+		if finalStatus == hermes.SubTaskDone {
+			completed++
+			tasks[idx].Status = hermes.SubTaskDone
+			tasks[idx].Result = finalText
+			e.reporter.OnSubTaskDone(idx, len(tasks), subTask, true, finalText)
+			e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
 
-		result, execErr := e.direct.Run(ctx, buildSubTaskGoal(goal, state.Accumulated, idx, len(tasks), subTask), cc, subTaskSink{})
-		if execErr != nil {
-			if err := e.store.UpdateSubTask(taskID, idx, hermes.SubTaskFailed, execErr.Error(), 0); err != nil {
-				log.Printf("[plan_execute] UpdateSubTask(failed) idx=%d: %v", idx, err)
-			}
-			e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, execErr.Error())
-			continue
-		}
+			state, _ = e.store.GetTask(taskID)
+			updated, _ := hermes.AppendResult(state.Accumulated, finalText, completed, e.cfg.AccumulatedCfg)
+			_ = e.store.UpdateAccumulated(taskID, updated)
+		} else if finalStatus == hermes.SubTaskSkipped {
+			tasks[idx].Status = hermes.SubTaskSkipped
+			tasks[idx].Result = finalText
+			e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
+			e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
 
-		text := strings.TrimSpace(result.Text)
-		if err := e.store.UpdateSubTask(taskID, idx, hermes.SubTaskDone, text, result.InputTokens+result.OutputTokens); err != nil {
-			log.Printf("[plan_execute] UpdateSubTask(done) idx=%d: %v", idx, err)
+			state, _ = e.store.GetTask(taskID)
+			updated, _ := hermes.AppendResult(state.Accumulated, finalText, completed, e.cfg.AccumulatedCfg)
+			_ = e.store.UpdateAccumulated(taskID, updated)
+		} else if !success {
+			tasks[idx].Status = hermes.SubTaskFailed
+			tasks[idx].Result = finalText
+			e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
+			e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
 		}
-		if result.Model != "" && (result.InputTokens > 0 || result.OutputTokens > 0) {
-			if err := e.store.AddModelUsage(taskID, result.Model, result.InputTokens, result.OutputTokens); err != nil {
-				log.Printf("[plan_execute] AddModelUsage(executor) idx=%d model=%s: %v", idx, result.Model, err)
-			}
-			if err := e.store.AddTokenUsage(taskID, result.InputTokens+result.OutputTokens); err != nil {
-				log.Printf("[plan_execute] AddTokenUsage(executor) idx=%d: %v", idx, err)
-			}
-		}
-		e.reporter.OnSubTaskDone(idx, len(tasks), subTask, true, text)
-		completed++
-		tasks[idx].Status = hermes.SubTaskDone
-		tasks[idx].Result = text
-		e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, text, result.InputTokens+result.OutputTokens, completed)
-
-		state, _ = e.store.GetTask(taskID)
-		updated, _ := hermes.AppendResult(state.Accumulated, text, completed, e.cfg.AccumulatedCfg)
-		_ = e.store.UpdateAccumulated(taskID, updated)
 	}
 
 	_ = e.store.MarkStatus(taskID, hermes.TaskStatusDone)
 	finalState, _ := e.store.GetTask(taskID)
-	e.runReview(ctx, finalState)
+	if reviewMode == ReviewModePerTask {
+		e.runReview(ctx, finalState, ReviewModePerTask, -1, "", true)
+	}
 	e.reporter.OnDone(finalState)
 	if e.cfg.OnDone != nil {
 		e.cfg.OnDone(ctx, finalState)
@@ -417,50 +421,50 @@ func (e *PlanExecuteEngine) onBudgetExceeded(ctx context.Context, state hermes.T
 	}
 }
 
-func (e *PlanExecuteEngine) runReview(ctx context.Context, state hermes.TaskState) {
-	if !e.shouldRunReview(state.Plan) {
-		return
+func (e *PlanExecuteEngine) runReview(ctx context.Context, state hermes.TaskState, mode ReviewMode, subTaskIdx int, retryFeedback string, notify bool) (ReviewResult, error) {
+	mode = mode.normalized()
+	if mode == "" {
+		mode = ReviewModePerTask
+	}
+	strictCfg := e.strictMode()
+	if mode == ReviewModePerSubTask && strictCfg.Enabled {
+		// strict per-subtask review can run on small plans as well.
+	} else {
+		if !e.shouldRunReview(state.Plan) {
+			return ReviewResult{}, nil
+		}
 	}
 	if e.cfg.ReviewPhase == nil {
-		return
+		return ReviewResult{}, nil
 	}
 
-	reviewReq := ReviewRequest{
-		TaskID:         state.ID,
-		ProjectDir:     e.cfg.ProjectDir,
-		Goal:           state.Goal,
-		Accumulated:    state.Accumulated,
-		Plan:           append([]hermes.SubTask(nil), state.Plan...),
-		SubTaskResults: ReviewInputsFromPlan(state.Plan),
-	}
-	if len(state.Artifacts) > 0 {
-		reviewReq.Artifacts = make([]Artifact, 0, len(state.Artifacts))
-		for _, artifact := range state.Artifacts {
-			reviewReq.Artifacts = append(reviewReq.Artifacts, Artifact{
-				Path:      artifact.Path,
-				Hash:      artifact.Hash,
-				SubTaskID: artifact.SubTaskID,
-			})
+	if mode == ReviewModePerSubTask {
+		if subTaskIdx < 0 || subTaskIdx >= len(state.Plan) {
+			return ReviewResult{}, fmt.Errorf("sub-task index %d out of range for review", subTaskIdx)
 		}
 	}
 
-	result, err := e.cfg.ReviewPhase.Review(ctx, reviewReq)
+	reviewReq := e.buildReviewRequest(state, mode, subTaskIdx, retryFeedback)
+	result, err := ReviewPhaseWithTimeout(ctx, e.cfg.ReviewPhase, reviewReq, strictCfg.ReviewTimeout)
 	if err != nil {
+		if result.Verdict != VerdictPass {
+			result.Verdict = VerdictPass
+		}
 		log.Printf("[plan_execute] review failed: %v", err)
-		return
 	}
 	if err := result.Validate(); err != nil {
 		log.Printf("[plan_execute] review invalid: %v", err)
-		return
+		return ReviewResult{}, err
 	}
 	if e.cfg.ReviewStore != nil {
 		if err := e.cfg.ReviewStore.StoreReview(ctx, state.ID, result); err != nil {
 			log.Printf("[plan_execute] store review: %v", err)
 		}
 	}
-	if e.cfg.OnReview != nil {
+	if notify && e.cfg.OnReview != nil {
 		e.cfg.OnReview(ctx, state, result, BuildReviewNotification(state.ID, result))
 	}
+	return result, nil
 }
 
 func (e *PlanExecuteEngine) shouldRunReview(tasks []hermes.SubTask) bool {
@@ -477,14 +481,185 @@ func (e *PlanExecuteEngine) shouldRunReview(tasks []hermes.SubTask) bool {
 	return len(tasks) >= minTasks
 }
 
-func buildSubTaskGoal(goal, accumulated string, idx, total int, subTask hermes.SubTask) string {
+func (e *PlanExecuteEngine) reviewMode() ReviewMode {
+	if e.cfg.ReviewMode == "" {
+		return ReviewModePerTask
+	}
+	return e.cfg.ReviewMode.normalized()
+}
+
+func (e *PlanExecuteEngine) strictMode() StrictModeConfig {
+	return e.cfg.StrictMode.WithDefaults()
+}
+
+func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal string, state hermes.TaskState, tasks []hermes.SubTask, idx int, subTask hermes.SubTask, cc *ChatContext, reviewMode ReviewMode, strictCfg StrictModeConfig) (hermes.SubTaskStatus, string, int, bool) {
+	attempts := 0
+	reviewFeedback := ""
+	totalAttempts := strictCfg.MaxRetriesPerSub + 1
+	for {
+		if attempts == 0 {
+			e.reporter.OnSubTaskStart(idx, len(tasks), subTask)
+		} else {
+			e.reporter.OnRetry(idx, attempts, totalAttempts, reviewFeedback)
+		}
+
+		prompt := buildSubTaskGoal(goal, state.Accumulated, idx, len(tasks), subTask, reviewFeedback)
+		result, execErr := e.direct.Run(ctx, prompt, cc, subTaskSink{})
+		if execErr != nil {
+			if err := e.store.UpdateSubTask(taskID, idx, hermes.SubTaskFailed, execErr.Error(), 0); err != nil {
+				log.Printf("[plan_execute] UpdateSubTask(failed) idx=%d: %v", idx, err)
+			}
+			if result.Model != "" && (result.InputTokens > 0 || result.OutputTokens > 0) {
+				if err := e.store.AddModelUsage(taskID, result.Model, result.InputTokens, result.OutputTokens); err != nil {
+					log.Printf("[plan_execute] AddModelUsage(executor) idx=%d model=%s: %v", idx, result.Model, err)
+				}
+				if err := e.store.AddTokenUsage(taskID, result.InputTokens+result.OutputTokens); err != nil {
+					log.Printf("[plan_execute] AddTokenUsage(executor) idx=%d: %v", idx, err)
+				}
+			}
+			return hermes.SubTaskFailed, execErr.Error(), result.InputTokens + result.OutputTokens, false
+		}
+
+		text := strings.TrimSpace(result.Text)
+		tokensUsed := result.InputTokens + result.OutputTokens
+		if result.Model != "" && tokensUsed > 0 {
+			if err := e.store.AddModelUsage(taskID, result.Model, result.InputTokens, result.OutputTokens); err != nil {
+				log.Printf("[plan_execute] AddModelUsage(executor) idx=%d model=%s: %v", idx, result.Model, err)
+			}
+			if err := e.store.AddTokenUsage(taskID, tokensUsed); err != nil {
+				log.Printf("[plan_execute] AddTokenUsage(executor) idx=%d: %v", idx, err)
+			}
+		}
+
+		finalStatus := hermes.SubTaskDone
+		finalText := text
+		if reviewMode == ReviewModePerSubTask && strictCfg.Enabled {
+			latestState, err := e.store.GetTask(taskID)
+			if err != nil {
+				log.Printf("[plan_execute] GetTask before strict review idx=%d: %v", idx, err)
+			} else {
+				latestState.Plan = append([]hermes.SubTask(nil), tasks...)
+				latestState.Plan[idx].Status = hermes.SubTaskDone
+				latestState.Plan[idx].Result = text
+				if reviewResult, reviewErr := e.runReview(ctx, latestState, ReviewModePerSubTask, idx, reviewFeedback, false); reviewErr == nil {
+					decision := ReviewDecisionFromStrictTags(reviewResult, strictCfg)
+					if decision.Verdict == VerdictBlock {
+						reviewFeedback = buildStrictRetryFeedback(reviewResult, decision)
+						if attempts < strictCfg.MaxRetriesPerSub {
+							attempts++
+							if err := e.store.UpdateSubTask(taskID, idx, hermes.SubTaskInProgress, text, tokensUsed); err != nil {
+								log.Printf("[plan_execute] UpdateSubTask(retry) idx=%d: %v", idx, err)
+							}
+							continue
+						}
+						finalStatus = hermes.SubTaskSkipped
+						finalText = annotatePartialResult(text, reviewFeedback)
+					}
+				}
+			}
+		}
+
+		if err := e.store.UpdateSubTask(taskID, idx, finalStatus, finalText, tokensUsed); err != nil {
+			log.Printf("[plan_execute] UpdateSubTask(%s) idx=%d: %v", finalStatus, idx, err)
+		}
+		return finalStatus, finalText, tokensUsed, finalStatus == hermes.SubTaskDone
+	}
+}
+
+func (e *PlanExecuteEngine) buildReviewRequest(state hermes.TaskState, mode ReviewMode, subTaskIdx int, retryFeedback string) ReviewRequest {
+	reviewReq := ReviewRequest{
+		TaskID:      state.ID,
+		ProjectDir:  e.cfg.ProjectDir,
+		Goal:        state.Goal,
+		Accumulated: state.Accumulated,
+		Plan:        append([]hermes.SubTask(nil), state.Plan...),
+	}
+
+	switch mode.normalized() {
+	case ReviewModePerSubTask:
+		if subTaskIdx >= 0 && subTaskIdx < len(reviewReq.Plan) {
+			reviewReq.Plan = []hermes.SubTask{reviewReq.Plan[subTaskIdx]}
+			reviewReq.SubTaskResults = []ReviewSubTaskInput{{
+				ID:          reviewReq.Plan[0].ID,
+				Index:       subTaskIdx,
+				Description: reviewReq.Plan[0].Description,
+				Status:      string(reviewReq.Plan[0].Status),
+				Result:      strings.TrimSpace(reviewReq.Plan[0].Result),
+				ToolHints:   append([]string(nil), reviewReq.Plan[0].ToolHints...),
+			}}
+		}
+	default:
+		reviewReq.SubTaskResults = ReviewInputsFromPlan(state.Plan)
+	}
+
+	if retryFeedback != "" {
+		reviewReq.Accumulated = strings.TrimSpace(reviewReq.Accumulated + "\n\nReviewer feedback requiring retry:\n" + retryFeedback)
+	}
+
+	if len(state.Artifacts) > 0 {
+		reviewReq.Artifacts = make([]Artifact, 0, len(state.Artifacts))
+		for _, artifact := range state.Artifacts {
+			reviewReq.Artifacts = append(reviewReq.Artifacts, Artifact{
+				Path:      artifact.Path,
+				Hash:      artifact.Hash,
+				SubTaskID: artifact.SubTaskID,
+			})
+		}
+	}
+	return reviewReq
+}
+
+func buildSubTaskGoal(goal, accumulated string, idx, total int, subTask hermes.SubTask, retryFeedback string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Original goal:\n%s\n\n", goal)
 	if strings.TrimSpace(accumulated) != "" {
 		fmt.Fprintf(&b, "Completed sub-task results so far:\n%s\n\n", accumulated)
 	}
+	if strings.TrimSpace(retryFeedback) != "" {
+		fmt.Fprintf(&b, "Reviewer feedback to address before retrying:\n%s\n\n", strings.TrimSpace(retryFeedback))
+	}
 	fmt.Fprintf(&b, "Current sub-task (%d/%d):\n%s", idx+1, total, subTask.Description)
 	return b.String()
+}
+
+func buildStrictRetryFeedback(review ReviewResult, decision StrictReviewDecision) string {
+	var b strings.Builder
+	b.WriteString("verdict: ")
+	b.WriteString(string(decision.Verdict))
+	if len(decision.BlockTags) > 0 {
+		b.WriteString("\nblock_tags: ")
+		parts := make([]string, 0, len(decision.BlockTags))
+		for _, tag := range decision.BlockTags {
+			parts = append(parts, string(tag))
+		}
+		b.WriteString(strings.Join(parts, ", "))
+	}
+	if text := strings.TrimSpace(review.Feedback); text != "" {
+		b.WriteString("\nfeedback: ")
+		b.WriteString(text)
+	}
+	return b.String()
+}
+
+func annotatePartialResult(result, retryFeedback string) string {
+	result = strings.TrimSpace(result)
+	retryFeedback = strings.TrimSpace(retryFeedback)
+	if retryFeedback == "" {
+		return result
+	}
+	if result == "" {
+		return "PARTIAL\n" + retryFeedback
+	}
+	return "PARTIAL\n" + result + "\n\nReviewer feedback:\n" + retryFeedback
+}
+
+func (m ReviewMode) normalized() ReviewMode {
+	switch strings.ToLower(strings.TrimSpace(string(m))) {
+	case string(ReviewModePerSubTask):
+		return ReviewModePerSubTask
+	default:
+		return ReviewModePerTask
+	}
 }
 
 type subTaskSink struct{}

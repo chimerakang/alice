@@ -165,6 +165,7 @@ type hermesCoord struct {
 		IsRunning() bool
 	}
 	enabled             bool
+	strictModeOverride  *bool
 	tier                string        // "" or "claude" → Claude tier; "codex" → GPT tier (set by /ghermes)
 	plannerSessionID    string        // cached Planner --resume session for the current tier
 	plannerSessionTier  string        // tier that produced plannerSessionID
@@ -274,6 +275,7 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "tasks", "description": "View to-do list"},
 		{"command": "lang", "description": "Switch bot language"},
 		{"command": "preview", "description": "Preview webpage screenshot"},
+		{"command": "strict", "description": "Toggle strict review mode"},
 		{"command": "retry", "description": "Retry reviewed low-score sub-task"},
 		{"command": "help", "description": "Show help message"},
 	}
@@ -1035,6 +1037,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		help += t.getLocalizedMessage(key.chatID, "help_agents_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_tasks_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_lang_desc", nil) + "\n"
+		help += "/strict - 切換 strict review mode\n"
 		help += t.getLocalizedMessage(key.chatID, "help_id_desc", nil)
 		t.sendMarkdown(key, help)
 
@@ -1473,6 +1476,9 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 
 		targetURL := parts[1]
 		t.handlePreviewCommand(key, targetURL)
+
+	case "/strict":
+		t.handleStrictCommand(key, parts)
 
 	case "/cron":
 		t.handleCronCommand(key, parts, text)
@@ -2051,6 +2057,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 
 	ctx := context.Background()
 	cfg := HermesDefaults(t.config.Hermes)
+	strictCfg := t.resolveStrictModeConfig(key, goal)
 
 	var plannerModel, executorModel string
 	if tier == "codex" {
@@ -2073,14 +2080,20 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		}
 	}
 	var reviewModel string
-	if tier == "codex" {
+	reviewBackend := appengine.ResolveStrictReviewBackend(appengine.BackendKindForModel(executorModel), strictCfg, appengine.BackendClaude, appengine.BackendCodex)
+	switch reviewBackend {
+	case appengine.BackendCodex:
 		reviewModel = t.config.ModelRouting.CodexDeepModel
 		if reviewModel == "" {
 			reviewModel = plannerModel
-			log.Printf("[hermes] codex_deep_model empty; reviewer falls back to planner model %q (not Claude DeepModel)", reviewModel)
+			log.Printf("[hermes] codex_deep_model empty; reviewer falls back to planner model %q", reviewModel)
 		}
-	} else {
+	default:
 		reviewModel = t.config.ModelRouting.DeepModel
+		if reviewModel == "" {
+			reviewModel = plannerModel
+			log.Printf("[hermes] deep_model empty; reviewer falls back to planner model %q", reviewModel)
+		}
 	}
 	reviewPhase := NewCLIReviewPhase(t.client, reviewModel)
 
@@ -2217,6 +2230,8 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		PostCompletionHook:    t.buildTaskSyncHook(ghIntegration.TriggerTaskSync, projectDir),
 		ReviewPhase:           reviewPhase,
 		ReviewStore:           globalStorage,
+		ReviewMode:            reviewModeForStrict(strictCfg),
+		StrictMode:            strictCfg,
 		OnReview:              onReview,
 		ContinueCh:            continueCh,
 		OnDone:                onDone,
@@ -2276,6 +2291,93 @@ func (t *TelegramBot) buildHermesOnDoneHook(key chatKey, originalGoal string) fu
 		t.getChatContext(key, "").AddRecentMessage(originalGoal, summary)
 		log.Printf("[hermes] wrote task result back to recentMessages for chat %d (%d chars)", key.chatID, len(summary))
 	}
+}
+
+func (t *TelegramBot) handleStrictCommand(key chatKey, parts []string) {
+	sub := ""
+	if len(parts) > 1 {
+		sub = strings.ToLower(strings.TrimSpace(parts[1]))
+	}
+
+	switch sub {
+	case "", "toggle":
+		enabled := !t.strictModeEnabled(key, "")
+		t.setStrictModeOverride(key, &enabled)
+		if enabled {
+			t.send(key, "✅ strict review mode 已啟用")
+		} else {
+			t.send(key, "⛔ strict review mode 已停用")
+		}
+	case "on", "enable":
+		enabled := true
+		t.setStrictModeOverride(key, &enabled)
+		t.send(key, "✅ strict review mode 已啟用")
+	case "off", "disable":
+		enabled := false
+		t.setStrictModeOverride(key, &enabled)
+		t.send(key, "⛔ strict review mode 已停用")
+	case "status":
+		if t.strictModeEnabled(key, "") {
+			t.send(key, "strict review mode：已啟用")
+		} else {
+			t.send(key, "strict review mode：已停用")
+		}
+	default:
+		t.send(key, "用法：/strict [on|off|status]")
+	}
+}
+
+func (t *TelegramBot) strictModeEnabled(key chatKey, goal string) bool {
+	t.hermesMu.RLock()
+	hc := t.hermesCoords[key]
+	t.hermesMu.RUnlock()
+	if hc != nil && hc.strictModeOverride != nil {
+		return *hc.strictModeOverride
+	}
+
+	if t.config != nil && t.config.Hermes.StrictModeEnabled {
+		return true
+	}
+
+	return shouldAutoEnableStrict(goal)
+}
+
+func (t *TelegramBot) setStrictModeOverride(key chatKey, enabled *bool) {
+	t.hermesMu.Lock()
+	defer t.hermesMu.Unlock()
+
+	hc := t.hermesCoords[key]
+	if hc == nil {
+		hc = &hermesCoord{}
+		t.hermesCoords[key] = hc
+	}
+	if enabled == nil {
+		hc.strictModeOverride = nil
+		return
+	}
+	value := *enabled
+	hc.strictModeOverride = &value
+}
+
+func shouldAutoEnableStrict(goal string) bool {
+	goal = strings.ToLower(strings.TrimSpace(extractHermesActionableGoal(goal)))
+	if goal == "" {
+		return false
+	}
+	return containsAny(goal, []string{"commit", "push", "部署", "deploy", "ssh", "release"})
+}
+
+func reviewModeForStrict(strictCfg appengine.StrictModeConfig) appengine.ReviewMode {
+	if strictCfg.Enabled {
+		return appengine.ReviewModePerSubTask
+	}
+	return appengine.ReviewModePerTask
+}
+
+func (t *TelegramBot) resolveStrictModeConfig(key chatKey, goal string) appengine.StrictModeConfig {
+	cfg := appengine.DefaultStrictModeConfig()
+	cfg.Enabled = t.strictModeEnabled(key, goal)
+	return cfg
 }
 
 // --- Send helpers (直接用 Telegram HTTP API 以支援 message_thread_id) ---

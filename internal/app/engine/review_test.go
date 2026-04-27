@@ -1,8 +1,10 @@
 package engine
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"claude-tg-agent/internal/app/hermes"
 )
@@ -140,4 +142,65 @@ func TestBuildReviewNotificationAndTelegramText(t *testing.T) {
 			t.Fatalf("telegram text missing %q:\n%s", want, text)
 		}
 	}
+}
+
+func TestStrictReviewDefaultsAndTagBlocking(t *testing.T) {
+	cfg := DefaultStrictModeConfig()
+	if cfg.MaxRetriesPerSub != 2 || cfg.ReviewTimeout != 30*time.Second || cfg.OpponentBackend != BackendAuto {
+		t.Fatalf("unexpected strict defaults: %+v", cfg)
+	}
+	if len(cfg.BlockTags) != len(DefaultStrictBlockTags) {
+		t.Fatalf("block tags = %+v, want defaults", cfg.BlockTags)
+	}
+
+	review := ReviewResult{
+		Verdict: VerdictPass,
+		IssueTags: []ReviewIssueTag{
+			ReviewIssueTagMissingValidation,
+			ReviewIssueTagMissingContext,
+		},
+		SubTaskResults: []ReviewSubTaskResult{{
+			SubTaskID: "s1",
+			IssueTags: []ReviewIssueTag{ReviewIssueTagScopeCreep},
+		}},
+	}
+
+	decision := ReviewDecisionFromStrictTags(review, StrictModeConfig{Enabled: true}.WithDefaults())
+	if decision.Verdict != VerdictBlock || len(decision.BlockTags) != 2 || !decision.Retryable {
+		t.Fatalf("unexpected strict decision: %+v", decision)
+	}
+	if got := ReviewTags(review); len(got) != 3 {
+		t.Fatalf("review tags = %+v, want 3 unique tags", got)
+	}
+}
+
+func TestResolveStrictReviewBackendFallsBackToExecutor(t *testing.T) {
+	cfg := StrictModeConfig{Enabled: true}.WithDefaults()
+	if got := ResolveStrictReviewBackend(BackendClaude, cfg, BackendClaude); got != BackendClaude {
+		t.Fatalf("backend fallback = %v, want claude", got)
+	}
+	if got := ResolveStrictReviewBackend(BackendClaude, cfg, BackendCodex); got != BackendCodex {
+		t.Fatalf("backend selection = %v, want codex", got)
+	}
+	if got := ResolveStrictReviewBackend(BackendCodex, cfg, BackendClaude); got != BackendClaude {
+		t.Fatalf("backend selection = %v, want claude", got)
+	}
+}
+
+func TestReviewPhaseWithTimeoutDowngradesToPass(t *testing.T) {
+	phase := blockingReviewPhase{}
+	review, err := ReviewPhaseWithTimeout(context.Background(), phase, ReviewRequest{}, 10*time.Millisecond)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if review.Verdict != VerdictPass {
+		t.Fatalf("timeout verdict = %s, want pass", review.Verdict)
+	}
+}
+
+type blockingReviewPhase struct{}
+
+func (blockingReviewPhase) Review(ctx context.Context, req ReviewRequest) (ReviewResult, error) {
+	<-ctx.Done()
+	return ReviewResult{}, ctx.Err()
 }

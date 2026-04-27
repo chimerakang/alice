@@ -119,6 +119,87 @@ func TestChatContextKeepsBackendSessionsIndependent(t *testing.T) {
 	}
 }
 
+func TestStrictCommandDispatchAndToggle(t *testing.T) {
+	key := chatKey{chatID: 7, threadID: 11}
+	bot := &TelegramBot{
+		config:       &Config{},
+		hermesCoords: map[chatKey]*hermesCoord{},
+		messageQueue: make(chan *TelegramMessage, 4),
+	}
+
+	bot.handleCommand(key, "/strict")
+	assertQueuedMessageContains(t, bot.messageQueue, "strict review mode 已啟用")
+	if !bot.strictModeEnabled(key, "") {
+		t.Fatal("expected strict mode override to enable after /strict toggle")
+	}
+
+	bot.handleCommand(key, "/strict off")
+	assertQueuedMessageContains(t, bot.messageQueue, "strict review mode 已停用")
+	if bot.strictModeEnabled(key, "") {
+		t.Fatal("expected strict mode override to disable after /strict off")
+	}
+
+	bot.handleCommand(key, "/strict status")
+	assertQueuedMessageContains(t, bot.messageQueue, "strict review mode：已停用")
+}
+
+func TestStrictModeAutoEnableFromRiskVerbs(t *testing.T) {
+	cases := []struct {
+		name string
+		goal string
+		want bool
+	}{
+		{name: "commit", goal: "請 commit 這次修改", want: true},
+		{name: "push", goal: "先整理後 push 到 main", want: true},
+		{name: "deploy", goal: "完成部署到 production", want: true},
+		{name: "ssh", goal: "ssh 到主機確認服務", want: true},
+		{name: "release", goal: "release v1.2.3", want: true},
+		{name: "non-risk", goal: "請幫我整理文件", want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldAutoEnableStrict(tc.goal); got != tc.want {
+				t.Fatalf("shouldAutoEnableStrict(%q) = %v, want %v", tc.goal, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveStrictModeConfigAutoEnablesFromGoal(t *testing.T) {
+	key := chatKey{chatID: 99, threadID: 3}
+	bot := &TelegramBot{
+		config: &Config{},
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: &hermesCoord{},
+		},
+	}
+
+	cfg := bot.resolveStrictModeConfig(key, "請 commit 並 push 變更")
+	if !cfg.Enabled {
+		t.Fatalf("expected strict config to auto-enable for risk verb goal, got %+v", cfg)
+	}
+
+	cfg = bot.resolveStrictModeConfig(key, "只是說明文件內容")
+	if cfg.Enabled {
+		t.Fatalf("expected strict config to stay disabled for non-risk goal, got %+v", cfg)
+	}
+}
+
+func assertQueuedMessageContains(t *testing.T, queue <-chan *TelegramMessage, want string) {
+	t.Helper()
+
+	select {
+	case msg := <-queue:
+		text, _ := msg.Params["text"].(string)
+		if !strings.Contains(text, want) {
+			t.Fatalf("queued message %q does not contain %q", text, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for queued message containing %q", want)
+	}
+}
+
 func TestHandleMessageHermesEnabledIssueRefFetchesIssue(t *testing.T) {
 	key := chatKey{chatID: 42, threadID: 7}
 	const userID int64 = 123

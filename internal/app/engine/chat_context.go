@@ -13,6 +13,9 @@ const (
 	BackendCodex
 )
 
+// BackendAuto lets routing helpers pick the opposite backend dynamically.
+const BackendAuto BackendKind = -1
+
 // ModelPreference stores a chat's explicit model routing preference.
 type ModelPreference string
 
