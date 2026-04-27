@@ -33,6 +33,7 @@ type PlanExecuteConfig struct {
 	Budget                hermes.TokenBudget
 	AccumulatedCfg        hermes.AccumulatedConfig
 	PlannerRules          string
+	ExecutorRules         string
 	PlannerSessionID      string
 
 	GithubIssueNumber int
@@ -224,6 +225,8 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 	e.onPlanReady(ctx, state, tasks)
 
 	completed := 0
+	blockCount := 0
+	autoFixedCount := 0
 	reviewMode := e.reviewMode()
 	strictCfg := e.strictMode()
 	for idx := range tasks {
@@ -244,7 +247,13 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 		}
 
 		subTask := tasks[idx]
-		finalStatus, finalText, finalTokens, success := e.executeSubTask(ctx, taskID, goal, state, tasks, idx, subTask, cc, reviewMode, strictCfg)
+		finalStatus, finalText, finalTokens, success, subMetrics := e.executeSubTask(ctx, taskID, goal, state, tasks, idx, subTask, cc, reviewMode, strictCfg)
+		if subMetrics.blockedOnce {
+			blockCount++
+		}
+		if subMetrics.autoFixed {
+			autoFixedCount++
+		}
 		if finalStatus == hermes.SubTaskDone {
 			completed++
 			tasks[idx].Status = hermes.SubTaskDone
@@ -275,7 +284,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 	_ = e.store.MarkStatus(taskID, hermes.TaskStatusDone)
 	finalState, _ := e.store.GetTask(taskID)
 	if reviewMode == ReviewModePerTask {
-		e.runReview(ctx, finalState, ReviewModePerTask, -1, "", true)
+		e.runReview(ctx, finalState, ReviewModePerTask, -1, "", true, blockCount, autoFixedCount)
 	}
 	e.reporter.OnDone(finalState)
 	if e.cfg.OnDone != nil {
@@ -425,7 +434,7 @@ func (e *PlanExecuteEngine) onBudgetExceeded(ctx context.Context, state hermes.T
 	}
 }
 
-func (e *PlanExecuteEngine) runReview(ctx context.Context, state hermes.TaskState, mode ReviewMode, subTaskIdx int, retryFeedback string, notify bool) (ReviewResult, error) {
+func (e *PlanExecuteEngine) runReview(ctx context.Context, state hermes.TaskState, mode ReviewMode, subTaskIdx int, retryFeedback string, notify bool, blockMetrics ...int) (ReviewResult, error) {
 	mode = mode.normalized()
 	if mode == "" {
 		mode = ReviewModePerTask
@@ -451,14 +460,22 @@ func (e *PlanExecuteEngine) runReview(ctx context.Context, state hermes.TaskStat
 	reviewReq := e.buildReviewRequest(state, mode, subTaskIdx, retryFeedback)
 	result, err := ReviewPhaseWithTimeout(ctx, e.cfg.ReviewPhase, reviewReq, strictCfg.ReviewTimeout)
 	if err != nil {
-		if result.Verdict != VerdictPass {
-			result.Verdict = VerdictPass
-		}
-		log.Printf("[plan_execute] review failed: %v", err)
+		// Reviewer failed (timeout, parse error, etc). Do NOT synthesise a fake
+		// "pass" verdict on top of the empty/zero-score result — that produced
+		// misleading "pass (0/100)" notifications where the verdict claimed
+		// success but the score said the opposite. Skip storage and
+		// notification; the task continues as if the reviewer was disabled
+		// for this round.
+		log.Printf("[plan_execute] review failed (skipping store/notify): %v", err)
+		return ReviewResult{}, err
 	}
 	if err := result.Validate(); err != nil {
-		log.Printf("[plan_execute] review invalid: %v", err)
+		log.Printf("[plan_execute] review invalid (skipping store/notify): %v", err)
 		return ReviewResult{}, err
+	}
+	if len(blockMetrics) >= 2 {
+		result.BlockCount = blockMetrics[0]
+		result.AutoFixedCount = blockMetrics[1]
 	}
 	if e.cfg.ReviewStore != nil {
 		if err := e.cfg.ReviewStore.StoreReview(ctx, state.ID, result); err != nil {
@@ -496,10 +513,16 @@ func (e *PlanExecuteEngine) strictMode() StrictModeConfig {
 	return e.cfg.StrictMode.WithDefaults()
 }
 
-func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal string, state hermes.TaskState, tasks []hermes.SubTask, idx int, subTask hermes.SubTask, cc *ChatContext, reviewMode ReviewMode, strictCfg StrictModeConfig) (hermes.SubTaskStatus, string, int, bool) {
+type subTaskExecMetrics struct {
+	blockedOnce bool
+	autoFixed   bool
+}
+
+func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal string, state hermes.TaskState, tasks []hermes.SubTask, idx int, subTask hermes.SubTask, cc *ChatContext, reviewMode ReviewMode, strictCfg StrictModeConfig) (hermes.SubTaskStatus, string, int, bool, subTaskExecMetrics) {
 	attempts := 0
 	reviewFeedback := ""
 	totalAttempts := strictCfg.MaxRetriesPerSub + 1
+	metrics := subTaskExecMetrics{}
 	for {
 		if attempts == 0 {
 			e.reporter.OnSubTaskStart(idx, len(tasks), subTask)
@@ -507,7 +530,7 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 			e.reporter.OnRetry(idx, attempts, totalAttempts, reviewFeedback)
 		}
 
-		prompt := buildSubTaskGoal(goal, state.Accumulated, idx, len(tasks), subTask, reviewFeedback)
+		prompt := buildSubTaskGoal(e.cfg.ExecutorRules, goal, state.Accumulated, idx, len(tasks), subTask, reviewFeedback)
 		result, execErr := e.direct.Run(ctx, prompt, cc, subTaskSink{})
 		if execErr != nil {
 			if err := e.store.UpdateSubTask(taskID, idx, hermes.SubTaskFailed, execErr.Error(), 0); err != nil {
@@ -521,7 +544,7 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 					log.Printf("[plan_execute] AddTokenUsage(executor) idx=%d: %v", idx, err)
 				}
 			}
-			return hermes.SubTaskFailed, execErr.Error(), result.InputTokens + result.OutputTokens, false
+			return hermes.SubTaskFailed, execErr.Error(), result.InputTokens + result.OutputTokens, false, metrics
 		}
 
 		text := strings.TrimSpace(result.Text)
@@ -548,6 +571,7 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 				if reviewResult, reviewErr := e.runReview(ctx, latestState, ReviewModePerSubTask, idx, reviewFeedback, false); reviewErr == nil {
 					decision := ReviewDecisionFromStrictTags(reviewResult, strictCfg)
 					if decision.Verdict == VerdictBlock {
+						metrics.blockedOnce = true
 						reviewFeedback = buildStrictRetryFeedback(reviewResult, decision)
 						if attempts < strictCfg.MaxRetriesPerSub {
 							attempts++
@@ -563,10 +587,13 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 			}
 		}
 
+		if metrics.blockedOnce && finalStatus == hermes.SubTaskDone {
+			metrics.autoFixed = true
+		}
 		if err := e.store.UpdateSubTask(taskID, idx, finalStatus, finalText, tokensUsed); err != nil {
 			log.Printf("[plan_execute] UpdateSubTask(%s) idx=%d: %v", finalStatus, idx, err)
 		}
-		return finalStatus, finalText, tokensUsed, finalStatus == hermes.SubTaskDone
+		return finalStatus, finalText, tokensUsed, finalStatus == hermes.SubTaskDone, metrics
 	}
 }
 
@@ -613,8 +640,12 @@ func (e *PlanExecuteEngine) buildReviewRequest(state hermes.TaskState, mode Revi
 	return reviewReq
 }
 
-func buildSubTaskGoal(goal, accumulated string, idx, total int, subTask hermes.SubTask, retryFeedback string) string {
+func buildSubTaskGoal(executorRules, goal, accumulated string, idx, total int, subTask hermes.SubTask, retryFeedback string) string {
 	var b strings.Builder
+	if rules := strings.TrimSpace(executorRules); rules != "" {
+		b.WriteString(rules)
+		b.WriteString("\n\n")
+	}
 	fmt.Fprintf(&b, "Original goal:\n%s\n\n", goal)
 	if strings.TrimSpace(accumulated) != "" {
 		fmt.Fprintf(&b, "Completed sub-task results so far:\n%s\n\n", accumulated)

@@ -2224,6 +2224,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		Budget:                budget,
 		AccumulatedCfg:        hermes.AccumulatedConfig{},
 		PlannerRules:          pb.ForRole(hermes.RolePlanner),
+		ExecutorRules:         pb.ForRole(hermes.RoleExecutor),
 		PlannerSessionID:      plannerSessionID,
 		GithubIssueNumber:     issueNumber,
 		GithubCfg:             ghCfg,
