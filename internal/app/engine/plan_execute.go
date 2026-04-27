@@ -48,6 +48,12 @@ type PlanExecuteConfig struct {
 	ReviewMode        ReviewMode
 	StrictMode        StrictModeConfig
 	OnReview          func(ctx context.Context, state hermes.TaskState, review ReviewResult, notification ReviewNotification)
+	// OnReviewSkipped fires when the reviewer phase produced an unusable
+	// result (timeout, parse error, verdict/score contradiction, etc) and
+	// the engine elected to skip storage and the OnReview notification.
+	// Wire this so the user still sees that review was attempted but
+	// could not conclude — silent skips look like the review never ran.
+	OnReviewSkipped   func(ctx context.Context, state hermes.TaskState, reason error)
 
 	ContinueCh      chan struct{}
 	ContinueTimeout time.Duration
@@ -463,15 +469,21 @@ func (e *PlanExecuteEngine) runReview(ctx context.Context, state hermes.TaskStat
 		// Reviewer failed (timeout, parse error, etc). Do NOT synthesise a fake
 		// "pass" verdict on top of the empty/zero-score result — that produced
 		// misleading "pass (0/100)" notifications where the verdict claimed
-		// success but the score said the opposite. Skip storage and
-		// notification; the task continues as if the reviewer was disabled
-		// for this round.
-		log.Printf("[plan_execute] review failed (skipping store/notify): %v", err)
+		// success but the score said the opposite. Skip storage but still
+		// notify the user via OnReviewSkipped so they know review was
+		// attempted but could not conclude.
+		log.Printf("[plan_execute] review failed (skipping store): %v", err)
+		if notify && e.cfg.OnReviewSkipped != nil {
+			e.cfg.OnReviewSkipped(ctx, state, err)
+		}
 		return ReviewResult{}, err
 	}
-	if err := result.Validate(); err != nil {
-		log.Printf("[plan_execute] review invalid (skipping store/notify): %v", err)
-		return ReviewResult{}, err
+	if validateErr := result.Validate(); validateErr != nil {
+		log.Printf("[plan_execute] review invalid (skipping store): %v", validateErr)
+		if notify && e.cfg.OnReviewSkipped != nil {
+			e.cfg.OnReviewSkipped(ctx, state, validateErr)
+		}
+		return ReviewResult{}, validateErr
 	}
 	if len(blockMetrics) >= 2 {
 		result.BlockCount = blockMetrics[0]

@@ -2182,6 +2182,15 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 			BroadcastReviewEvent(notification)
 		}
 	}
+	onReviewSkipped := func(_ context.Context, state hermes.TaskState, reason error) {
+		msg := "⚠️ 複審被略過"
+		if reason != nil {
+			msg += "：" + reason.Error()
+		} else {
+			msg += "（reviewer 未產生有效結果）"
+		}
+		t.send(key, msg)
+	}
 
 	// Use a noop store when no DB is available yet (wired fully in #97→#98 integration)
 	if taskStore == nil {
@@ -2218,6 +2227,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		ReviewMode:            reviewModeForStrict(strictCfg),
 		StrictMode:            strictCfg,
 		OnReview:              onReview,
+		OnReviewSkipped:       onReviewSkipped,
 		ContinueCh:            continueCh,
 		OnDone:                onDone,
 	}, planFn, direct, taskStore, reporter)
