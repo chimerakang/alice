@@ -91,7 +91,11 @@ func (r *TextProgressReporter) OnSubTaskDone(idx, total int, task SubTask, succe
 		icon = "❌"
 	}
 	msg := fmt.Sprintf("%s [%d/%d] %s", icon, idx+1, total, task.Description)
-	if result != "" && r.verbosity >= VerbosityVerbose {
+	// Always surface the result body when the sub-task failed — otherwise
+	// the user sees a bare ❌ line with no diagnostics. Successful results
+	// stay gated by Verbose since they are usually long four-section
+	// reports already shown via OnContent.
+	if result != "" && (!success || r.verbosity >= VerbosityVerbose) {
 		msg += "\n" + result
 	}
 	r.sendFn(msg)
