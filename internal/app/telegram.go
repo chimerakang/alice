@@ -171,6 +171,7 @@ type hermesCoord struct {
 	executorSessionID   string        // cached Executor thread resume ID for the current tier
 	executorSessionTier string        // tier that produced executorSessionID
 	continueCh          chan struct{} // non-nil when coordinator is paused on a budget warning
+	oneShot             bool          // true when launched via /hermes #N or /ghermes #N; disable on done
 }
 
 func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
@@ -2135,10 +2136,18 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	}
 
 	onDoneHook := t.buildHermesOnDoneHook(key, goal)
+	oneShot := issueNumber > 0
 	onDone := func(doneCtx context.Context, state hermes.TaskState) {
 		t.recordPlannerSession(key, tier, state.PlannerSessionID)
 		if sess := t.getChatContext(key, projectDir).Session(appengine.BackendKindForModel(executorModel)); sess != "" {
 			t.recordExecutorSession(key, tier, sess)
+		}
+		if oneShot {
+			t.hermesMu.Lock()
+			if hc := t.hermesCoords[key]; hc != nil {
+				hc.enabled = false
+			}
+			t.hermesMu.Unlock()
 		}
 		if onDoneHook != nil {
 			onDoneHook(doneCtx, state)
@@ -2158,7 +2167,12 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 
 	continueCh := make(chan struct{}, 1)
 	agent := t.getAgent(key)
-	if executorSessionID != "" {
+	if oneShot {
+		// Issue-launched tasks start with a fresh executor CLI session so the
+		// previous task's transcript does not bloat the prompt and trigger
+		// "Prompt is too long" on later subtasks.
+		agent.ClearSessionForModel(executorModel)
+	} else if executorSessionID != "" {
 		agent.chatContext.SetSession(appengine.BackendKindForModel(executorModel), executorSessionID)
 	}
 	direct := appengine.NewDirectEngine(&metricsForwardingRunner{
@@ -2170,6 +2184,16 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 			defer func() {
 				agent.currentModelOverride = prevOverride
 			}()
+			// Reset executor CLI session before each subtask. The Hermes engine
+			// rebuilds full context (goal + accumulated + current subtask) into
+			// the prompt each call, so cross-subtask CLI session continuity is
+			// redundant and is the main driver of "Prompt is too long" as the
+			// transcript grows.
+			if executorModel != "" {
+				agent.ClearSessionForModel(executorModel)
+			} else {
+				agent.ClearSession()
+			}
 			return agent.Run(msg, update)
 		},
 		metrics: agent.LastCallMetrics,
@@ -2195,7 +2219,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	}, planFn, direct, taskStore, reporter)
 
 	t.hermesMu.Lock()
-	t.hermesCoords[key] = &hermesCoord{coord: coord, enabled: true, continueCh: continueCh}
+	t.hermesCoords[key] = &hermesCoord{coord: coord, enabled: true, continueCh: continueCh, oneShot: oneShot}
 	t.hermesMu.Unlock()
 
 	taskID, err := coord.Start(ctx, goal, agent.chatContext)
