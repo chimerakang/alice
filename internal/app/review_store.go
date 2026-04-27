@@ -13,8 +13,18 @@ import (
 
 // StoreReview persists a completed Hermes review into the unified task schema.
 func (s *SQLiteStorage) StoreReview(ctx context.Context, taskID string, review appengine.ReviewResult) error {
+	return s.StoreReviewWithSource(ctx, taskID, review, "initial")
+}
+
+// StoreReviewWithSource persists a review and labels whether it came from the
+// initial ReviewPhase pass or a manual/automatic retry.
+func (s *SQLiteStorage) StoreReviewWithSource(ctx context.Context, taskID string, review appengine.ReviewResult, source string) error {
 	if err := review.Validate(); err != nil {
 		return fmt.Errorf("validate review: %w", err)
+	}
+	source = strings.TrimSpace(source)
+	if source == "" {
+		source = "initial"
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -33,6 +43,7 @@ func (s *SQLiteStorage) StoreReview(ctx context.Context, taskID string, review a
 		InputTokens:   review.InputTokens,
 		OutputTokens:  review.OutputTokens,
 		CostUSD:       review.CostUSD,
+		Source:        source,
 	})
 	if err != nil {
 		return err
@@ -70,6 +81,9 @@ func insertUnifiedReviewResultTx(tx *sql.Tx, review UnifiedReviewResult) (int64,
 	if review.CreatedAt.IsZero() {
 		review.CreatedAt = time.Now()
 	}
+	if strings.TrimSpace(review.Source) == "" {
+		review.Source = "initial"
+	}
 	tagsJSON, err := json.Marshal(review.IssueTags)
 	if err != nil {
 		return 0, err
@@ -77,11 +91,11 @@ func insertUnifiedReviewResultTx(tx *sql.Tx, review UnifiedReviewResult) (int64,
 	res, err := tx.Exec(`
 		INSERT INTO review_results
 			(task_id, reviewer_model, verdict, overall_score, feedback_text, issue_tags,
-			 input_tokens, output_tokens, cost_usd, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 input_tokens, output_tokens, cost_usd, source, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		review.TaskID, review.ReviewerModel, review.Verdict, review.OverallScore,
 		review.FeedbackText, string(tagsJSON), review.InputTokens, review.OutputTokens,
-		review.CostUSD, review.CreatedAt.Format(time.RFC3339Nano),
+		review.CostUSD, review.Source, review.CreatedAt.Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return 0, err

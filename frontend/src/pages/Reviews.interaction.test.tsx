@@ -39,6 +39,7 @@ function review(overrides: Partial<ReviewFeedItem>): ReviewFeedItem {
     sub_task_results: [],
     timestamp: "2026-04-26T12:00:00Z",
     source: "stored",
+    run_source: "initial",
     advisory_retry: false,
     retry_note: "暫無需重跑",
     failing_subtasks: 0,

@@ -89,6 +89,7 @@ type UnifiedReviewResult struct {
 	InputTokens   int       `json:"input_tokens"`
 	OutputTokens  int       `json:"output_tokens"`
 	CostUSD       float64   `json:"cost_usd"`
+	Source        string    `json:"source"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -194,6 +195,7 @@ func unifiedTaskTablesSQL() []string {
 			input_tokens    INTEGER NOT NULL DEFAULT 0,
 			output_tokens   INTEGER NOT NULL DEFAULT 0,
 			cost_usd        REAL NOT NULL DEFAULT 0,
+			source          TEXT NOT NULL DEFAULT 'initial',
 			created_at      TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_review_results_task ON review_results(task_id)`,
@@ -214,6 +216,9 @@ func (s *SQLiteStorage) migrateUnifiedTaskTables() error {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return fmt.Errorf("unified task migration: %w", err)
 		}
+	}
+	if _, err := s.db.Exec(`ALTER TABLE review_results ADD COLUMN source TEXT NOT NULL DEFAULT 'initial'`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("unified task source migration: %w", err)
 	}
 	return nil
 }
@@ -386,6 +391,9 @@ func (s *SQLiteStorage) InsertUnifiedReviewResult(review UnifiedReviewResult) (i
 	if review.CreatedAt.IsZero() {
 		review.CreatedAt = time.Now()
 	}
+	if strings.TrimSpace(review.Source) == "" {
+		review.Source = "initial"
+	}
 	tagsJSON, err := json.Marshal(review.IssueTags)
 	if err != nil {
 		return 0, err
@@ -393,11 +401,11 @@ func (s *SQLiteStorage) InsertUnifiedReviewResult(review UnifiedReviewResult) (i
 	res, err := s.db.Exec(`
 		INSERT INTO review_results
 			(task_id, reviewer_model, verdict, overall_score, feedback_text, issue_tags,
-			 input_tokens, output_tokens, cost_usd, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 input_tokens, output_tokens, cost_usd, source, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		review.TaskID, review.ReviewerModel, review.Verdict, review.OverallScore,
 		review.FeedbackText, string(tagsJSON), review.InputTokens, review.OutputTokens,
-		review.CostUSD, review.CreatedAt.Format(time.RFC3339Nano),
+		review.CostUSD, review.Source, review.CreatedAt.Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return 0, err
@@ -640,7 +648,7 @@ func (s *SQLiteStorage) listUnifiedArtifacts(subTaskID string) ([]UnifiedArtifac
 func (s *SQLiteStorage) listUnifiedReviewGraphs(taskID string) ([]UnifiedReviewGraph, error) {
 	rows, err := s.db.Query(`
 		SELECT id, task_id, reviewer_model, verdict, overall_score, feedback_text,
-		       issue_tags, input_tokens, output_tokens, cost_usd, created_at
+		       issue_tags, input_tokens, output_tokens, cost_usd, source, created_at
 		FROM review_results
 		WHERE task_id = ?
 		ORDER BY created_at DESC, id DESC`, taskID)
@@ -655,7 +663,7 @@ func (s *SQLiteStorage) listUnifiedReviewGraphs(taskID string) ([]UnifiedReviewG
 		if err := rows.Scan(
 			&review.ID, &review.TaskID, &review.ReviewerModel, &review.Verdict,
 			&review.OverallScore, &review.FeedbackText, &tagsJSON,
-			&review.InputTokens, &review.OutputTokens, &review.CostUSD, &createdAt,
+			&review.InputTokens, &review.OutputTokens, &review.CostUSD, &review.Source, &createdAt,
 		); err != nil {
 			rows.Close()
 			return nil, err

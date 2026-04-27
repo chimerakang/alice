@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -367,8 +368,19 @@ func BroadcastAgentStatusEvent(chatID int64, status string, details map[string]i
 
 // BroadcastReviewEvent broadcasts a compact review summary to connected clients.
 func BroadcastReviewEvent(notification appengine.ReviewNotification) {
+	broadcastReviewEvent(notification, "initial")
+}
+
+func BroadcastReviewEventWithSource(notification appengine.ReviewNotification, source string) {
+	broadcastReviewEvent(notification, source)
+}
+
+func broadcastReviewEvent(notification appengine.ReviewNotification, source string) {
 	if globalWebSocketHub == nil {
 		return
+	}
+	if strings.TrimSpace(source) == "" {
+		source = "initial"
 	}
 
 	data := map[string]interface{}{
@@ -380,6 +392,7 @@ func BroadcastReviewEvent(notification appengine.ReviewNotification) {
 		"advisory_retry":   notification.AdvisoryRetry,
 		"failing_subtasks": notification.FailingSubTasks,
 		"retry_note":       notification.RetryNote,
+		"source":           source,
 		"timestamp":        time.Now(),
 	}
 

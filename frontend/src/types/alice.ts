@@ -211,6 +211,7 @@ export interface UnifiedReview {
   input_tokens: number;
   output_tokens: number;
   cost_usd: number;
+  source?: "initial" | "retry" | string;
   created_at: string;
   sub_task_results: UnifiedReviewSubTaskResult[];
 }
@@ -225,6 +226,7 @@ export interface ReviewLiveEvent {
   failing_subtasks?: number;
   retry_note?: string;
   feedback_text?: string;
+  source?: "initial" | "retry" | string;
   timestamp: string;
   sub_task_results?: UnifiedReviewSubTaskResult[];
 }

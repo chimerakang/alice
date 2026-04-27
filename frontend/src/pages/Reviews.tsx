@@ -190,9 +190,16 @@ function ReviewRow({
         </div>
       </td>
       <td className="px-4 py-3">
-        <StatusBadge variant={verdictVariant} size="sm">
-          {review.verdict}
-        </StatusBadge>
+        <div className="flex items-center gap-2">
+          <StatusBadge variant={verdictVariant} size="sm">
+            {review.verdict}
+          </StatusBadge>
+          {review.run_source === "retry" && (
+            <span className="px-1.5 py-0.5 rounded bg-primary/10 text-[10px] text-primary">
+              retry
+            </span>
+          )}
+        </div>
       </td>
       <td className="px-4 py-3 whitespace-nowrap text-sm font-mono text-white">
         {review.overall_score}/100

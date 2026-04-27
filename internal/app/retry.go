@@ -1,0 +1,441 @@
+package app
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	appengine "claude-tg-agent/internal/app/engine"
+)
+
+const maxSubTaskRetryAttempts = 3
+
+type retrySelection struct {
+	Task              UnifiedTask
+	SubTask           UnifiedSubTask
+	Review            UnifiedReviewResult
+	SubTaskReview     UnifiedReviewSubTaskResult
+	RetryCount        int
+	DisplaySubTaskIdx int
+}
+
+type retryOutcome struct {
+	Selection retrySelection
+	Result    appengine.Result
+	Review    appengine.ReviewResult
+	Improved  bool
+	Duration  time.Duration
+}
+
+func composeRetryPrompt(description, verdict string, score int, feedback string, issueTags []string) string {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("[Retry — 上一輪 review 給 %s %d/100]\n\n", strings.TrimSpace(verdict), score))
+	b.WriteString("原 sub-task 描述：\n")
+	b.WriteString(strings.TrimSpace(description))
+	b.WriteString("\n\nReviewer 找出的問題：\n")
+	if strings.TrimSpace(feedback) == "" {
+		b.WriteString("（reviewer 未提供詳細文字回饋）")
+	} else {
+		b.WriteString(strings.TrimSpace(feedback))
+	}
+	b.WriteString("\n\n請只針對以下問題修正，不要做超出範圍的改動：\n")
+	if len(issueTags) == 0 {
+		b.WriteString("- 未分類 review 問題\n")
+	} else {
+		for _, tag := range issueTags {
+			tag = strings.TrimSpace(tag)
+			if tag != "" {
+				b.WriteString("- ")
+				b.WriteString(tag)
+				b.WriteString("\n")
+			}
+		}
+	}
+	b.WriteString("\n完成後以 <= 2 行回報實際做了什麼。")
+	return b.String()
+}
+
+func (s *SQLiteStorage) selectRetryTargetLatest(ctx context.Context, key chatKey) (retrySelection, error) {
+	return s.scanRetrySelection(ctx, `
+		SELECT t.id, t.chat_id, t.thread_id, t.project_dir, t.goal, t.engine, t.backend, t.status,
+		       t.started_at, t.ended_at, t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
+		       st.id, st.task_id, st.idx, st.description, st.model, st.status, st.result_text,
+		       st.input_tokens, st.output_tokens, st.cost_usd, st.started_at, st.ended_at,
+		       st.routing_reason, st.routing_latency_ms,
+		       rr.id, rr.task_id, rr.reviewer_model, rr.verdict, rr.overall_score, rr.feedback_text,
+		       rr.issue_tags, rr.input_tokens, rr.output_tokens, rr.cost_usd, rr.source, rr.created_at,
+		       rs.id, rs.review_id, rs.sub_task_id, rs.score, rs.feedback, rs.issue_tags
+		FROM review_results rr
+		JOIN tasks t ON t.id = rr.task_id
+		JOIN review_subtask_results rs ON rs.review_id = rr.id
+		JOIN sub_tasks st ON st.id = rs.sub_task_id
+		WHERE (rr.verdict IN ('partial', 'fail') OR rs.score < 70)
+		  AND t.chat_id = ? AND t.thread_id = ?
+		ORDER BY rr.created_at DESC, rr.id DESC, rs.score ASC, st.idx ASC
+		LIMIT 1`, key.chatID, key.threadID)
+}
+
+func (s *SQLiteStorage) selectRetryTargetLowest(ctx context.Context, taskID string) (retrySelection, error) {
+	return s.scanRetrySelection(ctx, `
+		SELECT t.id, t.chat_id, t.thread_id, t.project_dir, t.goal, t.engine, t.backend, t.status,
+		       t.started_at, t.ended_at, t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
+		       st.id, st.task_id, st.idx, st.description, st.model, st.status, st.result_text,
+		       st.input_tokens, st.output_tokens, st.cost_usd, st.started_at, st.ended_at,
+		       st.routing_reason, st.routing_latency_ms,
+		       rr.id, rr.task_id, rr.reviewer_model, rr.verdict, rr.overall_score, rr.feedback_text,
+		       rr.issue_tags, rr.input_tokens, rr.output_tokens, rr.cost_usd, rr.source, rr.created_at,
+		       rs.id, rs.review_id, rs.sub_task_id, rs.score, rs.feedback, rs.issue_tags
+		FROM review_results rr
+		JOIN tasks t ON t.id = rr.task_id
+		JOIN review_subtask_results rs ON rs.review_id = rr.id
+		JOIN sub_tasks st ON st.id = rs.sub_task_id
+		WHERE rr.task_id = ?
+		ORDER BY rr.created_at DESC, rr.id DESC, rs.score ASC, st.idx ASC
+		LIMIT 1`, taskID)
+}
+
+func (s *SQLiteStorage) selectRetryTargetByIndex(ctx context.Context, taskID string, displayIdx int) (retrySelection, error) {
+	if displayIdx <= 0 {
+		return retrySelection{}, fmt.Errorf("sub-task idx must be >= 1")
+	}
+	return s.scanRetrySelection(ctx, `
+		SELECT t.id, t.chat_id, t.thread_id, t.project_dir, t.goal, t.engine, t.backend, t.status,
+		       t.started_at, t.ended_at, t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
+		       st.id, st.task_id, st.idx, st.description, st.model, st.status, st.result_text,
+		       st.input_tokens, st.output_tokens, st.cost_usd, st.started_at, st.ended_at,
+		       st.routing_reason, st.routing_latency_ms,
+		       rr.id, rr.task_id, rr.reviewer_model, rr.verdict, rr.overall_score, rr.feedback_text,
+		       rr.issue_tags, rr.input_tokens, rr.output_tokens, rr.cost_usd, rr.source, rr.created_at,
+		       rs.id, rs.review_id, rs.sub_task_id, rs.score, rs.feedback, rs.issue_tags
+		FROM review_results rr
+		JOIN tasks t ON t.id = rr.task_id
+		JOIN sub_tasks st ON st.task_id = t.id
+		JOIN review_subtask_results rs ON rs.review_id = rr.id AND rs.sub_task_id = st.id
+		WHERE rr.task_id = ? AND st.idx = ?
+		ORDER BY rr.created_at DESC, rr.id DESC
+		LIMIT 1`, taskID, displayIdx-1)
+}
+
+func (s *SQLiteStorage) selectRetryTargetsAllFailed(ctx context.Context, taskID string) ([]retrySelection, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.id, t.chat_id, t.thread_id, t.project_dir, t.goal, t.engine, t.backend, t.status,
+		       t.started_at, t.ended_at, t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
+		       st.id, st.task_id, st.idx, st.description, st.model, st.status, st.result_text,
+		       st.input_tokens, st.output_tokens, st.cost_usd, st.started_at, st.ended_at,
+		       st.routing_reason, st.routing_latency_ms,
+		       rr.id, rr.task_id, rr.reviewer_model, rr.verdict, rr.overall_score, rr.feedback_text,
+		       rr.issue_tags, rr.input_tokens, rr.output_tokens, rr.cost_usd, rr.source, rr.created_at,
+		       rs.id, rs.review_id, rs.sub_task_id, rs.score, rs.feedback, rs.issue_tags
+		FROM review_results rr
+		JOIN tasks t ON t.id = rr.task_id
+		JOIN review_subtask_results rs ON rs.review_id = rr.id
+		JOIN sub_tasks st ON st.id = rs.sub_task_id
+		WHERE rr.id = (SELECT id FROM review_results WHERE task_id = ? ORDER BY created_at DESC, id DESC LIMIT 1)
+		  AND (rr.verdict IN ('partial', 'fail') OR rs.score < 70)
+		ORDER BY rs.score ASC, st.idx ASC`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []retrySelection
+	for rows.Next() {
+		selection, err := scanRetrySelectionRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.populateRetryCount(ctx, &selection); err != nil {
+			return nil, err
+		}
+		out = append(out, selection)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQLiteStorage) scanRetrySelection(ctx context.Context, query string, args ...any) (retrySelection, error) {
+	row := s.db.QueryRowContext(ctx, query, args...)
+	selection, err := scanRetrySelectionRow(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return retrySelection{}, fmt.Errorf("找不到可 retry 的 review sub-task")
+		}
+		return retrySelection{}, err
+	}
+	if err := s.populateRetryCount(ctx, &selection); err != nil {
+		return retrySelection{}, err
+	}
+	return selection, nil
+}
+
+func scanRetrySelectionRow(scanner sqlScanner) (retrySelection, error) {
+	var selection retrySelection
+	var taskStarted, taskEnded, subStarted, subEnded, reviewCreated sql.NullString
+	var reviewTagsJSON, subReviewTagsJSON string
+	err := scanner.Scan(
+		&selection.Task.ID, &selection.Task.ChatID, &selection.Task.ThreadID, &selection.Task.ProjectDir,
+		&selection.Task.Goal, &selection.Task.Engine, &selection.Task.Backend, &selection.Task.Status,
+		&taskStarted, &taskEnded, &selection.Task.TotalInputTokens, &selection.Task.TotalOutputTokens,
+		&selection.Task.TotalCostUSD,
+		&selection.SubTask.ID, &selection.SubTask.TaskID, &selection.SubTask.Idx, &selection.SubTask.Description,
+		&selection.SubTask.Model, &selection.SubTask.Status, &selection.SubTask.ResultText,
+		&selection.SubTask.InputTokens, &selection.SubTask.OutputTokens, &selection.SubTask.CostUSD,
+		&subStarted, &subEnded, &selection.SubTask.RoutingReason, &selection.SubTask.RoutingLatencyMS,
+		&selection.Review.ID, &selection.Review.TaskID, &selection.Review.ReviewerModel, &selection.Review.Verdict,
+		&selection.Review.OverallScore, &selection.Review.FeedbackText, &reviewTagsJSON,
+		&selection.Review.InputTokens, &selection.Review.OutputTokens, &selection.Review.CostUSD,
+		&selection.Review.Source, &reviewCreated,
+		&selection.SubTaskReview.ID, &selection.SubTaskReview.ReviewID, &selection.SubTaskReview.SubTaskID,
+		&selection.SubTaskReview.Score, &selection.SubTaskReview.Feedback, &subReviewTagsJSON,
+	)
+	if err != nil {
+		return selection, err
+	}
+	selection.Task.StartedAt = parseDBTime(taskStarted.String)
+	selection.Task.EndedAt = parseNullableDBTime(taskEnded)
+	selection.SubTask.StartedAt = parseDBTime(subStarted.String)
+	selection.SubTask.EndedAt = parseNullableDBTime(subEnded)
+	selection.Review.CreatedAt = parseDBTime(reviewCreated.String)
+	selection.Review.IssueTags = parseStringListJSON(reviewTagsJSON)
+	selection.SubTaskReview.IssueTags = parseStringListJSON(subReviewTagsJSON)
+	selection.DisplaySubTaskIdx = selection.SubTask.Idx + 1
+	return selection, nil
+}
+
+func (s *SQLiteStorage) populateRetryCount(ctx context.Context, selection *retrySelection) error {
+	return s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM review_results rr
+		JOIN review_subtask_results rs ON rs.review_id = rr.id
+		WHERE rr.source = 'retry' AND rs.sub_task_id = ?`, selection.SubTask.ID).Scan(&selection.RetryCount)
+}
+
+func parseRetryArgs(parts []string) (mode, taskID string, idx int, err error) {
+	if len(parts) < 2 || strings.EqualFold(parts[1], "latest") {
+		return "latest", "", 0, nil
+	}
+	taskID = strings.TrimSpace(parts[1])
+	if taskID == "" {
+		return "", "", 0, fmt.Errorf("missing task_id")
+	}
+	if len(parts) == 2 {
+		return "lowest", taskID, 0, nil
+	}
+	if strings.EqualFold(parts[2], "all-failed") {
+		return "all-failed", taskID, 0, nil
+	}
+	idx, err = strconv.Atoi(parts[2])
+	if err != nil || idx <= 0 {
+		return "", "", 0, fmt.Errorf("idx must be a positive integer")
+	}
+	return "index", taskID, idx, nil
+}
+
+func (t *TelegramBot) handleRetryCommand(key chatKey, parts []string) {
+	if globalStorage == nil {
+		t.send(key, "❌ Storage 尚未啟用，無法讀取 review 結果。")
+		return
+	}
+	store, ok := globalStorage.(*SQLiteStorage)
+	if !ok {
+		t.send(key, "❌ 目前 storage backend 不支援 /retry。")
+		return
+	}
+
+	mode, taskID, idx, err := parseRetryArgs(parts)
+	if err != nil {
+		t.send(key, "❌ 使用方式：/retry latest、/retry <task_id>、/retry <task_id> <idx>、/retry <task_id> all-failed")
+		return
+	}
+
+	go func() {
+		ctx := context.Background()
+		var selections []retrySelection
+		switch mode {
+		case "latest":
+			selection, selectErr := store.selectRetryTargetLatest(ctx, key)
+			err = selectErr
+			if err == nil {
+				selections = []retrySelection{selection}
+			}
+		case "lowest":
+			selection, selectErr := store.selectRetryTargetLowest(ctx, taskID)
+			err = selectErr
+			if err == nil {
+				selections = []retrySelection{selection}
+			}
+		case "index":
+			selection, selectErr := store.selectRetryTargetByIndex(ctx, taskID, idx)
+			err = selectErr
+			if err == nil {
+				selections = []retrySelection{selection}
+			}
+		case "all-failed":
+			selections, err = store.selectRetryTargetsAllFailed(ctx, taskID)
+		default:
+			err = fmt.Errorf("unknown retry mode %q", mode)
+		}
+		if err != nil {
+			t.send(key, "❌ "+err.Error())
+			return
+		}
+		if len(selections) == 0 {
+			t.send(key, "✅ 找不到低分或 partial/fail 的 sub-task 可 retry。")
+			return
+		}
+
+		for i, selection := range selections {
+			if selection.RetryCount >= maxSubTaskRetryAttempts {
+				t.send(key, fmt.Sprintf("⛔ sub-task #%d 已 retry %d 次，達到上限，建議人工介入。", selection.DisplaySubTaskIdx, selection.RetryCount))
+				continue
+			}
+			if len(selections) > 1 {
+				t.send(key, fmt.Sprintf("🔁 all-failed retry %d/%d", i+1, len(selections)))
+			}
+			outcome, runErr := t.runSubTaskRetry(ctx, key, store, selection)
+			if runErr != nil {
+				t.send(key, "❌ Retry 失敗："+runErr.Error())
+				continue
+			}
+			t.send(key, formatRetryCompletion(outcome))
+		}
+	}()
+}
+
+func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *SQLiteStorage, selection retrySelection) (retryOutcome, error) {
+	start := time.Now()
+	description := truncateForTelegram(selection.SubTask.Description, 80)
+	t.send(key, fmt.Sprintf(
+		"🔄 Retrying sub-task #%d：「%s」\n（原分數 %d/100，%d 個 issue tag）\n\n⏳ 執行中...",
+		selection.DisplaySubTaskIdx,
+		description,
+		selection.SubTaskReview.Score,
+		len(selection.SubTaskReview.IssueTags),
+	))
+
+	prompt := composeRetryPrompt(
+		selection.SubTask.Description,
+		selection.Review.Verdict,
+		selection.SubTaskReview.Score,
+		selection.SubTaskReview.Feedback,
+		selection.SubTaskReview.IssueTags,
+	)
+	agent := t.getAgent(key)
+	if selection.Task.ProjectDir != "" {
+		agent.SetProject(selection.Task.ProjectDir)
+	}
+
+	progress := newTelegramProgressSink(func(update string, silent bool) {
+		if !silent && strings.TrimSpace(update) != "" {
+			t.send(key, update)
+		}
+	})
+	result, err := appengine.NewDirectEngine(agent).Run(ctx, prompt, agent.chatContext, progress)
+	if err != nil {
+		return retryOutcome{Selection: selection, Result: result, Duration: time.Since(start)}, err
+	}
+
+	reviewModel := t.retryReviewModel(key)
+	reviewer := NewCLIReviewPhase(t.client, reviewModel)
+	review, err := reviewer.Review(ctx, appengine.ReviewRequest{
+		TaskID:      selection.Task.ID,
+		ProjectDir:  selection.Task.ProjectDir,
+		Goal:        selection.Task.Goal,
+		Accumulated: result.Text,
+		Artifacts:   result.Artifacts,
+		SubTaskResults: []appengine.ReviewSubTaskInput{{
+			ID:          selection.SubTask.ID,
+			Index:       selection.SubTask.Idx,
+			Description: selection.SubTask.Description,
+			Status:      "done",
+			Result:      result.Text,
+		}},
+	})
+	if err != nil {
+		return retryOutcome{Selection: selection, Result: result, Duration: time.Since(start)}, fmt.Errorf("review retry result: %w", err)
+	}
+	review = normalizeRetryReviewForSubTask(review, selection.SubTask.ID)
+	if err := store.StoreReviewWithSource(ctx, selection.Task.ID, review, "retry"); err != nil {
+		return retryOutcome{Selection: selection, Result: result, Review: review, Duration: time.Since(start)}, fmt.Errorf("store retry review: %w", err)
+	}
+	BroadcastReviewEventWithSource(appengine.BuildReviewNotification(selection.Task.ID, review), "retry")
+
+	return retryOutcome{
+		Selection: selection,
+		Result:    result,
+		Review:    review,
+		Improved:  retryScoreForSubTask(review, selection.SubTask.ID) > selection.SubTaskReview.Score,
+		Duration:  time.Since(start),
+	}, nil
+}
+
+func (t *TelegramBot) retryReviewModel(key chatKey) string {
+	if t == nil || t.config == nil {
+		return ""
+	}
+	pref := t.getUserModelPreference(key)
+	if strings.HasPrefix(pref, "gpt-") {
+		if t.config.ModelRouting.CodexDeepModel != "" {
+			return t.config.ModelRouting.CodexDeepModel
+		}
+		if t.config.ModelRouting.CodexSmartModel != "" {
+			return t.config.ModelRouting.CodexSmartModel
+		}
+	}
+	return t.config.ModelRouting.DeepModel
+}
+
+func retryScoreForSubTask(review appengine.ReviewResult, subTaskID string) int {
+	for _, subTask := range review.SubTaskResults {
+		if subTask.SubTaskID == subTaskID {
+			return subTask.Score
+		}
+	}
+	return review.OverallScore
+}
+
+func normalizeRetryReviewForSubTask(review appengine.ReviewResult, subTaskID string) appengine.ReviewResult {
+	if len(review.SubTaskResults) == 0 {
+		review.SubTaskResults = []appengine.ReviewSubTaskResult{{
+			SubTaskID: subTaskID,
+			Score:     review.OverallScore,
+			Feedback:  review.Feedback,
+			IssueTags: append([]appengine.ReviewTag(nil), review.IssueTags...),
+		}}
+		return review
+	}
+	for i := range review.SubTaskResults {
+		if strings.TrimSpace(review.SubTaskResults[i].SubTaskID) == "" || review.SubTaskResults[i].SubTaskID == "direct" {
+			review.SubTaskResults[i].SubTaskID = subTaskID
+		}
+	}
+	return review
+}
+
+func formatRetryCompletion(outcome retryOutcome) string {
+	newScore := retryScoreForSubTask(outcome.Review, outcome.Selection.SubTask.ID)
+	delta := newScore - outcome.Selection.SubTaskReview.Score
+	status := "✅ Retry 完成"
+	if delta <= 0 {
+		status = "⚠️ Retry 未改善，建議人工介入"
+	}
+	return fmt.Sprintf(
+		"%s\n   原分數: %d → %d (%+d)\n   驗證: %s\n   耗時: %s",
+		status,
+		outcome.Selection.SubTaskReview.Score,
+		newScore,
+		delta,
+		outcome.Review.Verdict,
+		outcome.Duration.Round(time.Second),
+	)
+}
+
+func truncateForTelegram(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return strings.TrimSpace(value[:limit]) + "..."
+}

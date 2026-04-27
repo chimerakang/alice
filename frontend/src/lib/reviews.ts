@@ -1,6 +1,7 @@
 import type { DecisionLog, UnifiedReview, ReviewLiveEvent, UnifiedReviewSubTaskResult } from "@/types/alice";
 
 export type ReviewSource = "stored" | "live";
+export type ReviewRunSource = "initial" | "retry" | string;
 
 export interface ReviewFeedItem {
   key: string;
@@ -15,6 +16,7 @@ export interface ReviewFeedItem {
   sub_task_results: UnifiedReviewSubTaskResult[];
   timestamp: string;
   source: ReviewSource;
+  run_source: ReviewRunSource;
   advisory_retry: boolean;
   retry_note: string;
   failing_subtasks: number;
@@ -40,16 +42,22 @@ function normalizeVerdict(verdict?: string): "pass" | "partial" | "fail" {
 }
 
 function buildReviewKey(review: {
+  id?: number;
   task_id?: string;
   reviewer_model?: string;
   verdict?: string;
   overall_score?: number;
+  source?: string;
 }, fallbackTaskId: string): string {
+  if (review.id !== undefined) {
+    return `${review.task_id || fallbackTaskId}|review:${review.id}`;
+  }
   return [
     review.task_id || fallbackTaskId,
     review.reviewer_model || "reviewer",
     review.verdict || "partial",
     review.overall_score || 0,
+    review.source || "live",
   ].join("|");
 }
 
@@ -67,6 +75,7 @@ export function normalizeStoredReview(review: UnifiedReview, decision: DecisionL
     sub_task_results: review.sub_task_results || [],
     timestamp: review.created_at || decision.timestamp || "",
     source: "stored",
+    run_source: review.source || "initial",
     advisory_retry: review.verdict !== "pass",
     retry_note: review.verdict === "pass" ? "暫無需重跑" : "建議人工評估後再決定是否重跑",
     failing_subtasks: review.sub_task_results?.filter((subTask) => subTask.score < 70).length || 0,
@@ -87,6 +96,7 @@ export function normalizeLiveReview(review: ReviewLiveEvent, decision?: Decision
     sub_task_results: review.sub_task_results || [],
     timestamp: review.timestamp || "",
     source: "live",
+    run_source: review.source || "initial",
     advisory_retry: Boolean(review.advisory_retry),
     retry_note: review.retry_note || "",
     failing_subtasks: review.failing_subtasks || 0,
@@ -168,4 +178,3 @@ export function buildReviewVerdictChartData(stats: ReviewSummaryStats) {
     { name: "Fail", value: stats.verdicts.fail, color: "#ef4444" },
   ].filter((item) => item.value > 0);
 }
-
