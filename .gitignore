@@ -10,6 +10,8 @@ test-websocket
 # Config with secrets
 config.json
 config.json.backup
+config.json.bak
+config.json.bak.*
 .env
 
 # Database and data
