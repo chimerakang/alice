@@ -179,9 +179,19 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 		}
 
 		if attempt < p.maxRetries {
+			parseErrMsg := "(unknown parse error)"
+			if parseErr != nil {
+				parseErrMsg = parseErr.Error()
+			}
 			prompt = fmt.Sprintf(
-				"Error: JSON parse failed on attempt %d. Your output was:\n%s\n\nOutput ONLY the JSON array in a ```json``` block.",
-				attempt, text,
+				"Error: JSON parse failed on attempt %d: %s\n"+
+					"Your output was:\n%s\n\n"+
+					"Fix the schema. Every sub-task object MUST include all three required fields:\n"+
+					"  - `id` (string, e.g. \"s1\")\n"+
+					"  - `description` (string)\n"+
+					"  - `tool_hints` (array of strings, e.g. [\"Read\", \"Bash\"])\n"+
+					"Output ONLY the corrected JSON array in a ```json``` block. No prose.",
+				attempt, parseErrMsg, text,
 			)
 		}
 	}
