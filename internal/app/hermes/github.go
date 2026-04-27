@@ -372,11 +372,38 @@ func HasLabel(issue *IssueContext, label string) bool {
 }
 
 // WritePlanToIssue writes the generated sub-task plan as a checklist to the Issue body.
-// This is called when the Issue had no checklist and the Planner generated a plan.
+//
+// The body is always re-fetched from GitHub before mutation — the caller's
+// notion of "originalBody" was historically the chat-side goal augmented
+// with conversation context (state.Goal), which would overwrite the issue
+// body with chat history every run and bloat it geometrically. This
+// function now ignores any caller-supplied body, fetches the current
+// remote body, strips any previously-written "## Hermes 執行計劃"
+// section, and appends a fresh one.
+//
+// originalBody is retained for backward compatibility but no longer used.
 func WritePlanToIssue(ctx context.Context, projectDir string, number int, originalBody string, tasks []SubTask) error {
+	_ = originalBody // intentionally ignored; see doc comment
+
+	out, err := ghCommand(ctx, projectDir, "issue", "view",
+		fmt.Sprintf("%d", number),
+		"--json", "body",
+	).Output()
+	if err != nil {
+		return fmt.Errorf("gh issue view body for plan write: %w", err)
+	}
+	var raw struct {
+		Body string `json:"body"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return fmt.Errorf("parse body JSON: %w", err)
+	}
+
+	cleanBody := stripHermesPlanSections(raw.Body)
+
 	var sb strings.Builder
-	sb.WriteString(originalBody)
-	if !strings.HasSuffix(originalBody, "\n") {
+	sb.WriteString(cleanBody)
+	if cleanBody != "" && !strings.HasSuffix(cleanBody, "\n") {
 		sb.WriteString("\n")
 	}
 	sb.WriteString("\n## Hermes 執行計劃\n\n")
@@ -390,10 +417,42 @@ func WritePlanToIssue(ctx context.Context, projectDir string, number int, origin
 		fmt.Sprintf("%d", number),
 		"--body", sb.String(),
 	)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("gh issue edit plan: %w (output: %s)", err, out)
+	if cmdOut, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("gh issue edit plan: %w (output: %s)", err, cmdOut)
 	}
 	return nil
+}
+
+// stripHermesPlanSections removes every "## Hermes 執行計劃" block from
+// the body — a section header followed by content up to the next "## "
+// heading or end-of-body. Idempotent; bodies without such a section are
+// returned unchanged. Used to clean up bodies that previous Hermes runs
+// appended duplicate plan sections to before this function was fixed.
+func stripHermesPlanSections(body string) string {
+	const header = "## Hermes 執行計劃"
+	for {
+		idx := strings.Index(body, header)
+		if idx < 0 {
+			break
+		}
+		// Find the end of this section: next "## " heading after the header,
+		// or end of body.
+		tail := body[idx+len(header):]
+		nextIdx := strings.Index(tail, "\n## ")
+		var end int
+		if nextIdx < 0 {
+			end = len(body)
+		} else {
+			end = idx + len(header) + nextIdx + 1 // keep the newline before next heading
+		}
+		// Trim trailing blank line just before the section if present.
+		start := idx
+		for start > 0 && (body[start-1] == '\n') {
+			start--
+		}
+		body = body[:start] + body[end:]
+	}
+	return strings.TrimRight(body, "\n")
 }
 
 // ── Comment builders ──────────────────────────────────────────────────────────
