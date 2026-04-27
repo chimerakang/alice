@@ -2067,9 +2067,15 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 			executorModel = t.config.ModelRouting.FastModel
 		}
 	}
-	reviewModel := t.config.ModelRouting.DeepModel
-	if tier == "codex" && t.config.ModelRouting.CodexDeepModel != "" {
+	var reviewModel string
+	if tier == "codex" {
 		reviewModel = t.config.ModelRouting.CodexDeepModel
+		if reviewModel == "" {
+			reviewModel = plannerModel
+			log.Printf("[hermes] codex_deep_model empty; reviewer falls back to planner model %q (not Claude DeepModel)", reviewModel)
+		}
+	} else {
+		reviewModel = t.config.ModelRouting.DeepModel
 	}
 	reviewPhase := NewCLIReviewPhase(t.client, reviewModel)
 
