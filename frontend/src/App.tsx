@@ -21,14 +21,29 @@ import {
   WifiOff,
 } from "lucide-react";
 
-const navItems = [
-  { to: "/", icon: LayoutDashboard, label: "Dashboard" },
-  { to: "/timeline", icon: Clock, label: "Timeline" },
-  { to: "/reviews", icon: MessageSquareText, label: "Reviews" },
-  { to: "/quality", icon: Gauge, label: "Quality" },
-  { to: "/checkpoints", icon: Camera, label: "Checkpoints" },
-  { to: "/performance", icon: BarChart3, label: "Performance" },
-  { to: "/security", icon: Shield, label: "Security" },
+const navSections = [
+  {
+    label: "Overview",
+    items: [
+      { to: "/", icon: LayoutDashboard, label: "Dashboard" },
+      { to: "/timeline", icon: Clock, label: "Timeline" },
+    ],
+  },
+  {
+    label: "Quality",
+    items: [
+      { to: "/reviews", icon: MessageSquareText, label: "Reviews" },
+      { to: "/quality", icon: Gauge, label: "Analytics" },
+    ],
+  },
+  {
+    label: "System",
+    items: [
+      { to: "/checkpoints", icon: Camera, label: "Checkpoints" },
+      { to: "/performance", icon: BarChart3, label: "Performance" },
+      { to: "/security", icon: Shield, label: "Security" },
+    ],
+  },
 ];
 
 function AppLayout() {
@@ -56,23 +71,30 @@ function AppLayout() {
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 py-4 px-3 space-y-1">
-          {navItems.map(({ to, icon: Icon, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === "/"}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${
-                  isActive
-                    ? "bg-primary/10 text-primary border border-primary/20"
-                    : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
-                }`
-              }
-            >
-              <Icon className="w-4 h-4" />
-              {label}
-            </NavLink>
+        <nav className="flex-1 py-4 px-3 space-y-4 overflow-y-auto">
+          {navSections.map((section) => (
+            <div key={section.label} className="space-y-1">
+              <div className="px-3 pb-1 text-[10px] font-semibold tracking-wider uppercase text-gray-600">
+                {section.label}
+              </div>
+              {section.items.map(({ to, icon: Icon, label }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end={to === "/"}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${
+                      isActive
+                        ? "bg-primary/10 text-primary border border-primary/20"
+                        : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
+                    }`
+                  }
+                >
+                  <Icon className="w-4 h-4" />
+                  {label}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
 
