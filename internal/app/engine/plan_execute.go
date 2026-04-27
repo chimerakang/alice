@@ -531,6 +531,7 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 		}
 
 		prompt := buildSubTaskGoal(e.cfg.ExecutorRules, goal, state.Accumulated, idx, len(tasks), subTask, reviewFeedback)
+		e.direct.BindSubTask(subTask)
 		result, execErr := e.direct.Run(ctx, prompt, cc, subTaskSink{})
 		if execErr != nil {
 			if err := e.store.UpdateSubTask(taskID, idx, hermes.SubTaskFailed, execErr.Error(), 0); err != nil {

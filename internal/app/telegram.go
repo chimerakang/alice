@@ -2059,7 +2059,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	cfg := HermesDefaults(t.config.Hermes)
 	strictCfg := t.resolveStrictModeConfig(key, goal)
 
-	var plannerModel, executorModel string
+	var plannerModel, executorModel, heavyExecutorModel string
 	if tier == "codex" {
 		plannerModel = cfg.CodexPlannerModel
 		if plannerModel == "" {
@@ -2069,6 +2069,8 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		if executorModel == "" {
 			executorModel = t.config.ModelRouting.CodexFastModel
 		}
+		heavyExecutorModel = cfg.CodexHeavyExecutorModel
+		// No SmartModel default for codex; if unset, heavy stays empty (single-tier).
 	} else {
 		plannerModel = cfg.PlannerModel
 		if plannerModel == "" {
@@ -2077,6 +2079,10 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		executorModel = cfg.ExecutorModel
 		if executorModel == "" {
 			executorModel = t.config.ModelRouting.FastModel
+		}
+		heavyExecutorModel = cfg.HeavyExecutorModel
+		if heavyExecutorModel == "" {
+			heavyExecutorModel = t.config.ModelRouting.SmartModel
 		}
 	}
 	var reviewModel string
@@ -2192,29 +2198,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	} else if executorSessionID != "" {
 		agent.chatContext.SetSession(appengine.BackendKindForModel(executorModel), executorSessionID)
 	}
-	direct := appengine.NewDirectEngine(&metricsForwardingRunner{
-		run: func(msg string, update func(string, bool)) (string, error) {
-			prevOverride := agent.currentModelOverride
-			if executorModel != "" {
-				agent.currentModelOverride = executorModel
-			}
-			defer func() {
-				agent.currentModelOverride = prevOverride
-			}()
-			// Reset executor CLI session before each subtask. The Hermes engine
-			// rebuilds full context (goal + accumulated + current subtask) into
-			// the prompt each call, so cross-subtask CLI session continuity is
-			// redundant and is the main driver of "Prompt is too long" as the
-			// transcript grows.
-			if executorModel != "" {
-				agent.ClearSessionForModel(executorModel)
-			} else {
-				agent.ClearSession()
-			}
-			return agent.Run(msg, update)
-		},
-		metrics: agent.LastCallMetrics,
-	})
+	direct := appengine.NewDirectEngine(newHermesExecutorRunner(agent, executorModel, heavyExecutorModel))
 	coord := appengine.NewPlanExecuteEngine(appengine.PlanExecuteConfig{
 		ChatID:                key.chatID,
 		ProjectDir:            projectDir,

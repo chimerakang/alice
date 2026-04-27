@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"claude-tg-agent/internal/app/hermes"
 )
 
 // DirectRunner is the legacy Agent.Run shape wrapped by DirectEngine.
@@ -38,6 +40,16 @@ func NewDirectEngine(runner DirectRunner, opts ...DirectOption) *DirectEngine {
 
 func (e *DirectEngine) Name() string {
 	return "direct"
+}
+
+// BindSubTask forwards the current sub-task to the underlying runner if it
+// implements SubTaskBindable. Used by PlanExecuteEngine to let runners switch
+// executor models (e.g. Haiku → Sonnet) per sub-task. Safe no-op when the
+// runner does not implement the interface.
+func (e *DirectEngine) BindSubTask(subTask hermes.SubTask) {
+	if binder, ok := e.runner.(SubTaskBindable); ok {
+		binder.BindSubTask(subTask)
+	}
 }
 
 func (e *DirectEngine) Run(ctx context.Context, goal string, cc *ChatContext, prog ProgressSink) (Result, error) {
