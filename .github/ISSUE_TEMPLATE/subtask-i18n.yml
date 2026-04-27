@@ -1,0 +1,99 @@
+name: 🟡 i18n Hardcoded Text
+description: 國際化：將硬編碼文本改為 message key
+title: "i18n: [功能模組] - N 個文本"
+labels: ["i18n", "subtask"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # 🟡 i18n Hardcoded Text Subtask
+
+  - type: textarea
+    id: text-inventory
+    attributes:
+      label: "📋 文本清單"
+      description: "列舉所有需要國際化的硬編碼文本（包含行號和來源）"
+      placeholder: |
+        內容模組 (telegram.go):
+
+        1. 行 1234: "圖片分析功能目前未啟用"
+           → message key: "image_analysis_disabled"
+
+        2. 行 1235-1236: "正在分析 %d 張圖片..."
+           → message key: "image_analysis_processing"
+
+        ... (共 N 個)
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: "✅ 驗收標準"
+      description: "複製對應的驗收標準模板，完成後逐項勾選"
+      value: |
+        ## Acceptance Criteria
+
+        ### 文本清單
+        - [ ] 列舉所有硬編碼文本 (N 個 keys)
+        - [ ] 確認無遺漏 (與需求對應)
+
+        ### i18n 集成
+        - [ ] 所有 key 加入 `i18n/messages.json`
+        - [ ] 至少 2 種語言翻譯完成 (簡體中文 + 繁體中文 或 英文)
+        - [ ] 無遺留硬編碼字符串
+
+        ### 代碼驗證
+        - [ ] 所有 `t.send()` / `fmt.Sprintf()` 改用 i18n key
+        - [ ] 使用 `i18n.GetMessage("key", ctx, params)` 模式
+        - [ ] 動態參數正確插入
+
+        ### 測試
+        - [ ] 測試驗證訊息內容正確
+        - [ ] 切換語言後訊息改變
+        - [ ] 特殊字符 (emoji / 非 ASCII) 顯示正確
+
+        ### Code Quality
+        - [ ] 無新增 linting 警告
+        - [ ] 代碼可獨立回退（無其他 issue 依賴）
+      required: true
+
+  - type: input
+    id: key-count
+    attributes:
+      label: "Key 數量"
+      description: "共需新增多少個 message key？"
+      placeholder: "18"
+      required: true
+
+  - type: textarea
+    id: test-plan
+    attributes:
+      label: "🧪 測試計劃"
+      description: "如何驗證國際化正確？"
+      placeholder: |
+        1. grep "中文字符" 搜尋是否有遺漏
+        2. 手動測試：切換到英文，驗證 N 個訊息都改變
+        3. 自動測試文件：test_xxx_i18n_test.go
+      required: true
+
+  - type: textarea
+    id: languages
+    attributes:
+      label: "🌐 需翻譯的語言"
+      description: "預期要翻譯成哪些語言？"
+      value: |
+        - [x] 繁體中文 (native)
+        - [x] 簡體中文 (assistant)
+        - [x] 英文 (assistant)
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: "📝 備註"
+      description: "任何翻譯或 i18n 的特殊考量"
+      placeholder: |
+        例：某些訊息含有動態參數（user name、file size），需注意參數位置
+      required: false

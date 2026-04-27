@@ -81,6 +81,7 @@ Config 從 `config.json` 載入（範本見 `config.example.json`），可用 en
 
 | 主題 | 文件 |
 |------|------|
+| **Subtask 拆分框架** (Triage、驗收標準、品質檢查) | [docs/SUBTASK_FRAMEWORK.md](docs/SUBTASK_FRAMEWORK.md) + [docs/SUBTASK_DECISION_CARD.md](docs/SUBTASK_DECISION_CARD.md) |
 | Dynamic Model Routing（sticky session、triage、commands、Web API） | [docs/DYNAMIC_MODEL_ROUTING.md](docs/DYNAMIC_MODEL_ROUTING.md) |
 | Deployment architecture、startup sequence、監控 stack | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
 | Hermes GPT tier / Codex backend（`ai_backend: "multi"`、`/ghermes`、已知限制） | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
