@@ -26,6 +26,9 @@ type UnifiedTaskStore interface {
 	ListUnifiedTaskGraphs(query UnifiedTaskQuery) ([]UnifiedTaskGraph, error)
 	CountUnifiedTasks(query UnifiedTaskQuery) (int64, error)
 	GetPlannerRulesWeeklyReport(windowStart, windowEnd time.Time, i18n *I18nManager, lang string) (PlannerRulesWeeklyReport, error)
+	GetQualityDecompositionStats(window QualityWindow) (QualityDecompositionStats, error)
+	GetQualityScoreStats(window QualityWindow) (QualityScoreStats, error)
+	GetQualityInsights(window QualityWindow) ([]QualityInsight, error)
 }
 
 type UnifiedTask struct {

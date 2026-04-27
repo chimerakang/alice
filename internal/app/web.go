@@ -104,6 +104,9 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/decisions/sources/stats", wi.handleSourceStats)
 	mux.HandleFunc("/api/decisions/sources/performance", wi.handleSourcePerformance)
 	mux.HandleFunc("/api/tasks", wi.handleUnifiedTasks)
+	mux.HandleFunc("/api/quality/decomposition", wi.handleQualityDecomposition)
+	mux.HandleFunc("/api/quality/scores", wi.handleQualityScores)
+	mux.HandleFunc("/api/quality/insights", wi.handleQualityInsights)
 	mux.HandleFunc("/api/multiagent/status", wi.handleMultiAgentStatus)
 	mux.HandleFunc("/api/multiagent/stats", wi.handleMultiAgentStats)
 	mux.HandleFunc("/api/multiagent/agents", wi.handleMultiAgentAgents)
@@ -815,6 +818,58 @@ func (wi *WebInterface) handleUnifiedTasks(w http.ResponseWriter, r *http.Reques
 			"offset":    query.Offset,
 			"timestamp": time.Now(),
 		})
+	})(w, r)
+}
+
+func (wi *WebInterface) handleQualityDecomposition(w http.ResponseWriter, r *http.Request) {
+	wi.handleQualityStats(w, r, func(window QualityWindow) (interface{}, error) {
+		return globalStorage.GetQualityDecompositionStats(window)
+	})
+}
+
+func (wi *WebInterface) handleQualityScores(w http.ResponseWriter, r *http.Request) {
+	wi.handleQualityStats(w, r, func(window QualityWindow) (interface{}, error) {
+		return globalStorage.GetQualityScoreStats(window)
+	})
+}
+
+func (wi *WebInterface) handleQualityInsights(w http.ResponseWriter, r *http.Request) {
+	wi.handleQualityStats(w, r, func(window QualityWindow) (interface{}, error) {
+		insights, err := globalStorage.GetQualityInsights(window)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{
+			"window_start": window.Start,
+			"window_end":   window.End,
+			"insights":     insights,
+		}, nil
+	})
+}
+
+func (wi *WebInterface) handleQualityStats(w http.ResponseWriter, r *http.Request, load func(QualityWindow) (interface{}, error)) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if globalStorage == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{"error": "Storage is unavailable"})
+			return
+		}
+		window, err := ResolveQualityWindow(r.URL.Query().Get("window"), time.Now().UTC())
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
+			return
+		}
+		payload, err := load(window)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": fmt.Sprintf("Quality query failed: %v", err),
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(payload)
 	})(w, r)
 }
 

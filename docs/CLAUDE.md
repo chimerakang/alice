@@ -30,4 +30,13 @@
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
 | #10512 | 4:43 PM | 🔴 | Hermes 模式跨輪對話上下文注入機制 | ~337 |
+
+### Apr 27, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #10843 | 2:20 PM | 🟣 | Quick-reference decision card created for rapid subtask splitting triage | ~273 |
+| #10840 | 2:19 PM | 🟣 | SUBTASK_FRAMEWORK.md created - comprehensive agent task splitting methodology | ~263 |
+| #10837 | 2:18 PM | 🔵 | Alice project uses auto-generated phase-based task tracking system | ~458 |
+| #10835 | 2:14 PM | 🔵 | Alice project subtask tracking methodology revealed | ~470 |
 </claude-mem-context>

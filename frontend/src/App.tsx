@@ -5,6 +5,7 @@ import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import Dashboard from "@/pages/Dashboard";
 import Timeline from "@/pages/Timeline";
 import Reviews from "@/pages/Reviews";
+import Quality from "@/pages/Quality";
 import Checkpoints from "@/pages/Checkpoints";
 import Performance from "@/pages/Performance";
 import Security from "@/pages/Security";
@@ -12,6 +13,7 @@ import {
   LayoutDashboard,
   Clock,
   MessageSquareText,
+  Gauge,
   Camera,
   BarChart3,
   Shield,
@@ -23,6 +25,7 @@ const navItems = [
   { to: "/", icon: LayoutDashboard, label: "Dashboard" },
   { to: "/timeline", icon: Clock, label: "Timeline" },
   { to: "/reviews", icon: MessageSquareText, label: "Reviews" },
+  { to: "/quality", icon: Gauge, label: "Quality" },
   { to: "/checkpoints", icon: Camera, label: "Checkpoints" },
   { to: "/performance", icon: BarChart3, label: "Performance" },
   { to: "/security", icon: Shield, label: "Security" },
@@ -99,6 +102,7 @@ function AppLayout() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/timeline" element={<Timeline />} />
             <Route path="/reviews" element={<Reviews />} />
+            <Route path="/quality" element={<Quality />} />
             <Route path="/checkpoints" element={<Checkpoints />} />
             <Route path="/performance" element={<Performance />} />
             <Route path="/security" element={<Security />} />

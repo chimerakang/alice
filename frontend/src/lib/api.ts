@@ -14,6 +14,9 @@ import type {
   GitDiffResponse,
   Checkpoint,
   UnifiedTask,
+  QualityDecompositionStats,
+  QualityScoreStats,
+  QualityInsight,
 } from "@/types/alice";
 
 const BASE = "";
@@ -197,6 +200,16 @@ export const api = {
       timestamp: res.timestamp,
     };
   },
+
+  // ========== Quality Analytics ==========
+  getQualityDecomposition: (window = "30d") =>
+    fetchJson<QualityDecompositionStats>(`/api/quality/decomposition?window=${encodeURIComponent(window)}`),
+  getQualityScores: (window = "30d") =>
+    fetchJson<QualityScoreStats>(`/api/quality/scores?window=${encodeURIComponent(window)}`),
+  getQualityInsights: (window = "30d") =>
+    fetchJson<{ insights?: QualityInsight[]; timestamp?: string }>(
+      `/api/quality/insights?window=${encodeURIComponent(window)}`
+    ),
 
   // ========== Multi-Agent ==========
   getMultiAgentStatus: () =>

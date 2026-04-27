@@ -274,6 +274,7 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "tasks", "description": "View to-do list"},
 		{"command": "lang", "description": "Switch bot language"},
 		{"command": "preview", "description": "Preview webpage screenshot"},
+		{"command": "retry", "description": "Retry reviewed low-score sub-task"},
 		{"command": "help", "description": "Show help message"},
 	}
 
@@ -1511,6 +1512,9 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 
 	case "/hermes-stats":
 		t.handleHermesStatsCommand(key, parts)
+
+	case "/retry":
+		t.handleRetryCommand(key, parts)
 
 	default:
 		t.send(key, t.getLocalizedMessage(key.chatID, "unknown_command", nil))

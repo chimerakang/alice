@@ -249,6 +249,100 @@ export interface UnifiedTask {
   reviews: UnifiedReview[];
 }
 
+// ========== Quality Analytics ==========
+
+export interface QualityBucket {
+  label: string;
+  count: number;
+  percentage: number;
+  avg_score: number;
+  partial_rate: number;
+  fail_rate: number;
+}
+
+export interface QualityTrendPoint {
+  period: string;
+  task_count: number;
+  review_count: number;
+  avg_sub_tasks: number;
+  pass_rate: number;
+  partial_rate: number;
+  fail_rate: number;
+  avg_score: number;
+  avg_sub_score: number;
+}
+
+export interface QualityGranularityScore {
+  sub_task_count: number;
+  task_count: number;
+  avg_score: number;
+}
+
+export interface QualityToolHintStat {
+  tool_hints: string;
+  count: number;
+  pass_rate: number;
+  avg_score: number;
+}
+
+export interface QualityDecompositionStats {
+  window_start: string;
+  window_end: string;
+  task_count: number;
+  sub_task_count: number;
+  avg_sub_tasks: number;
+  stddev_sub_tasks: number;
+  best_granularity: string;
+  granularity_buckets: QualityBucket[];
+  granularity_scores: QualityGranularityScore[];
+  weekly_trend: QualityTrendPoint[];
+  description_buckets: QualityBucket[];
+  tool_hint_stats: QualityToolHintStat[];
+}
+
+export interface QualityIssueTagStat {
+  tag: string;
+  count: number;
+  previous_count: number;
+  delta: number;
+  trend: "up" | "down" | "flat" | string;
+}
+
+export interface QualityLowScoringSubTask {
+  task_id: string;
+  sub_task_id: string;
+  description: string;
+  score: number;
+  issue_tags: string[];
+  feedback: string;
+  created_at: string;
+}
+
+export interface QualityScoreStats {
+  window_start: string;
+  window_end: string;
+  review_count: number;
+  reviewed_sub_task_count: number;
+  pass_rate: number;
+  partial_rate: number;
+  fail_rate: number;
+  avg_overall_score: number;
+  avg_sub_task_score: number;
+  verdict_distribution: Record<string, number>;
+  trend: QualityTrendPoint[];
+  top_issue_tags: QualityIssueTagStat[];
+  low_scoring_sub_tasks: QualityLowScoringSubTask[];
+}
+
+export interface QualityInsight {
+  name: string;
+  severity: "warning" | "info" | "success" | string;
+  message: string;
+  suggestion: string;
+  value: number;
+  threshold: number;
+}
+
 // ========== Performance ==========
 
 export interface PerformanceMetric {

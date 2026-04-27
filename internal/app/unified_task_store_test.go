@@ -559,6 +559,154 @@ func TestFormatPlannerRulesWeeklyReportEnglish(t *testing.T) {
 	}
 }
 
+func TestQualityDecompositionStatsAggregateTaskShape(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	window := QualityWindow{Start: now.Add(-30 * 24 * time.Hour), End: now.Add(time.Hour), Label: "30d"}
+
+	seedQualityTask(t, s, "quality-a", now.Add(-48*time.Hour), []qualitySeedSubTask{
+		{ID: "quality-a:s1", Description: "tiny", Model: "", Status: "done", Tools: []string{"Edit", "Bash"}, Score: 60, Tags: []string{"missing_validation"}},
+		{ID: "quality-a:s2", Description: strings.Repeat("validated step ", 8), Model: "sonnet", Status: "done", Tools: []string{"Bash"}, Score: 88},
+	}, "partial", 74, []string{"missing_validation"})
+	seedQualityTask(t, s, "quality-b", now.Add(-24*time.Hour), []qualitySeedSubTask{
+		{ID: "quality-b:s1", Description: strings.Repeat("well scoped implementation ", 4), Model: "sonnet", Status: "done", Tools: []string{"Edit", "Bash"}, Score: 95},
+		{ID: "quality-b:s2", Description: strings.Repeat("test coverage and validation ", 4), Model: "sonnet", Status: "done", Tools: []string{"Bash"}, Score: 92},
+		{ID: "quality-b:s3", Description: strings.Repeat("documentation update ", 4), Model: "sonnet", Status: "done", Tools: []string{"Edit"}, Score: 90},
+		{ID: "quality-b:s4", Description: strings.Repeat("final verification ", 4), Model: "sonnet", Status: "done", Tools: []string{"Bash"}, Score: 91},
+	}, "pass", 92, []string{"test_gap"})
+
+	stats, err := s.GetQualityDecompositionStats(window)
+	if err != nil {
+		t.Fatalf("GetQualityDecompositionStats: %v", err)
+	}
+	if stats.TaskCount != 2 || stats.AvgSubTasks != 3 {
+		t.Fatalf("unexpected task shape: count=%d avg=%.1f", stats.TaskCount, stats.AvgSubTasks)
+	}
+	if stats.GranularityBuckets[0].Count != 1 || stats.GranularityBuckets[1].Count != 1 {
+		t.Fatalf("unexpected distribution: %+v", stats.GranularityBuckets)
+	}
+	if stats.DescriptionBuckets[0].AvgScore != 60 {
+		t.Fatalf("short description failure rate: %+v", stats.DescriptionBuckets)
+	}
+	if len(stats.ToolHintStats) == 0 || stats.ToolHintStats[0].ToolHints == "" {
+		t.Fatalf("missing tool hint stats: %+v", stats.ToolHintStats)
+	}
+}
+
+func TestQualityScoreStatsAndInsights(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	window := QualityWindow{Start: now.Add(-14 * 24 * time.Hour), End: now.Add(time.Hour), Label: "14d"}
+
+	seedQualityTask(t, s, "commit-deploy-change", now.Add(-72*time.Hour), []qualitySeedSubTask{
+		{ID: "commit-deploy-change:s1", Description: "short", Model: "", Status: "done", Tools: []string{"Edit", "Bash"}, Score: 55, Tags: []string{"missing_validation"}},
+	}, "partial", 60, []string{"missing_validation"})
+	seedQualityTask(t, s, "push-release", now.Add(-48*time.Hour), []qualitySeedSubTask{
+		{ID: "push-release:s1", Description: "short", Model: "", Status: "done", Tools: []string{"Bash"}, Score: 62, Tags: []string{"scope_creep"}},
+	}, "partial", 65, []string{"scope_creep"})
+	seedQualityTask(t, s, "quality-pass", now.Add(-24*time.Hour), []qualitySeedSubTask{
+		{ID: "quality-pass:s1", Description: strings.Repeat("clear validated task ", 5), Model: "sonnet", Status: "done", Tools: []string{"Edit", "Bash"}, Score: 95},
+	}, "pass", 95, nil)
+
+	stats, err := s.GetQualityScoreStats(window)
+	if err != nil {
+		t.Fatalf("GetQualityScoreStats: %v", err)
+	}
+	if stats.ReviewCount != 3 || stats.VerdictDistribution["partial"] != 2 || int(stats.PassRate) != 33 {
+		t.Fatalf("unexpected score stats: %+v", stats)
+	}
+	if len(stats.TopIssueTags) == 0 || stats.TopIssueTags[0].Count == 0 {
+		t.Fatalf("missing issue tag stats: %+v", stats.TopIssueTags)
+	}
+
+	insights, err := s.GetQualityInsights(window)
+	if err != nil {
+		t.Fatalf("GetQualityInsights: %v", err)
+	}
+	if !hasQualityInsight(insights, "risk_verbs_partial_rate") {
+		t.Fatalf("expected risk verb insight, got %+v", insights)
+	}
+	if !hasQualityInsight(insights, "missing_subtask_model") {
+		t.Fatalf("expected missing model insight, got %+v", insights)
+	}
+}
+
+type qualitySeedSubTask struct {
+	ID          string
+	Description string
+	Model       string
+	Status      string
+	Tools       []string
+	Score       int
+	Tags        []string
+}
+
+func seedQualityTask(t *testing.T, s *SQLiteStorage, id string, startedAt time.Time, subTasks []qualitySeedSubTask, verdict string, score int, tags []string) {
+	t.Helper()
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:        id,
+		Goal:      id,
+		Engine:    "plan-execute",
+		Backend:   "codex",
+		Status:    "done",
+		StartedAt: startedAt,
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask(%s): %v", id, err)
+	}
+	for idx, subTask := range subTasks {
+		if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+			ID:          subTask.ID,
+			TaskID:      id,
+			Idx:         idx,
+			Description: subTask.Description,
+			Model:       subTask.Model,
+			Status:      subTask.Status,
+			StartedAt:   startedAt.Add(time.Duration(idx) * time.Minute),
+		}); err != nil {
+			t.Fatalf("UpsertUnifiedSubTask(%s): %v", subTask.ID, err)
+		}
+		for toolIdx, tool := range subTask.Tools {
+			if err := s.InsertUnifiedToolEvent(UnifiedToolEvent{
+				SubTaskID: subTask.ID,
+				ToolName:  tool,
+				Timestamp: startedAt.Add(time.Duration(toolIdx) * time.Second),
+				Status:    "done",
+			}); err != nil {
+				t.Fatalf("InsertUnifiedToolEvent(%s): %v", subTask.ID, err)
+			}
+		}
+	}
+	reviewID, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:       id,
+		Verdict:      verdict,
+		OverallScore: score,
+		IssueTags:    tags,
+		CreatedAt:    startedAt.Add(30 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("InsertUnifiedReviewResult(%s): %v", id, err)
+	}
+	for _, subTask := range subTasks {
+		if err := s.InsertUnifiedReviewSubTaskResult(UnifiedReviewSubTaskResult{
+			ReviewID:  reviewID,
+			SubTaskID: subTask.ID,
+			Score:     subTask.Score,
+			IssueTags: subTask.Tags,
+		}); err != nil {
+			t.Fatalf("InsertUnifiedReviewSubTaskResult(%s): %v", subTask.ID, err)
+		}
+	}
+}
+
+func hasQualityInsight(insights []QualityInsight, name string) bool {
+	for _, insight := range insights {
+		if insight.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 func assertCount(t *testing.T, db *sql.DB, table string, want int) {
 	t.Helper()
 	var got int

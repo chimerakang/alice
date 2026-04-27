@@ -47,6 +47,10 @@ vi.mock("@/pages/Reviews", () => ({
   default: () => <div data-testid="reviews-page" />,
 }));
 
+vi.mock("@/pages/Quality", () => ({
+  default: () => <div data-testid="quality-page" />,
+}));
+
 vi.mock("@/pages/Checkpoints", () => ({
   default: () => <div data-testid="checkpoints-page" />,
 }));
@@ -67,5 +71,7 @@ describe("App", () => {
     expect(html).toContain("Reviews");
     expect(html).toContain('data-testid="route:/reviews"');
     expect(html).toContain('data-testid="reviews-page"');
+    expect(html).toContain('href="/quality"');
+    expect(html).toContain('data-testid="route:/quality"');
   });
 });

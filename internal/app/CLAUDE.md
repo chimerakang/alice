@@ -20,10 +20,6 @@
 | #3136 | " | 🔵 | Comprehensive Model Selection Architecture Analysis Completed | ~656 |
 | #3134 | 2:38 AM | 🔵 | NewAgent Constructor Signature with CLIClient Dependency | ~422 |
 | #3133 | " | 🔵 | Single CLIClient Instantiation in Main Application Initialization | ~471 |
-| #3132 | " | 🔵 | Model Parameter Usage in CLI Command Construction | ~457 |
-| #3131 | " | 🔵 | Claude CLI Command Execution with Model Parameter Injection | ~502 |
-| #3130 | " | 🔵 | Agent Instantiation Points in Codebase | ~425 |
-| #3128 | 2:37 AM | 🔵 | CLIClient Injection Pattern in TelegramBot | ~431 |
 
 ### Feb 23, 2026
 
@@ -85,4 +81,13 @@
 |----|------|---|-------|------|
 | #10516 | 4:43 PM | 🔵 | Hermes 上下文修復採文字橋接，未實作 Codex thread resume | ~410 |
 | #10512 | " | 🔴 | Hermes 模式跨輪對話上下文注入機制 | ~337 |
+
+### Apr 27, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #10855 | 3:33 PM | 🔵 | Comprehensive OpenAI Integration Research via Explore Agent | ~556 |
+| #10854 | " | 🔵 | Complete Architecture Understanding for DALL-E Integration | ~559 |
+| #10853 | 3:32 PM | 🔵 | OpenAI API Integration Pattern in Telegram Bot | ~497 |
+| #10852 | " | 🔵 | Existing OpenAI Integration in Alice Project | ~392 |
 </claude-mem-context>
