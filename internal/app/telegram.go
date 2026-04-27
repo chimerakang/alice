@@ -2155,16 +2155,19 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	if executorSessionID != "" {
 		agent.chatContext.SetSession(appengine.BackendKindForModel(executorModel), executorSessionID)
 	}
-	direct := appengine.NewDirectEngine(directRunnerFunc(func(msg string, update func(string, bool)) (string, error) {
-		prevOverride := agent.currentModelOverride
-		if executorModel != "" {
-			agent.currentModelOverride = executorModel
-		}
-		defer func() {
-			agent.currentModelOverride = prevOverride
-		}()
-		return agent.Run(msg, update)
-	}))
+	direct := appengine.NewDirectEngine(&metricsForwardingRunner{
+		run: func(msg string, update func(string, bool)) (string, error) {
+			prevOverride := agent.currentModelOverride
+			if executorModel != "" {
+				agent.currentModelOverride = executorModel
+			}
+			defer func() {
+				agent.currentModelOverride = prevOverride
+			}()
+			return agent.Run(msg, update)
+		},
+		metrics: agent.LastCallMetrics,
+	})
 	coord := appengine.NewPlanExecuteEngine(appengine.PlanExecuteConfig{
 		ChatID:                key.chatID,
 		ProjectDir:            projectDir,

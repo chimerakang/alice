@@ -772,12 +772,15 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 		return "```json\n" + string(raw) + "\n```", planResp.SessionID, planResp.Usage.InputTokens, planResp.Usage.OutputTokens, nil
 	}
 
-	direct := appengine.NewDirectEngine(directRunnerFunc(func(msg string, update func(string, bool)) (string, error) {
-		if onUpdate != nil {
-			onUpdate("⚡ Phase 2: Executing with Sonnet...", false)
-		}
-		return a.runDirect(ctx, msg, update, startTime)
-	}))
+	direct := appengine.NewDirectEngine(&metricsForwardingRunner{
+		run: func(msg string, update func(string, bool)) (string, error) {
+			if onUpdate != nil {
+				onUpdate("⚡ Phase 2: Executing with Sonnet...", false)
+			}
+			return a.runDirect(ctx, msg, update, startTime)
+		},
+		metrics: a.LastCallMetrics,
+	})
 	store := hermes.NewMemoryTaskStore()
 	engine := appengine.NewPlanExecuteEngine(appengine.PlanExecuteConfig{
 		PlannerModel:          a.planModel,
@@ -804,6 +807,26 @@ type directRunnerFunc func(string, func(string, bool)) (string, error)
 
 func (f directRunnerFunc) Run(userMessage string, onUpdate func(string, bool)) (string, error) {
 	return f(userMessage, onUpdate)
+}
+
+// metricsForwardingRunner wraps a function-style runner together with a
+// metrics provider (typically *Agent). DirectEngine uses LastCallMetrics()
+// to attribute Executor tokens to the actual model — without this wrapper
+// the per-model breakdown would lose every Executor call.
+type metricsForwardingRunner struct {
+	run     func(string, func(string, bool)) (string, error)
+	metrics func() (string, int, int)
+}
+
+func (r *metricsForwardingRunner) Run(msg string, onUpdate func(string, bool)) (string, error) {
+	return r.run(msg, onUpdate)
+}
+
+func (r *metricsForwardingRunner) LastCallMetrics() (string, int, int) {
+	if r.metrics == nil {
+		return "", 0, 0
+	}
+	return r.metrics()
 }
 
 // runDirect is the standard single-phase execution (fallback when plan phase fails)
