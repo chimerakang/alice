@@ -398,10 +398,25 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOver
 		"--verbose",
 		"--model", model,
 		"--dangerously-skip-permissions",
-		"--max-turns", "1",
+		// 1 was too strict: when the project's CLAUDE.md / tool wiring
+		// nudges the model to use a tool before answering, the planner
+		// exhausted the budget on a single tool call and never produced
+		// JSON — claude CLI returned error_max_turns with empty stderr.
+		// 3 leaves room for at most one tool-use round before the
+		// model's required JSON output. Planner_rules still forbids
+		// tool use; this is just a safety margin.
+		"--max-turns", "3",
 	}
 
 	args = append(args, message)
+
+	// Diagnostic dump — when CallPlan fails with empty stderr, we want to be
+	// able to replay the exact prompt offline. The file is overwritten each
+	// call so /tmp doesn't fill up.
+	log.Printf("[cli] CallPlan prompt: model=%s projectDir=%s len=%d", model, projectDir, len(message))
+	if dumpErr := os.WriteFile("/tmp/alice_callplan_last.txt", []byte(message), 0644); dumpErr != nil {
+		log.Printf("[cli] CallPlan prompt dump failed: %v", dumpErr)
+	}
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = projectDir
