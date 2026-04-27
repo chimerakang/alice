@@ -48,7 +48,7 @@ func (s *SQLiteStorage) GetPlannerRulesWeeklyReport(windowStart, windowEnd time.
 		WindowStart:   windowStart.UTC(),
 		WindowEnd:     windowEnd.UTC(),
 		GeneratedAt:   time.Now().UTC(),
-		VerdictCounts: map[string]int{"pass": 0, "partial": 0, "fail": 0},
+		VerdictCounts: map[string]int{"pass": 0, "partial": 0, "fail": 0, "block": 0},
 	}
 
 	rows, err := s.db.Query(`

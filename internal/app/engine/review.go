@@ -113,6 +113,8 @@ type ReviewResult struct {
 	InputTokens    int                   `json:"input_tokens,omitempty"`
 	OutputTokens   int                   `json:"output_tokens,omitempty"`
 	CostUSD        float64               `json:"cost_usd,omitempty"`
+	BlockCount     int                   `json:"block_count,omitempty"`
+	AutoFixedCount int                   `json:"auto_fixed_count,omitempty"`
 }
 
 // ReviewNotification is a compact summary for user-facing notifications.

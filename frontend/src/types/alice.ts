@@ -211,6 +211,8 @@ export interface UnifiedReview {
   input_tokens: number;
   output_tokens: number;
   cost_usd: number;
+  block_count?: number;
+  auto_fixed_count?: number;
   source?: "initial" | "retry" | string;
   created_at: string;
   sub_task_results: UnifiedReviewSubTaskResult[];

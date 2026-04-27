@@ -82,18 +82,20 @@ type UnifiedArtifact struct {
 }
 
 type UnifiedReviewResult struct {
-	ID            int64     `json:"id,omitempty"`
-	TaskID        string    `json:"task_id"`
-	ReviewerModel string    `json:"reviewer_model"`
-	Verdict       string    `json:"verdict"`
-	OverallScore  int       `json:"overall_score"`
-	FeedbackText  string    `json:"feedback_text"`
-	IssueTags     []string  `json:"issue_tags"`
-	InputTokens   int       `json:"input_tokens"`
-	OutputTokens  int       `json:"output_tokens"`
-	CostUSD       float64   `json:"cost_usd"`
-	Source        string    `json:"source"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID             int64     `json:"id,omitempty"`
+	TaskID         string    `json:"task_id"`
+	ReviewerModel  string    `json:"reviewer_model"`
+	Verdict        string    `json:"verdict"`
+	OverallScore   int       `json:"overall_score"`
+	FeedbackText   string    `json:"feedback_text"`
+	IssueTags      []string  `json:"issue_tags"`
+	InputTokens    int       `json:"input_tokens"`
+	OutputTokens   int       `json:"output_tokens"`
+	CostUSD        float64   `json:"cost_usd"`
+	BlockCount     int       `json:"block_count"`
+	AutoFixedCount int       `json:"auto_fixed_count"`
+	Source         string    `json:"source"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 type UnifiedReviewSubTaskResult struct {
@@ -222,6 +224,12 @@ func (s *SQLiteStorage) migrateUnifiedTaskTables() error {
 	}
 	if _, err := s.db.Exec(`ALTER TABLE review_results ADD COLUMN source TEXT NOT NULL DEFAULT 'initial'`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 		return fmt.Errorf("unified task source migration: %w", err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE review_results ADD COLUMN block_count INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("unified task block_count migration: %w", err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE review_results ADD COLUMN auto_fixed_count INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("unified task auto_fixed_count migration: %w", err)
 	}
 	return nil
 }
@@ -651,7 +659,7 @@ func (s *SQLiteStorage) listUnifiedArtifacts(subTaskID string) ([]UnifiedArtifac
 func (s *SQLiteStorage) listUnifiedReviewGraphs(taskID string) ([]UnifiedReviewGraph, error) {
 	rows, err := s.db.Query(`
 		SELECT id, task_id, reviewer_model, verdict, overall_score, feedback_text,
-		       issue_tags, input_tokens, output_tokens, cost_usd, source, created_at
+		       issue_tags, input_tokens, output_tokens, cost_usd, block_count, auto_fixed_count, source, created_at
 		FROM review_results
 		WHERE task_id = ?
 		ORDER BY created_at DESC, id DESC`, taskID)
@@ -666,7 +674,8 @@ func (s *SQLiteStorage) listUnifiedReviewGraphs(taskID string) ([]UnifiedReviewG
 		if err := rows.Scan(
 			&review.ID, &review.TaskID, &review.ReviewerModel, &review.Verdict,
 			&review.OverallScore, &review.FeedbackText, &tagsJSON,
-			&review.InputTokens, &review.OutputTokens, &review.CostUSD, &review.Source, &createdAt,
+			&review.InputTokens, &review.OutputTokens, &review.CostUSD,
+			&review.BlockCount, &review.AutoFixedCount, &review.Source, &createdAt,
 		); err != nil {
 			rows.Close()
 			return nil, err

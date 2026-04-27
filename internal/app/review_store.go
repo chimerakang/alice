@@ -34,16 +34,18 @@ func (s *SQLiteStorage) StoreReviewWithSource(ctx context.Context, taskID string
 	defer tx.Rollback()
 
 	reviewID, err := insertUnifiedReviewResultTx(tx, UnifiedReviewResult{
-		TaskID:        taskID,
-		ReviewerModel: strings.TrimSpace(review.ReviewerModel),
-		Verdict:       string(review.Verdict),
-		OverallScore:  review.OverallScore,
-		FeedbackText:  strings.TrimSpace(review.Feedback),
-		IssueTags:     reviewTagsToStrings(review.IssueTags),
-		InputTokens:   review.InputTokens,
-		OutputTokens:  review.OutputTokens,
-		CostUSD:       review.CostUSD,
-		Source:        source,
+		TaskID:         taskID,
+		ReviewerModel:  strings.TrimSpace(review.ReviewerModel),
+		Verdict:        string(review.Verdict),
+		OverallScore:   review.OverallScore,
+		FeedbackText:   strings.TrimSpace(review.Feedback),
+		IssueTags:      reviewTagsToStrings(review.IssueTags),
+		InputTokens:    review.InputTokens,
+		OutputTokens:   review.OutputTokens,
+		CostUSD:        review.CostUSD,
+		BlockCount:     review.BlockCount,
+		AutoFixedCount: review.AutoFixedCount,
+		Source:         source,
 	})
 	if err != nil {
 		return err
@@ -91,11 +93,12 @@ func insertUnifiedReviewResultTx(tx *sql.Tx, review UnifiedReviewResult) (int64,
 	res, err := tx.Exec(`
 		INSERT INTO review_results
 			(task_id, reviewer_model, verdict, overall_score, feedback_text, issue_tags,
-			 input_tokens, output_tokens, cost_usd, source, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			 input_tokens, output_tokens, cost_usd, block_count, auto_fixed_count, source, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		review.TaskID, review.ReviewerModel, review.Verdict, review.OverallScore,
 		review.FeedbackText, string(tagsJSON), review.InputTokens, review.OutputTokens,
-		review.CostUSD, review.Source, review.CreatedAt.Format(time.RFC3339Nano),
+		review.CostUSD, review.BlockCount, review.AutoFixedCount, review.Source,
+		review.CreatedAt.Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return 0, err

@@ -249,6 +249,43 @@ func TestStoreReviewPersistsUnifiedReviewGraph(t *testing.T) {
 	}
 }
 
+func TestStoreReviewPersistsBlockMetrics(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:        "task-block-metrics",
+		Goal:      "deploy release",
+		Engine:    "plan_execute",
+		Backend:   "claude",
+		Status:    "done",
+		StartedAt: time.Now().UTC().Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	if err := s.StoreReview(context.Background(), "task-block-metrics", appengine.ReviewResult{
+		ReviewerModel:  "gpt-5.5",
+		Verdict:        appengine.VerdictBlock,
+		OverallScore:   58,
+		Feedback:       "scope_creep detected",
+		IssueTags:      []appengine.ReviewTag{appengine.ReviewTagScopeCreep},
+		BlockCount:     3,
+		AutoFixedCount: 2,
+	}); err != nil {
+		t.Fatalf("StoreReview: %v", err)
+	}
+
+	graphs, err := s.ListUnifiedTaskGraphs(UnifiedTaskQuery{ID: "task-block-metrics", Limit: 1})
+	if err != nil {
+		t.Fatalf("ListUnifiedTaskGraphs: %v", err)
+	}
+	if len(graphs) != 1 || len(graphs[0].Reviews) != 1 {
+		t.Fatalf("unexpected graph: %+v", graphs)
+	}
+	review := graphs[0].Reviews[0]
+	if review.BlockCount != 3 || review.AutoFixedCount != 2 {
+		t.Fatalf("block metrics: block_count=%d auto_fixed_count=%d, want 3/2", review.BlockCount, review.AutoFixedCount)
+	}
+}
+
 func TestStoreReviewRollsBackOnSubTaskInsertFailure(t *testing.T) {
 	s := newTestSQLiteStorage(t)
 	if err := s.UpsertUnifiedTask(UnifiedTask{
