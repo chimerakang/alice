@@ -36,6 +36,7 @@ type UnifiedTask struct {
 	ChatID            int64      `json:"chat_id"`
 	ThreadID          int        `json:"thread_id"`
 	ProjectDir        string     `json:"project_dir"`
+	GithubIssueNumber int        `json:"github_issue_number,omitempty"`
 	Goal              string     `json:"goal"`
 	Engine            string     `json:"engine"`
 	Backend           string     `json:"backend"`
@@ -142,6 +143,7 @@ func unifiedTaskTablesSQL() []string {
 			chat_id             INTEGER NOT NULL DEFAULT 0,
 			thread_id           INTEGER NOT NULL DEFAULT 0,
 			project_dir         TEXT NOT NULL DEFAULT '',
+			github_issue_number INTEGER NOT NULL DEFAULT 0,
 			goal                TEXT NOT NULL DEFAULT '',
 			engine              TEXT NOT NULL DEFAULT '',
 			backend             TEXT NOT NULL DEFAULT '',
@@ -155,6 +157,7 @@ func unifiedTaskTablesSQL() []string {
 		`CREATE INDEX IF NOT EXISTS idx_tasks_started_at ON tasks(started_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_chat_thread ON tasks(chat_id, thread_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_project_dir ON tasks(project_dir)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_github_issue_number ON tasks(github_issue_number)`,
 		`CREATE TABLE IF NOT EXISTS sub_tasks (
 			id                 TEXT PRIMARY KEY,
 			task_id            TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -230,6 +233,12 @@ func (s *SQLiteStorage) migrateUnifiedTaskTables() error {
 	}
 	if _, err := s.db.Exec(`ALTER TABLE review_results ADD COLUMN auto_fixed_count INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
 		return fmt.Errorf("unified task auto_fixed_count migration: %w", err)
+	}
+	if _, err := s.db.Exec(`ALTER TABLE tasks ADD COLUMN github_issue_number INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("unified task github_issue_number migration: %w", err)
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_tasks_github_issue_number ON tasks(github_issue_number)`); err != nil {
+		return fmt.Errorf("unified task github_issue_number index: %w", err)
 	}
 	return nil
 }
@@ -315,13 +324,17 @@ func (s *SQLiteStorage) UpsertUnifiedTask(task UnifiedTask) error {
 	}
 	_, err := s.db.Exec(`
 		INSERT INTO tasks
-			(id, chat_id, thread_id, project_dir, goal, engine, backend, status,
+			(id, chat_id, thread_id, project_dir, github_issue_number, goal, engine, backend, status,
 			 started_at, ended_at, total_input_tokens, total_output_tokens, total_cost_usd)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			chat_id = excluded.chat_id,
 			thread_id = excluded.thread_id,
 			project_dir = excluded.project_dir,
+			github_issue_number = CASE
+				WHEN excluded.github_issue_number > 0 THEN excluded.github_issue_number
+				ELSE tasks.github_issue_number
+			END,
 			goal = excluded.goal,
 			engine = excluded.engine,
 			backend = excluded.backend,
@@ -331,7 +344,7 @@ func (s *SQLiteStorage) UpsertUnifiedTask(task UnifiedTask) error {
 			total_input_tokens = excluded.total_input_tokens,
 			total_output_tokens = excluded.total_output_tokens,
 			total_cost_usd = excluded.total_cost_usd`,
-		task.ID, task.ChatID, task.ThreadID, task.ProjectDir, task.Goal,
+		task.ID, task.ChatID, task.ThreadID, task.ProjectDir, task.GithubIssueNumber, task.Goal,
 		task.Engine, task.Backend, task.Status, task.StartedAt.Format(time.RFC3339Nano),
 		formatNullableTime(task.EndedAt), task.TotalInputTokens, task.TotalOutputTokens,
 		task.TotalCostUSD,
@@ -446,7 +459,8 @@ func (s *SQLiteStorage) ListUnifiedTaskGraphs(query UnifiedTaskQuery) ([]Unified
 	}
 	rows, err := s.db.Query(`
 		SELECT id, chat_id, thread_id, project_dir, goal, engine, backend, status,
-		       started_at, ended_at, total_input_tokens, total_output_tokens, total_cost_usd
+		       github_issue_number, started_at, ended_at,
+		       total_input_tokens, total_output_tokens, total_cost_usd
 		FROM tasks`+where+`
 		ORDER BY started_at DESC
 		LIMIT ? OFFSET ?`, append(args, limit, maxInt(query.Offset, 0))...)
@@ -537,7 +551,7 @@ func scanUnifiedTask(scanner sqlScanner) (UnifiedTask, error) {
 	var startedAt, endedAt sql.NullString
 	err := scanner.Scan(
 		&task.ID, &task.ChatID, &task.ThreadID, &task.ProjectDir, &task.Goal,
-		&task.Engine, &task.Backend, &task.Status, &startedAt, &endedAt,
+		&task.Engine, &task.Backend, &task.Status, &task.GithubIssueNumber, &startedAt, &endedAt,
 		&task.TotalInputTokens, &task.TotalOutputTokens, &task.TotalCostUSD,
 	)
 	if err != nil {

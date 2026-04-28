@@ -13,15 +13,16 @@ func seedRetryReview(t *testing.T, s *SQLiteStorage, taskID string, score int, s
 	t.Helper()
 	now := time.Now().UTC().Truncate(time.Second)
 	if err := s.UpsertUnifiedTask(UnifiedTask{
-		ID:         taskID,
-		ChatID:     42,
-		ThreadID:   7,
-		ProjectDir: "/repo",
-		Goal:       "fix review debt",
-		Engine:     "plan_execute",
-		Backend:    "codex",
-		Status:     "done",
-		StartedAt:  now.Add(-time.Hour),
+		ID:                taskID,
+		ChatID:            42,
+		ThreadID:          7,
+		ProjectDir:        "/repo",
+		GithubIssueNumber: 136,
+		Goal:              "fix review debt",
+		Engine:            "plan_execute",
+		Backend:           "codex",
+		Status:            "done",
+		StartedAt:         now.Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("UpsertUnifiedTask: %v", err)
 	}
@@ -133,6 +134,19 @@ func TestSelectRetryTargetByIndexAcceptsTaskIDPrefix(t *testing.T) {
 	}
 }
 
+func TestSelectRetryTargetByIndexAcceptsGitHubIssueRef(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	seedRetryReview(t, s, "issue-linked-task", 61, "initial")
+
+	selection, err := s.selectRetryTargetByIndex(context.Background(), "#136", 2)
+	if err != nil {
+		t.Fatalf("selectRetryTargetByIndex issue ref: %v", err)
+	}
+	if selection.Task.ID != "issue-linked-task" || selection.Task.GithubIssueNumber != 136 || selection.DisplaySubTaskIdx != 2 {
+		t.Fatalf("unexpected issue ref selection: %+v", selection)
+	}
+}
+
 func TestParseRetryArgs(t *testing.T) {
 	tests := []struct {
 		parts      []string
@@ -146,6 +160,8 @@ func TestParseRetryArgs(t *testing.T) {
 		{[]string{"/retry", "task-1"}, "lowest", "task-1", 0, false},
 		{[]string{"/retry", "task-1", "3"}, "index", "task-1", 3, false},
 		{[]string{"/retry", "task-1", "all-failed"}, "all-failed", "task-1", 0, false},
+		{[]string{"/retry", "#136", "1"}, "index", "#136", 1, false},
+		{[]string{"/retry", "#136", "all-failed"}, "all-failed", "#136", 0, false},
 		{[]string{"/retry", "task-1", "bad"}, "", "", 0, true},
 	}
 	for _, tt := range tests {

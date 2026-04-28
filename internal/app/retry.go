@@ -61,7 +61,8 @@ func composeRetryPrompt(description, verdict string, score int, feedback string,
 func (s *SQLiteStorage) selectRetryTargetLatest(ctx context.Context, key chatKey) (retrySelection, error) {
 	return s.scanRetrySelection(ctx, `
 		SELECT t.id, t.chat_id, t.thread_id, t.project_dir, t.goal, t.engine, t.backend, t.status,
-		       t.started_at, t.ended_at, t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
+		       t.github_issue_number, t.started_at, t.ended_at,
+		       t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
 		       st.id, st.task_id, st.idx, st.description, st.model, st.status, st.result_text,
 		       st.input_tokens, st.output_tokens, st.cost_usd, st.started_at, st.ended_at,
 		       st.routing_reason, st.routing_latency_ms,
@@ -85,7 +86,8 @@ func (s *SQLiteStorage) selectRetryTargetLowest(ctx context.Context, taskID stri
 	}
 	return s.scanRetrySelection(ctx, `
 		SELECT t.id, t.chat_id, t.thread_id, t.project_dir, t.goal, t.engine, t.backend, t.status,
-		       t.started_at, t.ended_at, t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
+		       t.github_issue_number, t.started_at, t.ended_at,
+		       t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
 		       st.id, st.task_id, st.idx, st.description, st.model, st.status, st.result_text,
 		       st.input_tokens, st.output_tokens, st.cost_usd, st.started_at, st.ended_at,
 		       st.routing_reason, st.routing_latency_ms,
@@ -111,7 +113,8 @@ func (s *SQLiteStorage) selectRetryTargetByIndex(ctx context.Context, taskID str
 	}
 	return s.scanRetrySelection(ctx, `
 		SELECT t.id, t.chat_id, t.thread_id, t.project_dir, t.goal, t.engine, t.backend, t.status,
-		       t.started_at, t.ended_at, t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
+		       t.github_issue_number, t.started_at, t.ended_at,
+		       t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
 		       st.id, st.task_id, st.idx, st.description, st.model, st.status, st.result_text,
 		       st.input_tokens, st.output_tokens, st.cost_usd, st.started_at, st.ended_at,
 		       st.routing_reason, st.routing_latency_ms,
@@ -134,7 +137,8 @@ func (s *SQLiteStorage) selectRetryTargetsAllFailed(ctx context.Context, taskID 
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT t.id, t.chat_id, t.thread_id, t.project_dir, t.goal, t.engine, t.backend, t.status,
-		       t.started_at, t.ended_at, t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
+		       t.github_issue_number, t.started_at, t.ended_at,
+		       t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
 		       st.id, st.task_id, st.idx, st.description, st.model, st.status, st.result_text,
 		       st.input_tokens, st.output_tokens, st.cost_usd, st.started_at, st.ended_at,
 		       st.routing_reason, st.routing_latency_ms,
@@ -172,6 +176,9 @@ func (s *SQLiteStorage) resolveRetryTaskID(ctx context.Context, taskID string) (
 	if taskID == "" {
 		return "", fmt.Errorf("missing task_id")
 	}
+	if issueNumber, ok := parseRetryIssueRef(taskID); ok {
+		return s.resolveRetryTaskIDByIssue(ctx, issueNumber)
+	}
 	var exact string
 	err := s.db.QueryRowContext(ctx, `SELECT id FROM tasks WHERE id = ? LIMIT 1`, taskID).Scan(&exact)
 	if err == nil {
@@ -208,6 +215,39 @@ func (s *SQLiteStorage) resolveRetryTaskID(ctx context.Context, taskID string) (
 	}
 }
 
+func parseRetryIssueRef(ref string) (int, bool) {
+	ref = strings.TrimSpace(ref)
+	if !strings.HasPrefix(ref, "#") {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(ref, "#"))
+	if err != nil || n <= 0 {
+		return 0, true
+	}
+	return n, true
+}
+
+func (s *SQLiteStorage) resolveRetryTaskIDByIssue(ctx context.Context, issueNumber int) (string, error) {
+	if issueNumber <= 0 {
+		return "", fmt.Errorf("無效的 issue 編號")
+	}
+	var id string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id
+		FROM tasks
+		WHERE github_issue_number = ?
+		  AND EXISTS (SELECT 1 FROM review_results rr WHERE rr.task_id = tasks.id)
+		ORDER BY started_at DESC, id DESC
+		LIMIT 1`, issueNumber).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("找不到 GitHub Issue #%d 對應且已有 review 結果的 Hermes task", issueNumber)
+	}
+	return "", err
+}
+
 func (s *SQLiteStorage) scanRetrySelection(ctx context.Context, query string, args ...any) (retrySelection, error) {
 	row := s.db.QueryRowContext(ctx, query, args...)
 	selection, err := scanRetrySelectionRow(row)
@@ -230,7 +270,7 @@ func scanRetrySelectionRow(scanner sqlScanner) (retrySelection, error) {
 	err := scanner.Scan(
 		&selection.Task.ID, &selection.Task.ChatID, &selection.Task.ThreadID, &selection.Task.ProjectDir,
 		&selection.Task.Goal, &selection.Task.Engine, &selection.Task.Backend, &selection.Task.Status,
-		&taskStarted, &taskEnded, &selection.Task.TotalInputTokens, &selection.Task.TotalOutputTokens,
+		&selection.Task.GithubIssueNumber, &taskStarted, &taskEnded, &selection.Task.TotalInputTokens, &selection.Task.TotalOutputTokens,
 		&selection.Task.TotalCostUSD,
 		&selection.SubTask.ID, &selection.SubTask.TaskID, &selection.SubTask.Idx, &selection.SubTask.Description,
 		&selection.SubTask.Model, &selection.SubTask.Status, &selection.SubTask.ResultText,
@@ -299,7 +339,7 @@ func (t *TelegramBot) handleRetryCommand(key chatKey, parts []string) {
 
 	mode, taskID, idx, err := parseRetryArgs(parts)
 	if err != nil {
-		t.send(key, "❌ 使用方式：/retry latest、/retry <task_id>、/retry <task_id> <idx>、/retry <task_id> all-failed")
+		t.send(key, "❌ 使用方式：/retry latest、/retry <task_id|#issue>、/retry <task_id|#issue> <idx>、/retry <task_id|#issue> all-failed")
 		return
 	}
 

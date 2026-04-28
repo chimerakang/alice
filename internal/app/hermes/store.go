@@ -127,6 +127,7 @@ func (s *SQLiteTaskStore) migrate() error {
 			chat_id             INTEGER NOT NULL DEFAULT 0,
 			thread_id           INTEGER NOT NULL DEFAULT 0,
 			project_dir         TEXT NOT NULL DEFAULT '',
+			github_issue_number INTEGER NOT NULL DEFAULT 0,
 			goal                TEXT NOT NULL DEFAULT '',
 			engine              TEXT NOT NULL DEFAULT '',
 			backend             TEXT NOT NULL DEFAULT '',
@@ -140,6 +141,8 @@ func (s *SQLiteTaskStore) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_tasks_started_at ON tasks(started_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_chat_thread ON tasks(chat_id, thread_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_project_dir ON tasks(project_dir)`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_github_issue_number ON tasks(github_issue_number)`,
+		`ALTER TABLE tasks ADD COLUMN github_issue_number INTEGER NOT NULL DEFAULT 0`,
 		`CREATE TABLE IF NOT EXISTS sub_tasks (
 			id                 TEXT PRIMARY KEY,
 			task_id            TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -711,11 +714,15 @@ func (s *SQLiteTaskStore) upsertUnifiedTask(task TaskState, endedAt *time.Time) 
 	totalIn, totalOut := totalModelUsage(task.ModelUsages)
 	_, err := s.db.Exec(`
 		INSERT INTO tasks
-			(id, chat_id, thread_id, project_dir, goal, engine, backend, status,
+			(id, chat_id, thread_id, project_dir, github_issue_number, goal, engine, backend, status,
 			 started_at, ended_at, total_input_tokens, total_output_tokens, total_cost_usd)
-		VALUES (?, ?, 0, '', ?, 'plan-execute', '', ?, ?, ?, ?, ?, 0)
+		VALUES (?, ?, 0, '', ?, ?, 'plan-execute', '', ?, ?, ?, ?, ?, 0)
 		ON CONFLICT(id) DO UPDATE SET
 			chat_id = excluded.chat_id,
+			github_issue_number = CASE
+				WHEN excluded.github_issue_number > 0 THEN excluded.github_issue_number
+				ELSE tasks.github_issue_number
+			END,
 			goal = excluded.goal,
 			engine = excluded.engine,
 			status = excluded.status,
@@ -723,7 +730,7 @@ func (s *SQLiteTaskStore) upsertUnifiedTask(task TaskState, endedAt *time.Time) 
 			ended_at = excluded.ended_at,
 			total_input_tokens = excluded.total_input_tokens,
 			total_output_tokens = excluded.total_output_tokens`,
-		task.ID, task.ChatID, task.Goal, string(task.Status),
+		task.ID, task.ChatID, task.GithubIssueNumber, task.Goal, string(task.Status),
 		startedAt.Format(time.RFC3339Nano), formatUnifiedTime(endedAt), totalIn, totalOut,
 	)
 	return err
