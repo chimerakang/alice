@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -597,7 +598,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 			toolCallsForDecision = nil
 		}
 
-		resp, err = a.client.CallStream(ctx, userMessage, a.projectDir, sessionID, a.lastUsedModel, func(toolName string, toolInput map[string]interface{}) {
+		resp, userMessage, sessionID, err = a.callStreamWithResumeBridge(ctx, ps, userMessage, selectedBackend, sessionID, a.lastUsedModel, func(toolName string, toolInput map[string]interface{}) {
 			// Check if we should create a checkpoint before executing this tool
 			a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
 
@@ -715,6 +716,40 @@ func (a *Agent) LastCallMetrics() (model string, inTokens, outTokens int) {
 	a.lastCallMu.Lock()
 	defer a.lastCallMu.Unlock()
 	return a.lastCallModel, a.lastCallInputT, a.lastCallOutputT
+}
+
+func (a *Agent) callStreamWithResumeBridge(
+	ctx context.Context,
+	ps *projectState,
+	message string,
+	backend BackendKind,
+	sessionID, model string,
+	onToolUse func(toolName string, toolInput map[string]interface{}),
+	onContent func(contentType, text string),
+) (*CLIResponse, string, string, error) {
+	resp, err := a.client.CallStream(ctx, message, a.projectDir, sessionID, model, onToolUse, onContent)
+	if err == nil || sessionID == "" || !errors.Is(err, ErrSessionUnavailable) {
+		return resp, message, sessionID, err
+	}
+
+	if ps != nil && ps.ctx != nil {
+		ps.ctx.ClearSession(backend)
+	}
+
+	bridge := ""
+	if ps != nil && ps.ctx != nil {
+		bridge = buildContextBridge(ps.ctx.RecentMessagesSnapshot())
+	}
+	if bridge == "" {
+		log.Printf("[agent] codex resume fallback: session %q unavailable; retrying with fresh session without bridge (no recent messages)", sessionID)
+		resp, err = a.client.CallStream(ctx, message, a.projectDir, "", model, onToolUse, onContent)
+		return resp, message, "", err
+	}
+
+	bridgedMessage := bridge + message
+	log.Printf("[agent] codex resume fallback: session %q unavailable; bridge injected (%d recent messages)", sessionID, len(ps.ctx.RecentMsgs))
+	resp, err = a.client.CallStream(ctx, bridgedMessage, a.projectDir, "", model, onToolUse, onContent)
+	return resp, bridgedMessage, "", err
 }
 
 // RunWithPlan executes a two-phase OpusPlan workflow:
@@ -851,7 +886,7 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 	currentDecisionID := generateDecisionID(a.chatID, a.threadID, startTime)
 	var toolCallsForDecision []ToolExecution
 
-	resp, err := a.client.CallStream(ctx, userMessage, a.projectDir, sessionID, selectedModel, func(toolName string, toolInput map[string]interface{}) {
+	resp, userMessage, sessionID, err := a.callStreamWithResumeBridge(ctx, ps, userMessage, selectedBackend, sessionID, selectedModel, func(toolName string, toolInput map[string]interface{}) {
 		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
 		globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID, a.projectDir)
 

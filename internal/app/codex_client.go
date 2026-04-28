@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -94,6 +95,8 @@ type CodexClient struct {
 	Model     string
 	OpenAIKey string // injected into subprocess env as OPENAI_API_KEY when non-empty
 }
+
+var ErrSessionUnavailable = errors.New("codex session unavailable")
 
 // NewCodexClient creates a CodexClient with the given model name.
 // openaiKey is optional: if empty, the codex subprocess inherits OPENAI_API_KEY from the parent env.
@@ -327,23 +330,19 @@ User request:
 `
 
 // Call implements Client — non-streaming single invocation.
-// If sessionID is provided and resume fails, automatically retries with a new session.
 func (c *CodexClient) Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error) {
 	model := c.Model
 	if modelOverride != "" {
 		model = modelOverride
 	}
 	resp, err := c.runCodexStream(ctx, message, projectDir, sessionID, model, nil, nil)
-	// Resume-fallback: if resume fails and sessionID was provided, retry without it.
 	if err != nil && sessionID != "" && strings.Contains(err.Error(), "codex exec error") {
-		log.Printf("[codex] resume fallback: session %q unavailable, retrying with new session", sessionID)
-		return c.runCodexStream(ctx, message, projectDir, "", model, nil, nil)
+		return resp, fmt.Errorf("%w: %s: %v", ErrSessionUnavailable, sessionID, err)
 	}
 	return resp, err
 }
 
 // CallStream implements Client — streaming with tool/content callbacks.
-// If sessionID is provided and resume fails, automatically retries with a new session.
 func (c *CodexClient) CallStream(
 	ctx context.Context,
 	message, projectDir, sessionID, modelOverride string,
@@ -355,10 +354,8 @@ func (c *CodexClient) CallStream(
 		model = modelOverride
 	}
 	resp, err := c.runCodexStream(ctx, message, projectDir, sessionID, model, onToolUse, onContent)
-	// Resume-fallback: if resume fails and sessionID was provided, retry without it.
 	if err != nil && sessionID != "" && strings.Contains(err.Error(), "codex exec error") {
-		log.Printf("[codex] resume fallback: session %q unavailable, retrying with new session", sessionID)
-		return c.runCodexStream(ctx, message, projectDir, "", model, onToolUse, onContent)
+		return resp, fmt.Errorf("%w: %s: %v", ErrSessionUnavailable, sessionID, err)
 	}
 	return resp, err
 }
