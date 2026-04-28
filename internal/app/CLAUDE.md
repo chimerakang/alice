@@ -1,21 +1,6 @@
 <claude-mem-context>
 # Recent Activity
 
-### Feb 16, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #3477 | 10:47 PM | 🔵 | Session Cleared on Model Change Causing Context Loss | ~373 |
-| #3474 | " | 🔵 | Agent Instances Created Once Per ChatKey and Persist Across Model Changes | ~443 |
-
-### Feb 23, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #4901 | 3:17 PM | ✅ | CLI invocations now use sanitized environment to bypass nested execution detection | ~338 |
-| #4900 | " | 🔴 | Environment sanitization prevents Claude Code nested execution blocking | ~377 |
-| #4893 | 3:15 PM | 🔄 | Model selection now defers to configuration instead of hardcoded default | ~291 |
-
 ### Feb 28, 2026
 
 | ID | Time | T | Title | Read |
@@ -95,4 +80,14 @@
 | #11691 | 10:34 PM | 🔵 | Diagnosed `/retry` command JSON parsing failure with GPT models | ~335 |
 | #11523 | 6:57 PM | 🔵 | Investigated topic-to-project mapping mechanism | ~257 |
 | #11521 | " | 🔵 | Investigated existing /tasks command implementation | ~242 |
+
+### Apr 29, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #11732 | 1:35 AM | 🔴 | Fixed foreign key constraint failure in retry review storage | ~373 |
+| #11729 | 1:34 AM | 🔵 | Review subtask results table schema locations identified | ~294 |
+| #11724 | 1:33 AM | 🔵 | Review result storage mechanism with source tracking | ~327 |
+| #11721 | 1:30 AM | 🔵 | Retry command integration in Telegram bot interface | ~272 |
+| #11720 | " | 🔵 | Retry mechanism implementation for failed sub-tasks | ~533 |
 </claude-mem-context>

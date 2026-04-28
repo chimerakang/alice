@@ -73,18 +73,23 @@ func seedRetryReview(t *testing.T, s *SQLiteStorage, taskID string, score int, s
 }
 
 func TestComposeRetryPromptIncludesReviewContext(t *testing.T) {
-	prompt := composeRetryPrompt("修正 webhook", "partial", 64, "缺少測試", []string{"missing_validation"})
+	prompt := composeRetryPrompt("修正 webhook", "partial", 64, "缺少測試", []string{"missing_validation"}, "上一輪只有摘要")
 
 	for _, want := range []string{
 		"[Retry — 上一輪 review 給 partial 64/100]",
 		"原 sub-task 描述：\n修正 webhook",
+		"上一輪 sub-task 輸出：\n上一輪只有摘要",
 		"Reviewer 找出的問題：\n缺少測試",
 		"- missing_validation",
 		"不要做超出範圍的改動",
+		"關鍵檔案行號",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q:\n%s", want, prompt)
 		}
+	}
+	if strings.Contains(prompt, "<= 2 行") {
+		t.Fatalf("retry prompt should not ask for a two-line report:\n%s", prompt)
 	}
 }
 
@@ -118,6 +123,29 @@ func TestRetryCountCountsRetrySourceOnly(t *testing.T) {
 	}
 	if selection.Review.Source != "retry" {
 		t.Fatalf("latest review source = %q, want retry", selection.Review.Source)
+	}
+}
+
+func TestRetrySelectionRemembersCodexReviewHistory(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	seedRetryReview(t, s, "task-codex-retry", 60, "initial")
+	if _, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        "task-codex-retry",
+		ReviewerModel: "gpt-5.5",
+		Verdict:       "partial",
+		OverallScore:  65,
+		Source:        "initial",
+		CreatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("InsertUnifiedReviewResult codex marker: %v", err)
+	}
+
+	selection, err := s.selectRetryTargetByIndex(context.Background(), "task-codex-retry", 2)
+	if err != nil {
+		t.Fatalf("selectRetryTargetByIndex: %v", err)
+	}
+	if !selection.PreferCodex {
+		t.Fatalf("PreferCodex = false, want true")
 	}
 }
 
@@ -202,5 +230,41 @@ func TestNormalizeRetryReviewForSubTaskFillsPersistableSubTaskID(t *testing.T) {
 	}, "task:s2")
 	if review.SubTaskResults[0].SubTaskID != "task:s2" {
 		t.Fatalf("direct subtask id was not normalized: %+v", review.SubTaskResults[0])
+	}
+}
+
+func TestRetryExecutionModelUsesCodexSmartForCodexReview(t *testing.T) {
+	bot := &TelegramBot{config: &Config{
+		ModelRouting: ModelRoutingConfig{
+			CodexSmartModel: "gpt-5.4",
+			CodexDeepModel:  "gpt-5.5",
+			SmartModel:      "claude-sonnet-4-6",
+			DeepModel:       "claude-opus-4-6",
+		},
+	}}
+	selection := retrySelection{
+		PreferCodex: true,
+		Review:      UnifiedReviewResult{ReviewerModel: "claude-opus-4-6"},
+	}
+
+	if got := bot.retryExecutionModel(selection); got != bot.config.ModelRouting.CodexSmartModel {
+		t.Fatalf("retryExecutionModel = %q, want %q", got, bot.config.ModelRouting.CodexSmartModel)
+	}
+}
+
+func TestRetryReviewPayloadIncludesPreviousAndRetryResults(t *testing.T) {
+	selection := retrySelection{
+		SubTask: UnifiedSubTask{ResultText: "previous evidence"},
+		SubTaskReview: UnifiedReviewSubTaskResult{
+			Feedback:  "missing file references",
+			IssueTags: []string{"incomplete_traceability"},
+		},
+	}
+
+	accumulated := buildRetryReviewAccumulated(selection, "retry evidence")
+	for _, want := range []string{"missing file references", "incomplete_traceability", "previous evidence", "retry evidence"} {
+		if !strings.Contains(accumulated, want) {
+			t.Fatalf("accumulated payload missing %q:\n%s", want, accumulated)
+		}
 	}
 }

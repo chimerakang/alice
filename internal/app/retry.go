@@ -20,6 +20,7 @@ type retrySelection struct {
 	SubTaskReview     UnifiedReviewSubTaskResult
 	RetryCount        int
 	DisplaySubTaskIdx int
+	PreferCodex       bool
 }
 
 type retryOutcome struct {
@@ -30,11 +31,15 @@ type retryOutcome struct {
 	Duration  time.Duration
 }
 
-func composeRetryPrompt(description, verdict string, score int, feedback string, issueTags []string) string {
+func composeRetryPrompt(description, verdict string, score int, feedback string, issueTags []string, previousResult string) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("[Retry — 上一輪 review 給 %s %d/100]\n\n", strings.TrimSpace(verdict), score))
 	b.WriteString("原 sub-task 描述：\n")
 	b.WriteString(strings.TrimSpace(description))
+	if strings.TrimSpace(previousResult) != "" {
+		b.WriteString("\n\n上一輪 sub-task 輸出：\n")
+		b.WriteString(truncateForRetryPrompt(previousResult, 6000))
+	}
 	b.WriteString("\n\nReviewer 找出的問題：\n")
 	if strings.TrimSpace(feedback) == "" {
 		b.WriteString("（reviewer 未提供詳細文字回饋）")
@@ -54,7 +59,8 @@ func composeRetryPrompt(description, verdict string, score int, feedback string,
 			}
 		}
 	}
-	b.WriteString("\n完成後以 <= 2 行回報實際做了什麼。")
+	b.WriteString("\n完成後請用可被 reviewer 驗證的格式回報：實際改動或驗證結果、關鍵檔案行號、執行過的命令與 PASS/FAIL、仍未驗證的風險。")
+	b.WriteString("\n不要只給兩行摘要；如果沒有做程式碼改動，也要提供足夠證據說明原 review 問題已被補上。")
 	return b.String()
 }
 
@@ -298,11 +304,25 @@ func scanRetrySelectionRow(scanner sqlScanner) (retrySelection, error) {
 }
 
 func (s *SQLiteStorage) populateRetryCount(ctx context.Context, selection *retrySelection) error {
-	return s.db.QueryRowContext(ctx, `
+	if err := s.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
 		FROM review_results rr
 		JOIN review_subtask_results rs ON rs.review_id = rr.id
-		WHERE rr.source = 'retry' AND rs.sub_task_id = ?`, selection.SubTask.ID).Scan(&selection.RetryCount)
+		WHERE rr.source = 'retry' AND rs.sub_task_id = ?`, selection.SubTask.ID).Scan(&selection.RetryCount); err != nil {
+		return err
+	}
+	var codexReviews int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM review_results
+		WHERE task_id = ?
+		  AND (lower(reviewer_model) LIKE 'gpt%' OR lower(reviewer_model) LIKE 'codex%')`,
+		selection.Task.ID,
+	).Scan(&codexReviews); err != nil {
+		return err
+	}
+	selection.PreferCodex = codexReviews > 0
+	return nil
 }
 
 func parseRetryArgs(parts []string) (mode, taskID string, idx int, err error) {
@@ -414,6 +434,7 @@ func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *S
 		selection.SubTaskReview.Score,
 		selection.SubTaskReview.Feedback,
 		selection.SubTaskReview.IssueTags,
+		selection.SubTask.ResultText,
 	)
 	agent := t.getAgent(key)
 	if selection.Task.ProjectDir != "" {
@@ -425,7 +446,14 @@ func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *S
 			t.send(key, update)
 		}
 	})
+	retryModel := t.retryExecutionModel(selection)
+	prevOverride := agent.currentModelOverride
+	if retryModel != "" {
+		agent.currentModelOverride = retryModel
+		agent.ClearSessionForModel(retryModel)
+	}
 	result, err := appengine.NewDirectEngine(agent).Run(ctx, prompt, agent.chatContext, progress)
+	agent.currentModelOverride = prevOverride
 	if err != nil {
 		return retryOutcome{Selection: selection, Result: result, Duration: time.Since(start)}, err
 	}
@@ -436,14 +464,14 @@ func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *S
 		TaskID:      selection.Task.ID,
 		ProjectDir:  selection.Task.ProjectDir,
 		Goal:        selection.Task.Goal,
-		Accumulated: result.Text,
+		Accumulated: buildRetryReviewAccumulated(selection, result.Text),
 		Artifacts:   result.Artifacts,
 		SubTaskResults: []appengine.ReviewSubTaskInput{{
 			ID:          selection.SubTask.ID,
 			Index:       selection.SubTask.Idx,
 			Description: selection.SubTask.Description,
 			Status:      "done",
-			Result:      result.Text,
+			Result:      buildRetryReviewSubTaskResult(selection, result.Text),
 		}},
 	})
 	if err != nil {
@@ -462,6 +490,40 @@ func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *S
 		Improved:  retryScoreForSubTask(review, selection.SubTask.ID) > selection.SubTaskReview.Score,
 		Duration:  time.Since(start),
 	}, nil
+}
+
+func (t *TelegramBot) retryExecutionModel(selection retrySelection) string {
+	if t == nil || t.config == nil {
+		return ""
+	}
+	cfg := HermesDefaults(t.config.Hermes)
+	backendHint := strings.Join([]string{
+		selection.SubTask.Model,
+		selection.Review.ReviewerModel,
+		selection.Task.Backend,
+	}, " ")
+	if selection.PreferCodex || strings.Contains(strings.ToLower(backendHint), "gpt") || strings.Contains(strings.ToLower(backendHint), "codex") {
+		if cfg.CodexHeavyExecutorModel != "" {
+			return cfg.CodexHeavyExecutorModel
+		}
+		if t.config.ModelRouting.CodexSmartModel != "" {
+			return t.config.ModelRouting.CodexSmartModel
+		}
+		if cfg.CodexExecutorModel != "" {
+			return cfg.CodexExecutorModel
+		}
+		return t.config.ModelRouting.CodexDeepModel
+	}
+	if cfg.HeavyExecutorModel != "" {
+		return cfg.HeavyExecutorModel
+	}
+	if t.config.ModelRouting.SmartModel != "" {
+		return t.config.ModelRouting.SmartModel
+	}
+	if cfg.ExecutorModel != "" {
+		return cfg.ExecutorModel
+	}
+	return t.config.ModelRouting.DeepModel
 }
 
 func (t *TelegramBot) retryReviewModel(key chatKey) string {
@@ -489,6 +551,30 @@ func retryScoreForSubTask(review appengine.ReviewResult, subTaskID string) int {
 	return review.OverallScore
 }
 
+func buildRetryReviewAccumulated(selection retrySelection, retryResult string) string {
+	var b strings.Builder
+	b.WriteString("Retry review context.\n\nOriginal reviewer feedback:\n")
+	b.WriteString(strings.TrimSpace(selection.SubTaskReview.Feedback))
+	if len(selection.SubTaskReview.IssueTags) > 0 {
+		b.WriteString("\nIssue tags: ")
+		b.WriteString(strings.Join(selection.SubTaskReview.IssueTags, ", "))
+	}
+	b.WriteString("\n\nPrevious sub-task result:\n")
+	b.WriteString(truncateForRetryPrompt(selection.SubTask.ResultText, 6000))
+	b.WriteString("\n\nRetry result:\n")
+	b.WriteString(strings.TrimSpace(retryResult))
+	return b.String()
+}
+
+func buildRetryReviewSubTaskResult(selection retrySelection, retryResult string) string {
+	var b strings.Builder
+	b.WriteString("Previous result:\n")
+	b.WriteString(truncateForRetryPrompt(selection.SubTask.ResultText, 6000))
+	b.WriteString("\n\nRetry result:\n")
+	b.WriteString(strings.TrimSpace(retryResult))
+	return b.String()
+}
+
 func normalizeRetryReviewForSubTask(review appengine.ReviewResult, subTaskID string) appengine.ReviewResult {
 	if len(review.SubTaskResults) == 0 {
 		review.SubTaskResults = []appengine.ReviewSubTaskResult{{
@@ -499,10 +585,11 @@ func normalizeRetryReviewForSubTask(review appengine.ReviewResult, subTaskID str
 		}}
 		return review
 	}
+	// Always override SubTaskID — the reviewer may return an arbitrary string
+	// that doesn't match the actual sub_tasks.id in the DB, causing FK failures.
+	// In a single-subtask retry we always know the exact target ID.
 	for i := range review.SubTaskResults {
-		if strings.TrimSpace(review.SubTaskResults[i].SubTaskID) == "" || review.SubTaskResults[i].SubTaskID == "direct" {
-			review.SubTaskResults[i].SubTaskID = subTaskID
-		}
+		review.SubTaskResults[i].SubTaskID = subTaskID
 	}
 	return review
 }
@@ -531,4 +618,13 @@ func truncateForTelegram(value string, limit int) string {
 		return value
 	}
 	return strings.TrimSpace(value[:limit]) + "..."
+}
+
+func truncateForRetryPrompt(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if limit <= 0 || len([]rune(value)) <= limit {
+		return value
+	}
+	runes := []rune(value)
+	return strings.TrimSpace(string(runes[:limit])) + "..."
 }
