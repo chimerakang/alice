@@ -18,4 +18,10 @@
 | #10972 | 4:46 PM | 🔵 | Existing Test Coverage for PlanExecuteEngine StrictReviewMode | ~558 |
 | #10971 | " | 🔵 | Existing StrictReviewMode Test Coverage Assessment | ~584 |
 | #10896 | 4:07 PM | 🟣 | StrictReviewMode with opponent backend routing and BLOCK-retry flow | ~512 |
+
+### Apr 28, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #11692 | 10:35 PM | 🔵 | Root cause: codexPlanGuard conflicts with review JSON output requirement | ~429 |
 </claude-mem-context>

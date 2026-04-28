@@ -606,6 +606,14 @@ func ParseReviewResult(text string) (ReviewResult, error) {
 	}
 	if m := reviewJSONBlockRe.FindStringSubmatch(raw); len(m) > 1 {
 		raw = strings.TrimSpace(m[1])
+	} else if !strings.HasPrefix(raw, "{") {
+		// Model returned prose before the JSON object — extract the first {...} block.
+		if start := strings.Index(raw, "{"); start >= 0 {
+			raw = raw[start:]
+			if end := strings.LastIndex(raw, "}"); end >= 0 {
+				raw = raw[:end+1]
+			}
+		}
 	}
 	var result ReviewResult
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {

@@ -321,12 +321,12 @@ func (c *CodexClient) runCodexStream(
 }
 
 // codexPlanGuard is prepended to CallPlan prompts so codex (which has no --max-turns)
-// behaves as a planning-only invocation: think and propose, do not execute shell commands.
-const codexPlanGuard = `[PLAN MODE — DO NOT EXECUTE]
-You are in planning mode. Do NOT run any shell commands or modify any files.
-Reply with a written plan only. Tool calls are forbidden in this turn.
+// behaves as a read-only invocation: no shell commands, no file writes.
+// Output format is NOT specified here — callers (planner, reviewer) provide their own format instructions.
+const codexPlanGuard = `[READ-ONLY MODE — DO NOT EXECUTE]
+You are in a read-only invocation. Do NOT run any shell commands or modify any files.
+Tool calls are forbidden in this turn. Follow the output format instructions below exactly.
 
-User request:
 `
 
 // Call implements Client — non-streaming single invocation.

@@ -7,8 +7,6 @@
 |----|------|---|-------|------|
 | #3477 | 10:47 PM | 🔵 | Session Cleared on Model Change Causing Context Loss | ~373 |
 | #3474 | " | 🔵 | Agent Instances Created Once Per ChatKey and Persist Across Model Changes | ~443 |
-| #3472 | " | 🔵 | Model Switching Commands Only Update Preferences Without Agent Recreation | ~396 |
-| #3470 | " | 🔵 | Telegram Bot Architecture Uses Per-Chat Agent Instances | ~408 |
 
 ### Feb 23, 2026
 
@@ -93,6 +91,8 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #11692 | 10:35 PM | 🔵 | Root cause: codexPlanGuard conflicts with review JSON output requirement | ~429 |
+| #11691 | 10:34 PM | 🔵 | Diagnosed `/retry` command JSON parsing failure with GPT models | ~335 |
 | #11523 | 6:57 PM | 🔵 | Investigated topic-to-project mapping mechanism | ~257 |
 | #11521 | " | 🔵 | Investigated existing /tasks command implementation | ~242 |
 </claude-mem-context>
