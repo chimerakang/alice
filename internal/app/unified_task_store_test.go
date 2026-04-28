@@ -220,7 +220,7 @@ func TestStoreReviewPersistsUnifiedReviewGraph(t *testing.T) {
 		IssueTags:     []appengine.ReviewTag{appengine.ReviewTagMissingContext},
 		SubTaskResults: []appengine.ReviewSubTaskResult{
 			{
-				SubTaskID: "task-review-store:s1",
+				SubTaskID: "s1",
 				Score:     72,
 				Feedback:  "more context needed",
 				IssueTags: []appengine.ReviewTag{appengine.ReviewTagMissingValidation},

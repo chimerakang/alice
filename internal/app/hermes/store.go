@@ -371,7 +371,7 @@ func (s *SQLiteTaskStore) AppendArtifact(taskID string, artifact Artifact) error
 		if err != nil {
 			return err
 		}
-		if err := s.insertUnifiedArtifact(artifact); err != nil {
+		if err := s.insertUnifiedArtifact(taskID, artifact); err != nil {
 			return err
 		}
 		s.broadcastUnifiedTask(taskID)
@@ -748,11 +748,20 @@ func (s *SQLiteTaskStore) replaceUnifiedSubTasks(taskID string, plan []SubTask) 
 	return nil
 }
 
-func (s *SQLiteTaskStore) upsertUnifiedSubTask(taskID string, idx int, subTask SubTask) error {
-	subTaskID := subTask.ID
-	if subTaskID == "" {
-		subTaskID = fmt.Sprintf("%s:%d", taskID, idx+1)
+// UnifiedSubTaskID returns the globally unique sub_tasks.id for a given task.
+// Planner-supplied SubTask.ID values (e.g. "s1") are not unique across tasks,
+// so the storage layer namespaces them under the parent task ID. Callers that
+// need to reference these rows from review_subtask_results must use the same
+// composite form.
+func UnifiedSubTaskID(taskID string, idx int, plannerID string) string {
+	if strings.TrimSpace(plannerID) == "" {
+		return fmt.Sprintf("%s:%d", taskID, idx+1)
 	}
+	return fmt.Sprintf("%s:%s", taskID, plannerID)
+}
+
+func (s *SQLiteTaskStore) upsertUnifiedSubTask(taskID string, idx int, subTask SubTask) error {
+	subTaskID := UnifiedSubTaskID(taskID, idx, subTask.ID)
 	now := time.Now()
 	var endedAt *time.Time
 	if isTerminalSubTask(subTask.Status) {
@@ -777,11 +786,11 @@ func (s *SQLiteTaskStore) upsertUnifiedSubTask(taskID string, idx int, subTask S
 	return err
 }
 
-func (s *SQLiteTaskStore) insertUnifiedArtifact(artifact Artifact) error {
-	subTaskID := artifact.SubTaskID
-	if subTaskID == "" {
+func (s *SQLiteTaskStore) insertUnifiedArtifact(taskID string, artifact Artifact) error {
+	if strings.TrimSpace(artifact.SubTaskID) == "" {
 		return nil
 	}
+	subTaskID := UnifiedSubTaskID(taskID, 0, artifact.SubTaskID)
 	_, err := s.db.Exec(`
 		INSERT INTO artifacts (sub_task_id, path, hash)
 		VALUES (?, ?, ?)`,

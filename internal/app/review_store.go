@@ -9,6 +9,7 @@ import (
 	"time"
 
 	appengine "claude-tg-agent/internal/app/engine"
+	"claude-tg-agent/internal/app/hermes"
 )
 
 // StoreReview persists a completed Hermes review into the unified task schema.
@@ -50,10 +51,10 @@ func (s *SQLiteStorage) StoreReviewWithSource(ctx context.Context, taskID string
 	if err != nil {
 		return err
 	}
-	for _, subTask := range review.SubTaskResults {
+	for idx, subTask := range review.SubTaskResults {
 		if err := insertUnifiedReviewSubTaskResultTx(tx, UnifiedReviewSubTaskResult{
 			ReviewID:  reviewID,
-			SubTaskID: subTask.SubTaskID,
+			SubTaskID: hermes.UnifiedSubTaskID(taskID, idx, subTask.SubTaskID),
 			Score:     subTask.Score,
 			Feedback:  strings.TrimSpace(subTask.Feedback),
 			IssueTags: reviewTagsToStrings(subTask.IssueTags),

@@ -48,7 +48,7 @@ func TestSQLiteTaskStoreMirrorsPlanToUnifiedTables(t *testing.T) {
 	var tokens int
 	if err := store.db.QueryRow(`
 		SELECT status, result_text, input_tokens
-		FROM sub_tasks WHERE id = ?`, "s1").Scan(&subStatus, &result, &tokens); err != nil {
+		FROM sub_tasks WHERE id = ?`, UnifiedSubTaskID(task.ID, 0, "s1")).Scan(&subStatus, &result, &tokens); err != nil {
 		t.Fatalf("query unified subtask: %v", err)
 	}
 	if subStatus != string(SubTaskDone) || result != "first done" || tokens != 17 {
@@ -57,7 +57,7 @@ func TestSQLiteTaskStoreMirrorsPlanToUnifiedTables(t *testing.T) {
 
 	var artifactPath, artifactHash string
 	if err := store.db.QueryRow(`
-		SELECT path, hash FROM artifacts WHERE sub_task_id = ?`, "s1").
+		SELECT path, hash FROM artifacts WHERE sub_task_id = ?`, UnifiedSubTaskID(task.ID, 0, "s1")).
 		Scan(&artifactPath, &artifactHash); err != nil {
 		t.Fatalf("query unified artifact: %v", err)
 	}
