@@ -202,6 +202,13 @@ func (e *PlanExecuteEngine) Run(ctx context.Context, goal string, cc *ChatContex
 
 func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *ChatContext) {
 	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[plan_execute] task %s panic: %v", taskID, r)
+			_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+		} else if state, err := e.store.GetTask(taskID); err == nil && !state.IsTerminal() {
+			log.Printf("[plan_execute] task %s exited before terminal status; marking failed (status=%s current_idx=%d)", taskID, state.Status, state.CurrentIdx)
+			_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+		}
 		e.mu.Lock()
 		e.cancelFn = nil
 		e.taskID = ""
@@ -317,6 +324,9 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 				tasks[idx].Result = finalText
 				e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
 				e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
+			}
+			if err := e.store.AdvanceTask(taskID, idx+1, hermes.TaskStatusExecuting); err != nil {
+				log.Printf("[plan_execute] AdvanceTask idx=%d: %v", idx, err)
 			}
 		}
 
@@ -608,6 +618,9 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 	metrics := subTaskExecMetrics{}
 	for {
 		if attempts == 0 {
+			if err := e.store.MarkSubTaskStarted(taskID, idx); err != nil {
+				log.Printf("[plan_execute] MarkSubTaskStarted idx=%d: %v", idx, err)
+			}
 			e.reporter.OnSubTaskStart(idx, len(tasks), subTask)
 		} else {
 			e.reporter.OnRetry(idx, attempts, totalAttempts, reviewFeedback)

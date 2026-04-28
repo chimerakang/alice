@@ -28,6 +28,11 @@ type TaskStateStore interface {
 	// UpdateSubTask writes the result and status of a single sub-task back to the store.
 	UpdateSubTask(taskID string, idx int, status SubTaskStatus, result string, tokensUsed int) error
 
+	// MarkSubTaskStarted records that execution for a sub-task has been dispatched.
+	// It must not increment Attempts; attempts are counted when a run produces a
+	// result or enters a strict retry.
+	MarkSubTaskStarted(taskID string, idx int) error
+
 	// AdvanceTask increments CurrentIdx and sets the task status.
 	AdvanceTask(taskID string, nextIdx int, status TaskStatus) error
 
@@ -333,6 +338,41 @@ func (s *SQLiteTaskStore) UpdateSubTask(taskID string, idx int, status SubTaskSt
 		_, err = s.db.Exec(
 			`UPDATE hermes_task_states SET plan_json = ?, updated_at = ? WHERE id = ?`,
 			string(updated), time.Now().Format(time.RFC3339), taskID,
+		)
+		if err != nil {
+			return err
+		}
+		if err := s.upsertUnifiedSubTask(taskID, idx, plan[idx]); err != nil {
+			return err
+		}
+		s.broadcastUnifiedTask(taskID)
+		return nil
+	})
+}
+
+func (s *SQLiteTaskStore) MarkSubTaskStarted(taskID string, idx int) error {
+	return s.execWithRetry(func() error {
+		var planJSON string
+		if err := s.db.QueryRow(`SELECT plan_json FROM hermes_task_states WHERE id = ?`, taskID).
+			Scan(&planJSON); err != nil {
+			return err
+		}
+		var plan []SubTask
+		if err := json.Unmarshal([]byte(planJSON), &plan); err != nil {
+			return err
+		}
+		if idx < 0 || idx >= len(plan) {
+			return fmt.Errorf("sub-task index %d out of range", idx)
+		}
+		plan[idx].Status = SubTaskInProgress
+
+		updated, err := json.Marshal(plan)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec(
+			`UPDATE hermes_task_states SET current_idx = ?, plan_json = ?, updated_at = ? WHERE id = ?`,
+			idx, string(updated), time.Now().Format(time.RFC3339), taskID,
 		)
 		if err != nil {
 			return err

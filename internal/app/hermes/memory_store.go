@@ -81,6 +81,17 @@ func (s *MemoryTaskStore) UpdateSubTask(taskID string, idx int, status SubTaskSt
 	})
 }
 
+func (s *MemoryTaskStore) MarkSubTaskStarted(taskID string, idx int) error {
+	return s.updateErr(taskID, func(task *TaskState) error {
+		if idx < 0 || idx >= len(task.Plan) {
+			return fmt.Errorf("sub-task index %d out of range", idx)
+		}
+		task.CurrentIdx = idx
+		task.Plan[idx].Status = SubTaskInProgress
+		return nil
+	})
+}
+
 func (s *MemoryTaskStore) AdvanceTask(taskID string, nextIdx int, status TaskStatus) error {
 	return s.update(taskID, func(task *TaskState) {
 		task.CurrentIdx = nextIdx

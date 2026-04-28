@@ -354,6 +354,7 @@ type Agent struct {
 	planModel            string                   // OpusPlan: model for planning phase (e.g. Opus)
 	executeModel         string                   // OpusPlan: model for execution phase (e.g. Sonnet)
 	cliTimeoutMinutes    int                      // CLI 執行逾時（分鐘），0=無限制
+	runMu                sync.Mutex               // serializes CLI runs for shared agent/session state
 	// Abort control
 	cancelFunc context.CancelFunc // 取消正在執行的 CLI 子程序
 	cancelMu   sync.Mutex         // 保護 cancelFunc 的併發存取
@@ -487,6 +488,9 @@ func (a *Agent) current() *projectState {
 // Run sends a message to Claude Code CLI and returns the response text.
 // onUpdate(msg, silent): silent=false for initial status, silent=true for tool updates.
 func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, error) {
+	a.runMu.Lock()
+	defer a.runMu.Unlock()
+
 	startTime := time.Now()
 
 	// 設定 context with timeout (可透過 config 調整，預設 15 分鐘，0=無限制)
@@ -756,6 +760,9 @@ func (a *Agent) callStreamWithResumeBridge(
 // Phase 1: Call plan model (Opus) with --max-turns 1 to produce a plan
 // Phase 2: Call execute model (Sonnet) with the plan as context to execute
 func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (string, error) {
+	a.runMu.Lock()
+	defer a.runMu.Unlock()
+
 	startTime := time.Now()
 
 	var ctx context.Context
