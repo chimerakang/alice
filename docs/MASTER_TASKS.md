@@ -1,7 +1,7 @@
-# Alice - Master Tasks
+# Master Tasks
 
 > Auto-generated from GitHub Issues.
-> Last updated: 2026-04-27
+> Last updated: 2026-04-28
 > Run `/task-sync` to regenerate.
 
 ## Status Legend
@@ -25,7 +25,7 @@
 | P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 100% (1/1) | ✅ |
 | P11 - User Experience | 指令健全性和用戶體驗改善 | 100% (1/1) | ✅ |
 | P12 - Dashboard Analytics | Claude Code Hooks UI 增強：統計圖表 + 用戶指南 | 100% (1/1) | ✅ |
-| P13 - Future Enhancements | 未來功能增強與優化 | 54% (18/33) | 🔄 |
+| P13 - Future Enhancements | 未來功能增強與優化 | 52% (18/34) | 🔄 |
 | P14 - Commercialization Strategy | Alice AI Agent 商業化發展策略與產品定位 | 0% (0/6) | 🔄 |
 | P15 - Parallel Subagents & Orchestration | Implementation of parallel subagent execution with isolated contexts, tool-level parallelism, and orchestration | 50% (6/12) | 🔄 |
 | P16 - Multi-Backend Execution | Support for multiple execution backends: Local, Docker, SSH | 0% (0/1) | 🔄 |
@@ -91,7 +91,7 @@
 | | — 用戶可依照文件快速設置 Claude Code Hooks | | ✅ |
 | | — 設置指南包含完整的故障排除說明 | | ✅ |
 
-## P13 - Future Enhancements (🔄 54%)
+## P13 - Future Enhancements (🔄 52%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
@@ -647,6 +647,16 @@
 | | — 手動切換模型時，使用者收到「上下文將重置」提示 | | ☐ |
 | | — Session 閒置 > 閒置超時後，下一則訊息重新進入 triage | | ☐ |
 | | — Follow-up 測試案例（上述事故流程）可重現修復結果 | | ☐ |
+| P13.34 | **整合 OpenAI Image Generation (gpt-image-2 / DALL-E) 為遊戲開發鋪路** | [#129](https://github.com/chimerakang/alice/issues/129) | 🔄 |
+| | — 決定方案 A vs B（或混合） | | ☐ |
+| | — 新增 config schema：`multimedia.image_generation_provider`、`multimedia.image_model`（預設 `gpt-image-2`，fallback `dall-e-3`）、預設尺寸、單次/每日配額 | | ☐ |
+| | — 實作 `generateImage(ctx, prompt, opts) → filepath`，存入 `TempDownloadDir` | | ☐ |
+| | — 實作 image edit/variation（image-to-image）走 `/v1/images/edits` | | ☐ |
+| | — 與 `sendMediaFile()` 整合送回 Telegram | | ☐ |
+| | — 加 i18n keys（觸發/失敗/配額耗盡訊息，zh-TW + en）— 遵循 skill `alice-i18n` | | ☐ |
+| | — 安全限制：prompt 長度、頻率限制（per chat / per user）、**費用告警**（output $30/1M tokens） | | ☐ |
+| | — 加入 quality stats / cost tracking（沿用 [`internal/app/quality_stats.go`](internal/app/quality_stats.go) 模式） | | ☐ |
+| | — 文件：`docs/DEPLOYMENT.md` 增加 image gen 開關說明 | | ☐ |
 
 ## P14 - Commercialization Strategy (🔄 0%)
 
@@ -1220,6 +1230,7 @@
 | | — 終端機顯示 CLI 即時輸出 | | ✅ |
 | | — 支援多 agent 輸出切換 | | ✅ |
 | | — 保持 OLED 黑化風格一致性 | | ✅ |
+| P2.7 | **🚀 Feature: Complete Dashboard, Monitoring & Checkpoint System** | [#14](https://github.com/chimerakang/alice/pull/14) | ✅ |
 
 ## P3 - Data Layer (✅ 100%)
 
@@ -1554,6 +1565,7 @@
 | [#89](https://github.com/chimerakang/alice/issues/89) | feat: Implement cron scheduler for automated tasks | P13 - Future Enhancements | 🔄 |
 | [#90](https://github.com/chimerakang/alice/issues/90) | bug: CallStream 丟棄 CLI exit error 時的 streaming 結果導致「執行錯誤」 | P13 - Future Enhancements | 🔄 |
 | [#93](https://github.com/chimerakang/alice/issues/93) | Model routing 造成 session context 丟失：改採 Sticky + Follow-up detection | P13 - Future Enhancements | 🔄 |
+| [#129](https://github.com/chimerakang/alice/issues/129) | 整合 OpenAI Image Generation (gpt-image-2 / DALL-E) 為遊戲開發鋪路 | P13 - Future Enhancements | 🔄 |
 | [#49](https://github.com/chimerakang/alice/issues/49) | Alice 商業化：單機版隱私優先定位策略 | P14 - Commercialization Strategy | 🔄 |
 | [#51](https://github.com/chimerakang/alice/issues/51) | 多人版架構設計：從單機到團隊協作 | P14 - Commercialization Strategy | 🔄 |
 | [#53](https://github.com/chimerakang/alice/issues/53) | 競品分析深化：Entire Checkpoints vs Alice 差異化策略 | P14 - Commercialization Strategy | 🔄 |
@@ -1579,6 +1591,7 @@
 | [#4](https://github.com/chimerakang/alice/issues/4) | 📊 Performance Monitoring & Analytics | P2 - Monitoring | ✅ |
 | [#5](https://github.com/chimerakang/alice/issues/5) | 🔐 Security & Privacy Enhancements | P2 - Monitoring | ✅ |
 | [#12](https://github.com/chimerakang/alice/issues/12) | 🖥️ Dashboard Enhancement: Timeline & Terminal | P2 - Monitoring | ✅ |
+| [#14](https://github.com/chimerakang/alice/pull/14) | 🚀 Feature: Complete Dashboard, Monitoring & Checkpoint System | P2 - Monitoring | ✅ |
 | [#6](https://github.com/chimerakang/alice/issues/6) | 🚀 Deployment & DevOps Improvements | P3 - Data Layer | ✅ |
 | [#7](https://github.com/chimerakang/alice/issues/7) | 💾 Data Persistence Layer (SQLite) | P3 - Data Layer | ✅ |
 | [#8](https://github.com/chimerakang/alice/issues/8) | 🔌 WebSocket Real-time Dashboard Connection | P3 - Data Layer | ✅ |
@@ -1611,9 +1624,9 @@
 
 ## Summary
 
-**Total Issues:** 89
+**Total Issues:** 90
 **Completed:** 61 ✅
-**In Progress:** 28 🔄
+**In Progress:** 29 🔄
 
-**Last sync:** 2026-04-26 17:42 UTC
+**Last sync:** 2026-04-28 11:57 UTC
 

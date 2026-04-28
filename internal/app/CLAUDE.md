@@ -9,17 +9,6 @@
 | #3474 | " | 🔵 | Agent Instances Created Once Per ChatKey and Persist Across Model Changes | ~443 |
 | #3472 | " | 🔵 | Model Switching Commands Only Update Preferences Without Agent Recreation | ~396 |
 | #3470 | " | 🔵 | Telegram Bot Architecture Uses Per-Chat Agent Instances | ~408 |
-| #3446 | 9:36 PM | 🔵 | CLI Response Includes Total Cost from Claude Code, Not Calculated Locally | ~446 |
-| #3436 | 9:34 PM | 🔵 | Three-Tier Model Routing System Determines Haiku Usage | ~400 |
-| #3435 | 9:33 PM | 🔵 | Database Schema Tracks Model-Specific Cost Data | ~379 |
-| #3434 | " | 🔵 | Haiku Token Cost Configuration Located | ~300 |
-| #3140 | 2:40 AM | 🔵 | Performance Monitoring API Call Recording Infrastructure | ~440 |
-| #3139 | " | 🔵 | Keyword-Based Task Routing Implementation in AgentCoordinator | ~575 |
-| #3138 | " | 🔵 | Task Routing Methods in AgentCoordinator | ~458 |
-| #3137 | 2:39 AM | 🔵 | Multi-Agent Specialization System with Agent Type Enumeration | ~509 |
-| #3136 | " | 🔵 | Comprehensive Model Selection Architecture Analysis Completed | ~656 |
-| #3134 | 2:38 AM | 🔵 | NewAgent Constructor Signature with CLIClient Dependency | ~422 |
-| #3133 | " | 🔵 | Single CLIClient Instantiation in Main Application Initialization | ~471 |
 
 ### Feb 23, 2026
 
@@ -86,8 +75,24 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #10998 | 4:48 PM | 🔵 | Review Persistence Layer Missing block_count and auto_fixed_count Fields | ~701 |
+| #10995 | " | 🔵 | UnifiedReviewResult Struct Definition Confirmed Without BLOCK Metrics | ~576 |
+| #10994 | 4:47 PM | 🔵 | PlannerRulesWeeklyReport Infrastructure Exists Without StrictReviewMode Metrics | ~709 |
+| #10988 | " | 🔵 | Review Results Schema Missing BLOCK Metrics Fields | ~556 |
+| #10977 | 4:46 PM | 🔵 | StrictReviewMode Activation Logic Implemented, Metrics Testing Gaps Identified | ~584 |
+| #10976 | " | 🔵 | StrictReviewMode Activation Already Implemented, Storage Metrics Missing | ~535 |
+| #10912 | 4:25 PM | 🟣 | StrictReviewMode BLOCK metrics monitoring and weekly reporting | ~403 |
+| #10896 | 4:07 PM | 🟣 | StrictReviewMode with opponent backend routing and BLOCK-retry flow | ~512 |
+| #10894 | 4:06 PM | 🟣 | StrictReviewMode activation surface testing implemented | ~287 |
 | #10855 | 3:33 PM | 🔵 | Comprehensive OpenAI Integration Research via Explore Agent | ~556 |
 | #10854 | " | 🔵 | Complete Architecture Understanding for DALL-E Integration | ~559 |
 | #10853 | 3:32 PM | 🔵 | OpenAI API Integration Pattern in Telegram Bot | ~497 |
 | #10852 | " | 🔵 | Existing OpenAI Integration in Alice Project | ~392 |
+
+### Apr 28, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #11523 | 6:57 PM | 🔵 | Investigated topic-to-project mapping mechanism | ~257 |
+| #11521 | " | 🔵 | Investigated existing /tasks command implementation | ~242 |
 </claude-mem-context>

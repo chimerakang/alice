@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -394,6 +396,260 @@ func TestHandleHermesStatsCommandWeekQueuesWeeklyReviewReport(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected weekly report message")
+	}
+}
+
+func TestHandleTasksRendersGitHubIssuesWithKeyboard(t *testing.T) {
+	key := chatKey{chatID: 88, threadID: 3}
+	oldList := tasksGitHubIssueListFunc
+	oldRepo := tasksGitHubRepoURLFunc
+	tasksGitHubIssueListFunc = func(ctx context.Context, projectDir, state string, limit int) ([]tasksGitHubIssue, error) {
+		if projectDir != "/tmp/alice-project" {
+			t.Fatalf("unexpected projectDir: %s", projectDir)
+		}
+		if state != "open" {
+			t.Fatalf("unexpected state: %s", state)
+		}
+		if limit != 20 {
+			t.Fatalf("unexpected limit: %d", limit)
+		}
+		return []tasksGitHubIssue{
+			{
+				Number:    12,
+				Title:     "Fix parser regression",
+				Labels:    []string{"bug", "p1"},
+				Milestone: "Sprint 1",
+			},
+			{
+				Number: 13,
+				Title:  "Add topic filter",
+				Labels: []string{"enhancement"},
+			},
+		}, nil
+	}
+	tasksGitHubRepoURLFunc = func(projectDir string) (string, error) {
+		return "https://github.com/acme/alice", nil
+	}
+	defer func() {
+		tasksGitHubIssueListFunc = oldList
+		tasksGitHubRepoURLFunc = oldRepo
+	}()
+
+	bot := &TelegramBot{
+		agents: map[chatKey]*Agent{
+			key: NewAgent(&mockClient{}, "/tmp/alice-project", key.chatID, key.threadID),
+		},
+		config:          &Config{DefaultProjectDir: "/tmp/alice-project"},
+		i18n:            newTestI18nManager(t),
+		messageQueue:    make(chan *TelegramMessage, 4),
+		langPreferences: map[int64]string{},
+	}
+	bot.setChatlanguage(key.chatID, "zh-TW")
+
+	bot.handleTasks(key)
+
+	select {
+	case msg := <-bot.messageQueue:
+		text, _ := msg.Params["text"].(string)
+		if !strings.Contains(text, "Alice 待辦工作清單") {
+			t.Fatalf("unexpected title:\n%s", text)
+		}
+		if !strings.Contains(text, "顯示開放 Issues") {
+			t.Fatalf("unexpected state line:\n%s", text)
+		}
+		if !strings.Contains(text, "Milestone: Sprint 1") || !strings.Contains(text, "#12 Fix parser regression") {
+			t.Fatalf("missing milestone group:\n%s", text)
+		}
+		if !strings.Contains(text, "標籤: bug, p1") || !strings.Contains(text, "未指定 Milestone") {
+			t.Fatalf("missing issue details:\n%s", text)
+		}
+
+		markup, ok := msg.Params["reply_markup"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("reply_markup missing or wrong type: %#v", msg.Params["reply_markup"])
+		}
+		rows, ok := markup["inline_keyboard"].([][]map[string]interface{})
+		if !ok {
+			t.Fatalf("inline_keyboard missing or wrong type: %#v", markup["inline_keyboard"])
+		}
+		if len(rows) != 2 {
+			t.Fatalf("expected 2 keyboard rows, got %d", len(rows))
+		}
+		if rows[0][0]["text"] != "🔄 重新整理" || rows[0][1]["text"] != "📋 已關閉" {
+			t.Fatalf("unexpected first row buttons: %#v", rows[0])
+		}
+		if rows[1][0]["url"] != "https://github.com/acme/alice/issues" {
+			t.Fatalf("unexpected GitHub URL button: %#v", rows[1][0])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for /tasks response")
+	}
+}
+
+func TestHandleTasksRendersEmptyIssueListMessage(t *testing.T) {
+	key := chatKey{chatID: 89, threadID: 3}
+	oldList := tasksGitHubIssueListFunc
+	oldRepo := tasksGitHubRepoURLFunc
+	tasksGitHubIssueListFunc = func(ctx context.Context, projectDir, state string, limit int) ([]tasksGitHubIssue, error) {
+		if state != "open" {
+			t.Fatalf("unexpected state: %s", state)
+		}
+		return []tasksGitHubIssue{}, nil
+	}
+	tasksGitHubRepoURLFunc = func(projectDir string) (string, error) {
+		return "https://github.com/acme/alice", nil
+	}
+	defer func() {
+		tasksGitHubIssueListFunc = oldList
+		tasksGitHubRepoURLFunc = oldRepo
+	}()
+
+	bot := &TelegramBot{
+		agents: map[chatKey]*Agent{
+			key: NewAgent(&mockClient{}, "/tmp/alice-project", key.chatID, key.threadID),
+		},
+		config:          &Config{DefaultProjectDir: "/tmp/alice-project"},
+		i18n:            newTestI18nManager(t),
+		messageQueue:    make(chan *TelegramMessage, 4),
+		langPreferences: map[int64]string{},
+	}
+	bot.setChatlanguage(key.chatID, "zh-TW")
+
+	bot.handleTasks(key)
+
+	select {
+	case msg := <-bot.messageQueue:
+		text, _ := msg.Params["text"].(string)
+		if !strings.Contains(text, "目前沒有符合條件的 GitHub Issues") {
+			t.Fatalf("expected empty-issue message, got:\n%s", text)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for empty issue response")
+	}
+}
+
+func TestHandleTasksGeneralTopicShowsNoRepoMessage(t *testing.T) {
+	key := chatKey{chatID: 90, threadID: 0}
+	bot := &TelegramBot{
+		allowIDs:        map[int64]bool{123: true},
+		config:          &Config{DefaultProjectDir: "/tmp/alice-project"},
+		messageQueue:    make(chan *TelegramMessage, 2),
+		langPreferences: map[int64]string{},
+	}
+	bot.setChatlanguage(key.chatID, "zh-TW")
+
+	bot.handleMessage(key, 123, "/tasks", "", nil, nil, nil, "", 1)
+
+	select {
+	case msg := <-bot.messageQueue:
+		text, _ := msg.Params["text"].(string)
+		if !strings.Contains(text, "具體 project topic") {
+			t.Fatalf("expected general-topic guidance, got:\n%s", text)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for general topic response")
+	}
+}
+
+func TestHandleTasksUnboundTopicShowsNoRepoMessage(t *testing.T) {
+	key := chatKey{chatID: 91, threadID: 4}
+	s := newTestSQLiteStorage(t)
+	oldStorage := globalStorage
+	globalStorage = s
+	defer func() { globalStorage = oldStorage }()
+
+	bot := &TelegramBot{
+		agents:          map[chatKey]*Agent{key: NewAgent(&mockClient{}, "/tmp/alice-project", key.chatID, key.threadID)},
+		config:          &Config{DefaultProjectDir: "/tmp/alice-project"},
+		messageQueue:    make(chan *TelegramMessage, 2),
+		langPreferences: map[int64]string{},
+	}
+	bot.setChatlanguage(key.chatID, "zh-TW")
+
+	bot.handleTasks(key)
+
+	select {
+	case msg := <-bot.messageQueue:
+		text, _ := msg.Params["text"].(string)
+		if !strings.Contains(text, "具體 project topic") {
+			t.Fatalf("expected unbound-topic guidance, got:\n%s", text)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for unbound topic response")
+	}
+}
+
+func TestHandleTasksFallsBackToLegacyPhaseOverview(t *testing.T) {
+	key := chatKey{chatID: 91, threadID: 4}
+	projectDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectDir, "docs"), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	content := "preamble\n\n## Phase Overview\nlegacy content\n\n## Next\nmore"
+	if err := os.WriteFile(filepath.Join(projectDir, "docs", "MASTER_TASKS.md"), []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	oldRepo := tasksGitHubRepoURLFunc
+	tasksGitHubRepoURLFunc = func(projectDir string) (string, error) {
+		return "", errTasksNoGitHubRepo
+	}
+	defer func() { tasksGitHubRepoURLFunc = oldRepo }()
+
+	bot := &TelegramBot{
+		agents: map[chatKey]*Agent{
+			key: NewAgent(&mockClient{}, projectDir, key.chatID, key.threadID),
+		},
+		config:       &Config{DefaultProjectDir: projectDir},
+		messageQueue: make(chan *TelegramMessage, 2),
+	}
+
+	bot.handleTasks(key)
+
+	select {
+	case msg := <-bot.messageQueue:
+		text, _ := msg.Params["text"].(string)
+		if !strings.Contains(text, "Phase Overview") || !strings.Contains(text, "legacy content") {
+			t.Fatalf("expected legacy fallback text, got:\n%s", text)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for legacy fallback")
+	}
+}
+
+func TestHandleTasksAuthFailurePromptsLogin(t *testing.T) {
+	key := chatKey{chatID: 92, threadID: 5}
+	oldList := tasksGitHubIssueListFunc
+	oldRepo := tasksGitHubRepoURLFunc
+	tasksGitHubRepoURLFunc = func(projectDir string) (string, error) {
+		return "https://github.com/acme/alice", nil
+	}
+	tasksGitHubIssueListFunc = func(ctx context.Context, projectDir, state string, limit int) ([]tasksGitHubIssue, error) {
+		return nil, errTasksGitHubAuthRequired
+	}
+	defer func() {
+		tasksGitHubIssueListFunc = oldList
+		tasksGitHubRepoURLFunc = oldRepo
+	}()
+
+	bot := &TelegramBot{
+		agents: map[chatKey]*Agent{
+			key: NewAgent(&mockClient{}, "/tmp/alice-project", key.chatID, key.threadID),
+		},
+		config:       &Config{DefaultProjectDir: "/tmp/alice-project"},
+		messageQueue: make(chan *TelegramMessage, 2),
+	}
+
+	bot.handleTasks(key)
+
+	select {
+	case msg := <-bot.messageQueue:
+		text, _ := msg.Params["text"].(string)
+		if !strings.Contains(text, "gh auth login") {
+			t.Fatalf("expected auth prompt, got:\n%s", text)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for auth prompt")
 	}
 }
 

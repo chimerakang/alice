@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -157,6 +158,16 @@ const (
 )
 
 var hermesFetchIssue = hermes.FetchIssue
+
+var (
+	tasksGitHubIssueListFunc = listGitHubIssuesForTasks
+	tasksGitHubRepoURLFunc   = resolveGitHubRepoURL
+)
+
+var (
+	errTasksGitHubAuthRequired = errors.New("tasks github auth required")
+	errTasksNoGitHubRepo       = errors.New("tasks github repo unavailable")
+)
 
 // hermesCoord bundles the coordinator and its enabled flag for a single chat.
 type hermesCoord struct {
@@ -693,6 +704,10 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		// Reject @mention commands in forum (Telegram doesn't provide threadID)
 		// Force users to type commands directly in the topic they want to interact with
 		if key.threadID == 0 {
+			if strings.HasPrefix(text, "/tasks") {
+				t.send(key, tasksNoRepoMessage(t.getChatLanguage(key.chatID)))
+				return
+			}
 			log.Printf("[telegram] @mention command rejected (threadID=0): '%s' from user %d", text, userID)
 
 			// Send helpful instruction in General topic
@@ -3348,6 +3363,28 @@ func (t *TelegramBot) handleCallbackQuery(key chatKey, userID int64, queryID, da
 		t.handleCheckpointsList(key)
 		checkpointMsg := t.getLocalizedMessage(key.chatID, "callback_checkpoint_updated", nil)
 		t.answerCallbackQuery(queryID, checkpointMsg)
+	case strings.HasPrefix(data, "tasks:"):
+		parts := strings.SplitN(data, ":", 3)
+		state := "open"
+		if len(parts) == 3 {
+			if parts[2] == "open" || parts[2] == "closed" {
+				state = parts[2]
+			}
+		}
+		if err := t.sendTasksMessage(key, t.getAgent(key).ProjectDir(), state); err != nil {
+			if errors.Is(err, errTasksGitHubAuthRequired) {
+				t.answerCallbackQuery(queryID, tasksAuthRequiredMessage(t.getChatLanguage(key.chatID)))
+				return
+			}
+			if errors.Is(err, errTasksNoGitHubRepo) {
+				t.answerCallbackQuery(queryID, tasksNoRepoMessage(t.getChatLanguage(key.chatID)))
+				return
+			}
+			log.Printf("[telegram] tasks callback failed: %v", err)
+			t.answerCallbackQuery(queryID, tasksNoRepoMessage(t.getChatLanguage(key.chatID)))
+			return
+		}
+		t.answerCallbackQuery(queryID, tasksStatusMessage(t.getChatLanguage(key.chatID), state))
 	case strings.HasPrefix(data, "stop_agent_"):
 		// Handle stop button click
 		agent := t.getAgent(key)
@@ -3776,24 +3813,248 @@ func (t *TelegramBot) testPhotoUpload(key chatKey) {
 	log.Printf("[telegram] Test photo uploaded successfully: %s (%s)", photoPath, fileSize)
 }
 
-// handleTasks 處理 /tasks 命令，顯示未完成的工作清單
-func (t *TelegramBot) handleTasks(key chatKey) {
-	agent := t.getAgent(key)
-	projectDir := agent.ProjectDir()
+type tasksGitHubIssue struct {
+	Number    int
+	Title     string
+	Labels    []string
+	Milestone string
+	URL       string
+}
 
+type ghTasksIssueJSON struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+	Milestone *struct {
+		Title string `json:"title"`
+	} `json:"milestone"`
+	URL string `json:"url"`
+}
+
+func taskLocalizedText(lang, zhTW, en string) string {
+	if lang == "zh-TW" {
+		return zhTW
+	}
+	return en
+}
+
+func tasksActionLabels(lang, state string) (refreshText, toggleText, openGitHubText string) {
+	refreshText = taskLocalizedText(lang, "🔄 重新整理", "🔄 Refresh")
+	openGitHubText = taskLocalizedText(lang, "🌐 在 GitHub 開啟", "🌐 Open in GitHub")
+	if state == "closed" {
+		toggleText = taskLocalizedText(lang, "📋 開放", "📋 Open")
+	} else {
+		toggleText = taskLocalizedText(lang, "📋 已關閉", "📋 Closed")
+	}
+	return refreshText, toggleText, openGitHubText
+}
+
+func tasksStatusMessage(lang, state string) string {
+	switch state {
+	case "closed":
+		return taskLocalizedText(lang, "📋 顯示已關閉 Issues", "📋 Showing closed issues")
+	default:
+		return taskLocalizedText(lang, "📋 顯示開放 Issues", "📋 Showing open issues")
+	}
+}
+
+func tasksAuthRequiredMessage(lang string) string {
+	return taskLocalizedText(lang,
+		"❌ 目前無法查詢 GitHub Issues。\n\n請先執行 `gh auth login` 完成認證後再試一次。",
+		"❌ Unable to query GitHub Issues right now.\n\nPlease run `gh auth login` and try again.")
+}
+
+func tasksNoRepoMessage(lang string) string {
+	return taskLocalizedText(lang,
+		"⚠️ 這個 Topic 綁定的專案不是可用的 GitHub repository。\n\n請先在具體 project topic 使用 `/project` 綁定，或檢查 `gh` / git remote 設定。",
+		"⚠️ The project bound to this topic is not a usable GitHub repository.\n\nPlease bind a project with `/project` in a concrete project topic, or check your `gh` / git remote settings.")
+}
+
+func tasksNoMilestoneLabel(lang string) string {
+	return taskLocalizedText(lang, "未指定 Milestone", "No milestone")
+}
+
+func tasksLabelsLabel(lang string) string {
+	return taskLocalizedText(lang, "標籤", "Labels")
+}
+
+func tasksMilestoneLabel(lang string) string {
+	return taskLocalizedText(lang, "Milestone", "Milestone")
+}
+
+func tasksDisplayIssueCount(lang string, count int) string {
+	return taskLocalizedText(lang,
+		fmt.Sprintf("共 %d 筆，僅顯示前 20 筆", count),
+		fmt.Sprintf("%d issues, showing up to 20", count))
+}
+
+func normalizeGitHubRepoURL(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	rawURL = strings.TrimSuffix(rawURL, ".git")
+	if rawURL == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(rawURL, "git@") || strings.HasPrefix(rawURL, "ssh://") {
+		if strings.HasPrefix(rawURL, "ssh://") {
+			u, err := url.Parse(rawURL)
+			if err == nil && u.Host != "" && u.Path != "" {
+				return fmt.Sprintf("https://%s%s", u.Host, strings.TrimSuffix(u.Path, "/"))
+			}
+		}
+
+		atIdx := strings.Index(rawURL, "@")
+		colonIdx := strings.Index(rawURL, ":")
+		if atIdx >= 0 && colonIdx > atIdx {
+			host := rawURL[atIdx+1 : colonIdx]
+			path := strings.TrimPrefix(rawURL[colonIdx+1:], "/")
+			path = strings.Trim(path, "/")
+			if host != "" && path != "" {
+				return fmt.Sprintf("https://%s/%s", host, path)
+			}
+		}
+	}
+
+	if strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://") {
+		u, err := url.Parse(rawURL)
+		if err == nil && u.Host != "" {
+			return fmt.Sprintf("https://%s%s", u.Host, strings.TrimSuffix(u.Path, "/"))
+		}
+	}
+
+	return ""
+}
+
+func repoURLFromIssueURL(issueURL string) string {
+	issueURL = strings.TrimSpace(issueURL)
+	if issueURL == "" {
+		return ""
+	}
+	if idx := strings.Index(issueURL, "/issues/"); idx > 0 {
+		return strings.TrimSuffix(issueURL[:idx], "/")
+	}
+	return ""
+}
+
+func resolveGitHubRepoURL(projectDir string) (string, error) {
+	tryRemote := func(remote string) string {
+		return normalizeGitHubRepoURL(remote)
+	}
+
+	cmd := exec.Command("git", "remote", "get-url", "origin")
+	cmd.Dir = projectDir
+	output, err := cmd.Output()
+	if err == nil {
+		if repoURL := tryRemote(string(output)); repoURL != "" {
+			return repoURL, nil
+		}
+	}
+
+	cmd = exec.Command("git", "remote")
+	cmd.Dir = projectDir
+	output, err = cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("no remotes found: %w", err)
+	}
+
+	remotes := strings.Fields(strings.TrimSpace(string(output)))
+	if len(remotes) == 0 {
+		return "", fmt.Errorf("no remotes configured")
+	}
+
+	for _, remote := range remotes {
+		cmd = exec.Command("git", "remote", "get-url", remote)
+		cmd.Dir = projectDir
+		output, err = cmd.Output()
+		if err != nil {
+			continue
+		}
+		if repoURL := tryRemote(string(output)); repoURL != "" {
+			return repoURL, nil
+		}
+	}
+
+	return "", fmt.Errorf("no GitHub remote found")
+}
+
+func listGitHubIssuesForTasks(ctx context.Context, projectDir, state string, limit int) ([]tasksGitHubIssue, error) {
+	if state != "open" && state != "closed" {
+		return nil, fmt.Errorf("unsupported issue state: %s", state)
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	cmd := exec.CommandContext(ctx, "gh", "issue", "list",
+		"--state", state,
+		"--limit", strconv.Itoa(limit),
+		"--json", "number,title,labels,milestone,url",
+	)
+	cmd.Dir = projectDir
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		lower := strings.ToLower(string(output) + " " + err.Error())
+		switch {
+		case strings.Contains(lower, "authentication required"),
+			strings.Contains(lower, "not logged in"),
+			strings.Contains(lower, "gh auth login"),
+			strings.Contains(lower, "must authenticate"),
+			strings.Contains(lower, "401 unauthorized"),
+			strings.Contains(lower, "authentication failed"):
+			return nil, errTasksGitHubAuthRequired
+		case strings.Contains(lower, "could not resolve to a repository"),
+			strings.Contains(lower, "not a git repository"),
+			strings.Contains(lower, "no remotes configured"),
+			strings.Contains(lower, "no remotes found"),
+			strings.Contains(lower, "no github remote found"):
+			return nil, errTasksNoGitHubRepo
+		default:
+			return nil, fmt.Errorf("gh issue list: %w (%s)", err, strings.TrimSpace(string(output)))
+		}
+	}
+
+	var raw []ghTasksIssueJSON
+	if err := json.Unmarshal(output, &raw); err != nil {
+		return nil, fmt.Errorf("parse issue list JSON: %w", err)
+	}
+
+	issues := make([]tasksGitHubIssue, 0, len(raw))
+	for _, item := range raw {
+		labels := make([]string, 0, len(item.Labels))
+		for _, label := range item.Labels {
+			if label.Name != "" {
+				labels = append(labels, label.Name)
+			}
+		}
+
+		milestone := ""
+		if item.Milestone != nil {
+			milestone = strings.TrimSpace(item.Milestone.Title)
+		}
+
+		issues = append(issues, tasksGitHubIssue{
+			Number:    item.Number,
+			Title:     strings.TrimSpace(item.Title),
+			Labels:    labels,
+			Milestone: milestone,
+			URL:       strings.TrimSpace(item.URL),
+		})
+	}
+
+	return issues, nil
+}
+
+func readLegacyTasksOverview(projectDir string) (string, error) {
 	tasksFile := filepath.Join(projectDir, "docs", "MASTER_TASKS.md")
 	data, err := os.ReadFile(tasksFile)
 	if err != nil {
-		errMsg := t.getLocalizedMessage(key.chatID, "tasks_read_failed", nil)
-		errMsg = strings.ReplaceAll(errMsg, "{error}", err.Error())
-		t.send(key, errMsg)
-		return
+		return "", err
 	}
 
-	// 提取 Phase Overview 部分（簡潔摘要）
 	content := string(data)
 	if idx := strings.Index(content, "## Phase Overview"); idx >= 0 {
-		// 找出 Phase Overview 區塊的結尾（下一個 ## 或 --- 分隔符）
 		rest := content[idx:]
 		endIdx := strings.Index(rest[20:], "\n## ")
 		if endIdx < 0 {
@@ -3804,11 +4065,203 @@ func (t *TelegramBot) handleTasks(key chatKey) {
 		} else {
 			endIdx += 20
 		}
+		return rest[:endIdx], nil
+	}
 
-		extracted := rest[:endIdx]
-		t.send(key, extracted)
-	} else {
-		errMsg := t.getLocalizedMessage(key.chatID, "tasks_format_invalid", nil)
+	return "", fmt.Errorf("MASTER_TASKS.md format is invalid")
+}
+
+func (t *TelegramBot) sendTasksMessage(key chatKey, projectDir, state string) error {
+	lang := t.getChatLanguage(key.chatID)
+
+	repoURL, repoErr := tasksGitHubRepoURLFunc(projectDir)
+	if repoErr != nil {
+		legacy, legacyErr := readLegacyTasksOverview(projectDir)
+		if legacyErr == nil {
+			t.send(key, legacy)
+			return nil
+		}
+		return errTasksNoGitHubRepo
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	issues, err := tasksGitHubIssueListFunc(ctx, projectDir, state, 20)
+	if err != nil {
+		switch {
+		case errors.Is(err, errTasksGitHubAuthRequired):
+			t.send(key, tasksAuthRequiredMessage(lang))
+			return err
+		case errors.Is(err, errTasksNoGitHubRepo):
+			legacy, legacyErr := readLegacyTasksOverview(projectDir)
+			if legacyErr == nil {
+				t.send(key, legacy)
+				return nil
+			}
+			t.send(key, tasksNoRepoMessage(lang))
+			return errTasksNoGitHubRepo
+		default:
+			legacy, legacyErr := readLegacyTasksOverview(projectDir)
+			if legacyErr == nil {
+				t.send(key, legacy)
+				return nil
+			}
+			return err
+		}
+	}
+
+	if repoURL == "" && len(issues) > 0 {
+		repoURL = repoURLFromIssueURL(issues[0].URL)
+	}
+
+	text := t.buildTasksIssueMessage(key.chatID, state, issues)
+	keyboard := t.buildTasksKeyboard(key.chatID, repoURL, state)
+	msg := map[string]interface{}{
+		"chat_id":      strconv.FormatInt(key.chatID, 10),
+		"text":         sanitizeUTF8(text),
+		"reply_markup": keyboard,
+	}
+	if key.threadID != 0 {
+		msg["message_thread_id"] = strconv.Itoa(key.threadID)
+	}
+	t.sendTelegram("sendMessage", msg)
+	return nil
+}
+
+func (t *TelegramBot) resolveTasksProjectDir(key chatKey) (string, error) {
+	if key.threadID == 0 {
+		return "", errTasksNoGitHubRepo
+	}
+
+	if globalStorage != nil {
+		if saved, err := globalStorage.GetTopicSetting(key.chatID, key.threadID); err == nil && saved != "" {
+			return saved, nil
+		}
+		return "", errTasksNoGitHubRepo
+	}
+
+	projectDir := t.getAgent(key).ProjectDir()
+	if projectDir == "" {
+		return "", errTasksNoGitHubRepo
+	}
+	return projectDir, nil
+}
+
+func (t *TelegramBot) buildTasksKeyboard(chatID int64, repoURL, state string) map[string]interface{} {
+	lang := t.getChatLanguage(chatID)
+	refreshText, toggleText, openGitHubText := tasksActionLabels(lang, state)
+	rows := [][]map[string]interface{}{
+		{
+			{
+				"text":          refreshText,
+				"callback_data": fmt.Sprintf("tasks:refresh:%s", state),
+			},
+			{
+				"text": toggleText,
+				"callback_data": fmt.Sprintf("tasks:view:%s", func() string {
+					if state == "closed" {
+						return "open"
+					}
+					return "closed"
+				}()),
+			},
+		},
+	}
+	if repoURL != "" {
+		rows = append(rows, []map[string]interface{}{
+			{
+				"text": openGitHubText,
+				"url":  fmt.Sprintf("%s/issues", strings.TrimSuffix(repoURL, "/")),
+			},
+		})
+	}
+	return map[string]interface{}{"inline_keyboard": rows}
+}
+
+func (t *TelegramBot) buildTasksIssueMessage(chatID int64, state string, issues []tasksGitHubIssue) string {
+	lang := t.getChatLanguage(chatID)
+	title := t.getLocalizedMessage(chatID, "tasks_command_title", nil)
+	if title == "tasks_command_title" {
+		title = taskLocalizedText(lang, "📋 Alice 待辦工作清單", "📋 Alice Task List")
+	}
+	noIssues := t.getLocalizedMessage(chatID, "tasks_empty", nil)
+	if noIssues == "tasks_empty" {
+		noIssues = taskLocalizedText(lang, "目前沒有符合條件的 GitHub Issues", "No GitHub Issues match this filter")
+	}
+
+	var sb strings.Builder
+	sb.WriteString(title)
+	sb.WriteString("\n")
+	sb.WriteString(tasksStatusMessage(lang, state))
+	sb.WriteString("\n")
+	sb.WriteString(tasksDisplayIssueCount(lang, len(issues)))
+
+	if len(issues) == 0 {
+		sb.WriteString("\n\n")
+		sb.WriteString(noIssues)
+		return sb.String()
+	}
+
+	groupOrder := make([]string, 0)
+	grouped := make(map[string][]tasksGitHubIssue)
+	for _, issue := range issues {
+		groupName := issue.Milestone
+		if groupName == "" {
+			groupName = tasksNoMilestoneLabel(lang)
+		}
+		if _, ok := grouped[groupName]; !ok {
+			groupOrder = append(groupOrder, groupName)
+		}
+		grouped[groupName] = append(grouped[groupName], issue)
+	}
+
+	sb.WriteString("\n\n")
+	for idx, milestone := range groupOrder {
+		if idx > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("📌 ")
+		sb.WriteString(tasksMilestoneLabel(lang))
+		sb.WriteString(": ")
+		sb.WriteString(milestone)
+		sb.WriteString("\n")
+		for _, issue := range grouped[milestone] {
+			sb.WriteString(fmt.Sprintf("- #%d %s\n", issue.Number, issue.Title))
+			labelText := taskLocalizedText(lang, "無", "None")
+			if len(issue.Labels) > 0 {
+				labelText = strings.Join(issue.Labels, ", ")
+			}
+			sb.WriteString(fmt.Sprintf("  %s: %s\n", tasksLabelsLabel(lang), labelText))
+		}
+	}
+
+	return strings.TrimSpace(sb.String())
+}
+
+// handleTasks 處理 /tasks 命令，顯示目前 topic 綁定專案的 GitHub Issues
+func (t *TelegramBot) handleTasks(key chatKey) {
+	projectDir, err := t.resolveTasksProjectDir(key)
+	if err != nil {
+		t.send(key, tasksNoRepoMessage(t.getChatLanguage(key.chatID)))
+		return
+	}
+
+	if err := t.sendTasksMessage(key, projectDir, "open"); err != nil {
+		if errors.Is(err, errTasksGitHubAuthRequired) {
+			return
+		}
+		if errors.Is(err, errTasksNoGitHubRepo) {
+			t.send(key, tasksNoRepoMessage(t.getChatLanguage(key.chatID)))
+			return
+		}
+		log.Printf("[telegram] handleTasks failed: %v", err)
+		errMsg := t.getLocalizedMessage(key.chatID, "tasks_read_failed", map[string]string{"error": err.Error()})
+		if errMsg == "tasks_read_failed" {
+			errMsg = taskLocalizedText(t.getChatLanguage(key.chatID),
+				fmt.Sprintf("❌ 無法讀取任務清單\n\n錯誤: %s", err.Error()),
+				fmt.Sprintf("❌ Failed to read task list\n\nError: %s", err.Error()))
+		}
 		t.send(key, errMsg)
 	}
 }
