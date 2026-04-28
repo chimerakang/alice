@@ -54,7 +54,7 @@ func (s *SQLiteStorage) StoreReviewWithSource(ctx context.Context, taskID string
 	for idx, subTask := range review.SubTaskResults {
 		if err := insertUnifiedReviewSubTaskResultTx(tx, UnifiedReviewSubTaskResult{
 			ReviewID:  reviewID,
-			SubTaskID: hermes.UnifiedSubTaskID(taskID, idx, subTask.SubTaskID),
+			SubTaskID: reviewSubTaskStorageID(taskID, idx, subTask.SubTaskID),
 			Score:     subTask.Score,
 			Feedback:  strings.TrimSpace(subTask.Feedback),
 			IssueTags: reviewTagsToStrings(subTask.IssueTags),
@@ -67,6 +67,14 @@ func (s *SQLiteStorage) StoreReviewWithSource(ctx context.Context, taskID string
 	}
 	s.broadcastUnifiedTask(taskID)
 	return nil
+}
+
+func reviewSubTaskStorageID(taskID string, idx int, subTaskID string) string {
+	subTaskID = strings.TrimSpace(subTaskID)
+	if strings.HasPrefix(subTaskID, taskID+":") {
+		return subTaskID
+	}
+	return hermes.UnifiedSubTaskID(taskID, idx, subTaskID)
 }
 
 func reviewTagsToStrings(tags []appengine.ReviewTag) []string {

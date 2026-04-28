@@ -249,6 +249,58 @@ func TestStoreReviewPersistsUnifiedReviewGraph(t *testing.T) {
 	}
 }
 
+func TestStoreReviewWithSourceAcceptsNamespacedSubTaskID(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	now := time.Now().UTC()
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:        "task-retry-store",
+		Goal:      "retry review",
+		Engine:    "plan_execute",
+		Backend:   "codex",
+		Status:    "done",
+		StartedAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+		ID:          "task-retry-store:s4",
+		TaskID:      "task-retry-store",
+		Idx:         3,
+		Description: "retry step",
+		Status:      "done",
+		StartedAt:   now.Add(-30 * time.Second),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedSubTask: %v", err)
+	}
+
+	if err := s.StoreReviewWithSource(context.Background(), "task-retry-store", appengine.ReviewResult{
+		ReviewerModel: "gpt-5.5",
+		Verdict:       appengine.VerdictPartial,
+		OverallScore:  86,
+		Feedback:      "retry still needs validation",
+		SubTaskResults: []appengine.ReviewSubTaskResult{{
+			SubTaskID: "task-retry-store:s4",
+			Score:     86,
+			Feedback:  "rerun compile",
+			IssueTags: []appengine.ReviewTag{appengine.ReviewTagMissingValidation},
+		}},
+	}, "retry"); err != nil {
+		t.Fatalf("StoreReviewWithSource: %v", err)
+	}
+
+	graphs, err := s.ListUnifiedTaskGraphs(UnifiedTaskQuery{ID: "task-retry-store", Limit: 1})
+	if err != nil {
+		t.Fatalf("ListUnifiedTaskGraphs: %v", err)
+	}
+	if len(graphs) != 1 || len(graphs[0].Reviews) != 1 || graphs[0].Reviews[0].Source != "retry" {
+		t.Fatalf("unexpected retry review graph: %+v", graphs)
+	}
+	results := graphs[0].Reviews[0].SubTaskResults
+	if len(results) != 1 || results[0].SubTaskID != "task-retry-store:s4" {
+		t.Fatalf("unexpected retry subtask result: %+v", results)
+	}
+}
+
 func TestStoreReviewPersistsBlockMetrics(t *testing.T) {
 	s := newTestSQLiteStorage(t)
 	if err := s.UpsertUnifiedTask(UnifiedTask{
