@@ -345,6 +345,14 @@ func (t *TelegramBot) getChatContext(key chatKey, projectDir string) *ChatContex
 	ctx := t.chatContexts[key]
 	if ctx == nil {
 		ctx = NewChatContext(key.chatID, key.threadID, projectDir)
+		if globalStorage != nil {
+			if pref, err := globalStorage.GetTopicModelPreference(key.chatID, key.threadID); err == nil && pref != "" {
+				ctx.Pref = ModelPreference(pref)
+				log.Printf("[telegram] restored model preference for chat=%d thread=%d: %s", key.chatID, key.threadID, pref)
+			} else if err != nil {
+				log.Printf("[telegram] failed to restore model preference for chat=%d thread=%d: %v", key.chatID, key.threadID, err)
+			}
+		}
 		t.chatContexts[key] = ctx
 	}
 	if projectDir != "" {
@@ -398,6 +406,11 @@ func (t *TelegramBot) setUserModelPreference(key chatKey, mode string) {
 		t.chatContexts[key] = ctx
 	}
 	ctx.Pref = ModelPreference(mode)
+	if globalStorage != nil {
+		if err := globalStorage.SaveTopicModelPreference(key.chatID, key.threadID, ctx.ProjectDir, mode); err != nil {
+			log.Printf("[telegram] failed to save model preference for chat=%d thread=%d: %v", key.chatID, key.threadID, err)
+		}
+	}
 }
 
 // handleSavingsCommand 處理 /savings 指令 - 顯示本週路由統計和節省金額
@@ -796,6 +809,15 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		} else if userPref == "gpt-deep" {
 			modelOverride = t.config.ModelRouting.CodexDeepModel
 			log.Printf("[telegram] model routing: using GPT deep model (user preference)")
+		} else if userPref == "plan" {
+			if t.config.ModelRouting.PlanModel != "" && t.config.ModelRouting.ExecuteModel != "" {
+				agent.SetPlanMode(true, t.config.ModelRouting.PlanModel, t.config.ModelRouting.ExecuteModel)
+				log.Printf("[telegram] model routing: using plan mode (user preference)")
+			}
+		} else if userPref != "" {
+			modelOverride = userPref
+			agent.SetPlanMode(false, "", "")
+			log.Printf("[telegram] model routing: using custom model %s (user preference)", userPref)
 		} else if t.isStickySession(agent) {
 			// Priority 2: Sticky session — session active and not idle, skip triage entirely
 			log.Printf("[telegram] model routing: sticky session active (last activity: %v ago), keeping current model + session",
@@ -1196,6 +1218,11 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		} else if modelMode == "gpt-deep" {
 			modelDisplay = t.getLocalizedMessage(key.chatID, "model_gpt_deep", nil)
 			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.config.ModelRouting.CodexDeepModel)
+		} else if modelMode == "plan" {
+			modelDisplay = fmt.Sprintf("`%s → %s`", t.config.ModelRouting.PlanModel, t.config.ModelRouting.ExecuteModel)
+		} else if modelMode != "" {
+			modelDisplay = t.getLocalizedMessage(key.chatID, "model_default", nil)
+			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", modelMode)
 		} else {
 			modelDisplay = t.getLocalizedMessage(key.chatID, "model_auto", nil)
 			modelDisplay = strings.ReplaceAll(modelDisplay, "{model}", t.client.GetModel())

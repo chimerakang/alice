@@ -59,6 +59,8 @@ type Storage interface {
 	// Topic Settings
 	SaveTopicSetting(chatID int64, threadID int, projectDir string) error
 	GetTopicSetting(chatID int64, threadID int) (string, error)
+	SaveTopicModelPreference(chatID int64, threadID int, projectDir, modelPref string) error
+	GetTopicModelPreference(chatID int64, threadID int) (string, error)
 
 	// Chat Language Preferences
 	SaveChatLanguage(chatID int64, langCode string) error
@@ -280,6 +282,7 @@ func (s *SQLiteStorage) initTables() error {
 		chat_id INTEGER NOT NULL,
 		thread_id INTEGER NOT NULL,
 		project_dir TEXT NOT NULL,
+		model_pref TEXT NOT NULL DEFAULT '',
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (chat_id, thread_id)
 	);
@@ -395,6 +398,12 @@ func (s *SQLiteStorage) initTables() error {
 			return fmt.Errorf("failed to create tables: %w", err)
 		}
 	}
+
+	if _, err := s.db.Exec(`ALTER TABLE topic_settings ADD COLUMN model_pref TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("failed to migrate topic settings model preference: %w", err)
+	}
+
 	if err := s.migrateUnifiedTaskTables(); err != nil {
 		return err
 	}
@@ -1386,6 +1395,37 @@ func (s *SQLiteStorage) GetTopicSetting(chatID int64, threadID int) (string, err
 		return "", nil
 	}
 	return projectDir, err
+}
+
+// SaveTopicModelPreference 儲存 topic 的模型偏好；空字串代表自動模式
+func (s *SQLiteStorage) SaveTopicModelPreference(chatID int64, threadID int, projectDir, modelPref string) error {
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(`
+			INSERT INTO topic_settings (chat_id, thread_id, project_dir, model_pref, updated_at)
+			VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(chat_id, thread_id) DO UPDATE SET
+				project_dir = CASE
+					WHEN excluded.project_dir != '' THEN excluded.project_dir
+					ELSE topic_settings.project_dir
+				END,
+				model_pref = excluded.model_pref,
+				updated_at = CURRENT_TIMESTAMP`,
+			chatID, threadID, projectDir, modelPref)
+		return err
+	})
+}
+
+// GetTopicModelPreference 讀取 topic 的模型偏好，找不到時回傳空字串
+func (s *SQLiteStorage) GetTopicModelPreference(chatID int64, threadID int) (string, error) {
+	var modelPref string
+	err := s.db.QueryRow(`
+		SELECT model_pref FROM topic_settings
+		WHERE chat_id = ? AND thread_id = ?`,
+		chatID, threadID).Scan(&modelPref)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return modelPref, err
 }
 
 // ==================== Chat Language Preferences ====================

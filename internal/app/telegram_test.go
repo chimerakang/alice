@@ -121,6 +121,28 @@ func TestChatContextKeepsBackendSessionsIndependent(t *testing.T) {
 	}
 }
 
+func TestChatContextRestoresModelPreferenceFromStorage(t *testing.T) {
+	storage := newTestSQLiteStorage(t)
+	if err := storage.SaveTopicModelPreference(42, 7, "/tmp/alice-project", "gpt-5.5"); err != nil {
+		t.Fatalf("SaveTopicModelPreference: %v", err)
+	}
+
+	oldStorage := globalStorage
+	globalStorage = storage
+	t.Cleanup(func() { globalStorage = oldStorage })
+
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		chatContexts: map[chatKey]*ChatContext{},
+		config:       &Config{DefaultProjectDir: "/tmp/alice-project"},
+	}
+
+	ctx := bot.getChatContext(key, "/tmp/alice-project")
+	if got := string(ctx.Pref); got != "gpt-5.5" {
+		t.Fatalf("restored model preference = %q, want gpt-5.5", got)
+	}
+}
+
 func TestStrictCommandDispatchAndToggle(t *testing.T) {
 	key := chatKey{chatID: 7, threadID: 11}
 	bot := &TelegramBot{

@@ -23,6 +23,37 @@ func newTestSQLiteStorage(t *testing.T) *SQLiteStorage {
 	return s
 }
 
+func TestTopicModelPreferenceRoundTrip(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+
+	if got, err := s.GetTopicModelPreference(42, 7); err != nil || got != "" {
+		t.Fatalf("empty preference: got %q err=%v", got, err)
+	}
+
+	if err := s.SaveTopicSetting(42, 7, "/repo"); err != nil {
+		t.Fatalf("SaveTopicSetting: %v", err)
+	}
+	if err := s.SaveTopicModelPreference(42, 7, "/repo", "gpt-5.5"); err != nil {
+		t.Fatalf("SaveTopicModelPreference: %v", err)
+	}
+
+	got, err := s.GetTopicModelPreference(42, 7)
+	if err != nil {
+		t.Fatalf("GetTopicModelPreference: %v", err)
+	}
+	if got != "gpt-5.5" {
+		t.Fatalf("model preference = %q, want gpt-5.5", got)
+	}
+
+	projectDir, err := s.GetTopicSetting(42, 7)
+	if err != nil {
+		t.Fatalf("GetTopicSetting: %v", err)
+	}
+	if projectDir != "/repo" {
+		t.Fatalf("project dir = %q, want /repo", projectDir)
+	}
+}
+
 func TestListPromptClassifications_Empty(t *testing.T) {
 	s := newTestSQLiteStorage(t)
 	recs, err := s.ListPromptClassifications(10)

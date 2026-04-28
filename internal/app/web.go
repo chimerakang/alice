@@ -2524,9 +2524,24 @@ func (wi *WebInterface) handleModelRoutingStatus(w http.ResponseWriter, r *http.
 			case "deep":
 				mode = "deep"
 				modelName = wi.bot.config.ModelRouting.DeepModel
-			default:
+			case "gpt-fast":
+				mode = "gpt-fast"
+				modelName = wi.bot.config.ModelRouting.CodexFastModel
+			case "gpt-smart":
+				mode = "gpt-smart"
+				modelName = wi.bot.config.ModelRouting.CodexSmartModel
+			case "gpt-deep":
+				mode = "gpt-deep"
+				modelName = wi.bot.config.ModelRouting.CodexDeepModel
+			case "plan":
+				mode = "plan"
+				modelName = fmt.Sprintf("%s → %s", wi.bot.config.ModelRouting.PlanModel, wi.bot.config.ModelRouting.ExecuteModel)
+			case "":
 				mode = "auto"
-				modelName = wi.bot.config.Model // Default model
+				modelName = wi.bot.config.Model
+			default:
+				mode = "custom"
+				modelName = pref
 			}
 
 			preferences[chatKey] = map[string]interface{}{
@@ -2570,7 +2585,7 @@ func (wi *WebInterface) handleModelRoutingSet(w http.ResponseWriter, r *http.Req
 		var req struct {
 			ChatID   int64  `json:"chat_id"`
 			ThreadID int    `json:"thread_id"`
-			Mode     string `json:"mode"` // "fast", "deep", or "auto"
+			Mode     string `json:"mode"` // "fast", "smart", "deep", "gpt-fast", "gpt-smart", "gpt-deep", "plan", "auto", or a model name
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2578,9 +2593,9 @@ func (wi *WebInterface) handleModelRoutingSet(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		// Validate mode
-		if req.Mode != "fast" && req.Mode != "deep" && req.Mode != "auto" {
-			http.Error(w, "Invalid mode. Must be 'fast', 'deep', or 'auto'", http.StatusBadRequest)
+		req.Mode = strings.TrimSpace(req.Mode)
+		if req.Mode == "" {
+			http.Error(w, "mode is required", http.StatusBadRequest)
 			return
 		}
 
@@ -2605,9 +2620,24 @@ func (wi *WebInterface) handleModelRoutingSet(w http.ResponseWriter, r *http.Req
 		case "deep":
 			modeValue = "deep"
 			modelName = wi.bot.config.ModelRouting.DeepModel
+		case "gpt-fast":
+			modeValue = "gpt-fast"
+			modelName = wi.bot.config.ModelRouting.CodexFastModel
+		case "gpt-smart":
+			modeValue = "gpt-smart"
+			modelName = wi.bot.config.ModelRouting.CodexSmartModel
+		case "gpt-deep":
+			modeValue = "gpt-deep"
+			modelName = wi.bot.config.ModelRouting.CodexDeepModel
+		case "plan":
+			modeValue = "plan"
+			modelName = fmt.Sprintf("%s → %s", wi.bot.config.ModelRouting.PlanModel, wi.bot.config.ModelRouting.ExecuteModel)
 		case "auto":
 			modeValue = "" // Empty string means auto mode
 			modelName = wi.bot.config.Model
+		default:
+			modeValue = req.Mode
+			modelName = req.Mode
 		}
 
 		wi.bot.setUserModelPreference(key, modeValue)
