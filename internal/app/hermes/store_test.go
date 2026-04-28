@@ -33,9 +33,10 @@ func newTestStore(t *testing.T) *SQLiteTaskStore {
 
 func makeTask(id string, chatID int64) TaskState {
 	return TaskState{
-		ID:     id,
-		ChatID: chatID,
-		Goal:   "refactor auth module",
+		ID:         id,
+		ChatID:     chatID,
+		ProjectDir: "/repo",
+		Goal:       "refactor auth module",
 		Plan: []SubTask{
 			{ID: "s1", Description: "read auth.go", Status: SubTaskPending},
 			{ID: "s2", Description: "write tests", Status: SubTaskPending},
@@ -72,6 +73,9 @@ func TestCreateAndGetTask(t *testing.T) {
 	}
 	if got.Goal != orig.Goal {
 		t.Errorf("goal mismatch: %q", got.Goal)
+	}
+	if got.ProjectDir != orig.ProjectDir {
+		t.Errorf("project dir mismatch: %q", got.ProjectDir)
 	}
 	if len(got.Plan) != 2 {
 		t.Errorf("plan length: got %d, want 2", len(got.Plan))

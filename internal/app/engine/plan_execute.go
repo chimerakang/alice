@@ -54,13 +54,13 @@ type PlanExecuteConfig struct {
 	// the engine elected to skip storage and the OnReview notification.
 	// Wire this so the user still sees that review was attempted but
 	// could not conclude — silent skips look like the review never ran.
-	OnReviewSkipped   func(ctx context.Context, state hermes.TaskState, reason error)
+	OnReviewSkipped func(ctx context.Context, state hermes.TaskState, reason error)
 	// OnTaskRetry fires after a review on attempt N triggers a re-plan.
 	// attempt is the zero-based index of the just-completed attempt; the
 	// retry that follows is attempt+1. maxRetries comes from TaskRetry
 	// config. Use this to tell the user the engine is restarting with
 	// re-plan, since OnReview is suppressed for non-final attempts.
-	OnTaskRetry       func(ctx context.Context, attempt, maxRetries int, review ReviewResult)
+	OnTaskRetry func(ctx context.Context, attempt, maxRetries int, review ReviewResult)
 
 	ContinueCh      chan struct{}
 	ContinueTimeout time.Duration
@@ -140,6 +140,7 @@ func (e *PlanExecuteEngine) Start(ctx context.Context, goal string, cc *ChatCont
 	task := hermes.TaskState{
 		ID:                uuid.New().String(),
 		ChatID:            e.cfg.ChatID,
+		ProjectDir:        e.cfg.ProjectDir,
 		Goal:              goal,
 		Status:            hermes.TaskStatusPlanning,
 		InterruptPolicy:   e.cfg.InterruptPolicy,

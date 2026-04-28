@@ -243,8 +243,22 @@ func (s *SQLiteStorage) resolveRetryTaskIDByIssue(ctx context.Context, issueNumb
 		FROM tasks
 		WHERE github_issue_number = ?
 		  AND EXISTS (SELECT 1 FROM review_results rr WHERE rr.task_id = tasks.id)
-		ORDER BY started_at DESC, id DESC
+		ORDER BY CASE WHEN project_dir != '' THEN 0 ELSE 1 END, started_at DESC, id DESC
 		LIMIT 1`, issueNumber).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if err != sql.ErrNoRows {
+		return "", err
+	}
+
+	err = s.db.QueryRowContext(ctx, `
+		SELECT id
+		FROM tasks
+		WHERE goal LIKE ?
+		  AND EXISTS (SELECT 1 FROM review_results rr WHERE rr.task_id = tasks.id)
+		ORDER BY CASE WHEN project_dir != '' THEN 0 ELSE 1 END, started_at DESC, id DESC
+		LIMIT 1`, fmt.Sprintf("[GitHub #%d]%%", issueNumber)).Scan(&id)
 	if err == nil {
 		return id, nil
 	}
@@ -437,8 +451,9 @@ func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *S
 		selection.SubTask.ResultText,
 	)
 	agent := t.getAgent(key)
-	if selection.Task.ProjectDir != "" {
-		agent.SetProject(selection.Task.ProjectDir)
+	projectDir := t.retryProjectDir(selection, agent)
+	if projectDir != "" {
+		agent.SetProject(projectDir)
 	}
 
 	progress := newTelegramProgressSink(func(update string, silent bool) {
@@ -462,7 +477,7 @@ func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *S
 	reviewer := NewCLIReviewPhase(t.client, reviewModel)
 	review, err := reviewer.Review(ctx, appengine.ReviewRequest{
 		TaskID:      selection.Task.ID,
-		ProjectDir:  selection.Task.ProjectDir,
+		ProjectDir:  projectDir,
 		Goal:        selection.Task.Goal,
 		Accumulated: buildRetryReviewAccumulated(selection, result.Text),
 		Artifacts:   result.Artifacts,
@@ -490,6 +505,23 @@ func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *S
 		Improved:  retryScoreForSubTask(review, selection.SubTask.ID) > selection.SubTaskReview.Score,
 		Duration:  time.Since(start),
 	}, nil
+}
+
+func (t *TelegramBot) retryProjectDir(selection retrySelection, agent *Agent) string {
+	if projectDir := strings.TrimSpace(selection.Task.ProjectDir); projectDir != "" {
+		return projectDir
+	}
+	if agent != nil {
+		if projectDir := strings.TrimSpace(agent.ProjectDir()); projectDir != "" {
+			return projectDir
+		}
+	}
+	if t != nil && t.config != nil {
+		if projectDir := strings.TrimSpace(t.config.DefaultProjectDir); projectDir != "" {
+			return projectDir
+		}
+	}
+	return "."
 }
 
 func (t *TelegramBot) retryExecutionModel(selection retrySelection) string {
@@ -601,7 +633,7 @@ func formatRetryCompletion(outcome retryOutcome) string {
 	if delta <= 0 {
 		status = "⚠️ Retry 未改善，建議人工介入"
 	}
-	return fmt.Sprintf(
+	message := fmt.Sprintf(
 		"%s\n   原分數: %d → %d (%+d)\n   驗證: %s\n   耗時: %s",
 		status,
 		outcome.Selection.SubTaskReview.Score,
@@ -610,6 +642,60 @@ func formatRetryCompletion(outcome retryOutcome) string {
 		outcome.Review.Verdict,
 		outcome.Duration.Round(time.Second),
 	)
+	if result := truncateRetryMessageField(outcome.Result.Text, 700); result != "" {
+		message += "\n\n執行結果：\n" + result
+	}
+	if feedback := truncateRetryMessageField(retryReviewFeedbackForSubTask(outcome.Review, outcome.Selection.SubTask.ID), 500); feedback != "" {
+		message += "\n\nReview 回饋：\n" + feedback
+	}
+	if tags := retryReviewTagsForSubTask(outcome.Review, outcome.Selection.SubTask.ID); tags != "" {
+		message += "\nIssue tags: " + tags
+	}
+	return message
+}
+
+func retryReviewFeedbackForSubTask(review appengine.ReviewResult, subTaskID string) string {
+	for _, subTask := range review.SubTaskResults {
+		if subTask.SubTaskID == subTaskID && strings.TrimSpace(subTask.Feedback) != "" {
+			return subTask.Feedback
+		}
+	}
+	return review.Feedback
+}
+
+func retryReviewTagsForSubTask(review appengine.ReviewResult, subTaskID string) string {
+	tags := review.IssueTags
+	for _, subTask := range review.SubTaskResults {
+		if subTask.SubTaskID == subTaskID {
+			tags = subTask.IssueTags
+			break
+		}
+	}
+	if len(tags) == 0 {
+		return ""
+	}
+	items := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if tag != "" {
+			items = append(items, string(tag))
+		}
+	}
+	return strings.Join(items, ", ")
+}
+
+func truncateRetryMessageField(value string, limit int) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if value == "" || limit <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	if limit <= 3 {
+		return string(runes[:limit])
+	}
+	return strings.TrimSpace(string(runes[:limit-3])) + "..."
 }
 
 func truncateForTelegram(value string, limit int) string {

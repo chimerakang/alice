@@ -39,14 +39,15 @@ const (
 
 // TaskState is the top-level record for a Hermes planning session.
 type TaskState struct {
-	ID                string          `json:"id"`                 // UUID
-	ChatID            int64           `json:"chat_id"`            // Telegram chat
-	PlannerSessionID  string          `json:"planner_session_id"` // Claude Code --resume ID
+	ID                string          `json:"id"`                            // UUID
+	ChatID            int64           `json:"chat_id"`                       // Telegram chat
+	PlannerSessionID  string          `json:"planner_session_id"`            // Claude Code --resume ID
 	ExecutorSessionID string          `json:"executor_session_id,omitempty"` // executor thread resume ID (transient, not persisted to DB)
+	ProjectDir        string          `json:"project_dir,omitempty"`
 	Goal              string          `json:"goal"`
 	Plan              []SubTask       `json:"plan"`
 	CurrentIdx        int             `json:"current_idx"`
-	Accumulated       string          `json:"accumulated"`            // rolling executor summary
+	Accumulated       string          `json:"accumulated"` // rolling executor summary
 	Artifacts         []Artifact      `json:"artifacts"`
 	Status            TaskStatus      `json:"status"`
 	InterruptedBy     *int64          `json:"interrupted_by,omitempty"` // Telegram message ID
@@ -101,7 +102,7 @@ type SubTask struct {
 	Description string        `json:"description"`
 	ToolHints   []string      `json:"tool_hints,omitempty"` // suggested tools from Planner
 	Status      SubTaskStatus `json:"status"`
-	Result      string        `json:"result,omitempty"`   // short summary written by Executor
+	Result      string        `json:"result,omitempty"` // short summary written by Executor
 	Attempts    int           `json:"attempts"`
 	TokensUsed  int           `json:"tokens_used"`
 }
@@ -109,13 +110,13 @@ type SubTask struct {
 // Artifact records a file that was modified or created during task execution.
 type Artifact struct {
 	Path      string `json:"path"`
-	Hash      string `json:"hash"`       // SHA-256 hex of file contents after write
+	Hash      string `json:"hash"` // SHA-256 hex of file contents after write
 	SubTaskID string `json:"sub_task_id"`
 }
 
 // ModelUsage tracks token consumption per model.
 type ModelUsage struct {
-	Model        string `json:"model"`         // e.g., "claude-opus-4-7" or "claude-haiku-4-5-20251001"
+	Model        string `json:"model"` // e.g., "claude-opus-4-7" or "claude-haiku-4-5-20251001"
 	InputTokens  int    `json:"input_tokens"`
 	OutputTokens int    `json:"output_tokens"`
 	CallCount    int    `json:"call_count"`
@@ -128,8 +129,8 @@ func (m *ModelUsage) TotalTokens() int {
 
 // TokenBudget enforces resource limits at the task level.
 type TokenBudget struct {
-	MaxTotalTokens      int       `json:"max_total_tokens"`       // 0 = unlimited
-	MaxWallclockSeconds int       `json:"max_wallclock_seconds"`  // 0 = unlimited
+	MaxTotalTokens      int       `json:"max_total_tokens"`      // 0 = unlimited
+	MaxWallclockSeconds int       `json:"max_wallclock_seconds"` // 0 = unlimited
 	UsedTokens          int       `json:"used_tokens"`
 	StartedAt           time.Time `json:"started_at"`
 }

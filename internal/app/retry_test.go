@@ -175,6 +175,40 @@ func TestSelectRetryTargetByIndexAcceptsGitHubIssueRef(t *testing.T) {
 	}
 }
 
+func TestSelectRetryTargetByIndexAcceptsLegacyGitHubIssueGoal(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	seedRetryReview(t, s, "legacy-issue-linked-task", 61, "initial")
+	if _, err := s.db.Exec(`UPDATE tasks SET github_issue_number = 0, goal = ? WHERE id = ?`, "[GitHub #180] Fix retry", "legacy-issue-linked-task"); err != nil {
+		t.Fatalf("patch legacy issue task: %v", err)
+	}
+
+	selection, err := s.selectRetryTargetByIndex(context.Background(), "#180", 2)
+	if err != nil {
+		t.Fatalf("selectRetryTargetByIndex legacy issue ref: %v", err)
+	}
+	if selection.Task.ID != "legacy-issue-linked-task" || selection.DisplaySubTaskIdx != 2 {
+		t.Fatalf("unexpected legacy issue ref selection: %+v", selection)
+	}
+}
+
+func TestRetryProjectDirFallsBackForLegacyEmptyTaskProject(t *testing.T) {
+	bot := &TelegramBot{config: &Config{DefaultProjectDir: "/default"}}
+
+	got := bot.retryProjectDir(retrySelection{
+		Task: UnifiedTask{ProjectDir: ""},
+	}, &Agent{projectDir: "/active"})
+	if got != "/active" {
+		t.Fatalf("retryProjectDir agent fallback = %q, want /active", got)
+	}
+
+	got = bot.retryProjectDir(retrySelection{
+		Task: UnifiedTask{ProjectDir: ""},
+	}, nil)
+	if got != "/default" {
+		t.Fatalf("retryProjectDir default fallback = %q, want /default", got)
+	}
+}
+
 func TestParseRetryArgs(t *testing.T) {
 	tests := []struct {
 		parts      []string
@@ -265,6 +299,44 @@ func TestRetryReviewPayloadIncludesPreviousAndRetryResults(t *testing.T) {
 	for _, want := range []string{"missing file references", "incomplete_traceability", "previous evidence", "retry evidence"} {
 		if !strings.Contains(accumulated, want) {
 			t.Fatalf("accumulated payload missing %q:\n%s", want, accumulated)
+		}
+	}
+}
+
+func TestFormatRetryCompletionIncludesResultAndReviewFeedback(t *testing.T) {
+	outcome := retryOutcome{
+		Selection: retrySelection{
+			SubTask: UnifiedSubTask{ID: "task:s2"},
+			SubTaskReview: UnifiedReviewSubTaskResult{
+				Score: 55,
+			},
+		},
+		Result: appengine.Result{
+			Text: "make proto pass; npm run typecheck pass",
+		},
+		Review: appengine.ReviewResult{
+			Verdict:      appengine.VerdictPass,
+			OverallScore: 82,
+			SubTaskResults: []appengine.ReviewSubTaskResult{{
+				SubTaskID: "task:s2",
+				Score:     82,
+				Feedback:  "validation evidence is now present",
+				IssueTags: []appengine.ReviewIssueTag{appengine.ReviewIssueTagMissingValidation},
+			}},
+		},
+		Duration: 2*time.Minute + 58*time.Second,
+	}
+
+	got := formatRetryCompletion(outcome)
+	for _, want := range []string{
+		"✅ Retry 完成",
+		"原分數: 55 → 82 (+27)",
+		"執行結果：\nmake proto pass; npm run typecheck pass",
+		"Review 回饋：\nvalidation evidence is now present",
+		"Issue tags: missing_validation",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("formatRetryCompletion missing %q:\n%s", want, got)
 		}
 	}
 }

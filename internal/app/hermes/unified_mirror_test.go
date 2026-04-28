@@ -33,15 +33,15 @@ func TestSQLiteTaskStoreMirrorsPlanToUnifiedTables(t *testing.T) {
 		t.Fatalf("MarkStatus: %v", err)
 	}
 
-	var taskStatus string
+	var taskStatus, projectDir string
 	var totalIn, totalOut int
 	if err := store.db.QueryRow(`
-		SELECT status, total_input_tokens, total_output_tokens
-		FROM tasks WHERE id = ?`, task.ID).Scan(&taskStatus, &totalIn, &totalOut); err != nil {
+		SELECT status, project_dir, total_input_tokens, total_output_tokens
+		FROM tasks WHERE id = ?`, task.ID).Scan(&taskStatus, &projectDir, &totalIn, &totalOut); err != nil {
 		t.Fatalf("query unified task: %v", err)
 	}
-	if taskStatus != string(TaskStatusDone) || totalIn != 10 || totalOut != 7 {
-		t.Fatalf("unexpected unified task status/tokens: status=%q in=%d out=%d", taskStatus, totalIn, totalOut)
+	if taskStatus != string(TaskStatusDone) || projectDir != "/repo" || totalIn != 10 || totalOut != 7 {
+		t.Fatalf("unexpected unified task status/project/tokens: status=%q project=%q in=%d out=%d", taskStatus, projectDir, totalIn, totalOut)
 	}
 
 	var subStatus, result string

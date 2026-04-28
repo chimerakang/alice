@@ -143,6 +143,7 @@ func (c *CodexClient) runCodexStream(
 	onContent func(contentType, text string),
 ) (*CLIResponse, error) {
 	startTime := time.Now()
+	projectDir = codexWorkingDir(projectDir)
 
 	var args []string
 	if sessionID != "" {
@@ -318,6 +319,14 @@ func (c *CodexClient) runCodexStream(
 	resp.Usage.OutputTokens = outputTokens
 
 	return resp, nil
+}
+
+func codexWorkingDir(projectDir string) string {
+	projectDir = strings.TrimSpace(projectDir)
+	if projectDir == "" {
+		return "."
+	}
+	return projectDir
 }
 
 // codexPlanGuard is prepended to CallPlan prompts so codex (which has no --max-turns)
