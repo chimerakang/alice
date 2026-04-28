@@ -141,8 +141,8 @@ func (s *SQLiteTaskStore) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_tasks_started_at ON tasks(started_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_chat_thread ON tasks(chat_id, thread_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_tasks_project_dir ON tasks(project_dir)`,
-		`CREATE INDEX IF NOT EXISTS idx_tasks_github_issue_number ON tasks(github_issue_number)`,
 		`ALTER TABLE tasks ADD COLUMN github_issue_number INTEGER NOT NULL DEFAULT 0`,
+		`CREATE INDEX IF NOT EXISTS idx_tasks_github_issue_number ON tasks(github_issue_number)`,
 		`CREATE TABLE IF NOT EXISTS sub_tasks (
 			id                 TEXT PRIMARY KEY,
 			task_id            TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
