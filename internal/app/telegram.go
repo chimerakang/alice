@@ -2252,6 +2252,11 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		return
 	}
 	log.Printf("[hermes] chat %d started task %s", key.chatID, taskID)
+	displayTaskID := strings.TrimSpace(taskID)
+	if len(displayTaskID) > 8 {
+		displayTaskID = displayTaskID[:8]
+	}
+	t.send(key, fmt.Sprintf("📌 任務編號：%s", displayTaskID))
 }
 
 // buildTaskSyncHook returns a post-completion hook that runs `claude -p /task-sync`

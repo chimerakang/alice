@@ -120,27 +120,42 @@ func TestBuildReviewNotificationAndTelegramText(t *testing.T) {
 		OverallScore:  73,
 		IssueTags:     []ReviewTag{ReviewTagMissingContext, ReviewTagMissingValidation},
 		SubTaskResults: []ReviewSubTaskResult{
-			{SubTaskID: "s1", Score: 65, Feedback: "needs more checks"},
-			{SubTaskID: "s2", Score: 81, Feedback: "ok"},
+			{SubTaskID: "s1", Score: 81, Feedback: "ok"},
+			{SubTaskID: "s2", Score: 45, Feedback: "needs more checks", IssueTags: []ReviewIssueTag{ReviewIssueTagScopeCreep}},
+			{SubTaskID: "s3", Score: 65, Feedback: "missing runtime validation"},
 		},
 	}
 
-	notification := BuildReviewNotification(" task-123 ", review)
-	if notification.TaskID != "task-123" {
+	notification := BuildReviewNotification(" 1234567890abcdef ", review)
+	if notification.TaskID != "1234567890abcdef" {
 		t.Fatalf("task id = %q, want trimmed value", notification.TaskID)
 	}
-	if !notification.AdvisoryRetry || notification.FailingSubTasks != 1 {
+	if !notification.AdvisoryRetry || notification.FailingSubTasks != 2 {
 		t.Fatalf("notification retry state = %+v", notification)
 	}
-	if notification.RetryNote != "建議人工評估後重跑 1 個失敗/低分子任務" {
+	if notification.RetryNote != "建議人工評估後重跑 2 個失敗/低分子任務" {
 		t.Fatalf("retry note = %q", notification.RetryNote)
 	}
 
 	text := notification.TelegramText()
-	for _, want := range []string{"複審完成", "partial", "missing_context, missing_validation", "建議人工評估後重跑 1 個失敗/低分子任務"} {
+	for _, want := range []string{
+		"複審完成",
+		"任務：12345678",
+		"partial",
+		"missing_context, missing_validation",
+		"❌ #2 s2 (45/100) — scope_creep",
+		"⚠️ #3 s3 (65/100)",
+		"✅ #1 s1 (81/100)",
+		"建議人工評估後重跑 2 個失敗/低分子任務",
+		"/retry 12345678 2",
+		"/retry 12345678 all-failed",
+	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("telegram text missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Index(text, "#2 s2") > strings.Index(text, "#3 s3") || strings.Index(text, "#3 s3") > strings.Index(text, "#1 s1") {
+		t.Fatalf("subtask scores were not sorted low-first:\n%s", text)
 	}
 }
 

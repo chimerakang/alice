@@ -79,6 +79,10 @@ func (s *SQLiteStorage) selectRetryTargetLatest(ctx context.Context, key chatKey
 }
 
 func (s *SQLiteStorage) selectRetryTargetLowest(ctx context.Context, taskID string) (retrySelection, error) {
+	taskID, err := s.resolveRetryTaskID(ctx, taskID)
+	if err != nil {
+		return retrySelection{}, err
+	}
 	return s.scanRetrySelection(ctx, `
 		SELECT t.id, t.chat_id, t.thread_id, t.project_dir, t.goal, t.engine, t.backend, t.status,
 		       t.started_at, t.ended_at, t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
@@ -101,6 +105,10 @@ func (s *SQLiteStorage) selectRetryTargetByIndex(ctx context.Context, taskID str
 	if displayIdx <= 0 {
 		return retrySelection{}, fmt.Errorf("sub-task idx must be >= 1")
 	}
+	taskID, err := s.resolveRetryTaskID(ctx, taskID)
+	if err != nil {
+		return retrySelection{}, err
+	}
 	return s.scanRetrySelection(ctx, `
 		SELECT t.id, t.chat_id, t.thread_id, t.project_dir, t.goal, t.engine, t.backend, t.status,
 		       t.started_at, t.ended_at, t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
@@ -120,6 +128,10 @@ func (s *SQLiteStorage) selectRetryTargetByIndex(ctx context.Context, taskID str
 }
 
 func (s *SQLiteStorage) selectRetryTargetsAllFailed(ctx context.Context, taskID string) ([]retrySelection, error) {
+	taskID, err := s.resolveRetryTaskID(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT t.id, t.chat_id, t.thread_id, t.project_dir, t.goal, t.engine, t.backend, t.status,
 		       t.started_at, t.ended_at, t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
@@ -153,6 +165,47 @@ func (s *SQLiteStorage) selectRetryTargetsAllFailed(ctx context.Context, taskID 
 		out = append(out, selection)
 	}
 	return out, rows.Err()
+}
+
+func (s *SQLiteStorage) resolveRetryTaskID(ctx context.Context, taskID string) (string, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return "", fmt.Errorf("missing task_id")
+	}
+	var exact string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM tasks WHERE id = ? LIMIT 1`, taskID).Scan(&exact)
+	if err == nil {
+		return exact, nil
+	}
+	if err != sql.ErrNoRows {
+		return "", err
+	}
+
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM tasks WHERE id LIKE ? ORDER BY started_at DESC, id DESC LIMIT 2`, taskID+"%")
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	var matches []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return "", err
+		}
+		matches = append(matches, id)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("找不到 task_id %q", taskID)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("task_id prefix %q 不唯一，請輸入更長的 task_id", taskID)
+	}
 }
 
 func (s *SQLiteStorage) scanRetrySelection(ctx context.Context, query string, args ...any) (retrySelection, error) {

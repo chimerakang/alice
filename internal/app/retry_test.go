@@ -120,6 +120,19 @@ func TestRetryCountCountsRetrySourceOnly(t *testing.T) {
 	}
 }
 
+func TestSelectRetryTargetByIndexAcceptsTaskIDPrefix(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	seedRetryReview(t, s, "12345678-aaaa-bbbb-cccc-000000000001", 61, "initial")
+
+	selection, err := s.selectRetryTargetByIndex(context.Background(), "12345678", 2)
+	if err != nil {
+		t.Fatalf("selectRetryTargetByIndex prefix: %v", err)
+	}
+	if selection.Task.ID != "12345678-aaaa-bbbb-cccc-000000000001" || selection.DisplaySubTaskIdx != 2 {
+		t.Fatalf("unexpected prefix selection: %+v", selection)
+	}
+}
+
 func TestParseRetryArgs(t *testing.T) {
 	tests := []struct {
 		parts      []string

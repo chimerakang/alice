@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -119,14 +120,24 @@ type ReviewResult struct {
 
 // ReviewNotification is a compact summary for user-facing notifications.
 type ReviewNotification struct {
-	TaskID          string           `json:"task_id"`
-	ReviewerModel   string           `json:"reviewer_model,omitempty"`
-	Verdict         ReviewVerdict    `json:"verdict"`
-	OverallScore    int              `json:"overall_score"`
-	IssueTags       []ReviewIssueTag `json:"issue_tags,omitempty"`
-	AdvisoryRetry   bool             `json:"advisory_retry"`
-	FailingSubTasks int              `json:"failing_subtasks"`
-	RetryNote       string           `json:"retry_note,omitempty"`
+	TaskID          string                            `json:"task_id"`
+	ReviewerModel   string                            `json:"reviewer_model,omitempty"`
+	Verdict         ReviewVerdict                     `json:"verdict"`
+	OverallScore    int                               `json:"overall_score"`
+	IssueTags       []ReviewIssueTag                  `json:"issue_tags,omitempty"`
+	SubTaskResults  []ReviewNotificationSubTaskResult `json:"sub_task_results,omitempty"`
+	AdvisoryRetry   bool                              `json:"advisory_retry"`
+	FailingSubTasks int                               `json:"failing_subtasks"`
+	RetryNote       string                            `json:"retry_note,omitempty"`
+}
+
+// ReviewNotificationSubTaskResult is the user-facing per-subtask review summary.
+type ReviewNotificationSubTaskResult struct {
+	Index     int              `json:"index"`
+	SubTaskID string           `json:"sub_task_id"`
+	Score     int              `json:"score"`
+	Feedback  string           `json:"feedback,omitempty"`
+	IssueTags []ReviewIssueTag `json:"issue_tags,omitempty"`
 }
 
 // StrictModeConfig controls hard-gate review behavior.
@@ -331,11 +342,25 @@ func IsStrictRetryable(decision StrictReviewDecision) bool {
 // BuildReviewNotification normalizes a review into a concise summary.
 func BuildReviewNotification(taskID string, review ReviewResult) ReviewNotification {
 	failingSubTasks := 0
-	for _, subTask := range review.SubTaskResults {
+	subTaskResults := make([]ReviewNotificationSubTaskResult, 0, len(review.SubTaskResults))
+	for idx, subTask := range review.SubTaskResults {
 		if subTask.Score < 70 {
 			failingSubTasks++
 		}
+		subTaskResults = append(subTaskResults, ReviewNotificationSubTaskResult{
+			Index:     reviewSubTaskDisplayIndex(subTask.SubTaskID, idx),
+			SubTaskID: strings.TrimSpace(subTask.SubTaskID),
+			Score:     subTask.Score,
+			Feedback:  strings.TrimSpace(subTask.Feedback),
+			IssueTags: append([]ReviewIssueTag(nil), subTask.IssueTags...),
+		})
 	}
+	sort.SliceStable(subTaskResults, func(i, j int) bool {
+		if subTaskResults[i].Score != subTaskResults[j].Score {
+			return subTaskResults[i].Score < subTaskResults[j].Score
+		}
+		return subTaskResults[i].Index < subTaskResults[j].Index
+	})
 
 	notification := ReviewNotification{
 		TaskID:          strings.TrimSpace(taskID),
@@ -343,6 +368,7 @@ func BuildReviewNotification(taskID string, review ReviewResult) ReviewNotificat
 		Verdict:         review.Verdict,
 		OverallScore:    review.OverallScore,
 		IssueTags:       append([]ReviewTag(nil), review.IssueTags...),
+		SubTaskResults:  subTaskResults,
 		AdvisoryRetry:   review.Verdict != VerdictPass && review.Verdict != VerdictAllow || failingSubTasks > 0,
 		FailingSubTasks: failingSubTasks,
 	}
@@ -360,21 +386,98 @@ func BuildReviewNotification(taskID string, review ReviewResult) ReviewNotificat
 
 // TelegramText renders the notification as a concise chat message.
 func (n ReviewNotification) TelegramText() string {
-	tags := "無"
-	if len(n.IssueTags) > 0 {
-		items := make([]string, 0, len(n.IssueTags))
-		for _, tag := range n.IssueTags {
-			items = append(items, string(tag))
-		}
-		tags = strings.Join(items, ", ")
-	}
-
 	var b strings.Builder
 	b.WriteString("🔎 複審完成\n")
+	if n.TaskID != "" {
+		b.WriteString("任務：" + shortReviewTaskID(n.TaskID) + "\n\n")
+	}
 	b.WriteString(fmt.Sprintf("結果：%s（%d/100）\n", n.Verdict, n.OverallScore))
-	b.WriteString("標籤：" + tags + "\n")
-	b.WriteString("重跑建議：" + n.RetryNote)
+	b.WriteString("整體標籤：" + formatReviewTags(n.IssueTags) + "\n")
+	if len(n.SubTaskResults) > 0 {
+		b.WriteString("\n子任務：\n")
+		for _, subTask := range n.SubTaskResults {
+			marker := "✅"
+			if subTask.Score < 60 {
+				marker = "❌"
+			} else if subTask.Score < 80 {
+				marker = "⚠️"
+			}
+			id := strings.TrimSpace(subTask.SubTaskID)
+			if id == "" {
+				id = "unknown"
+			}
+			b.WriteString(fmt.Sprintf("  %s #%d %s (%d/100)", marker, subTask.Index, id, subTask.Score))
+			if len(subTask.IssueTags) > 0 {
+				b.WriteString(" — " + formatReviewTags(subTask.IssueTags))
+			}
+			b.WriteString("\n")
+			if feedback := truncateReviewFeedback(subTask.Feedback, 80); feedback != "" {
+				b.WriteString("     " + feedback + "\n")
+			}
+		}
+	}
+	b.WriteString("\n重跑建議：" + n.RetryNote)
+	if n.TaskID != "" {
+		shortID := shortReviewTaskID(n.TaskID)
+		if len(n.SubTaskResults) > 0 {
+			b.WriteString(fmt.Sprintf("\n重跑：/retry %s %d  （單一）/  /retry %s all-failed  （全部低分）", shortID, n.SubTaskResults[0].Index, shortID))
+		} else {
+			b.WriteString(fmt.Sprintf("\n重跑：/retry %s", shortID))
+		}
+	}
 	return b.String()
+}
+
+func formatReviewTags(tags []ReviewIssueTag) string {
+	if len(tags) == 0 {
+		return "無"
+	}
+	items := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if tag == "" {
+			continue
+		}
+		items = append(items, string(tag))
+	}
+	if len(items) == 0 {
+		return "無"
+	}
+	return strings.Join(items, ", ")
+}
+
+func shortReviewTaskID(taskID string) string {
+	taskID = strings.TrimSpace(taskID)
+	if len(taskID) <= 8 {
+		return taskID
+	}
+	return taskID[:8]
+}
+
+func truncateReviewFeedback(feedback string, maxRunes int) string {
+	feedback = strings.Join(strings.Fields(strings.TrimSpace(feedback)), " ")
+	if feedback == "" || maxRunes <= 0 {
+		return ""
+	}
+	runes := []rune(feedback)
+	if len(runes) <= maxRunes {
+		return feedback
+	}
+	if maxRunes <= 3 {
+		return string(runes[:maxRunes])
+	}
+	return string(runes[:maxRunes-3]) + "..."
+}
+
+var reviewSubTaskIndexRe = regexp.MustCompile(`(?i)(?:^|[^0-9])s?([1-9][0-9]*)$`)
+
+func reviewSubTaskDisplayIndex(subTaskID string, fallbackZeroBased int) int {
+	if match := reviewSubTaskIndexRe.FindStringSubmatch(strings.TrimSpace(subTaskID)); len(match) == 2 {
+		var idx int
+		if _, err := fmt.Sscanf(match[1], "%d", &idx); err == nil && idx > 0 {
+			return idx
+		}
+	}
+	return fallbackZeroBased + 1
 }
 
 // BuildReviewPrompt assembles the first-version reviewer prompt for #119.
