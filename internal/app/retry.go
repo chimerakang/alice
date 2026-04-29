@@ -35,6 +35,14 @@ type retryOutcome struct {
 	Duration  time.Duration
 }
 
+type retryTaskCandidate struct {
+	ID                string
+	Goal              string
+	GithubIssueNumber int
+	FailedCount       int
+	LatestReviewAt    time.Time
+}
+
 func composeRetryPrompt(description, verdict string, score int, feedback string, issueTags []string, previousResult string) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("[Retry — 上一輪 review 給 %s %d/100]\n\n", strings.TrimSpace(verdict), score))
@@ -87,6 +95,50 @@ func (s *SQLiteStorage) selectRetryTargetLatest(ctx context.Context, key chatKey
 		  AND t.chat_id = ? AND t.thread_id = ?
 		ORDER BY rr.created_at DESC, rr.id DESC, rs.score ASC, st.idx ASC
 		LIMIT 1`, key.chatID, key.threadID)
+}
+
+func (s *SQLiteStorage) selectRetryTaskCandidates(ctx context.Context, key chatKey, limit int) ([]retryTaskCandidate, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT t.id, t.goal, t.github_issue_number,
+		       SUM(CASE WHEN rs.score < 70 THEN 1 ELSE 0 END),
+		       MAX(rr.created_at)
+		FROM review_results rr
+		JOIN tasks t ON t.id = rr.task_id
+		JOIN review_subtask_results rs ON rs.review_id = rr.id
+		WHERE (rr.verdict IN ('partial', 'fail') OR rs.score < 70)
+		  AND t.chat_id = ? AND t.thread_id = ?
+		  AND rr.id = (
+		    SELECT rr2.id
+		    FROM review_results rr2
+		    WHERE rr2.task_id = t.id
+		    ORDER BY rr2.created_at DESC, rr2.id DESC
+		    LIMIT 1
+		  )
+		GROUP BY t.id, t.goal, t.github_issue_number
+		ORDER BY MAX(rr.created_at) DESC, t.id DESC
+		LIMIT ?`, key.chatID, key.threadID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []retryTaskCandidate
+	for rows.Next() {
+		var candidate retryTaskCandidate
+		var latest sql.NullString
+		if err := rows.Scan(&candidate.ID, &candidate.Goal, &candidate.GithubIssueNumber, &candidate.FailedCount, &latest); err != nil {
+			return nil, err
+		}
+		candidate.LatestReviewAt = parseDBTime(latest.String)
+		out = append(out, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *SQLiteStorage) selectRetryTargetLowest(ctx context.Context, taskID string) (retrySelection, error) {
@@ -500,7 +552,7 @@ func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *S
 			t.send(key, update)
 		}
 	})
-	retryModel := t.retryExecutionModel(selection)
+	retryModel := t.retryExecutionModel(key, selection)
 	prevOverride := agent.currentModelOverride
 	if retryModel != "" {
 		agent.currentModelOverride = retryModel
@@ -582,9 +634,12 @@ func (t *TelegramBot) retryProjectDir(selection retrySelection, agent *Agent) st
 	return "."
 }
 
-func (t *TelegramBot) retryExecutionModel(selection retrySelection) string {
+func (t *TelegramBot) retryExecutionModel(key chatKey, selection retrySelection) string {
 	if t == nil || t.config == nil {
 		return ""
+	}
+	if prefModel := t.retryModelForUserPreference(key); prefModel != "" {
+		return prefModel
 	}
 	cfg := HermesDefaults(t.config.Hermes)
 	backendHint := strings.Join([]string{
@@ -614,6 +669,32 @@ func (t *TelegramBot) retryExecutionModel(selection retrySelection) string {
 		return cfg.ExecutorModel
 	}
 	return t.config.ModelRouting.DeepModel
+}
+
+func (t *TelegramBot) retryModelForUserPreference(key chatKey) string {
+	if t == nil || t.config == nil || !t.config.ModelRouting.EnableDynamicRouting {
+		return ""
+	}
+	switch pref := strings.TrimSpace(t.getUserModelPreference(key)); pref {
+	case "":
+		return ""
+	case "fast":
+		return t.config.ModelRouting.FastModel
+	case "smart":
+		return t.config.ModelRouting.SmartModel
+	case "deep":
+		return t.config.ModelRouting.DeepModel
+	case "gpt-fast":
+		return t.config.ModelRouting.CodexFastModel
+	case "gpt-smart":
+		return t.config.ModelRouting.CodexSmartModel
+	case "gpt-deep":
+		return t.config.ModelRouting.CodexDeepModel
+	case "plan":
+		return t.config.ModelRouting.ExecuteModel
+	default:
+		return pref
+	}
 }
 
 func (t *TelegramBot) retryReviewModel(key chatKey) string {

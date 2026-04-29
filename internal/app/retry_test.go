@@ -72,6 +72,22 @@ func seedRetryReview(t *testing.T, s *SQLiteStorage, taskID string, score int, s
 	return reviewID
 }
 
+func TestSelectRetryTaskCandidatesListsLatestFailedReviewTasks(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	seedRetryReview(t, s, "task-retry-candidate", 61, "review")
+
+	candidates, err := s.selectRetryTaskCandidates(context.Background(), chatKey{chatID: 42, threadID: 7}, 5)
+	if err != nil {
+		t.Fatalf("selectRetryTaskCandidates: %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidate count = %d, want 1: %+v", len(candidates), candidates)
+	}
+	if candidates[0].ID != "task-retry-candidate" || candidates[0].GithubIssueNumber != 136 || candidates[0].FailedCount != 1 {
+		t.Fatalf("unexpected candidate: %+v", candidates[0])
+	}
+}
+
 func TestComposeRetryPromptIncludesReviewContext(t *testing.T) {
 	prompt := composeRetryPrompt("修正 webhook", "partial", 64, "缺少測試", []string{"missing_validation"}, "上一輪只有摘要")
 
@@ -288,10 +304,11 @@ func TestNormalizeRetryReviewForSubTaskFillsPersistableSubTaskID(t *testing.T) {
 func TestRetryExecutionModelUsesCodexSmartForCodexReview(t *testing.T) {
 	bot := &TelegramBot{config: &Config{
 		ModelRouting: ModelRoutingConfig{
-			CodexSmartModel: "gpt-5.4",
-			CodexDeepModel:  "gpt-5.5",
-			SmartModel:      "claude-sonnet-4-6",
-			DeepModel:       "claude-opus-4-6",
+			EnableDynamicRouting: true,
+			CodexSmartModel:      "gpt-5.4",
+			CodexDeepModel:       "gpt-5.5",
+			SmartModel:           "claude-sonnet-4-6",
+			DeepModel:            "claude-opus-4-6",
 		},
 	}}
 	selection := retrySelection{
@@ -299,8 +316,36 @@ func TestRetryExecutionModelUsesCodexSmartForCodexReview(t *testing.T) {
 		Review:      UnifiedReviewResult{ReviewerModel: "claude-opus-4-6"},
 	}
 
-	if got := bot.retryExecutionModel(selection); got != bot.config.ModelRouting.CodexSmartModel {
+	if got := bot.retryExecutionModel(chatKey{}, selection); got != bot.config.ModelRouting.CodexSmartModel {
 		t.Fatalf("retryExecutionModel = %q, want %q", got, bot.config.ModelRouting.CodexSmartModel)
+	}
+}
+
+func TestRetryExecutionModelHonorsGPTDeepPreference(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		config: &Config{
+			DefaultProjectDir: "/repo",
+			ModelRouting: ModelRoutingConfig{
+				EnableDynamicRouting: true,
+				CodexSmartModel:      "gpt-5.4",
+				CodexDeepModel:       "gpt-5.5",
+				SmartModel:           "claude-sonnet-4-6",
+				DeepModel:            "claude-opus-4-6",
+			},
+		},
+		chatContexts: map[chatKey]*ChatContext{
+			key: NewChatContext(key.chatID, key.threadID, "/repo"),
+		},
+	}
+	bot.chatContexts[key].Pref = ModelPreference("gpt-deep")
+	selection := retrySelection{
+		PreferCodex: true,
+		Review:      UnifiedReviewResult{ReviewerModel: "gpt-5.4"},
+	}
+
+	if got := bot.retryExecutionModel(key, selection); got != "gpt-5.5" {
+		t.Fatalf("retryExecutionModel = %q, want gpt-5.5", got)
 	}
 }
 

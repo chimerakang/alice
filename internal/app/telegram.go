@@ -1743,8 +1743,12 @@ func (t *TelegramBot) sendMenu(key chatKey) {
 				{"text": "Dashboard", "callback_data": "refresh_dashboard"},
 			},
 			{
-				{"text": "Tasks", "callback_data": "tasks:view:open"},
+				{"text": "Tasks", "callback_data": "menu:tasks"},
 				{"text": "Hermes", "callback_data": "menu:hermes_status"},
+			},
+			{
+				{"text": "Retry", "callback_data": "retry:menu"},
+				{"text": "Model", "callback_data": "model:menu"},
 			},
 			{
 				{"text": "Checkpoints", "callback_data": "show_checkpoints"},
@@ -1752,7 +1756,7 @@ func (t *TelegramBot) sendMenu(key chatKey) {
 			},
 			{
 				{"text": "Help", "callback_data": "menu:help"},
-				{"text": "Abort", "callback_data": fmt.Sprintf("stop_agent_%d_%d", key.chatID, key.threadID)},
+				{"text": "Abort", "callback_data": "menu:abort_confirm"},
 			},
 		},
 	}
@@ -1760,6 +1764,20 @@ func (t *TelegramBot) sendMenu(key chatKey) {
 		"chat_id":      strconv.FormatInt(key.chatID, 10),
 		"text":         sanitizeUTF8(text),
 		"reply_markup": keyboard,
+	}
+	if key.threadID != 0 {
+		params["message_thread_id"] = strconv.Itoa(key.threadID)
+	}
+	t.queueMessage("sendMessage", params)
+}
+
+func (t *TelegramBot) sendMenuMessage(key chatKey, text string, rows [][]map[string]interface{}) {
+	params := map[string]interface{}{
+		"chat_id": strconv.FormatInt(key.chatID, 10),
+		"text":    sanitizeUTF8(text),
+		"reply_markup": map[string]interface{}{
+			"inline_keyboard": rows,
+		},
 	}
 	if key.threadID != 0 {
 		params["message_thread_id"] = strconv.Itoa(key.threadID)
@@ -4310,6 +4328,10 @@ func (t *TelegramBot) handleCallbackQuery(key chatKey, userID int64, queryID, da
 		t.answerCallbackQuery(queryID, tasksStatusMessage(t.getChatLanguage(key.chatID), state))
 	case strings.HasPrefix(data, "menu:"):
 		t.handleMenuCallback(key, queryID, data)
+	case strings.HasPrefix(data, "retry:"):
+		t.handleRetryCallback(key, queryID, data)
+	case strings.HasPrefix(data, "model:"):
+		t.handleModelCallback(key, queryID, data)
 	case strings.HasPrefix(data, "hermes:"):
 		t.handleHermesCallback(key, queryID, data)
 	case strings.HasPrefix(data, "stop_agent_"):
@@ -4335,20 +4357,307 @@ func (t *TelegramBot) handleCallbackQuery(key chatKey, userID int64, queryID, da
 func (t *TelegramBot) handleMenuCallback(key chatKey, queryID, data string) {
 	action := strings.TrimPrefix(data, "menu:")
 	switch action {
+	case "open":
+		t.answerCallbackQuery(queryID, "顯示主選單")
+		t.sendMenu(key)
+	case "cancel":
+		t.answerCallbackQuery(queryID, "已取消")
 	case "status":
 		t.answerCallbackQuery(queryID, "顯示狀態")
 		t.handleCommand(key, "/status")
 	case "usage":
 		t.answerCallbackQuery(queryID, "顯示用量")
 		t.handleCommand(key, "/usage")
+	case "tasks":
+		t.answerCallbackQuery(queryID, "顯示 Tasks 選單")
+		t.sendTasksSelector(key)
 	case "hermes_status":
 		t.answerCallbackQuery(queryID, "顯示 Hermes 狀態")
 		t.handleHermesCommand(key, []string{"/hermes", "status"}, "")
 	case "help":
 		t.answerCallbackQuery(queryID, "顯示說明")
 		t.handleCommand(key, "/help")
+	case "abort_confirm":
+		t.answerCallbackQuery(queryID, "請確認中斷")
+		t.sendAbortConfirmation(key)
 	default:
 		t.answerCallbackQuery(queryID, "無法辨識選單操作")
+	}
+}
+
+func (t *TelegramBot) sendTasksSelector(key chatKey) {
+	t.sendMenuMessage(key, "📌 Tasks\n\n選擇要查看的 task 狀態。", [][]map[string]interface{}{
+		{
+			{"text": "Open", "callback_data": "tasks:view:open"},
+			{"text": "Closed", "callback_data": "tasks:view:closed"},
+		},
+		{
+			{"text": "Refresh Open", "callback_data": "tasks:refresh:open"},
+			{"text": "Refresh Closed", "callback_data": "tasks:refresh:closed"},
+		},
+		{
+			{"text": "回主選單", "callback_data": "menu:open"},
+		},
+	})
+}
+
+func (t *TelegramBot) sendAbortConfirmation(key chatKey) {
+	t.sendMenuMessage(key, "⚠️ 確定要中斷目前正在執行的任務嗎？", [][]map[string]interface{}{
+		{
+			{"text": "確認中斷", "callback_data": fmt.Sprintf("stop_agent_%d_%d", key.chatID, key.threadID)},
+			{"text": "取消", "callback_data": "menu:cancel"},
+		},
+	})
+}
+
+func (t *TelegramBot) sendModelMenu(key chatKey) {
+	current := t.getUserModelPreference(key)
+	if current == "" {
+		current = "auto"
+	}
+	text := fmt.Sprintf("🧭 Model / Backend\n\n目前模式：%s", current)
+	t.sendMenuMessage(key, text, [][]map[string]interface{}{
+		{
+			{"text": "Claude Fast", "callback_data": "model:set:fast"},
+			{"text": "Claude Smart", "callback_data": "model:set:smart"},
+		},
+		{
+			{"text": "Claude Deep", "callback_data": "model:set:deep"},
+			{"text": "Plan", "callback_data": "model:set:plan"},
+		},
+		{
+			{"text": "GPT Fast", "callback_data": "model:set:gpt-fast"},
+			{"text": "GPT Smart", "callback_data": "model:set:gpt-smart"},
+		},
+		{
+			{"text": "GPT Deep", "callback_data": "model:set:gpt-deep"},
+			{"text": "Auto", "callback_data": "model:set:auto"},
+		},
+		{
+			{"text": "Backend 狀態", "callback_data": "model:backend"},
+			{"text": "回主選單", "callback_data": "menu:open"},
+		},
+	})
+}
+
+func (t *TelegramBot) handleModelCallback(key chatKey, queryID, data string) {
+	switch {
+	case data == "model:menu":
+		t.answerCallbackQuery(queryID, "顯示模型選單")
+		t.sendModelMenu(key)
+	case data == "model:backend":
+		t.answerCallbackQuery(queryID, "顯示 backend")
+		t.handleBackendCommand(key, []string{"/backend", "list"})
+	case strings.HasPrefix(data, "model:set:"):
+		mode := strings.TrimPrefix(data, "model:set:")
+		command := map[string]string{
+			"fast":      "/fast",
+			"smart":     "/smart",
+			"deep":      "/deep",
+			"gpt-fast":  "/gfast",
+			"gpt-smart": "/gsmart",
+			"gpt-deep":  "/gdeep",
+			"auto":      "/auto",
+			"plan":      "/plan",
+		}[mode]
+		if command == "" {
+			t.answerCallbackQuery(queryID, "無法辨識模型")
+			return
+		}
+		t.answerCallbackQuery(queryID, "切換模型")
+		t.handleCommand(key, command)
+	default:
+		t.answerCallbackQuery(queryID, "無法辨識模型操作")
+	}
+}
+
+func (t *TelegramBot) sendRetryMenu(key chatKey) {
+	rows := [][]map[string]interface{}{
+		{
+			{"text": "Retry latest", "callback_data": "retry:confirm:latest"},
+			{"text": "回主選單", "callback_data": "menu:open"},
+		},
+	}
+	text := "🔁 Retry\n\n選擇要重跑的 review sub-task。"
+	store, ok := globalStorage.(*SQLiteStorage)
+	if globalStorage == nil || !ok {
+		text += "\n\nStorage 尚未啟用，暫時只能使用 slash command。"
+		t.sendMenuMessage(key, text, rows)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), retrySelectionTimeout)
+	defer cancel()
+	candidates, err := store.selectRetryTaskCandidates(ctx, key, 5)
+	if err != nil {
+		text += "\n\n讀取候選任務失敗：" + err.Error()
+		t.sendMenuMessage(key, text, rows)
+		return
+	}
+	for _, candidate := range candidates {
+		rows = append(rows, []map[string]interface{}{
+			{"text": retryCandidateButtonText(candidate), "callback_data": "retry:task:" + candidate.ID},
+		})
+	}
+	if len(candidates) == 0 {
+		text += "\n\n目前沒有找到這個 topic 的 retry 候選任務。"
+	}
+	t.sendMenuMessage(key, text, rows)
+}
+
+func retryCandidateButtonText(candidate retryTaskCandidate) string {
+	prefix := shortHermesTaskID(candidate.ID)
+	if candidate.GithubIssueNumber > 0 {
+		prefix = fmt.Sprintf("#%d %s", candidate.GithubIssueNumber, prefix)
+	}
+	goal := truncateForTelegram(strings.TrimSpace(candidate.Goal), 34)
+	if goal == "" {
+		goal = "untitled task"
+	}
+	return fmt.Sprintf("%s · %d failed · %s", prefix, candidate.FailedCount, goal)
+}
+
+func (t *TelegramBot) sendRetryTaskMenu(key chatKey, taskID string) {
+	if globalStorage == nil {
+		t.send(key, "❌ Storage 尚未啟用，無法讀取 review 結果。")
+		return
+	}
+	store, ok := globalStorage.(*SQLiteStorage)
+	if !ok {
+		t.send(key, "❌ 目前 storage backend 不支援 retry 選單。")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), retrySelectionTimeout)
+	defer cancel()
+	selections, err := store.selectRetryTargetsAllFailed(ctx, taskID)
+	if err != nil {
+		t.send(key, "❌ "+err.Error())
+		return
+	}
+	rows := [][]map[string]interface{}{
+		{
+			{"text": "最低分 sub-task", "callback_data": "retry:confirm:lowest:" + taskID},
+			{"text": "全部失敗", "callback_data": "retry:confirm:all:" + taskID},
+		},
+	}
+	for _, selection := range selections {
+		rows = append(rows, []map[string]interface{}{
+			{
+				"text":          fmt.Sprintf("#%d · %d/100 · %s", selection.DisplaySubTaskIdx, selection.SubTaskReview.Score, truncateForTelegram(selection.SubTask.Description, 30)),
+				"callback_data": fmt.Sprintf("retry:confirm:index:%s:%d", taskID, selection.DisplaySubTaskIdx),
+			},
+		})
+	}
+	rows = append(rows, []map[string]interface{}{{"text": "回 Retry", "callback_data": "retry:menu"}})
+	t.sendMenuMessage(key, fmt.Sprintf("🔁 Retry task `%s`\n\n選擇要重跑的範圍。", shortHermesTaskID(taskID)), rows)
+}
+
+func (t *TelegramBot) sendRetryConfirmation(key chatKey, mode, taskID string, idx int) {
+	label := "latest low-score sub-task"
+	runData := "retry:run:latest"
+	switch mode {
+	case "lowest":
+		label = "這個 task 的最低分 sub-task"
+		runData = "retry:run:lowest:" + taskID
+	case "all":
+		label = "這個 task 的所有失敗 sub-task"
+		runData = "retry:run:all:" + taskID
+	case "index":
+		label = fmt.Sprintf("這個 task 的 sub-task #%d", idx)
+		runData = fmt.Sprintf("retry:run:index:%s:%d", taskID, idx)
+	}
+	t.sendMenuMessage(key, "⚠️ 確認執行 retry？\n\n將重跑 "+label+"。", [][]map[string]interface{}{
+		{
+			{"text": "確認執行", "callback_data": runData},
+			{"text": "取消", "callback_data": "retry:cancel"},
+		},
+	})
+}
+
+func (t *TelegramBot) handleRetryCallback(key chatKey, queryID, data string) {
+	switch {
+	case data == "retry:menu":
+		t.answerCallbackQuery(queryID, "顯示 retry 選單")
+		t.sendRetryMenu(key)
+	case data == "retry:cancel":
+		t.answerCallbackQuery(queryID, "已取消")
+	case data == "retry:confirm:latest":
+		t.answerCallbackQuery(queryID, "請確認 retry")
+		t.sendRetryConfirmation(key, "latest", "", 0)
+	case strings.HasPrefix(data, "retry:task:"):
+		taskID := strings.TrimPrefix(data, "retry:task:")
+		t.answerCallbackQuery(queryID, "選擇 retry 範圍")
+		t.sendRetryTaskMenu(key, taskID)
+	case strings.HasPrefix(data, "retry:confirm:"):
+		t.handleRetryConfirmCallback(key, queryID, data)
+	case strings.HasPrefix(data, "retry:run:"):
+		t.handleRetryRunCallback(key, queryID, data)
+	default:
+		t.answerCallbackQuery(queryID, "無法辨識 retry 操作")
+	}
+}
+
+func (t *TelegramBot) handleRetryConfirmCallback(key chatKey, queryID, data string) {
+	parts := strings.Split(data, ":")
+	if len(parts) < 3 {
+		t.answerCallbackQuery(queryID, "無法辨識 retry 操作")
+		return
+	}
+	switch parts[2] {
+	case "lowest":
+		if len(parts) != 4 {
+			t.answerCallbackQuery(queryID, "缺少 task id")
+			return
+		}
+		t.answerCallbackQuery(queryID, "請確認 retry")
+		t.sendRetryConfirmation(key, "lowest", parts[3], 0)
+	case "all":
+		if len(parts) != 4 {
+			t.answerCallbackQuery(queryID, "缺少 task id")
+			return
+		}
+		t.answerCallbackQuery(queryID, "請確認 retry all")
+		t.sendRetryConfirmation(key, "all", parts[3], 0)
+	case "index":
+		if len(parts) != 5 {
+			t.answerCallbackQuery(queryID, "缺少 sub-task 編號")
+			return
+		}
+		idx, err := strconv.Atoi(parts[4])
+		if err != nil || idx <= 0 {
+			t.answerCallbackQuery(queryID, "sub-task 編號無效")
+			return
+		}
+		t.answerCallbackQuery(queryID, "請確認 retry")
+		t.sendRetryConfirmation(key, "index", parts[3], idx)
+	default:
+		t.answerCallbackQuery(queryID, "無法辨識 retry 操作")
+	}
+}
+
+func (t *TelegramBot) handleRetryRunCallback(key chatKey, queryID, data string) {
+	parts := strings.Split(data, ":")
+	if len(parts) < 3 {
+		t.answerCallbackQuery(queryID, "無法辨識 retry 操作")
+		return
+	}
+	t.answerCallbackQuery(queryID, "開始 retry")
+	switch parts[2] {
+	case "latest":
+		t.handleRetryCommand(key, []string{"/retry", "latest"})
+	case "lowest":
+		if len(parts) == 4 {
+			t.handleRetryCommand(key, []string{"/retry", parts[3]})
+		}
+	case "all":
+		if len(parts) == 4 {
+			t.handleRetryCommand(key, []string{"/retry", parts[3], "all-failed"})
+		}
+	case "index":
+		if len(parts) == 5 {
+			t.handleRetryCommand(key, []string{"/retry", parts[3], parts[4]})
+		}
+	default:
+		t.answerCallbackQuery(queryID, "無法辨識 retry 操作")
 	}
 }
 

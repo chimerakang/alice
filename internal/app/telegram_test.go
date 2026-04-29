@@ -622,17 +622,109 @@ func TestSendMenuQueuesInlineKeyboard(t *testing.T) {
 		if !ok {
 			t.Fatalf("inline_keyboard missing or wrong type: %#v", markup["inline_keyboard"])
 		}
-		if len(rows) != 4 {
-			t.Fatalf("expected 4 menu rows, got %d", len(rows))
+		if len(rows) != 5 {
+			t.Fatalf("expected 5 menu rows, got %d", len(rows))
 		}
-		if rows[1][0]["callback_data"] != "tasks:view:open" {
+		if rows[1][0]["callback_data"] != "menu:tasks" {
 			t.Fatalf("unexpected tasks button: %#v", rows[1][0])
 		}
 		if rows[1][1]["callback_data"] != "menu:hermes_status" {
 			t.Fatalf("unexpected Hermes button: %#v", rows[1][1])
 		}
+		if rows[2][0]["callback_data"] != "retry:menu" {
+			t.Fatalf("unexpected retry button: %#v", rows[2][0])
+		}
+		if rows[2][1]["callback_data"] != "model:menu" {
+			t.Fatalf("unexpected model button: %#v", rows[2][1])
+		}
+		if rows[4][1]["callback_data"] != "menu:abort_confirm" {
+			t.Fatalf("unexpected abort button: %#v", rows[4][1])
+		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for menu message")
+	}
+}
+
+func TestSendTasksSelectorQueuesOpenClosedRefresh(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{messageQueue: make(chan *TelegramMessage, 1)}
+
+	bot.sendTasksSelector(key)
+
+	select {
+	case msg := <-bot.messageQueue:
+		markup, ok := msg.Params["reply_markup"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("reply_markup missing or wrong type: %#v", msg.Params["reply_markup"])
+		}
+		rows, ok := markup["inline_keyboard"].([][]map[string]interface{})
+		if !ok {
+			t.Fatalf("inline_keyboard missing or wrong type: %#v", markup["inline_keyboard"])
+		}
+		if rows[0][0]["callback_data"] != "tasks:view:open" || rows[0][1]["callback_data"] != "tasks:view:closed" {
+			t.Fatalf("unexpected task view row: %#v", rows[0])
+		}
+		if rows[1][0]["callback_data"] != "tasks:refresh:open" || rows[1][1]["callback_data"] != "tasks:refresh:closed" {
+			t.Fatalf("unexpected task refresh row: %#v", rows[1])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for tasks selector message")
+	}
+}
+
+func TestSendModelMenuQueuesSelector(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		config:       &Config{DefaultProjectDir: "/repo"},
+		chatContexts: map[chatKey]*ChatContext{key: NewChatContext(42, 7, "/repo")},
+		messageQueue: make(chan *TelegramMessage, 1),
+	}
+	bot.chatContexts[key].Pref = ModelPreference("gpt-deep")
+
+	bot.sendModelMenu(key)
+
+	select {
+	case msg := <-bot.messageQueue:
+		markup, ok := msg.Params["reply_markup"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("reply_markup missing or wrong type: %#v", msg.Params["reply_markup"])
+		}
+		rows, ok := markup["inline_keyboard"].([][]map[string]interface{})
+		if !ok {
+			t.Fatalf("inline_keyboard missing or wrong type: %#v", markup["inline_keyboard"])
+		}
+		if len(rows) != 5 {
+			t.Fatalf("expected 5 model rows, got %d", len(rows))
+		}
+		if rows[0][0]["callback_data"] != "model:set:fast" || rows[3][0]["callback_data"] != "model:set:gpt-deep" {
+			t.Fatalf("unexpected model rows: %#v", rows)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for model menu message")
+	}
+}
+
+func TestSendRetryConfirmationQueuesRunButton(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{messageQueue: make(chan *TelegramMessage, 1)}
+
+	bot.sendRetryConfirmation(key, "all", "task-123", 0)
+
+	select {
+	case msg := <-bot.messageQueue:
+		markup, ok := msg.Params["reply_markup"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("reply_markup missing or wrong type: %#v", msg.Params["reply_markup"])
+		}
+		rows, ok := markup["inline_keyboard"].([][]map[string]interface{})
+		if !ok {
+			t.Fatalf("inline_keyboard missing or wrong type: %#v", markup["inline_keyboard"])
+		}
+		if rows[0][0]["callback_data"] != "retry:run:all:task-123" {
+			t.Fatalf("unexpected retry run button: %#v", rows[0][0])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for retry confirmation message")
 	}
 }
 
