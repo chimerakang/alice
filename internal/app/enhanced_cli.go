@@ -66,14 +66,11 @@ func (c *EnhancedCLIClient) CallWithFiles(ctx context.Context, message string, f
 	// 執行命令
 	log.Printf("[enhanced-cli] executing: claude %s", strings.Join(args, " "))
 
-	cmd, cancel := processCommand(ctx, ProcessOptions{
+	output, err := runProcessOutput(ctx, ProcessOptions{
 		Dir:     projectDir,
-		Env:     append(os.Environ(), "ALICE_SKIP_HOOKS=1"),
+		Env:     cleanEnvForCLI(),
 		Timeout: defaultAgentProcessTimeout,
 	}, "claude", args...)
-	defer cancel()
-
-	output, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() == context.Canceled {
 			return nil, fmt.Errorf("agent aborted by user")

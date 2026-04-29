@@ -141,14 +141,11 @@ func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID, mo
 
 	args = append(args, message)
 
-	cmd, cancel := processCommand(ctx, ProcessOptions{
+	output, err := runProcessOutput(ctx, ProcessOptions{
 		Dir:     projectDir,
 		Env:     cleanEnvForCLI(),
 		Timeout: defaultAgentProcessTimeout,
 	}, "claude", args...)
-	defer cancel()
-
-	output, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() == context.Canceled {
 			return nil, fmt.Errorf("agent aborted by user")

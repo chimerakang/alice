@@ -5551,18 +5551,10 @@ Reply only with: fast / balanced / deep`
 		prompt,
 	}
 
-	cmd, cmdCancel := processCommand(triageCtx, ProcessOptions{
+	output, err := runProcessOutput(triageCtx, ProcessOptions{
 		Env:     cleanEnvForCLI(),
 		Timeout: 15 * time.Second,
 	}, "claude", args...)
-	defer cmdCancel()
-
-	// Redirect stdin to /dev/null to prevent blocking on stdin reads
-	devNull, _ := os.Open(os.DevNull)
-	defer devNull.Close()
-	cmd.Stdin = devNull
-
-	output, err := cmd.Output()
 	if err != nil {
 		log.Printf("[telegram] haiku triage failed, falling back to heuristic: %v", err)
 		return evaluateTaskComplexity(userMessage)

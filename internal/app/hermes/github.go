@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"strings"
 	"time"
@@ -68,17 +67,25 @@ var checklistRe = regexp.MustCompile(`(?m)^- \[( |x|X)\] (.+)$`)
 // when SyncChecklist/PostComment hung, leaving tasks stuck in `executing`.
 const ghDefaultTimeout = 30 * time.Second
 
-// ghCommand builds a gh subcommand rooted at projectDir so `gh` resolves the
+const ghOutputLimit = 256 * 1024
+
+func ghProcessOptions(projectDir string) ProcessOptions {
+	return ProcessOptions{
+		Dir:         projectDir,
+		Timeout:     ghDefaultTimeout,
+		OutputLimit: ghOutputLimit,
+	}
+}
+
+// ghOutput runs a gh subcommand rooted at projectDir so `gh` resolves the
 // correct repository from that directory's git remote. An empty projectDir
 // falls back to the bot's cwd (compatible with older single-project setups).
-//
-// The returned cancel func MUST be deferred by the caller; it releases the
-// per-call timeout context. Calling it after the cmd finishes is a no-op.
-func ghCommand(ctx context.Context, projectDir string, args ...string) (*exec.Cmd, context.CancelFunc) {
-	return processCommand(ctx, ProcessOptions{
-		Dir:     projectDir,
-		Timeout: ghDefaultTimeout,
-	}, "gh", args...)
+func ghOutput(ctx context.Context, projectDir string, args ...string) ([]byte, error) {
+	return runProcessOutput(ctx, ghProcessOptions(projectDir), "gh", args...)
+}
+
+func ghCombinedOutput(ctx context.Context, projectDir string, args ...string) ([]byte, error) {
+	return runProcessCombinedOutput(ctx, ghProcessOptions(projectDir), "gh", args...)
 }
 
 // ListIssues fetches open issues and returns them sorted by computed priority:
@@ -87,13 +94,11 @@ func ListIssues(ctx context.Context, projectDir string, limit int) ([]IssueListI
 	if limit <= 0 {
 		limit = 15
 	}
-	cmd, cancel := ghCommand(ctx, projectDir, "issue", "list",
+	out, err := ghOutput(ctx, projectDir, "issue", "list",
 		"--state", "open",
 		"--limit", fmt.Sprintf("%d", limit),
 		"--json", "number,title,labels,milestone,updatedAt",
 	)
-	defer cancel()
-	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("gh issue list: %w", err)
 	}
@@ -195,12 +200,10 @@ func FormatIssueList(items []IssueListItem) string {
 // and returns parsed data. projectDir must match the chat's configured repo
 // so gh resolves the correct remote; empty string falls back to cwd.
 func FetchIssue(ctx context.Context, projectDir string, number int) (*IssueContext, error) {
-	cmd, cancel := ghCommand(ctx, projectDir, "issue", "view",
+	out, err := ghOutput(ctx, projectDir, "issue", "view",
 		fmt.Sprintf("%d", number),
 		"--json", "title,body,labels",
 	)
-	defer cancel()
-	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("gh issue view %d: %w", number, err)
 	}
@@ -304,12 +307,10 @@ func min16(n int) int {
 
 // PostComment posts a comment to the given Issue via `gh issue comment`.
 func PostComment(ctx context.Context, projectDir string, number int, body string) error {
-	cmd, cancel := ghCommand(ctx, projectDir, "issue", "comment",
+	if out, err := ghCombinedOutput(ctx, projectDir, "issue", "comment",
 		fmt.Sprintf("%d", number),
 		"--body", body,
-	)
-	defer cancel()
-	if out, err := cmd.CombinedOutput(); err != nil {
+	); err != nil {
 		return fmt.Errorf("gh issue comment %d: %w (output: %s)", number, err, out)
 	}
 	return nil
@@ -318,12 +319,10 @@ func PostComment(ctx context.Context, projectDir string, number int, body string
 // SyncChecklist fetches the current Issue body and checks off completed sub-tasks.
 func SyncChecklist(ctx context.Context, projectDir string, number int, subtasks []SubTask) error {
 	// Fetch current body
-	viewCmd, viewCancel := ghCommand(ctx, projectDir, "issue", "view",
+	out, err := ghOutput(ctx, projectDir, "issue", "view",
 		fmt.Sprintf("%d", number),
 		"--json", "body",
 	)
-	defer viewCancel()
-	out, err := viewCmd.Output()
 	if err != nil {
 		return fmt.Errorf("gh issue view body: %w", err)
 	}
@@ -350,12 +349,10 @@ func SyncChecklist(ctx context.Context, projectDir string, number int, subtasks 
 		return nil // nothing changed
 	}
 
-	cmd, cancel := ghCommand(ctx, projectDir, "issue", "edit",
+	if out, err := ghCombinedOutput(ctx, projectDir, "issue", "edit",
 		fmt.Sprintf("%d", number),
 		"--body", updatedBody,
-	)
-	defer cancel()
-	if out, err := cmd.CombinedOutput(); err != nil {
+	); err != nil {
 		return fmt.Errorf("gh issue edit checklist: %w (output: %s)", err, out)
 	}
 	return nil
@@ -363,12 +360,10 @@ func SyncChecklist(ctx context.Context, projectDir string, number int, subtasks 
 
 // ApplyLabel adds a label to the Issue (creates if needed via gh's built-in behaviour).
 func ApplyLabel(ctx context.Context, projectDir string, number int, label string) error {
-	cmd, cancel := ghCommand(ctx, projectDir, "issue", "edit",
+	if out, err := ghCombinedOutput(ctx, projectDir, "issue", "edit",
 		fmt.Sprintf("%d", number),
 		"--add-label", label,
-	)
-	defer cancel()
-	if out, err := cmd.CombinedOutput(); err != nil {
+	); err != nil {
 		return fmt.Errorf("gh apply label %q to #%d: %w (output: %s)", label, number, err, out)
 	}
 	return nil
@@ -376,11 +371,9 @@ func ApplyLabel(ctx context.Context, projectDir string, number int, label string
 
 // CloseIssue closes the Issue.
 func CloseIssue(ctx context.Context, projectDir string, number int) error {
-	cmd, cancel := ghCommand(ctx, projectDir, "issue", "close",
+	if out, err := ghCombinedOutput(ctx, projectDir, "issue", "close",
 		fmt.Sprintf("%d", number),
-	)
-	defer cancel()
-	if out, err := cmd.CombinedOutput(); err != nil {
+	); err != nil {
 		return fmt.Errorf("gh issue close #%d: %w (output: %s)", number, err, out)
 	}
 	return nil
@@ -410,12 +403,10 @@ func HasLabel(issue *IssueContext, label string) bool {
 func WritePlanToIssue(ctx context.Context, projectDir string, number int, originalBody string, tasks []SubTask) error {
 	_ = originalBody // intentionally ignored; see doc comment
 
-	viewCmd, viewCancel := ghCommand(ctx, projectDir, "issue", "view",
+	out, err := ghOutput(ctx, projectDir, "issue", "view",
 		fmt.Sprintf("%d", number),
 		"--json", "body",
 	)
-	defer viewCancel()
-	out, err := viewCmd.Output()
 	if err != nil {
 		return fmt.Errorf("gh issue view body for plan write: %w", err)
 	}
@@ -440,12 +431,10 @@ func WritePlanToIssue(ctx context.Context, projectDir string, number int, origin
 		sb.WriteString("\n")
 	}
 
-	cmd, cancel := ghCommand(ctx, projectDir, "issue", "edit",
+	if cmdOut, err := ghCombinedOutput(ctx, projectDir, "issue", "edit",
 		fmt.Sprintf("%d", number),
 		"--body", sb.String(),
-	)
-	defer cancel()
-	if cmdOut, err := cmd.CombinedOutput(); err != nil {
+	); err != nil {
 		return fmt.Errorf("gh issue edit plan: %w (output: %s)", err, cmdOut)
 	}
 	return nil
