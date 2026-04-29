@@ -57,7 +57,7 @@ For each incoming message:
 | Runner / Path | Current Memory Status | Target |
 | --- | --- | --- |
 | Hermes issue/follow-up | Uses `MemoryResolver` for Hermes task + recent bridge | Add static hints and memory observability |
-| Direct Agent | Uses backend session, recent bridge on model switch, recent bridge on resume fallback | Use `MemoryResolver` for fallback and follow-up injection |
+| Direct Agent | Uses backend session; model switch and resume fallback assemble recent bridge through `MemoryResolver` | Add structured task/general memory sources |
 | File/document analysis | Primarily session/recent-message dependent | Use `MemoryResolver`; later write general memory cards |
 | Multimedia analysis | Primarily runner-specific prompt context | Use `MemoryResolver`; later persist media analysis summaries |
 | Retry/review/checkup | Reads task/review state through existing services | Use memory sections for prior task/review summaries |

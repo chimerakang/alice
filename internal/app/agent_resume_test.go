@@ -91,3 +91,32 @@ func TestAgentRunInjectsBridgeWhenCodexResumeUnavailable(t *testing.T) {
 		t.Fatalf("codex session = %q, want new-codex-thread", gotSession)
 	}
 }
+
+func TestAgentRunSkipsRecentBridgeForExplicitIssueOnResumeFallback(t *testing.T) {
+	chatCtx := NewChatContext(123, 0, "/tmp/project")
+	chatCtx.SetSession(BackendCodex, "stale-codex-thread")
+	chatCtx.AddRecentMessage(
+		"剛剛在處理 #99",
+		"#99 的結論不應污染新的 explicit issue request。",
+	)
+	client := &resumeBridgeClient{}
+	agent := NewAgentWithContext(client, chatCtx)
+	agent.SetModelOverride("gpt-5.5")
+
+	if _, err := agent.Run("請繼續處理 #143", nil); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(client.calls) != 2 {
+		t.Fatalf("CallStream calls = %d, want 2", len(client.calls))
+	}
+	retryPrompt := client.calls[1].message
+	if strings.Contains(retryPrompt, "#99 的結論") {
+		t.Fatalf("retry prompt leaked unrelated recent bridge:\n%s", retryPrompt)
+	}
+	if strings.Contains(retryPrompt, "[Context from previous conversation") {
+		t.Fatalf("retry prompt included generic recent bridge for explicit issue:\n%s", retryPrompt)
+	}
+	if !strings.Contains(retryPrompt, "請繼續處理 #143") {
+		t.Fatalf("retry prompt missing current request:\n%s", retryPrompt)
+	}
+}

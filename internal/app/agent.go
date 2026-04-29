@@ -698,7 +698,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	// If model changed, bridge recent messages. Native sessions are kept per
 	// backend; same-backend model changes still start a fresh session.
 	if selectedModel != a.lastUsedModel && a.lastUsedModel != "" {
-		bridge := buildContextBridge(ps.ctx.RecentMessagesSnapshot())
+		bridge := a.resolveAgentMemoryBridge(ctx, ps, userMessage, "direct_model_switch")
 		if bridge != "" {
 			userMessage = bridge + userMessage
 			log.Printf("[agent] context bridge injected (%d recent messages)", len(ps.ctx.RecentMsgs))
@@ -889,7 +889,7 @@ func (a *Agent) callStreamWithResumeBridge(
 
 	bridge := ""
 	if ps != nil && ps.ctx != nil {
-		bridge = buildContextBridge(ps.ctx.RecentMessagesSnapshot())
+		bridge = a.resolveAgentMemoryBridge(ctx, ps, message, "direct_resume_fallback")
 	}
 	if bridge == "" {
 		log.Printf("[agent] codex resume fallback: session %q unavailable; retrying with fresh session without bridge (no recent messages)", sessionID)
@@ -901,6 +901,27 @@ func (a *Agent) callStreamWithResumeBridge(
 	log.Printf("[agent] codex resume fallback: session %q unavailable; bridge injected (%d recent messages)", sessionID, len(ps.ctx.RecentMsgs))
 	resp, err = a.client.CallStream(ctx, bridgedMessage, a.projectDir, "", model, onToolUse, onContent)
 	return resp, bridgedMessage, "", err
+}
+
+func (a *Agent) resolveAgentMemoryBridge(ctx context.Context, ps *projectState, userMessage, mode string) string {
+	if ps == nil || ps.ctx == nil {
+		return ""
+	}
+	resolver := NewMemoryResolver(nil)
+	bundle, err := resolver.Resolve(ctx, MemoryRequest{
+		ChatID:         ps.ctx.ChatID,
+		ThreadID:       ps.ctx.ThreadID,
+		ProjectDir:     ps.ctx.ProjectDir,
+		UserMessage:    userMessage,
+		Mode:           mode,
+		BudgetChars:    defaultMemoryBudgetChars,
+		RecentMessages: ps.ctx.RecentMessagesSnapshot(),
+	})
+	if err != nil {
+		log.Printf("[agent] memory bridge resolve failed mode=%s chat=%d thread=%d: %v", mode, ps.ctx.ChatID, ps.ctx.ThreadID, err)
+		return ""
+	}
+	return bundle.Render()
 }
 
 // RunWithPlan executes a two-phase Plan/Execute workflow:
