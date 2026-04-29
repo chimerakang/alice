@@ -904,7 +904,7 @@ func (wi *WebInterface) handleMemoryPreview(w http.ResponseWriter, r *http.Reque
 			}
 		}
 
-		resolver := NewMemoryResolverWithSources(taskSource, globalGeneralMemorySource())
+		resolver := NewMemoryResolverWithAllSources(taskSource, globalGeneralMemorySource(), defaultStaticHintSourceForProject(req.ProjectDir))
 		bundle, err := resolver.Resolve(r.Context(), req)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)

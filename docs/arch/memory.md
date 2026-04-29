@@ -21,7 +21,7 @@ target layering, and the first implementation boundary.
 | Structured Hermes task memory | `hermes.TaskState` in SQLite or memory store | Persisted task state | Hermes continuation, same issue request, related chat follow-up | Task is unrelated to requested issue/project/thread | Highest priority for matching issue; compact task summary only |
 | General task memory | Unified `tasks/sub_tasks` rows mirrored from `decision_logs` | Until normal data retention cleanup | Direct/file/media follow-up and related issue/project requests | Task is unrelated to requested issue/project/thread | Compact request/result cards |
 | Issue-scoped memory | `TaskState.GithubIssueNumber` and issue-aware follow-up detection | Persists with Hermes tasks | Message explicitly references `#N` / `＃Ｎ` | Requested issue differs | Takes priority over unrelated active tasks |
-| Project/static knowledge | `CLAUDE.md`, `.claude/skills/*`, `docs/arch/*`, `docs/playbooks/*` | Repository-managed | New task planning, project-specific follow-up, skill routing | File changes or project changes | Future resolver source; include only targeted hints |
+| Project/static knowledge | `CLAUDE.md`, `docs/arch/memory.md` | Repository-managed | New task planning and project-specific follow-up when `project_dir` is known | File changes or project changes | Low-priority `static_hint` section with strict attribution and per-file clamping |
 | Observability/audit memory | Decision logs, tool events, future memory-card records | Persisted log data | Dashboard/API and debug inspection | Not prompt-critical unless queried | Do not inject by default |
 
 ## Current Implementation
@@ -31,8 +31,8 @@ The first version adds `internal/app/memory_resolver.go` with:
 - `MemoryRequest`: chat/thread/project/user message/issue/mode/budget/recent messages.
 - `MemoryBundle`: ordered `MemorySection` entries.
 - `MemorySection`: `Source`, `Scope`, `Priority`, and prompt-ready `Text`.
-- `UnifiedMemoryResolver`: combines recent messages, Hermes task memory, and
-  general task memory.
+- `UnifiedMemoryResolver`: combines recent messages, Hermes task memory, general
+  task memory, and low-priority static project hints.
 
 Hermes now enters memory retrieval through `MemoryResolver` in
 `buildHermesGoalWithContext`. The older `loadHermesContextTasks` helper remains
@@ -42,6 +42,11 @@ as a compatibility wrapper for tests and existing call sites.
 resolution. It accepts `chat_id`, optional `thread_id`, `project_dir`, `issue`,
 `message`, `mode`, and `budget`, then returns section source/scope/priority,
 size, and preview text for the bundle that would be assembled.
+
+Static project hints are intentionally narrow. `ProjectStaticHintSource` only
+reads `CLAUDE.md` and `docs/arch/memory.md`, skips missing or oversized files,
+attributes each snippet by path, and injects them below task memory as
+orientation rather than implementation truth.
 
 ## Retrieval Policy
 
@@ -63,10 +68,10 @@ For each incoming message:
 
 | Runner / Path | Current Memory Status | Target |
 | --- | --- | --- |
-| Hermes issue/follow-up | Uses `MemoryResolver` for Hermes task + recent bridge | Add static hints and memory observability |
-| Direct Agent | Uses backend session; model switch and resume fallback assemble recent bridge and general task memory through `MemoryResolver` | Add richer task summaries and observability |
-| File/document analysis | Stop-button document runner resolves prompt memory through `MemoryResolver` before calling Direct Agent | Add richer file-specific memory metadata |
-| Multimedia analysis | Photo and voice runners resolve prompt memory through `MemoryResolver` before calling Direct Agent | Add richer media-specific memory metadata |
+| Hermes issue/follow-up | Uses `MemoryResolver` for Hermes task, general task memory, recent bridge, static hints, and preview observability | Add richer task summaries |
+| Direct Agent | Uses backend session; model switch and resume fallback assemble recent bridge, general task memory, and static hints through `MemoryResolver` | Add richer task summaries |
+| File/document analysis | Stop-button document runner resolves prompt memory, including static hints when project context is known, through `MemoryResolver` before calling Direct Agent | Add richer file-specific memory metadata |
+| Multimedia analysis | Photo and voice runners resolve prompt memory, including static hints when project context is known, through `MemoryResolver` before calling Direct Agent | Add richer media-specific memory metadata |
 | Retry/review/checkup | Reads task/review state through existing services | Use memory sections for prior task/review summaries |
 
 ## Continuation Rules
@@ -94,4 +99,5 @@ budgets because existing Hermes prompt assembly is character-based.
   decision-log/unified-task mirror, including touched files and continuation
   hints.
 - Add dashboard UI for available memory sections and injected bundle previews.
-- Add static project hints as a resolver source with strict attribution.
+- Expand static project hints beyond the initial controlled files when there is
+  a clear routing and freshness policy.

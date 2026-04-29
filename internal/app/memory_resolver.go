@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -12,6 +14,7 @@ import (
 )
 
 const defaultMemoryBudgetChars = 6000
+const staticHintBudgetChars = 1800
 
 type MemoryResolver interface {
 	Resolve(ctx context.Context, req MemoryRequest) (MemoryBundle, error)
@@ -91,6 +94,10 @@ type generalMemorySource interface {
 	ListGeneralMemoryCards(ctx context.Context, req MemoryRequest, limit int) ([]GeneralMemoryCard, error)
 }
 
+type staticHintSource interface {
+	ListStaticMemoryHints(ctx context.Context, req MemoryRequest, limit int) ([]StaticMemoryHint, error)
+}
+
 type GeneralMemoryCard struct {
 	ID                string
 	ChatID            int64
@@ -107,9 +114,15 @@ type GeneralMemoryCard struct {
 	UpdatedAt         time.Time
 }
 
+type StaticMemoryHint struct {
+	Path string
+	Text string
+}
+
 type UnifiedMemoryResolver struct {
 	tasks   hermesMemoryTaskSource
 	general generalMemorySource
+	static  staticHintSource
 }
 
 func NewMemoryResolver(tasks hermesMemoryTaskSource) *UnifiedMemoryResolver {
@@ -118,6 +131,17 @@ func NewMemoryResolver(tasks hermesMemoryTaskSource) *UnifiedMemoryResolver {
 
 func NewMemoryResolverWithSources(tasks hermesMemoryTaskSource, general generalMemorySource) *UnifiedMemoryResolver {
 	return &UnifiedMemoryResolver{tasks: tasks, general: general}
+}
+
+func NewMemoryResolverWithAllSources(tasks hermesMemoryTaskSource, general generalMemorySource, static staticHintSource) *UnifiedMemoryResolver {
+	return &UnifiedMemoryResolver{tasks: tasks, general: general, static: static}
+}
+
+func defaultStaticHintSourceForProject(projectDir string) staticHintSource {
+	if strings.TrimSpace(projectDir) == "" {
+		return nil
+	}
+	return ProjectStaticHintSource{}
 }
 
 func globalGeneralMemorySource() generalMemorySource {
@@ -158,6 +182,15 @@ func (r *UnifiedMemoryResolver) Resolve(ctx context.Context, req MemoryRequest) 
 		}
 		if strings.TrimSpace(generalSection.Text) != "" {
 			sections = append(sections, generalSection)
+		}
+	}
+	if r != nil && r.static != nil {
+		staticSection, err := r.resolveStaticHintSection(ctx, req)
+		if err != nil {
+			return MemoryBundle{}, err
+		}
+		if strings.TrimSpace(staticSection.Text) != "" {
+			sections = append(sections, staticSection)
 		}
 	}
 	if issueNumber == 0 {
@@ -268,6 +301,83 @@ func buildGeneralMemoryContextSection(cards []GeneralMemoryCard) string {
 	return sb.String()
 }
 
+func buildStaticHintContextSection(hints []StaticMemoryHint) string {
+	if len(hints) == 0 {
+		return ""
+	}
+	sections := make([]string, 0, len(hints))
+	for _, hint := range hints {
+		path := strings.TrimSpace(hint.Path)
+		text := strings.TrimSpace(hint.Text)
+		if path == "" || text == "" {
+			continue
+		}
+		var sb strings.Builder
+		sb.WriteString("Static project hint from ")
+		sb.WriteString(path)
+		sb.WriteString(":\n")
+		sb.WriteString(clampHermesContext(text, staticHintBudgetChars))
+		sections = append(sections, strings.TrimSpace(sb.String()))
+	}
+	if len(sections) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("Static project context:\n")
+	sb.WriteString("Use these attributed project hints as low-priority orientation. Prefer live code and task memory for concrete implementation details.\n\n")
+	sb.WriteString(strings.Join(sections, "\n\n"))
+	return sb.String()
+}
+
+type ProjectStaticHintSource struct{}
+
+func (ProjectStaticHintSource) ListStaticMemoryHints(ctx context.Context, req MemoryRequest, limit int) ([]StaticMemoryHint, error) {
+	projectDir := strings.TrimSpace(req.ProjectDir)
+	if projectDir == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 3
+	}
+	paths := []string{
+		"CLAUDE.md",
+		filepath.Join("docs", "arch", "memory.md"),
+	}
+	capacity := limit
+	if len(paths) < capacity {
+		capacity = len(paths)
+	}
+	hints := make([]StaticMemoryHint, 0, capacity)
+	for _, relPath := range paths {
+		if len(hints) >= limit {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		fullPath := filepath.Join(projectDir, relPath)
+		info, err := os.Stat(fullPath)
+		if err != nil || info.IsDir() || info.Size() > 256*1024 {
+			continue
+		}
+		data, err := os.ReadFile(fullPath)
+		if err != nil {
+			continue
+		}
+		text := strings.TrimSpace(string(data))
+		if text == "" {
+			continue
+		}
+		hints = append(hints, StaticMemoryHint{
+			Path: filepath.ToSlash(relPath),
+			Text: text,
+		})
+	}
+	return hints, nil
+}
+
 func (r *UnifiedMemoryResolver) resolveHermesTaskSection(ctx context.Context, req MemoryRequest) (MemorySection, error) {
 	select {
 	case <-ctx.Done():
@@ -326,6 +436,28 @@ func (r *UnifiedMemoryResolver) resolveGeneralMemorySection(ctx context.Context,
 		Scope:    scope,
 		Priority: priority,
 		Text:     buildGeneralMemoryContextSection(cards),
+	}, nil
+}
+
+func (r *UnifiedMemoryResolver) resolveStaticHintSection(ctx context.Context, req MemoryRequest) (MemorySection, error) {
+	select {
+	case <-ctx.Done():
+		return MemorySection{}, ctx.Err()
+	default:
+	}
+	hints, err := r.static.ListStaticMemoryHints(ctx, req, 3)
+	if err != nil {
+		return MemorySection{}, fmt.Errorf("list static hints: %w", err)
+	}
+	text := buildStaticHintContextSection(hints)
+	if strings.TrimSpace(text) == "" {
+		return MemorySection{}, nil
+	}
+	return MemorySection{
+		Source:   "static_hint",
+		Scope:    projectMemoryScope(req.ProjectDir),
+		Priority: 35,
+		Text:     text,
 	}, nil
 }
 
@@ -407,6 +539,14 @@ func memoryScopeForRequest(req MemoryRequest) string {
 		return fmt.Sprintf("chat:%d/thread:%d", req.ChatID, req.ThreadID)
 	}
 	return fmt.Sprintf("chat:%d", req.ChatID)
+}
+
+func projectMemoryScope(projectDir string) string {
+	projectDir = strings.TrimSpace(projectDir)
+	if projectDir == "" {
+		return "project"
+	}
+	return "project:" + projectDir
 }
 
 func clampMemorySections(sections []MemorySection, budget int) []MemorySection {

@@ -439,6 +439,63 @@ func TestMemoryResolverIncludesGeneralTaskMemory(t *testing.T) {
 	}
 }
 
+func TestMemoryResolverIncludesStaticProjectHints(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "CLAUDE.md"), []byte("Static root guidance for Alice memory."), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+	docsDir := filepath.Join(projectDir, "docs", "arch")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(docsDir, "memory.md"), []byte("Static memory architecture hint."), 0o644); err != nil {
+		t.Fatalf("write memory.md: %v", err)
+	}
+
+	resolver := NewMemoryResolverWithAllSources(nil, nil, ProjectStaticHintSource{})
+	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
+		ChatID:      42,
+		ThreadID:    7,
+		ProjectDir:  projectDir,
+		UserMessage: "請繼續處理 memory",
+		Mode:        "direct_resume_fallback",
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(bundle.Sections) != 1 {
+		t.Fatalf("sections = %#v, want one static hint section", bundle.Sections)
+	}
+	section := bundle.Sections[0]
+	if section.Source != "static_hint" {
+		t.Fatalf("source = %q, want static_hint", section.Source)
+	}
+	if section.Scope != "project:"+projectDir {
+		t.Fatalf("scope = %q, want project scope", section.Scope)
+	}
+	rendered := bundle.Render()
+	for _, want := range []string{"CLAUDE.md", "docs/arch/memory.md", "Static root guidance", "Static memory architecture"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered static hints missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestProjectStaticHintSourceIgnoresMissingFiles(t *testing.T) {
+	resolver := NewMemoryResolverWithAllSources(nil, nil, ProjectStaticHintSource{})
+	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
+		ChatID:     42,
+		ProjectDir: t.TempDir(),
+		Mode:       "preview",
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(bundle.Sections) != 0 {
+		t.Fatalf("sections = %#v, want none for missing static files", bundle.Sections)
+	}
+}
+
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

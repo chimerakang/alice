@@ -913,7 +913,7 @@ func (a *Agent) resolveAgentMemoryBridge(ctx context.Context, ps *projectState, 
 	if ps == nil || ps.ctx == nil {
 		return ""
 	}
-	resolver := NewMemoryResolverWithSources(nil, globalGeneralMemorySource())
+	resolver := NewMemoryResolverWithAllSources(nil, globalGeneralMemorySource(), defaultStaticHintSourceForProject(ps.ctx.ProjectDir))
 	bundle, err := resolver.Resolve(ctx, MemoryRequest{
 		ChatID:         ps.ctx.ChatID,
 		ThreadID:       ps.ctx.ThreadID,
