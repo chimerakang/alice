@@ -2352,10 +2352,21 @@ func (t *TelegramBot) buildHermesGoalWithContext(key chatKey, currentRequest str
 		return currentRequest
 	}
 
-	taskHistory := t.loadHermesContextTasks(key.chatID, currentRequest)
-	var recentMessages []contextMessage
-	recentMessages = t.getChatContext(key, "").RecentMessagesSnapshot()
-	return composeHermesGoalWithContext(currentRequest, taskHistory, recentMessages)
+	recentMessages := t.getChatContext(key, "").RecentMessagesSnapshot()
+	resolver := NewMemoryResolver(t.taskSvc)
+	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
+		ChatID:         key.chatID,
+		ThreadID:       key.threadID,
+		UserMessage:    currentRequest,
+		Mode:           "hermes",
+		BudgetChars:    defaultMemoryBudgetChars,
+		RecentMessages: recentMessages,
+	})
+	if err != nil {
+		log.Printf("[hermes] failed to resolve memory for chat %d: %v", key.chatID, err)
+		return composeHermesGoalWithContext(currentRequest, nil, recentMessages)
+	}
+	return bundle.RenderForPrompt(currentRequest)
 }
 
 func (t *TelegramBot) resolveHermesContinuationTask(key chatKey, projectDir string) (hermes.TaskState, bool) {
@@ -3167,61 +3178,16 @@ func hermesContinuationVerbKey(mode string) string {
 }
 
 func (t *TelegramBot) loadHermesContextTasks(chatID int64, currentRequest string) []hermes.TaskState {
-	var tasks []hermes.TaskState
-	issueNumber, hasIssueNumber := ParseIssueNumber(currentRequest)
-	active, err := t.taskSvc.GetActiveForChat(chatID)
-	switch {
-	case err == nil:
-		if !hasIssueNumber || active.GithubIssueNumber == issueNumber {
-			tasks = append(tasks, active)
-		}
-	case err != nil && err != hermes.ErrNoTask:
-		log.Printf("[hermes] failed to load active task context for chat %d: %v", chatID, err)
-	}
-
-	historyLimit := 3
-	if hasIssueNumber {
-		historyLimit = 10
-	}
-	history, err := t.taskSvc.ListForChat(chatID, historyLimit)
+	resolver := NewMemoryResolver(t.taskSvc)
+	tasks, err := resolver.loadHermesMemoryTasks(MemoryRequest{
+		ChatID:      chatID,
+		UserMessage: currentRequest,
+		Mode:        "hermes",
+	})
 	if err != nil {
 		log.Printf("[hermes] failed to list task context for chat %d: %v", chatID, err)
-		return tasks
+		return nil
 	}
-
-	currentNorm := normalizeHermesGoal(currentRequest)
-	seen := make(map[string]struct{}, len(tasks))
-	for _, task := range tasks {
-		seen[task.ID] = struct{}{}
-	}
-	if hasIssueNumber {
-		for _, task := range history {
-			if task.GithubIssueNumber != issueNumber {
-				continue
-			}
-			if _, ok := seen[task.ID]; ok {
-				continue
-			}
-			tasks = append(tasks, task)
-			seen[task.ID] = struct{}{}
-			if len(tasks) >= 3 {
-				return tasks
-			}
-		}
-	}
-	for _, task := range history {
-		if _, ok := seen[task.ID]; ok {
-			continue
-		}
-		if normalizeHermesGoal(extractHermesActionableGoal(task.Goal)) == currentNorm {
-			continue
-		}
-		tasks = append(tasks, task)
-		if len(tasks) >= 2 {
-			break
-		}
-	}
-
 	return tasks
 }
 

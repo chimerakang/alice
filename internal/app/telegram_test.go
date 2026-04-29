@@ -198,6 +198,102 @@ func TestLoadHermesContextTasksPrioritizesMatchingIssue(t *testing.T) {
 	}
 }
 
+func TestMemoryResolverOrdersIssueBeforeRecentMessages(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	now := time.Date(2026, 4, 29, 13, 0, 0, 0, time.UTC)
+	for _, task := range []hermes.TaskState{
+		{
+			ID:                "issue-143",
+			ChatID:            42,
+			GithubIssueNumber: 143,
+			Status:            hermes.TaskStatusDone,
+			Goal:              "[GitHub #143] Unified Memory Architecture",
+			Accumulated:       "已決定先建立 MemoryResolver 與 MemoryBundle，再逐步接 Direct/file/multimedia。",
+			CreatedAt:         now.Add(-2 * time.Hour),
+			UpdatedAt:         now.Add(-2 * time.Hour),
+		},
+		{
+			ID:                "issue-99",
+			ChatID:            42,
+			GithubIssueNumber: 99,
+			Status:            hermes.TaskStatusExecuting,
+			Goal:              "其他 active task",
+			Accumulated:       "不應污染 #143 的 memory bundle。",
+			CreatedAt:         now.Add(-time.Hour),
+			UpdatedAt:         now.Add(-time.Hour),
+		},
+	} {
+		if _, err := store.CreateTask(task); err != nil {
+			t.Fatalf("CreateTask(%s): %v", task.ID, err)
+		}
+	}
+
+	resolver := NewMemoryResolver(tasksvc.New(store))
+	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
+		ChatID:      42,
+		UserMessage: "接下來我們來處理 #143 memory的架構重構工作",
+		Mode:        "hermes",
+		RecentMessages: []contextMessage{
+			{Role: "user", Content: "剛剛在處理別的 issue"},
+			{Role: "assistant", Content: "那是 #99 的內容"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(bundle.Sections) != 2 {
+		t.Fatalf("sections = %d, want 2: %#v", len(bundle.Sections), bundle.Sections)
+	}
+	if bundle.Sections[0].Source != "issue_task" {
+		t.Fatalf("first source = %q, want issue_task", bundle.Sections[0].Source)
+	}
+	rendered := bundle.Render()
+	if !strings.Contains(rendered, "MemoryResolver 與 MemoryBundle") {
+		t.Fatalf("expected issue memory in rendered bundle:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "不應污染 #143") {
+		t.Fatalf("different issue memory leaked into bundle:\n%s", rendered)
+	}
+}
+
+func TestMemoryResolverClampsLowPrioritySections(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	if _, err := store.CreateTask(hermes.TaskState{
+		ID:                "issue-143",
+		ChatID:            42,
+		GithubIssueNumber: 143,
+		Status:            hermes.TaskStatusDone,
+		Goal:              "[GitHub #143] Unified Memory Architecture",
+		Accumulated:       strings.Repeat("重要的 issue-scoped memory。", 20),
+		CreatedAt:         time.Now().Add(-time.Hour),
+		UpdatedAt:         time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	resolver := NewMemoryResolver(tasksvc.New(store))
+	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
+		ChatID:      42,
+		UserMessage: "繼續 #143",
+		BudgetChars: 160,
+		RecentMessages: []contextMessage{
+			{Role: "user", Content: strings.Repeat("recent ", 50)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(bundle.Sections) != 1 {
+		t.Fatalf("sections = %d, want only high-priority issue memory: %#v", len(bundle.Sections), bundle.Sections)
+	}
+	if bundle.Sections[0].Source != "issue_task" {
+		t.Fatalf("source = %q, want issue_task", bundle.Sections[0].Source)
+	}
+	if got := len([]rune(bundle.Render())); got > 160 {
+		t.Fatalf("rendered length = %d, want <= 160", got)
+	}
+}
+
 func TestComposeHermesGoalWithContextStripsNestedInjectedGoal(t *testing.T) {
 	tasks := []hermes.TaskState{
 		{
