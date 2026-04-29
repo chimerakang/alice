@@ -350,9 +350,9 @@ type Agent struct {
 	currentModelOverride string                   // Current model override for this agent (for dynamic routing)
 	lastUsedModel        string                   // Last model used (for session continuity)
 	chatContext          *ChatContext             // Shared conversation state across Agent/Hermes
-	enablePlanMode       bool                     // OpusPlan: enable two-phase plan+execute
-	planModel            string                   // OpusPlan: model for planning phase (e.g. Opus)
-	executeModel         string                   // OpusPlan: model for execution phase (e.g. Sonnet)
+	enablePlanMode       bool                     // enable two-phase plan+execute
+	planModel            string                   // model for planning phase
+	executeModel         string                   // model for execution phase
 	cliTimeoutMinutes    int                      // CLI 執行逾時（分鐘），0=無限制
 	runMu                sync.Mutex               // serializes CLI runs for shared agent/session state
 	// Abort control
@@ -412,14 +412,14 @@ func (a *Agent) SetModelOverride(model string) {
 	a.currentModelOverride = model
 }
 
-// SetPlanMode 啟用或停用 OpusPlan 兩階段模式
+// SetPlanMode 啟用或停用 Plan/Execute 兩階段模式
 func (a *Agent) SetPlanMode(enabled bool, planModel, executeModel string) {
 	a.enablePlanMode = enabled
 	a.planModel = planModel
 	a.executeModel = executeModel
 }
 
-// IsPlanMode 回報是否啟用 OpusPlan 模式
+// IsPlanMode 回報是否啟用 Plan/Execute 模式
 func (a *Agent) IsPlanMode() bool {
 	return a.enablePlanMode
 }
@@ -465,7 +465,7 @@ func (a *Agent) selectModel(userMessage string) (model string, routingReason str
 		return bestMatch.Model, "static_rule"
 	}
 
-	// 返回預設模型 (Sonnet)
+	// 返回預設模型
 	return "sonnet", "default"
 }
 
@@ -485,7 +485,7 @@ func (a *Agent) current() *projectState {
 	return ps
 }
 
-// Run sends a message to Claude Code CLI and returns the response text.
+// Run sends a message through the configured AI client and returns the response text.
 // onUpdate(msg, silent): silent=false for initial status, silent=true for tool updates.
 func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, error) {
 	a.runMu.Lock()
@@ -755,9 +755,9 @@ func (a *Agent) callStreamWithResumeBridge(
 	return resp, bridgedMessage, "", err
 }
 
-// RunWithPlan executes a two-phase OpusPlan workflow:
-// Phase 1: Call plan model (Opus) with --max-turns 1 to produce a plan
-// Phase 2: Call execute model (Sonnet) with the plan as context to execute
+// RunWithPlan executes a two-phase Plan/Execute workflow:
+// Phase 1: Call the planner model with --max-turns 1 to produce a plan.
+// Phase 2: Call the executor model with the plan as context to execute.
 func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (string, error) {
 	a.runMu.Lock()
 	defer a.runMu.Unlock()
@@ -787,7 +787,7 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 		if onUpdate != nil {
 			onUpdate(fmt.Sprintf("🧠 Phase 1: Planning with %s...", modelStatusName(a.planModel)), false)
 		}
-		log.Printf("[agent] OpusPlan via PlanExecuteEngine: calling plan model=%s, project=%s", a.planModel, projectDir)
+		log.Printf("[agent] plan/execute via PlanExecuteEngine: calling plan model=%s, project=%s", a.planModel, projectDir)
 		planResp, err := a.client.CallPlan(ctx, opusPlanPrompt(userMessage), projectDir, a.planModel, func(contentType, text string) {
 			if onUpdate != nil && contentType == "text" && text != "" {
 				preview := text
@@ -835,7 +835,7 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 
 	result, err := engine.Run(ctx, userMessage, a.chatContext, nil)
 	if err != nil {
-		log.Printf("[agent] OpusPlan via PlanExecuteEngine failed: %v", err)
+		log.Printf("[agent] plan/execute via PlanExecuteEngine failed: %v", err)
 		if onUpdate != nil {
 			onUpdate("⚠️ Plan phase failed, falling back to direct execution...", false)
 		}
@@ -1069,7 +1069,7 @@ func (a *Agent) Reset() {
 	}
 }
 
-// ClearSession resets only the session ID, forcing fresh Claude Code context on next run while preserving usage stats
+// ClearSession resets only the current backend session ID while preserving usage stats.
 func (a *Agent) ClearSession() {
 	ps := a.current()
 	ps.ctx.ClearSession(ps.ctx.LastBackend)

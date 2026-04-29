@@ -1,4 +1,4 @@
-package app
+package hermes
 
 import (
 	"bytes"
@@ -11,7 +11,6 @@ import (
 )
 
 const defaultProcessTimeout = 30 * time.Second
-const defaultAgentProcessTimeout = 15 * time.Minute
 
 // ProcessOptions describes the runtime envelope for an external command.
 type ProcessOptions struct {
@@ -21,21 +20,17 @@ type ProcessOptions struct {
 	OutputLimit int
 }
 
-// runProcessOutput executes a command with a mandatory timeout. It is the
-// package-level guardrail for short helper commands such as git/gh probes.
 func runProcessOutput(ctx context.Context, opts ProcessOptions, name string, args ...string) ([]byte, error) {
 	return runProcess(ctx, opts, false, name, args...)
 }
 
-// runProcessCombinedOutput executes a command with a mandatory timeout and
-// returns stdout/stderr combined for user-facing diagnostics.
 func runProcessCombinedOutput(ctx context.Context, opts ProcessOptions, name string, args ...string) ([]byte, error) {
 	return runProcess(ctx, opts, true, name, args...)
 }
 
 func runProcess(ctx context.Context, opts ProcessOptions, combined bool, name string, args ...string) ([]byte, error) {
 	start := time.Now()
-	log.Printf("[process] start cmd=%s dir=%q timeout=%s", processLogName(name, args), opts.Dir, processTimeout(opts.Timeout))
+	log.Printf("[hermes.process] start cmd=%s dir=%q timeout=%s", processLogName(name, args), opts.Dir, processTimeout(opts.Timeout))
 
 	cmd, cancel := processCommand(ctx, opts, name, args...)
 	defer cancel()
@@ -65,7 +60,7 @@ func runProcess(ctx context.Context, opts ProcessOptions, combined bool, name st
 	if err != nil {
 		status = "error"
 	}
-	log.Printf("[process] done cmd=%s status=%s duration=%s", processLogName(name, args), status, time.Since(start).Round(time.Millisecond))
+	log.Printf("[hermes.process] done cmd=%s status=%s duration=%s", processLogName(name, args), status, time.Since(start).Round(time.Millisecond))
 	return output, err
 }
 

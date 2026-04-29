@@ -166,7 +166,7 @@ type GithubIntegrationConfig struct {
 	// FailureLabel is added to the Issue when Hermes execution fails.
 	FailureLabel string `json:"mark_failure_label"`
 
-	// TriggerTaskSync runs `gh` task-sync on Hermes completion (best-effort).
+	// TriggerTaskSync runs the local /task-sync maintenance command on Hermes completion (best-effort).
 	TriggerTaskSync bool `json:"trigger_task_sync_on_complete"`
 
 	// ComplexityBudgetMap maps complexity labels (e.g. "complexity:small") to budget overrides.
@@ -340,10 +340,10 @@ func LoadConfig() (*Config, error) {
 		ModelRouting: ModelRoutingConfig{
 			EnableDynamicRouting:  false, // Disabled by default
 			FastModel:             "claude-haiku-4-5-20251001",
-			SmartModel:            "claude-sonnet-4-6", // /smart: balanced Sonnet
+			SmartModel:            "claude-sonnet-4-6", // /smart: configured balanced model
 			DeepModel:             "claude-opus-4-6",
-			PlanModel:             "claude-opus-4-6",            // OpusPlan: Opus for planning
-			ExecuteModel:          "claude-sonnet-4-5-20250929", // OpusPlan: Sonnet for execution
+			PlanModel:             "claude-opus-4-6",            // Plan/Execute: planning phase model
+			ExecuteModel:          "claude-sonnet-4-5-20250929", // Plan/Execute: execution phase model
 			CodexFastModel:        "gpt-5.4-mini",               // /gfast: fast GPT tier
 			CodexSmartModel:       "gpt-5.4",                    // /gsmart: balanced GPT tier
 			CodexDeepModel:        "gpt-5.5",                    // /gdeep: powerful GPT tier (gpt-5.5-pro is API-key-only)

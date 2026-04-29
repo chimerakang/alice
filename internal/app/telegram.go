@@ -376,7 +376,7 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "status", "description": "View current status"},
 		{"command": "usage", "description": "View token usage"},
 		{"command": "fast", "description": "Switch to fast mode (Haiku)"},
-		{"command": "deep", "description": "Switch to deep mode (Opus)"},
+		{"command": "deep", "description": "Switch to configured deep model"},
 		{"command": "auto", "description": "Auto routing mode (AI decides)"},
 		{"command": "abort", "description": "Abort running task"},
 		{"command": "dashboard", "description": "View system monitoring dashboard"},
@@ -975,19 +975,19 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			}
 			switch complexity {
 			case "deep":
-				// Auto-activate OpusPlan for deep tasks when plan_model is configured
+				// Auto-activate Plan/Execute mode for deep tasks when both phase models are configured.
 				if t.config.ModelRouting.PlanModel != "" && t.config.ModelRouting.ExecuteModel != "" {
 					agent.SetPlanMode(true, t.config.ModelRouting.PlanModel, t.config.ModelRouting.ExecuteModel)
-					log.Printf("[telegram] model routing: classified as deep → auto OpusPlan (plan=%s, exec=%s)",
+					log.Printf("[telegram] model routing: classified as deep → auto plan/execute (plan=%s, exec=%s)",
 						t.config.ModelRouting.PlanModel, t.config.ModelRouting.ExecuteModel)
 				} else {
 					modelOverride = t.config.ModelRouting.DeepModel
-					log.Printf("[telegram] model routing: classified as deep (Opus)")
+					log.Printf("[telegram] model routing: classified as deep (model=%s)", modelOverride)
 				}
 			case "balanced":
-				// Keep default model (Sonnet) - no override needed
+				// Keep default model - no override needed.
 				agent.SetPlanMode(false, "", "") // Ensure plan mode is off
-				log.Printf("[telegram] model routing: classified as balanced (Sonnet)")
+				log.Printf("[telegram] model routing: classified as balanced (default model)")
 			default: // "fast"
 				agent.SetPlanMode(false, "", "") // Ensure plan mode is off
 				modelOverride = t.config.ModelRouting.FastModel
@@ -1008,7 +1008,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	var err error
 	var statusMessageID int
 
-	// Add language preference hint to message for Claude
+	// Add language preference hint to the model prompt.
 	userLang := t.getChatLanguage(key.chatID)
 	userMessage := text
 	if userLang == "en" {
@@ -1066,7 +1066,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			response, err = result.Text, runErr
 		}
 	} else if agent.IsPlanMode() {
-		// OpusPlan two-phase execution
+		// Plan/Execute two-phase execution
 		response, err = agent.RunWithPlan(userMessage, createUpdateCallback())
 	} else {
 		// Regular single agent execution
@@ -1183,7 +1183,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 	switch cmd {
 	case "/start", "/help":
 		// Build help text using localized messages for both languages
-		help := "🤖 *Claude Code Agent*\n\n"
+		help := "🤖 *Alice AI Agent*\n\n"
 		help += t.getLocalizedMessage(key.chatID, "help_intro", nil) + "\n\n"
 		help += t.getLocalizedMessage(key.chatID, "help_forum_topics", nil) + "\n\n"
 		help += t.getLocalizedMessage(key.chatID, "help_basic_commands", nil) + "\n"
@@ -1935,7 +1935,7 @@ func (t *TelegramBot) startHermesFromIssue(key chatKey, issueNumber int, project
 	t.startHermesTaskWithIssue(key, goal, projectDir, issueNumber, budget, ghCfg)
 }
 
-// startHermesTask launches a Hermes coordinator for the given goal on the Claude tier.
+// startHermesTask launches a Hermes coordinator for the given goal on the chat's current tier.
 // Uses context.Background() so the task survives handler cancellation.
 func (t *TelegramBot) startHermesTask(key chatKey, goal, projectDir string) {
 	t.startHermesTaskWithIssueTier(key, t.buildHermesGoalWithContext(key, goal), projectDir, 0, HermesBudgetConfig{}, GithubIntegrationConfig{}, t.hermesTierFor(key))
@@ -2440,8 +2440,9 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	t.send(key, fmt.Sprintf("📌 任務編號：%s", displayTaskID))
 }
 
-// buildTaskSyncHook returns a post-completion hook that runs `claude -p /task-sync`
-// when triggerSync is true. Returns nil otherwise.
+// buildTaskSyncHook returns a post-completion hook that refreshes MASTER_TASKS.md
+// when triggerSync is true. It intentionally uses Claude CLI because /task-sync
+// is a local Claude slash command, not a backend-neutral Alice command yet.
 func (t *TelegramBot) buildTaskSyncHook(triggerSync bool, projectDir string) func(ctx context.Context) {
 	if !triggerSync {
 		return nil

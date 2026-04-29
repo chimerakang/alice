@@ -1,4 +1,4 @@
-package app
+package hermes
 
 import (
 	"context"

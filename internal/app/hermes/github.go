@@ -75,12 +75,10 @@ const ghDefaultTimeout = 30 * time.Second
 // The returned cancel func MUST be deferred by the caller; it releases the
 // per-call timeout context. Calling it after the cmd finishes is a no-op.
 func ghCommand(ctx context.Context, projectDir string, args ...string) (*exec.Cmd, context.CancelFunc) {
-	cctx, cancel := context.WithTimeout(ctx, ghDefaultTimeout)
-	cmd := exec.CommandContext(cctx, "gh", args...)
-	if projectDir != "" {
-		cmd.Dir = projectDir
-	}
-	return cmd, cancel
+	return processCommand(ctx, ProcessOptions{
+		Dir:     projectDir,
+		Timeout: ghDefaultTimeout,
+	}, "gh", args...)
 }
 
 // ListIssues fetches open issues and returns them sorted by computed priority:

@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"os/exec"
 	"sync"
 	"time"
 )
@@ -83,19 +82,20 @@ func (b *LocalBackend) Execute(ctx context.Context, cmd string, opts ExecOptions
 		timeout = 5 * time.Minute
 	}
 
-	execCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	c := exec.CommandContext(execCtx, "sh", "-c", cmd)
-	c.Dir = workDir
-
-	// Build environment
+	env := []string(nil)
 	if len(opts.Env) > 0 {
-		c.Env = os.Environ()
+		env = os.Environ()
 		for k, v := range opts.Env {
-			c.Env = append(c.Env, fmt.Sprintf("%s=%s", k, v))
+			env = append(env, fmt.Sprintf("%s=%s", k, v))
 		}
 	}
+
+	c, cancel := processCommand(ctx, ProcessOptions{
+		Dir:     workDir,
+		Env:     env,
+		Timeout: timeout,
+	}, "sh", "-c", cmd)
+	defer cancel()
 
 	var stdout, stderr bytes.Buffer
 	c.Stdout = &stdout
@@ -191,8 +191,8 @@ func (b *DockerBackend) GetWorkDir(ctx context.Context) (string, error) {
 
 func (b *DockerBackend) Ping(ctx context.Context) error {
 	// Check if docker is available
-	c := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}")
-	if err := c.Run(); err != nil {
+	_, err := runProcessOutput(ctx, ProcessOptions{Timeout: 10 * time.Second}, "docker", "version", "--format", "{{.Server.Version}}")
+	if err != nil {
 		return fmt.Errorf("docker not available: %w", err)
 	}
 	return nil
@@ -253,9 +253,8 @@ func (b *SSHBackend) GetWorkDir(ctx context.Context) (string, error) {
 
 func (b *SSHBackend) Ping(ctx context.Context) error {
 	// Try SSH connection test
-	c := exec.CommandContext(ctx, "ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
+	output, err := runProcessOutput(ctx, ProcessOptions{Timeout: 10 * time.Second}, "ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes",
 		"-i", b.keyPath, fmt.Sprintf("%s@%s", b.user, b.host), "echo ok")
-	output, err := c.Output()
 	if err != nil {
 		return fmt.Errorf("SSH connection failed: %w", err)
 	}
