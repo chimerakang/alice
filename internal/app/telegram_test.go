@@ -11,6 +11,7 @@ import (
 
 	appengine "claude-tg-agent/internal/app/engine"
 	"claude-tg-agent/internal/app/hermes"
+	tasksvc "claude-tg-agent/internal/app/task"
 )
 
 func writeTestExecutable(t *testing.T, dir, name, body string) string {
@@ -101,6 +102,8 @@ func TestComposeHermesGoalWithContext(t *testing.T) {
 		"JWK 環境變數名稱不一致",
 		"LOG_LEVEL 與 ENV 不同步",
 		"OBS 文件 API 路徑寫錯",
+		"Persisted Hermes context:",
+		"avoid broad rediscovery",
 		"Assistant: 我找到 4 個待修問題：MediaSourceService、JWK、LOG_LEVEL、OBS 文件。",
 		"User: 好，請幫忙修正",
 		hermesCurrentRequestHeader,
@@ -109,6 +112,89 @@ func TestComposeHermesGoalWithContext(t *testing.T) {
 		if !strings.Contains(goal, want) {
 			t.Fatalf("expected composed goal to contain %q, got:\n%s", want, goal)
 		}
+	}
+}
+
+func TestComposeHermesGoalWithIssueMemory(t *testing.T) {
+	tasks := []hermes.TaskState{
+		{
+			ID:                "task-issue-94",
+			GithubIssueNumber: 94,
+			Status:            hermes.TaskStatusDone,
+			Goal:              "[GitHub #94] CLAUDE.md 文件分層",
+			Plan: []hermes.SubTask{
+				{
+					Description: "拆出 alice-i18n 與 alice-add-tool skills",
+					Status:      hermes.SubTaskDone,
+					Result:      "已新增兩個 SKILL.md，並確認 .gitignore 例外放行。",
+				},
+				{
+					Description: "補 model routing 文件",
+					Status:      hermes.SubTaskDone,
+					Result:      "docs/arch/model-routing.md 已包含四層優先順序與 session lifecycle。",
+				},
+			},
+			Accumulated: "CLAUDE.md 已降到 77 行；剩下 review、commit、關 issue。",
+			UpdatedAt:   time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC),
+		},
+	}
+
+	goal := composeHermesGoalWithContext("好，那我們 #94 算是結束了嗎", tasks, nil)
+
+	for _, want := range []string{
+		"Persisted Hermes context:",
+		"Task ID: task-issue-94",
+		"GitHub issue: #94",
+		"Status: done",
+		"CLAUDE.md 已降到 77 行",
+		"拆出 alice-i18n 與 alice-add-tool skills",
+		"model-routing.md 已包含四層優先順序",
+		"avoid broad rediscovery",
+		"only re-read files or GitHub issue details when a specific uncertainty must be verified",
+		"好，那我們 #94 算是結束了嗎",
+	} {
+		if !strings.Contains(goal, want) {
+			t.Fatalf("expected issue memory goal to contain %q, got:\n%s", want, goal)
+		}
+	}
+}
+
+func TestLoadHermesContextTasksPrioritizesMatchingIssue(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	now := time.Date(2026, 4, 29, 13, 0, 0, 0, time.UTC)
+	for _, task := range []hermes.TaskState{
+		{
+			ID:                "issue-94",
+			ChatID:            42,
+			GithubIssueNumber: 94,
+			Status:            hermes.TaskStatusDone,
+			Goal:              "[GitHub #94] 文件分層",
+			Accumulated:       "CLAUDE.md 已降到 77 行。",
+			CreatedAt:         now.Add(-3 * time.Hour),
+			UpdatedAt:         now.Add(-3 * time.Hour),
+		},
+		{
+			ID:          "different-topic",
+			ChatID:      42,
+			Status:      hermes.TaskStatusExecuting,
+			Goal:        "其他問題",
+			Accumulated: "即使是 active task，也不應優先於明確指定的 issue。",
+			CreatedAt:   now.Add(-time.Hour),
+			UpdatedAt:   now.Add(-time.Hour),
+		},
+	} {
+		if _, err := store.CreateTask(task); err != nil {
+			t.Fatalf("CreateTask(%s): %v", task.ID, err)
+		}
+	}
+	bot := &TelegramBot{taskSvc: tasksvc.New(store)}
+
+	tasks := bot.loadHermesContextTasks(42, "好，那我們 #94 算是結束了嗎")
+	if len(tasks) == 0 {
+		t.Fatal("expected matching issue task context")
+	}
+	if tasks[0].ID != "issue-94" {
+		t.Fatalf("first context task = %q, want issue-94; all tasks: %#v", tasks[0].ID, tasks)
 	}
 }
 

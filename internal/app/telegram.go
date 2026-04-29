@@ -3168,15 +3168,22 @@ func hermesContinuationVerbKey(mode string) string {
 
 func (t *TelegramBot) loadHermesContextTasks(chatID int64, currentRequest string) []hermes.TaskState {
 	var tasks []hermes.TaskState
+	issueNumber, hasIssueNumber := ParseIssueNumber(currentRequest)
 	active, err := t.taskSvc.GetActiveForChat(chatID)
 	switch {
 	case err == nil:
-		tasks = append(tasks, active)
+		if !hasIssueNumber || active.GithubIssueNumber == issueNumber {
+			tasks = append(tasks, active)
+		}
 	case err != nil && err != hermes.ErrNoTask:
 		log.Printf("[hermes] failed to load active task context for chat %d: %v", chatID, err)
 	}
 
-	history, err := t.taskSvc.ListForChat(chatID, 3)
+	historyLimit := 3
+	if hasIssueNumber {
+		historyLimit = 10
+	}
+	history, err := t.taskSvc.ListForChat(chatID, historyLimit)
 	if err != nil {
 		log.Printf("[hermes] failed to list task context for chat %d: %v", chatID, err)
 		return tasks
@@ -3186,6 +3193,21 @@ func (t *TelegramBot) loadHermesContextTasks(chatID int64, currentRequest string
 	seen := make(map[string]struct{}, len(tasks))
 	for _, task := range tasks {
 		seen[task.ID] = struct{}{}
+	}
+	if hasIssueNumber {
+		for _, task := range history {
+			if task.GithubIssueNumber != issueNumber {
+				continue
+			}
+			if _, ok := seen[task.ID]; ok {
+				continue
+			}
+			tasks = append(tasks, task)
+			seen[task.ID] = struct{}{}
+			if len(tasks) >= 3 {
+				return tasks
+			}
+		}
 	}
 	for _, task := range history {
 		if _, ok := seen[task.ID]; ok {
@@ -3244,32 +3266,53 @@ func buildHermesTaskContextSection(tasks []hermes.TaskState) string {
 	var sections []string
 	for _, task := range tasks {
 		goal := strings.TrimSpace(extractHermesActionableGoal(task.Goal))
-		summary := strings.TrimSpace(buildHermesTaskSummary(task))
-		if goal == "" && summary == "" {
+		progress := strings.TrimSpace(buildHermesProgressSummary(task))
+		if goal == "" && progress == "" {
 			continue
 		}
 
 		var sb strings.Builder
-		sb.WriteString("Recent Hermes task")
+		sb.WriteString("Persisted Hermes work memory")
 		if !task.UpdatedAt.IsZero() {
 			sb.WriteString(" (")
 			sb.WriteString(task.UpdatedAt.Format(time.RFC3339))
 			sb.WriteString(")")
 		}
 		sb.WriteString(":\n")
+		if task.ID != "" {
+			sb.WriteString("- Task ID: ")
+			sb.WriteString(task.ID)
+			sb.WriteString("\n")
+		}
+		if task.Status != "" {
+			sb.WriteString("- Status: ")
+			sb.WriteString(string(task.Status))
+			sb.WriteString("\n")
+		}
+		if task.GithubIssueNumber > 0 {
+			sb.WriteString(fmt.Sprintf("- GitHub issue: #%d\n", task.GithubIssueNumber))
+		}
 		if goal != "" {
-			sb.WriteString("User: ")
+			sb.WriteString("- Original request: ")
 			sb.WriteString(clampHermesContext(goal, hermesContextMaxChars))
 			sb.WriteString("\n")
 		}
-		if summary != "" {
-			sb.WriteString("Assistant: ")
-			sb.WriteString(clampHermesContext(summary, hermesContextMaxChars))
+		if progress != "" {
+			sb.WriteString("- Stored progress:\n")
+			sb.WriteString(indentHermesContext(clampHermesContext(progress, hermesContextMaxChars), "  "))
 		}
 		sections = append(sections, strings.TrimSpace(sb.String()))
 	}
 
-	return strings.Join(sections, "\n\n")
+	if len(sections) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Persisted Hermes context:\n")
+	sb.WriteString("Use this as continuity for the same issue/topic. Start from this stored state, avoid broad rediscovery, and only re-read files or GitHub issue details when a specific uncertainty must be verified.\n\n")
+	sb.WriteString(strings.Join(sections, "\n\n"))
+	return sb.String()
 }
 
 func buildHermesTaskSummary(task hermes.TaskState) string {
@@ -3337,6 +3380,18 @@ func clampHermesContext(s string, maxRunes int) string {
 		return s
 	}
 	return strings.TrimSpace(string(runes[:maxRunes])) + "..."
+}
+
+func indentHermesContext(s, prefix string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		lines[i] = prefix + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 // hermesTierFor returns the active Hermes tier for this chat ("" or "codex").
