@@ -368,6 +368,34 @@ export interface PerformanceAnalytics {
   timestamp: string;
 }
 
+// ========== Memory ==========
+
+export interface MemoryPreviewSection {
+  source: string;
+  scope: string;
+  priority: number;
+  size: number;
+  preview: string;
+}
+
+export interface MemoryPreviewResponse {
+  sections: MemoryPreviewSection[];
+  section_count: number;
+  rendered_size: number;
+  rendered_preview: string;
+  timestamp: string;
+}
+
+export interface MemoryPreviewQuery {
+  chatId: number;
+  threadId?: number;
+  projectDir?: string;
+  issue?: number;
+  message?: string;
+  mode?: string;
+  budget?: number;
+}
+
 // ========== Security ==========
 
 export interface SecurityEvent {

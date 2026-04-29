@@ -63,6 +63,10 @@ vi.mock("@/pages/Security", () => ({
   default: () => <div data-testid="security-page" />,
 }));
 
+vi.mock("@/pages/Memory", () => ({
+  default: () => <div data-testid="memory-page" />,
+}));
+
 describe("App", () => {
   it("wires the reviews page into the sidebar and router", () => {
     const html = renderToStaticMarkup(<App />);
@@ -73,5 +77,8 @@ describe("App", () => {
     expect(html).toContain('data-testid="reviews-page"');
     expect(html).toContain('href="/quality"');
     expect(html).toContain('data-testid="route:/quality"');
+    expect(html).toContain('href="/memory"');
+    expect(html).toContain("Memory");
+    expect(html).toContain('data-testid="route:/memory"');
   });
 });

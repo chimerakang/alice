@@ -9,6 +9,7 @@ import Quality from "@/pages/Quality";
 import Checkpoints from "@/pages/Checkpoints";
 import Performance from "@/pages/Performance";
 import Security from "@/pages/Security";
+import Memory from "@/pages/Memory";
 import {
   LayoutDashboard,
   Clock,
@@ -17,6 +18,7 @@ import {
   Camera,
   BarChart3,
   Shield,
+  BrainCircuit,
   Wifi,
   WifiOff,
 } from "lucide-react";
@@ -41,6 +43,7 @@ const navSections = [
     items: [
       { to: "/checkpoints", icon: Camera, label: "Checkpoints" },
       { to: "/performance", icon: BarChart3, label: "Performance" },
+      { to: "/memory", icon: BrainCircuit, label: "Memory" },
       { to: "/security", icon: Shield, label: "Security" },
     ],
   },
@@ -127,6 +130,7 @@ function AppLayout() {
             <Route path="/quality" element={<Quality />} />
             <Route path="/checkpoints" element={<Checkpoints />} />
             <Route path="/performance" element={<Performance />} />
+            <Route path="/memory" element={<Memory />} />
             <Route path="/security" element={<Security />} />
           </Routes>
         </div>

@@ -17,6 +17,8 @@ import type {
   QualityDecompositionStats,
   QualityScoreStats,
   QualityInsight,
+  MemoryPreviewQuery,
+  MemoryPreviewResponse,
 } from "@/types/alice";
 
 const BASE = "";
@@ -240,6 +242,20 @@ export const api = {
     return fetchJson<{ tool_distribution?: { tool_type: string; avg_execution_time: number; count: number }[]; total?: number }>(
       `/api/performance/tool-distribution${qs}`
     );
+  },
+
+  // ========== Memory ==========
+  getMemoryPreview: (params: MemoryPreviewQuery) => {
+    const qs = buildQuery({
+      chat_id: params.chatId,
+      thread_id: params.threadId,
+      project_dir: params.projectDir,
+      issue: params.issue,
+      message: params.message,
+      mode: params.mode,
+      budget: params.budget,
+    });
+    return fetchJson<MemoryPreviewResponse>(`/api/memory/preview${qs}`);
   },
 
   // ========== Security ==========
