@@ -554,6 +554,7 @@ func TestParseHermesCallbackData(t *testing.T) {
 		{name: "continue", data: "hermes:continue:task-123", wantMode: "continue", wantTaskID: "task-123", wantOK: true},
 		{name: "replan", data: "hermes:replan:task-456", wantMode: "replan", wantTaskID: "task-456", wantOK: true},
 		{name: "cancel", data: "hermes:cancel", wantMode: "cancel", wantOK: true},
+		{name: "issue restart", data: "hermes:issue-restart:182:codex", wantMode: "issue-restart:codex", wantTaskID: "182", wantOK: true},
 		{name: "missing task", data: "hermes:continue:", wantOK: false},
 		{name: "unknown mode", data: "hermes:restart:task-123", wantOK: false},
 	}
@@ -565,6 +566,61 @@ func TestParseHermesCallbackData(t *testing.T) {
 				t.Fatalf("parseHermesCallbackData(%q) = (%q, %q, %v), want (%q, %q, %v)", tt.data, gotMode, gotTaskID, gotOK, tt.wantMode, tt.wantTaskID, tt.wantOK)
 			}
 		})
+	}
+}
+
+func TestSendHermesRecentCompletedIssueActionsQueuesRestartAndReplan(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		i18n:            newTestI18nManager(t),
+		langPreferences: map[int64]string{},
+		messageQueue:    make(chan *TelegramMessage, 1),
+	}
+	bot.setChatlanguage(key.chatID, "zh-TW")
+
+	bot.sendHermesRecentCompletedIssueActions(key, 182, hermes.TaskState{ID: "09570b36-1111-2222-3333-444444444444"}, "codex")
+
+	select {
+	case msg := <-bot.messageQueue:
+		text, _ := msg.Params["text"].(string)
+		if !strings.Contains(text, "不代表 GitHub issue 必須停止") {
+			t.Fatalf("recent completed issue message should explain non-terminal issue state:\n%s", text)
+		}
+		markup, ok := msg.Params["reply_markup"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("reply_markup missing or wrong type: %#v", msg.Params["reply_markup"])
+		}
+		rows, ok := markup["inline_keyboard"].([][]map[string]interface{})
+		if !ok {
+			t.Fatalf("inline_keyboard missing or wrong type: %#v", markup["inline_keyboard"])
+		}
+		if len(rows) != 2 || len(rows[0]) != 2 || len(rows[1]) != 1 {
+			t.Fatalf("unexpected keyboard shape: %#v", rows)
+		}
+		if rows[0][0]["callback_data"] != "hermes:issue-restart:182:codex" {
+			t.Fatalf("unexpected restart button: %#v", rows[0][0])
+		}
+		if rows[0][1]["callback_data"] != "hermes:replan:09570b36-1111-2222-3333-444444444444" {
+			t.Fatalf("unexpected replan button: %#v", rows[0][1])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for recent completed issue actions message")
+	}
+}
+
+func TestCountUncheckedIssueChecklistItems(t *testing.T) {
+	issue := &hermes.IssueContext{
+		Checklist: []hermes.ChecklistItem{
+			{Text: "done", Checked: true},
+			{Text: "remaining", Checked: false},
+			{Text: "also remaining", Checked: false},
+		},
+	}
+	if got := countUncheckedIssueChecklistItems(issue); got != 2 {
+		t.Fatalf("countUncheckedIssueChecklistItems = %d, want 2", got)
+	}
+	if got := countUncheckedIssueChecklistItems(nil); got != 0 {
+		t.Fatalf("countUncheckedIssueChecklistItems(nil) = %d, want 0", got)
 	}
 }
 
@@ -1472,6 +1528,40 @@ func TestApplyExplicitUserModelPreferenceUsesGPTDeepForVoice(t *testing.T) {
 	}
 	if agent.enablePlanMode {
 		t.Fatalf("enablePlanMode = true, want false")
+	}
+}
+
+func TestRunAgentForStopButtonUsesGPTDeepPreferenceForDocumentAnalysis(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	client := &modelRecordingClient{}
+	bot := &TelegramBot{
+		config: &Config{
+			DefaultProjectDir: "/repo",
+			ModelRouting: ModelRoutingConfig{
+				EnableDynamicRouting: true,
+				CodexDeepModel:       "gpt-5.5",
+			},
+		},
+		chatContexts: map[chatKey]*ChatContext{
+			key: NewChatContext(key.chatID, key.threadID, "/repo"),
+		},
+	}
+	bot.chatContexts[key].Pref = ModelPreference("gpt-deep")
+	agent := NewAgent(client, "/repo", key.chatID, key.threadID)
+	agent.SetModelOverride("claude-haiku-4-5-20251001")
+
+	got, err := bot.runAgentForStopButton(key, agent, "分析文件 temp/feedback.docx", nil)
+	if err != nil {
+		t.Fatalf("runAgentForStopButton: %v", err)
+	}
+	if got != "ok" {
+		t.Fatalf("response = %q, want ok", got)
+	}
+	if len(client.calls) != 1 || client.calls[0] != "gpt-5.5" {
+		t.Fatalf("model calls = %#v, want [gpt-5.5]", client.calls)
+	}
+	if agent.currentModelOverride != "gpt-5.5" {
+		t.Fatalf("currentModelOverride = %q, want gpt-5.5", agent.currentModelOverride)
 	}
 }
 

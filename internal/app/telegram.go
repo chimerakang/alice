@@ -2233,11 +2233,16 @@ func (t *TelegramBot) startHermesFromIssueMode(key chatKey, issueNumber int, pro
 				t.startHermesContinuationTask(key, task, projectDir, "continue")
 				return
 			case hermesSimilarCompleted:
-				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_recent_completed", map[string]string{
-					"issueNum": fmt.Sprintf("%d", issueNumber),
-					"taskID":   shortHermesTaskID(task.ID),
-					"goal":     goal,
-				}))
+				if unchecked := countUncheckedIssueChecklistItems(issue); unchecked > 0 {
+					t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_continue_unchecked", map[string]string{
+						"issueNum": fmt.Sprintf("%d", issueNumber),
+						"taskID":   shortHermesTaskID(task.ID),
+						"count":    fmt.Sprintf("%d", unchecked),
+					}))
+					t.startHermesTaskWithIssueTier(key, goal, projectDir, issueNumber, budget, ghCfg, t.hermesTierFor(key))
+					return
+				}
+				t.sendHermesRecentCompletedIssueActions(key, issueNumber, task, t.hermesTierFor(key))
 				return
 			}
 		}
@@ -2274,6 +2279,19 @@ func (t *TelegramBot) startHermesFromIssueMode(key chatKey, issueNumber int, pro
 	}))
 
 	t.startHermesTaskWithIssue(key, goal, projectDir, issueNumber, budget, ghCfg)
+}
+
+func countUncheckedIssueChecklistItems(issue *hermes.IssueContext) int {
+	if issue == nil {
+		return 0
+	}
+	count := 0
+	for _, item := range issue.Checklist {
+		if !item.Checked {
+			count++
+		}
+	}
+	return count
 }
 
 // startHermesTask launches a Hermes coordinator for the given goal on the chat's current tier.
@@ -3016,6 +3034,41 @@ func (t *TelegramBot) sendHermesStatus(key chatKey, projectDir string) {
 
 func (t *TelegramBot) sendHermesCandidateActions(key chatKey, text string, task hermes.TaskState) {
 	t.sendHermesActionsMessage(key, text, []hermes.TaskState{task})
+}
+
+func (t *TelegramBot) sendHermesRecentCompletedIssueActions(key chatKey, issueNumber int, task hermes.TaskState, tier string) {
+	shortID := shortHermesTaskID(task.ID)
+	restartData := fmt.Sprintf("hermes:issue-restart:%d", issueNumber)
+	if strings.TrimSpace(tier) != "" {
+		restartData += ":" + strings.TrimSpace(tier)
+	}
+	text := t.getLocalizedMessage(key.chatID, "hermes_issue_recent_completed_actions", map[string]string{
+		"issueNum": fmt.Sprintf("%d", issueNumber),
+		"taskID":   shortID,
+	})
+	rows := [][]map[string]interface{}{
+		{
+			{
+				"text": t.getLocalizedMessage(key.chatID, "hermes_issue_restart_btn", map[string]string{
+					"issueNum": fmt.Sprintf("%d", issueNumber),
+				}),
+				"callback_data": restartData,
+			},
+			{
+				"text": t.getLocalizedMessage(key.chatID, "hermes_candidate_replan", map[string]string{
+					"id": shortID,
+				}),
+				"callback_data": "hermes:replan:" + task.ID,
+			},
+		},
+		{
+			{
+				"text":          t.getLocalizedMessage(key.chatID, "hermes_candidate_cancel", nil),
+				"callback_data": "hermes:cancel",
+			},
+		},
+	}
+	t.sendMenuMessage(key, text, rows)
 }
 
 func (t *TelegramBot) sendHermesActionsMessage(key chatKey, text string, tasks []hermes.TaskState) {
@@ -5289,6 +5342,17 @@ func parseHermesCallbackData(data string) (mode string, taskID string, ok bool) 
 	if data == "hermes:cancel" {
 		return "cancel", "", true
 	}
+	if strings.HasPrefix(data, "hermes:issue-restart:") {
+		rest := strings.TrimPrefix(data, "hermes:issue-restart:")
+		issueID, tier, _ := strings.Cut(rest, ":")
+		if strings.TrimSpace(issueID) == "" {
+			return "", "", false
+		}
+		if tier != "" {
+			return "issue-restart:" + tier, issueID, true
+		}
+		return "issue-restart", issueID, true
+	}
 	if strings.HasPrefix(data, "hermes:issue:") {
 		rest := strings.TrimPrefix(data, "hermes:issue:")
 		issueID, tier, _ := strings.Cut(rest, ":")
@@ -5328,15 +5392,25 @@ func (t *TelegramBot) handleHermesCallback(key chatKey, queryID, data string) {
 			t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_invalid_issue_number", nil))
 			return
 		}
+		forceRestart := strings.HasPrefix(mode, "issue-restart")
 		tier := ""
 		if _, rawTier, found := strings.Cut(mode, ":"); found {
 			tier = rawTier
 		}
 		projectDir := t.getAgent(key).ProjectDir()
 		t.setHermesTier(key, tier)
-		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_issue_loading", map[string]string{"issueNum": fmt.Sprintf("%d", issueNumber)}))
-		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_loading", map[string]string{"issueNum": fmt.Sprintf("%d", issueNumber)}))
+		if forceRestart {
+			t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_issue_restart_loading", map[string]string{"issueNum": fmt.Sprintf("%d", issueNumber)}))
+			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_restart_loading", map[string]string{"issueNum": fmt.Sprintf("%d", issueNumber)}))
+		} else {
+			t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_issue_loading", map[string]string{"issueNum": fmt.Sprintf("%d", issueNumber)}))
+			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_loading", map[string]string{"issueNum": fmt.Sprintf("%d", issueNumber)}))
+		}
 		go t.runTrackedJob("hermes.issue.callback", func() {
+			if forceRestart {
+				t.startHermesFreshFromIssue(key, issueNumber, projectDir)
+				return
+			}
 			t.startHermesFromIssue(key, issueNumber, projectDir)
 		})
 		return
@@ -5481,8 +5555,7 @@ func (t *TelegramBot) runAgentWithStopButton(key chatKey, agent *Agent, prompt s
 			}
 		}
 	}
-	result, err := appengine.NewDirectEngine(agent).Run(context.Background(), prompt, agent.chatContext, newTelegramProgressSink(updateCallback))
-	response := result.Text
+	response, err := t.runAgentForStopButton(key, agent, prompt, updateCallback)
 
 	// Remove stop button after completion
 	if statusMessageID != 0 {
@@ -5502,6 +5575,15 @@ func (t *TelegramBot) runAgentWithStopButton(key chatKey, agent *Agent, prompt s
 	}
 
 	return response, err
+}
+
+func (t *TelegramBot) runAgentForStopButton(key chatKey, agent *Agent, prompt string, updateCallback func(string, bool)) (string, error) {
+	t.applyExplicitUserModelPreference(key, agent, "multimedia")
+	if agent.IsPlanMode() {
+		return agent.RunWithPlan(prompt, updateCallback)
+	}
+	result, err := appengine.NewDirectEngine(agent).Run(context.Background(), prompt, agent.chatContext, newTelegramProgressSink(updateCallback))
+	return result.Text, err
 }
 
 // sendTelegram sends JSON data to Telegram API via the message queue
