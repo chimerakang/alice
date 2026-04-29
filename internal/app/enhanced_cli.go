@@ -66,9 +66,12 @@ func (c *EnhancedCLIClient) CallWithFiles(ctx context.Context, message string, f
 	// 執行命令
 	log.Printf("[enhanced-cli] executing: claude %s", strings.Join(args, " "))
 
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = projectDir
-	cmd.Env = append(os.Environ(), "ALICE_SKIP_HOOKS=1")
+	cmd, cancel := processCommand(ctx, ProcessOptions{
+		Dir:     projectDir,
+		Env:     append(os.Environ(), "ALICE_SKIP_HOOKS=1"),
+		Timeout: defaultAgentProcessTimeout,
+	}, "claude", args...)
+	defer cancel()
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -161,9 +164,12 @@ func (c *EnhancedCLIClient) CallStreamWithFiles(ctx context.Context, message str
 	args = append(args, message)
 
 	// 執行流式命令
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = projectDir
-	cmd.Env = append(os.Environ(), "ALICE_SKIP_HOOKS=1")
+	cmd, cancel := processCommand(ctx, ProcessOptions{
+		Dir:     projectDir,
+		Env:     append(os.Environ(), "ALICE_SKIP_HOOKS=1"),
+		Timeout: defaultAgentProcessTimeout,
+	}, "claude", args...)
+	defer cancel()
 
 	// 使用原 CLIClient.CallStream 的邏輯處理流式回應
 	stdout, err := cmd.StdoutPipe()
@@ -191,10 +197,10 @@ func (c *EnhancedCLIClient) CallStreamWithFiles(ctx context.Context, message str
 		}
 
 		var event struct {
-			Type      string                 `json:"type"`
-			SessionID string                 `json:"session_id"`
-			IsError   bool                   `json:"is_error"`
-			Result    string                 `json:"result"`
+			Type      string `json:"type"`
+			SessionID string `json:"session_id"`
+			IsError   bool   `json:"is_error"`
+			Result    string `json:"result"`
 			Usage     struct {
 				InputTokens  int `json:"input_tokens"`
 				OutputTokens int `json:"output_tokens"`

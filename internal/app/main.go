@@ -18,7 +18,7 @@ import (
 const Version = "1.0.1"
 
 type ModelPricingConfig struct {
-	Haiku  struct {
+	Haiku struct {
 		Input  float64 `json:"input"`  // per 1M tokens
 		Output float64 `json:"output"` // per 1M tokens
 	} `json:"haiku"`
@@ -41,12 +41,12 @@ type Config struct {
 
 	// Web Interface Settings
 	EnableWebInterface bool   `json:"enable_web_interface"`
-	WebPort           string `json:"web_port"`
-	WebStaticDir      string `json:"web_static_dir"`
-	WebAPIToken       string `json:"web_api_token"` // Bearer token for control endpoints
+	WebPort            string `json:"web_port"`
+	WebStaticDir       string `json:"web_static_dir"`
+	WebAPIToken        string `json:"web_api_token"` // Bearer token for control endpoints
 
 	// Transparency Settings
-	EnableDecisionLogging bool `json:"enable_decision_logging"`
+	EnableDecisionLogging bool   `json:"enable_decision_logging"`
 	DecisionLogLevel      string `json:"decision_log_level"` // "off", "basic", "detailed"
 
 	// Multi-Agent Settings
@@ -60,10 +60,10 @@ type Config struct {
 	Security security.SecurityConfig `json:"security"`
 
 	// Storage Settings
-	EnablePersistence   bool   `json:"enable_persistence"`
-	DatabasePath        string `json:"database_path"`
-	DataRetentionDays   int    `json:"data_retention_days"`
-	EnableDataCleanup   bool   `json:"enable_data_cleanup"`
+	EnablePersistence bool   `json:"enable_persistence"`
+	DatabasePath      string `json:"database_path"`
+	DataRetentionDays int    `json:"data_retention_days"`
+	EnableDataCleanup bool   `json:"enable_data_cleanup"`
 
 	// Multimedia Settings
 	Multimedia MultimediaConfig `json:"multimedia"`
@@ -116,8 +116,8 @@ type HermesConfig struct {
 	CodexHeavyExecutorModel string `json:"codex_heavy_executor_model"`
 
 	// Retry limits
-	MaxRetriesPerSubtask    int `json:"max_retries_per_subtask"`    // default 3
-	MaxPlannerJSONRetries   int `json:"max_planner_json_retries"`   // default 3
+	MaxRetriesPerSubtask  int `json:"max_retries_per_subtask"`  // default 3
+	MaxPlannerJSONRetries int `json:"max_planner_json_retries"` // default 3
 
 	// Interrupt behaviour: "queue" | "interrupt" | "inject"
 	InterruptPolicy string `json:"interrupt_policy"` // default "queue"
@@ -204,11 +204,11 @@ type CostRateConfig struct {
 
 // HermesSummaryConfig controls task completion summary reporting.
 type HermesSummaryConfig struct {
-	Enabled            bool                       `json:"enabled"`             // whether to generate summaries
-	Verbosity          string                     `json:"verbosity"`           // "minimal" or "detailed"
-	IncludeCostEst     bool                       `json:"include_cost_estimate"`
-	Targets            []string                   `json:"targets"`             // where to push summaries ("telegram", "github")
-	CostRates          map[string]CostRateConfig `json:"cost_rates"`          // per-model pricing
+	Enabled        bool                      `json:"enabled"`   // whether to generate summaries
+	Verbosity      string                    `json:"verbosity"` // "minimal" or "detailed"
+	IncludeCostEst bool                      `json:"include_cost_estimate"`
+	Targets        []string                  `json:"targets"`    // where to push summaries ("telegram", "github")
+	CostRates      map[string]CostRateConfig `json:"cost_rates"` // per-model pricing
 }
 
 // HermesDefaults returns a HermesConfig with sensible defaults filled in.
@@ -253,25 +253,25 @@ func HermesDefaults(cfg HermesConfig) HermesConfig {
 
 // BackendConfig configures execution backends
 type BackendConfig struct {
-	Default string             `json:"default"` // default backend name
+	Default string              `json:"default"` // default backend name
 	Docker  DockerBackendConfig `json:"docker"`
 	SSH     SSHBackendConfig    `json:"ssh"`
 }
 
 // DockerBackendConfig configures the Docker execution backend
 type DockerBackendConfig struct {
-	Enabled        bool   `json:"enabled"`
-	Image          string `json:"image"`
-	AutoCleanup    bool   `json:"auto_cleanup"`
-	Network        string `json:"network"`
-	MemoryLimit    string `json:"memory_limit"`
-	CPULimit       string `json:"cpu_limit"`
+	Enabled     bool   `json:"enabled"`
+	Image       string `json:"image"`
+	AutoCleanup bool   `json:"auto_cleanup"`
+	Network     string `json:"network"`
+	MemoryLimit string `json:"memory_limit"`
+	CPULimit    string `json:"cpu_limit"`
 }
 
 // SSHBackendConfig configures SSH execution backends
 type SSHBackendConfig struct {
-	Enabled bool                       `json:"enabled"`
-	Hosts   map[string]SSHHostConfig   `json:"hosts"`
+	Enabled bool                     `json:"enabled"`
+	Hosts   map[string]SSHHostConfig `json:"hosts"`
 }
 
 // SSHHostConfig configures a single SSH host
@@ -284,35 +284,35 @@ type SSHHostConfig struct {
 
 func LoadConfig() (*Config, error) {
 	config := &Config{
-		Model:                 "sonnet",
-		DefaultProjectDir:     ".",
-		WebPort:               "8080",
-		WebStaticDir:          "./static",
+		Model:                       "sonnet",
+		DefaultProjectDir:           ".",
+		WebPort:                     "8080",
+		WebStaticDir:                "./static",
 		EnableDecisionLogging:       true,
 		DecisionLogLevel:            "detailed",
-		EnableMultiAgent:            false, // Disabled by default (experimental)
-		EnablePerformanceMonitoring: true,  // Enabled by default
-		PerformanceMetricsRetention: 24,    // 24 hours default
-		EnablePersistence:           true,  // Enable SQLite persistence by default
+		EnableMultiAgent:            false,             // Disabled by default (experimental)
+		EnablePerformanceMonitoring: true,              // Enabled by default
+		PerformanceMetricsRetention: 24,                // 24 hours default
+		EnablePersistence:           true,              // Enable SQLite persistence by default
 		DatabasePath:                "./data/alice.db", // Default database path
-		DataRetentionDays:           30,    // Keep 30 days of data
-		EnableDataCleanup:           true,  // Enable automatic cleanup
+		DataRetentionDays:           30,                // Keep 30 days of data
+		EnableDataCleanup:           true,              // Enable automatic cleanup
 		Security: security.SecurityConfig{
 			EnableRateLimiting:    true,
-			RateLimitRPM:          120,  // 120 requests per minute (SPA makes many concurrent calls)
-			RateLimitBurst:        30,   // 30 burst capacity (SPA initial load ~15 parallel requests)
+			RateLimitRPM:          120, // 120 requests per minute (SPA makes many concurrent calls)
+			RateLimitBurst:        30,  // 30 burst capacity (SPA initial load ~15 parallel requests)
 			EnablePIIDetection:    true,
 			EnableAuditLogging:    true,
-			DataRetentionDays:     30,   // 30 days default
+			DataRetentionDays:     30,    // 30 days default
 			RequireAuthentication: false, // Disabled by default
-			SessionTimeoutMinutes: 60,   // 1 hour
-			MaxConcurrentSessions: 100,  // 100 concurrent sessions
+			SessionTimeoutMinutes: 60,    // 1 hour
+			MaxConcurrentSessions: 100,   // 100 concurrent sessions
 		},
 		Multimedia: MultimediaConfig{
 			EnablePhotoSupport:  true,
 			EnableVoiceSupport:  true,
-			MaxFileSizeMB:       20,             // 20MB limit
-			TempDownloadDir:     "./temp/media", // Temporary download directory
+			MaxFileSizeMB:       20,               // 20MB limit
+			TempDownloadDir:     "./temp/media",   // Temporary download directory
 			VoiceToTextProvider: "openai_whisper", // Default to OpenAI Whisper
 		},
 		Rendering: RenderingConfig{
@@ -338,16 +338,16 @@ func LoadConfig() (*Config, error) {
 			},
 		},
 		ModelRouting: ModelRoutingConfig{
-			EnableDynamicRouting: false, // Disabled by default
-			FastModel:            "claude-haiku-4-5-20251001",
-			SmartModel:           "claude-sonnet-4-6",           // /smart: balanced Sonnet
-			DeepModel:            "claude-opus-4-6",
-			PlanModel:            "claude-opus-4-6",            // OpusPlan: Opus for planning
-			ExecuteModel:         "claude-sonnet-4-5-20250929", // OpusPlan: Sonnet for execution
-			CodexFastModel:       "gpt-5.4-mini",               // /gfast: fast GPT tier
-			CodexSmartModel:      "gpt-5.4",                    // /gsmart: balanced GPT tier
-			CodexDeepModel:       "gpt-5.5",                    // /gdeep: powerful GPT tier (gpt-5.5-pro is API-key-only)
-			UseGPT4oMini:         false,
+			EnableDynamicRouting:  false, // Disabled by default
+			FastModel:             "claude-haiku-4-5-20251001",
+			SmartModel:            "claude-sonnet-4-6", // /smart: balanced Sonnet
+			DeepModel:             "claude-opus-4-6",
+			PlanModel:             "claude-opus-4-6",            // OpusPlan: Opus for planning
+			ExecuteModel:          "claude-sonnet-4-5-20250929", // OpusPlan: Sonnet for execution
+			CodexFastModel:        "gpt-5.4-mini",               // /gfast: fast GPT tier
+			CodexSmartModel:       "gpt-5.4",                    // /gsmart: balanced GPT tier
+			CodexDeepModel:        "gpt-5.5",                    // /gdeep: powerful GPT tier (gpt-5.5-pro is API-key-only)
+			UseGPT4oMini:          false,
 			StickySession:         true,
 			SessionIdleTimeoutMin: 5,
 		},
@@ -541,6 +541,11 @@ func Main() {
 	if err != nil {
 		log.Fatalf("❌ Config error: %v", err)
 	}
+	runtimeLock, err := AcquireRuntimeLock(runtimeLockPath(config.DatabasePath))
+	if err != nil {
+		log.Fatalf("❌ Runtime lock error: %v", err)
+	}
+	defer runtimeLock.Close()
 
 	log.Printf("🚀 Starting Claude TG Agent (CLI mode)")
 	log.Printf("   Model: %s", config.Model)
@@ -789,6 +794,9 @@ func Main() {
 	}
 	log.Printf("   Execution backends: %d registered (default=%s)", len(globalBackendManager.ListAll()), globalBackendManager.DefaultName())
 
+	appCtx, cancelApp := context.WithCancel(context.Background())
+	defer cancelApp()
+
 	// Initialize Cron Scheduler
 	if config.EnablePersistence && globalStorage != nil {
 		globalCronScheduler = NewCronScheduler(tgBot, client)
@@ -801,18 +809,33 @@ func Main() {
 
 	// Start web interface if enabled
 	var webInterface *WebInterface
+	var webErrCh <-chan error
 	if config.EnableWebInterface {
 		webInterface = NewWebInterface(tgBot, config.WebPort, config.WebStaticDir, config.WebAPIToken)
+		errCh := make(chan error, 1)
+		webErrCh = errCh
 		go func() {
+			done := globalJobTracker.Start("web.server")
+			var jobErr error
+			defer func() { done(jobErr) }()
 			if err := webInterface.Start(); err != nil {
-				log.Printf("❌ Web server error: %v", err)
+				jobErr = err
+				errCh <- err
 			}
 		}()
+		select {
+		case err := <-errCh:
+			log.Fatalf("❌ Web interface failed to start: %v", err)
+		case <-time.After(500 * time.Millisecond):
+			log.Printf("   Web interface: listening on port %s", config.WebPort)
+		}
 	}
 
 	// Start periodic data cleanup if persistence is enabled
 	if config.EnablePersistence && config.EnableDataCleanup && globalStorage != nil {
 		go func() {
+			done := globalJobTracker.Start("cleanup.data")
+			defer done(nil)
 			ticker := time.NewTicker(24 * time.Hour) // Run cleanup daily
 			defer ticker.Stop()
 
@@ -822,6 +845,8 @@ func Main() {
 					if err := globalStorage.CleanupOldData(config.DataRetentionDays); err != nil {
 						log.Printf("❌ Data cleanup error: %v", err)
 					}
+				case <-appCtx.Done():
+					return
 				}
 			}
 		}()
@@ -831,6 +856,8 @@ func Main() {
 	// Start periodic multimedia file cleanup
 	if config.Multimedia.EnablePhotoSupport || config.Multimedia.EnableVoiceSupport {
 		go func() {
+			done := globalJobTracker.Start("cleanup.media")
+			defer done(nil)
 			ticker := time.NewTicker(6 * time.Hour) // Clean temp files every 6 hours
 			defer ticker.Stop()
 
@@ -838,6 +865,8 @@ func Main() {
 				select {
 				case <-ticker.C:
 					CleanupTempMediaFiles(config.Multimedia.TempDownloadDir, 1*time.Hour) // Remove files older than 1 hour
+				case <-appCtx.Done():
+					return
 				}
 			}
 		}()
@@ -845,14 +874,27 @@ func Main() {
 	}
 
 	// Start Telegram bot in separate goroutine
-	go tgBot.Start()
+	go func() {
+		done := globalJobTracker.Start("telegram.polling")
+		defer done(nil)
+		tgBot.Start()
+	}()
 
 	// Wait for interrupt signals for graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	var shutdownReason string
+	select {
+	case sig := <-quit:
+		shutdownReason = fmt.Sprintf("signal %s", sig)
+	case err := <-webErrCh:
+		shutdownReason = fmt.Sprintf("web interface error: %v", err)
+	}
 
-	log.Println("🛑 Shutting down...")
+	log.Printf("🛑 Shutting down (%s)...", shutdownReason)
+
+	cancelApp()
+	tgBot.Stop()
 
 	// Stop cron scheduler
 	if globalCronScheduler != nil {

@@ -736,3 +736,38 @@ func TestHermesPlannerSessionReusesSameTierAndClearsOnSwitch(t *testing.T) {
 		t.Fatalf("expected no codex planner session after tier switch, got %q", got)
 	}
 }
+
+type fakeInterruptibleCoord struct {
+	running       bool
+	interrupted   bool
+	interruptFrom int64
+}
+
+func (f *fakeInterruptibleCoord) TaskID() string { return "task-1" }
+
+func (f *fakeInterruptibleCoord) IsRunning() bool { return f.running }
+
+func (f *fakeInterruptibleCoord) InterruptWith(messageID int64) {
+	f.interrupted = true
+	f.interruptFrom = messageID
+}
+
+func TestAbortActiveTaskInterruptsRunningHermesCoordinator(t *testing.T) {
+	key := chatKey{chatID: 77, threadID: 3}
+	coord := &fakeInterruptibleCoord{running: true}
+	bot := &TelegramBot{
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {coord: coord, enabled: true},
+		},
+	}
+
+	if got := bot.abortActiveTask(key, 12345); got != abortTaskAborted {
+		t.Fatalf("abortActiveTask result = %v, want %v", got, abortTaskAborted)
+	}
+	if !coord.interrupted {
+		t.Fatal("expected Hermes coordinator to be interrupted")
+	}
+	if coord.interruptFrom != 12345 {
+		t.Fatalf("interrupt message id = %d, want 12345", coord.interruptFrom)
+	}
+}

@@ -1,8 +1,8 @@
 package app
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -95,17 +95,13 @@ func (gm *GitManager) detectGitState(projectDir string) (*alicev1.GitState, erro
 
 // isGitRepository checks if the given directory is a Git repository
 func (gm *GitManager) isGitRepository(projectDir string) bool {
-	cmd := exec.Command("git", "rev-parse", "--git-dir")
-	cmd.Dir = projectDir
-	err := cmd.Run()
+	_, err := runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "rev-parse", "--git-dir")
 	return err == nil
 }
 
 // getCurrentBranch gets the current Git branch
 func (gm *GitManager) getCurrentBranch(projectDir string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-	cmd.Dir = projectDir
-	output, err := cmd.Output()
+	output, err := runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("failed to get current branch: %w", err)
 	}
@@ -114,9 +110,7 @@ func (gm *GitManager) getCurrentBranch(projectDir string) (string, error) {
 
 // getCommitHash gets the current commit hash (short)
 func (gm *GitManager) getCommitHash(projectDir string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", "--short", "HEAD")
-	cmd.Dir = projectDir
-	output, err := cmd.Output()
+	output, err := runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "rev-parse", "--short", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("failed to get commit hash: %w", err)
 	}
@@ -125,14 +119,10 @@ func (gm *GitManager) getCommitHash(projectDir string) (string, error) {
 
 // getRemoteURL gets the remote repository URL
 func (gm *GitManager) getRemoteURL(projectDir string) (string, error) {
-	cmd := exec.Command("git", "remote", "get-url", "origin")
-	cmd.Dir = projectDir
-	output, err := cmd.Output()
+	output, err := runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "remote", "get-url", "origin")
 	if err != nil {
 		// Try to get any remote if origin doesn't exist
-		cmd = exec.Command("git", "remote")
-		cmd.Dir = projectDir
-		remotes, err := cmd.Output()
+		remotes, err := runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "remote")
 		if err != nil {
 			return "", fmt.Errorf("no remotes found: %w", err)
 		}
@@ -143,9 +133,7 @@ func (gm *GitManager) getRemoteURL(projectDir string) (string, error) {
 		}
 
 		// Get URL for first available remote
-		cmd = exec.Command("git", "remote", "get-url", remoteList[0])
-		cmd.Dir = projectDir
-		output, err = cmd.Output()
+		output, err = runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "remote", "get-url", remoteList[0])
 		if err != nil {
 			return "", fmt.Errorf("failed to get remote URL: %w", err)
 		}
@@ -156,9 +144,7 @@ func (gm *GitManager) getRemoteURL(projectDir string) (string, error) {
 // checkDirtyState checks if repository has uncommitted changes
 func (gm *GitManager) checkDirtyState(projectDir string) (bool, []string, error) {
 	// Check for modified, added, deleted files
-	cmd := exec.Command("git", "status", "--porcelain")
-	cmd.Dir = projectDir
-	output, err := cmd.Output()
+	output, err := runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "status", "--porcelain")
 	if err != nil {
 		return false, nil, fmt.Errorf("failed to get Git status: %w", err)
 	}
@@ -234,10 +220,7 @@ func (gom *GitOperationManager) ExecuteGitOperation(projectDir, operation string
 
 	// Execute the Git command
 	cmdArgs := append([]string{operation}, args...)
-	cmd := exec.Command("git", cmdArgs...)
-	cmd.Dir = projectDir
-
-	output, err := cmd.CombinedOutput()
+	output, err := runProcessCombinedOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", cmdArgs...)
 	if err != nil {
 		return "", fmt.Errorf("Git operation failed: %w, output: %s", err, output)
 	}
@@ -253,12 +236,12 @@ func (gom *GitOperationManager) ExecuteGitOperation(projectDir, operation string
 // isDestructiveOperation checks if an operation is potentially destructive
 func (gom *GitOperationManager) isDestructiveOperation(operation string) bool {
 	destructiveOps := map[string]bool{
-		"reset":   true,
-		"rebase":  true,
+		"reset":       true,
+		"rebase":      true,
 		"cherry-pick": true,
-		"merge":   true,
-		"push":    true,
-		"force":   true,
+		"merge":       true,
+		"push":        true,
+		"force":       true,
 	}
 	return destructiveOps[operation]
 }
@@ -266,14 +249,14 @@ func (gom *GitOperationManager) isDestructiveOperation(operation string) bool {
 // isModifyingOperation checks if an operation modifies the repository state
 func (gom *GitOperationManager) isModifyingOperation(operation string) bool {
 	modifyingOps := map[string]bool{
-		"add":     true,
-		"commit":  true,
-		"push":    true,
-		"pull":    true,
-		"reset":   true,
-		"rebase":  true,
-		"merge":   true,
-		"checkout": true,
+		"add":         true,
+		"commit":      true,
+		"push":        true,
+		"pull":        true,
+		"reset":       true,
+		"rebase":      true,
+		"merge":       true,
+		"checkout":    true,
 		"cherry-pick": true,
 	}
 	return modifyingOps[operation]
@@ -290,8 +273,8 @@ func (gom *GitOperationManager) performSafetyChecks(projectDir, operation string
 	// Check if working directory is clean for certain operations
 	if state.IsDirty {
 		cleanRequiredOps := map[string]bool{
-			"rebase": true,
-			"merge":  true,
+			"rebase":   true,
+			"merge":    true,
 			"checkout": true,
 		}
 		if cleanRequiredOps[operation] {
@@ -301,9 +284,9 @@ func (gom *GitOperationManager) performSafetyChecks(projectDir, operation string
 
 	// Check for protected branches
 	protectedBranches := map[string]bool{
-		"main":   true,
-		"master": true,
-		"develop": true,
+		"main":       true,
+		"master":     true,
+		"develop":    true,
 		"production": true,
 	}
 
@@ -355,16 +338,16 @@ type GitEventLogger struct {
 
 // GitEvent represents a Git operation event
 type GitEvent struct {
-	Timestamp   time.Time
-	ProjectDir  string
-	Operation   string
-	Args        []string
-	Success     bool
-	Output      string
-	Error       string
-	ChatID      int64
-	ThreadID    int
-	UserPrompt  string
+	Timestamp  time.Time
+	ProjectDir string
+	Operation  string
+	Args       []string
+	Success    bool
+	Output     string
+	Error      string
+	ChatID     int64
+	ThreadID   int
+	UserPrompt string
 }
 
 // NewGitEventLogger creates a new Git event logger

@@ -6,8 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -45,10 +45,10 @@ type CLIClient struct {
 // Claude Code 會設定 CLAUDECODE=1 等變數來防止嵌套啟動，必須清除。
 func cleanEnvForCLI() []string {
 	blocked := map[string]bool{
-		"CLAUDECODE":                          true,
-		"CLAUDE_CODE_ENTRYPOINT":              true,
+		"CLAUDECODE":             true,
+		"CLAUDE_CODE_ENTRYPOINT": true,
 		"CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING": true,
-		"CLAUDE_AGENT_SDK_VERSION":            true,
+		"CLAUDE_AGENT_SDK_VERSION":                  true,
 	}
 	var env []string
 	for _, e := range os.Environ() {
@@ -141,9 +141,12 @@ func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID, mo
 
 	args = append(args, message)
 
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = projectDir
-	cmd.Env = cleanEnvForCLI()
+	cmd, cancel := processCommand(ctx, ProcessOptions{
+		Dir:     projectDir,
+		Env:     cleanEnvForCLI(),
+		Timeout: defaultAgentProcessTimeout,
+	}, "claude", args...)
+	defer cancel()
 
 	output, err := cmd.Output()
 	if err != nil {
@@ -226,9 +229,12 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 
 	args = append(args, message)
 
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = projectDir
-	cmd.Env = cleanEnvForCLI()
+	cmd, cancel := processCommand(ctx, ProcessOptions{
+		Dir:     projectDir,
+		Env:     cleanEnvForCLI(),
+		Timeout: defaultAgentProcessTimeout,
+	}, "claude", args...)
+	defer cancel()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -418,9 +424,12 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOver
 		log.Printf("[cli] CallPlan prompt dump failed: %v", dumpErr)
 	}
 
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = projectDir
-	cmd.Env = cleanEnvForCLI()
+	cmd, cancel := processCommand(ctx, ProcessOptions{
+		Dir:     projectDir,
+		Env:     cleanEnvForCLI(),
+		Timeout: defaultAgentProcessTimeout,
+	}, "claude", args...)
+	defer cancel()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

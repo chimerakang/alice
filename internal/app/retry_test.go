@@ -109,6 +109,24 @@ func TestSelectRetryTargetLatestChoosesLowestScoredSubTask(t *testing.T) {
 	}
 }
 
+func TestSelectRetryTargetsAllFailedDoesNotDeadlockWithSingleSQLiteConn(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	seedRetryReview(t, s, "task-retry-all", 64, "initial")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	selections, err := s.selectRetryTargetsAllFailed(ctx, "task-retry-all")
+	if err != nil {
+		t.Fatalf("selectRetryTargetsAllFailed: %v", err)
+	}
+	if len(selections) != 1 {
+		t.Fatalf("selection count = %d, want 1", len(selections))
+	}
+	if selections[0].SubTask.ID != "task-retry-all:s2" || selections[0].SubTaskReview.Score != 64 {
+		t.Fatalf("lowest selection first = %+v", selections[0])
+	}
+}
+
 func TestRetryCountCountsRetrySourceOnly(t *testing.T) {
 	s := newTestSQLiteStorage(t)
 	seedRetryReview(t, s, "task-retry-count", 60, "initial")

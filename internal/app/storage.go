@@ -860,12 +860,12 @@ func (s *SQLiteStorage) GetPerformanceAnalytics(hours int) (PerformanceAnalytics
 	row := s.db.QueryRow(`
 		SELECT
 			COUNT(*) as total_requests,
-			AVG(CASE WHEN api_call_success THEN 1.0 ELSE 0.0 END) * 100.0 as success_rate,
-			AVG(api_call_latency_ms) as avg_api_latency_ms,
-			AVG(tool_execution_time_ms) as avg_tool_execution_ms,
-			SUM(tokens_used) as total_tokens,
-			SUM(estimated_cost) as total_cost,
-			MAX(memory_usage) as peak_memory,
+			COALESCE(AVG(CASE WHEN api_call_success THEN 1.0 ELSE 0.0 END) * 100.0, 0) as success_rate,
+			COALESCE(AVG(api_call_latency_ms), 0) as avg_api_latency_ms,
+			COALESCE(AVG(tool_execution_time_ms), 0) as avg_tool_execution_ms,
+			COALESCE(SUM(tokens_used), 0) as total_tokens,
+			COALESCE(SUM(estimated_cost), 0) as total_cost,
+			COALESCE(MAX(memory_usage), 0) as peak_memory,
 			COUNT(*) / CAST(? as REAL) as requests_per_hour
 		FROM performance_metrics
 		WHERE timestamp >= ?`, hours, sinceStr)
@@ -895,13 +895,19 @@ func (s *SQLiteStorage) GetPerformanceAnalytics(hours int) (PerformanceAnalytics
 		WHERE timestamp >= ? AND error_type IS NOT NULL AND error_type != ''
 		GROUP BY error_type`, sinceStr)
 	if err == nil {
-		defer rows.Close()
 		for rows.Next() {
 			var errorType string
 			var count int64
 			if rows.Scan(&errorType, &count) == nil {
 				analytics.ErrorsByType[errorType] = count
 			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return analytics, err
+		}
+		if err := rows.Close(); err != nil {
+			return analytics, err
 		}
 	}
 
@@ -913,13 +919,19 @@ func (s *SQLiteStorage) GetPerformanceAnalytics(hours int) (PerformanceAnalytics
 		WHERE timestamp >= ? AND tool_execution_type IS NOT NULL AND tool_execution_type != ''
 		GROUP BY tool_execution_type`, sinceStr)
 	if err == nil {
-		defer rows.Close()
 		for rows.Next() {
 			var toolType string
 			var count int64
 			if rows.Scan(&toolType, &count) == nil {
 				analytics.ToolUsageStats[toolType] = count
 			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return analytics, err
+		}
+		if err := rows.Close(); err != nil {
+			return analytics, err
 		}
 	}
 
@@ -955,7 +967,6 @@ func (s *SQLiteStorage) GetToolExecutionStatsByTimeRange(start, end time.Time) (
 	if err != nil {
 		return stats, err
 	}
-	defer rows.Close()
 
 	hasData := false
 	for rows.Next() {
@@ -972,6 +983,13 @@ func (s *SQLiteStorage) GetToolExecutionStatsByTimeRange(start, end time.Time) (
 			"avg_execution_time": avgExecutionTime,
 		}
 		hasData = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return stats, err
+	}
+	if err := rows.Close(); err != nil {
+		return stats, err
 	}
 
 	// 如果 performance_metrics 表沒有數據，回退到 tool_executions 表
@@ -1011,7 +1029,7 @@ func (s *SQLiteStorage) GetToolExecutionStatsByTimeRange(start, end time.Time) (
 		return stats, rows2.Err()
 	}
 
-	return stats, rows.Err()
+	return stats, nil
 }
 
 // GetCostSavings 計算指定時間範圍內的成本節省報告
@@ -1891,6 +1909,33 @@ func InitStorage(dbPath string) error {
 
 	globalStorage = storage
 	log.Printf("Storage system initialized successfully")
+
+	// Zombie recovery: any task left in `executing` or `planning` from a prior
+	// process is dead because its goroutine died with that process. Without this
+	// sweep the dashboard and /retry routing keep treating those rows as
+	// active forever, and new identical-id retries collide with the stale
+	// state. Sweep both the legacy `tasks` table (unified #114 mirror) and
+	// `hermes_task_states` (engine source-of-truth).
+	if db, ok := storage.GetDB().(*sql.DB); ok {
+		now := time.Now().Format(time.RFC3339Nano)
+		if res, err := db.Exec(
+			`UPDATE tasks SET status='failed', ended_at=COALESCE(ended_at, ?) WHERE status IN ('executing','planning')`,
+			now,
+		); err != nil {
+			log.Printf("[storage] zombie sweep tasks: %v", err)
+		} else if n, _ := res.RowsAffected(); n > 0 {
+			log.Printf("[storage] marked %d dangling tasks as failed (process restart recovery)", n)
+		}
+		if res, err := db.Exec(
+			`UPDATE hermes_task_states SET status='failed', updated_at=? WHERE status IN ('executing','planning')`,
+			now,
+		); err != nil {
+			log.Printf("[storage] zombie sweep hermes_task_states: %v", err)
+		} else if n, _ := res.RowsAffected(); n > 0 {
+			log.Printf("[storage] marked %d dangling hermes_task_states as failed", n)
+		}
+	}
+
 	return nil
 }
 

@@ -513,10 +513,6 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		cancel()
 	}()
 
-	if onUpdate != nil {
-		onUpdate("🔧 Claude Code processing...", false)
-	}
-
 	ps := a.current()
 
 	// Handle model selection with three-tier routing priority
@@ -544,6 +540,9 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	if selectedModel == "" {
 		selectedModel = a.client.GetModel() // Use default if no model selected
 		routingReason = "default"
+	}
+	if onUpdate != nil {
+		onUpdate(processingStatusForModel(selectedModel), false)
 	}
 	selectedBackend := BackendKindForModel(selectedModel)
 	previousBackend := ps.ctx.LastBackend
@@ -786,7 +785,7 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 
 	planFn := func(ctx context.Context, _ string, projectDir string) (string, string, int, int, error) {
 		if onUpdate != nil {
-			onUpdate("🧠 Phase 1: Planning with Opus...", false)
+			onUpdate(fmt.Sprintf("🧠 Phase 1: Planning with %s...", modelStatusName(a.planModel)), false)
 		}
 		log.Printf("[agent] OpusPlan via PlanExecuteEngine: calling plan model=%s, project=%s", a.planModel, projectDir)
 		planResp, err := a.client.CallPlan(ctx, opusPlanPrompt(userMessage), projectDir, a.planModel, func(contentType, text string) {
@@ -817,7 +816,7 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 	direct := appengine.NewDirectEngine(&metricsForwardingRunner{
 		run: func(msg string, update func(string, bool)) (string, error) {
 			if onUpdate != nil {
-				onUpdate("⚡ Phase 2: Executing with Sonnet...", false)
+				onUpdate(fmt.Sprintf("⚡ Phase 2: Executing with %s...", modelStatusName(a.executeModel)), false)
 			}
 			return a.runDirect(ctx, msg, update, startTime)
 		},
@@ -851,6 +850,23 @@ func (f directRunnerFunc) Run(userMessage string, onUpdate func(string, bool)) (
 	return f(userMessage, onUpdate)
 }
 
+func processingStatusForModel(model string) string {
+	switch BackendKindForModel(model) {
+	case BackendCodex:
+		return fmt.Sprintf("🔧 GPT/Codex processing with %s...", modelStatusName(model))
+	default:
+		return fmt.Sprintf("🔧 Claude processing with %s...", modelStatusName(model))
+	}
+}
+
+func modelStatusName(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return "default model"
+	}
+	return model
+}
+
 // metricsForwardingRunner wraps a function-style runner together with a
 // metrics provider (typically *Agent). DirectEngine uses LastCallMetrics()
 // to attribute Executor tokens to the actual model — without this wrapper
@@ -873,15 +889,14 @@ func (r *metricsForwardingRunner) LastCallMetrics() (string, int, int) {
 
 // runDirect is the standard single-phase execution (fallback when plan phase fails)
 func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func(string, bool), startTime time.Time) (string, error) {
-	if onUpdate != nil {
-		onUpdate("🔧 Claude Code processing...", false)
-	}
-
 	ps := a.current()
 
 	selectedModel := a.executeModel
 	if selectedModel == "" {
 		selectedModel = a.client.GetModel()
+	}
+	if onUpdate != nil {
+		onUpdate(processingStatusForModel(selectedModel), false)
 	}
 	a.lastUsedModel = selectedModel
 	selectedBackend := BackendKindForModel(selectedModel)

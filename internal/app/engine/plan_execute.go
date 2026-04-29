@@ -210,6 +210,12 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 			_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
 		}
 		e.mu.Lock()
+		// Cancel runCtx so callers and subprocesses tied to this run are
+		// released; previously the cancel func was only nil'd, leaving ctx
+		// alive indefinitely.
+		if e.cancelFn != nil {
+			e.cancelFn()
+		}
 		e.cancelFn = nil
 		e.taskID = ""
 		e.mu.Unlock()
@@ -379,7 +385,11 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 	}
 	e.onDone(ctx, finalState, lastCompleted, len(lastTasks))
 	if e.cfg.PostCompletionHook != nil {
-		go e.cfg.PostCompletionHook(ctx)
+		go func() {
+			hookCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			e.cfg.PostCompletionHook(hookCtx)
+		}()
 	}
 }
 

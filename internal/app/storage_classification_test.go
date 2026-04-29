@@ -23,6 +23,52 @@ func newTestSQLiteStorage(t *testing.T) *SQLiteStorage {
 	return s
 }
 
+func TestGetToolExecutionStatsByTimeRangeDoesNotDeadlockWithSingleSQLiteConn(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	if err := s.InsertToolExecution(ToolExecution{
+		Timestamp: time.Now(),
+		ToolName:  "Read",
+		Status:    "success",
+		Duration:  150 * time.Millisecond,
+	}); err != nil {
+		t.Fatalf("InsertToolExecution: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.GetToolExecutionStatsByTimeRange(time.Now().Add(-time.Hour), time.Now().Add(time.Hour))
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("GetToolExecutionStatsByTimeRange: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("GetToolExecutionStatsByTimeRange deadlocked with single SQLite connection")
+	}
+}
+
+func TestGetPerformanceAnalyticsDoesNotDeadlockWithSingleSQLiteConn(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.GetPerformanceAnalytics(24)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("GetPerformanceAnalytics: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("GetPerformanceAnalytics deadlocked with single SQLite connection")
+	}
+}
+
 func TestTopicModelPreferenceRoundTrip(t *testing.T) {
 	s := newTestSQLiteStorage(t)
 

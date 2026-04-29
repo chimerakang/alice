@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -99,7 +98,13 @@ type TelegramBot struct {
 	messageQueue chan *TelegramMessage // 訊息佇列
 	queueCtx     context.Context       // 佇列上下文
 	queueCancel  context.CancelFunc    // 佇列取消函數
-	rateLimiter  *time.Ticker          // 速率限制器
+	pollCtx      context.Context
+	pollCancel   context.CancelFunc
+	rateLimiter  *time.Ticker // 速率限制器
+
+	apiHTTPClient      *http.Client
+	longPollHTTPClient *http.Client
+	downloadHTTPClient *http.Client
 
 	// Model routing preferences per chat/thread
 	chatContexts map[chatKey]*ChatContext // Shared conversation state per chat/topic
@@ -155,6 +160,9 @@ const (
 	hermesPreviousContextHeader = "[Previous conversation context]"
 	hermesCurrentRequestHeader  = "[Current request]"
 	hermesContextMaxChars       = 2000
+	telegramAPITimeout          = 20 * time.Second
+	telegramLongPollTimeout     = 75 * time.Second
+	telegramDownloadTimeout     = 2 * time.Minute
 )
 
 var hermesFetchIssue = hermes.FetchIssue
@@ -186,9 +194,53 @@ type hermesCoord struct {
 	oneShot             bool          // true when launched via /hermes #N or /ghermes #N; disable on done
 }
 
+type interruptibleCoordinator interface {
+	InterruptWith(messageID int64)
+	IsRunning() bool
+}
+
+type abortTaskResult int
+
+const (
+	abortTaskNone abortTaskResult = iota
+	abortTaskAborted
+	abortTaskFinished
+)
+
+func (t *TelegramBot) abortActiveTask(key chatKey, messageID int64) abortTaskResult {
+	t.hermesMu.RLock()
+	hc := t.hermesCoords[key]
+	var coord interface {
+		TaskID() string
+		IsRunning() bool
+	}
+	if hc != nil {
+		coord = hc.coord
+	}
+	t.hermesMu.RUnlock()
+
+	if coord != nil && coord.IsRunning() {
+		if interrupter, ok := coord.(interruptibleCoordinator); ok {
+			interrupter.InterruptWith(messageID)
+			return abortTaskAborted
+		}
+		return abortTaskFinished
+	}
+
+	agent := t.getAgent(key)
+	if !agent.IsProcessing() {
+		return abortTaskNone
+	}
+	if agent.Abort() {
+		return abortTaskAborted
+	}
+	return abortTaskFinished
+}
+
 func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
+	apiHTTPClient := &http.Client{Timeout: telegramAPITimeout}
 	// 驗證 bot token
-	resp, err := http.Get(fmt.Sprintf("https://api.telegram.org/bot%s/getMe", config.TelegramToken))
+	resp, err := apiHTTPClient.Get(fmt.Sprintf("https://api.telegram.org/bot%s/getMe", config.TelegramToken))
 	if err != nil {
 		return nil, fmt.Errorf("telegram bot init: %w", err)
 	}
@@ -221,6 +273,7 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 
 	// Initialize context for message queue
 	queueCtx, queueCancel := context.WithCancel(context.Background())
+	pollCtx, pollCancel := context.WithCancel(context.Background())
 
 	bot := &TelegramBot{
 		agents:       make(map[chatKey]*Agent),
@@ -236,7 +289,13 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 		messageQueue: make(chan *TelegramMessage, 1000), // Large buffer for queuing
 		queueCtx:     queueCtx,
 		queueCancel:  queueCancel,
+		pollCtx:      pollCtx,
+		pollCancel:   pollCancel,
 		rateLimiter:  time.NewTicker(500 * time.Millisecond), // 2 messages per second
+
+		apiHTTPClient:      apiHTTPClient,
+		longPollHTTPClient: &http.Client{Timeout: telegramLongPollTimeout},
+		downloadHTTPClient: &http.Client{Timeout: telegramDownloadTimeout},
 
 		// Model routing preferences
 		chatContexts:     make(map[chatKey]*ChatContext),
@@ -251,7 +310,7 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 	}
 
 	// Start message queue worker
-	go bot.messageQueueWorker()
+	go bot.runTrackedJob("telegram.message_queue", bot.messageQueueWorker)
 
 	// 註冊 Telegram 指令選單
 	bot.registerCommands()
@@ -259,6 +318,8 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 	// Load persisted chat language preferences from database (background operation)
 	if globalStorage != nil {
 		go func() {
+			done := globalJobTracker.Start("telegram.load_language_preferences")
+			defer done(nil)
 			// This is a best-effort load - we don't fail the bot if this doesn't work
 			// Language preferences will be loaded on-demand if not cached
 			log.Printf("[telegram] loading persisted chat language preferences...")
@@ -266,6 +327,45 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 	}
 
 	return bot, nil
+}
+
+func (t *TelegramBot) telegramAPIClient() *http.Client {
+	if t != nil && t.apiHTTPClient != nil {
+		return t.apiHTTPClient
+	}
+	return &http.Client{Timeout: telegramAPITimeout}
+}
+
+func (t *TelegramBot) telegramLongPollClient() *http.Client {
+	if t != nil && t.longPollHTTPClient != nil {
+		return t.longPollHTTPClient
+	}
+	return &http.Client{Timeout: telegramLongPollTimeout}
+}
+
+func (t *TelegramBot) telegramDownloadClient() *http.Client {
+	if t != nil && t.downloadHTTPClient != nil {
+		return t.downloadHTTPClient
+	}
+	return &http.Client{Timeout: telegramDownloadTimeout}
+}
+
+func (t *TelegramBot) Stop() {
+	if t == nil {
+		return
+	}
+	if t.pollCancel != nil {
+		t.pollCancel()
+	}
+	if t.queueCancel != nil {
+		t.queueCancel()
+	}
+}
+
+func (t *TelegramBot) runTrackedJob(name string, fn func()) {
+	done := globalJobTracker.Start(name)
+	defer done(nil)
+	fn()
 }
 
 // registerCommands 透過 Telegram Bot API 註冊指令自動完成選單
@@ -293,7 +393,7 @@ func (t *TelegramBot) registerCommands() {
 
 	body, _ := json.Marshal(map[string]interface{}{"commands": commands})
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/setMyCommands", t.config.TelegramToken)
-	resp, err := http.Post(apiURL, "application/json", bytes.NewReader(body))
+	resp, err := t.telegramAPIClient().Post(apiURL, "application/json", bytes.NewReader(body))
 	if err != nil {
 		log.Printf("[telegram] setMyCommands error: %v", err)
 		return
@@ -524,8 +624,23 @@ func (t *TelegramBot) Start() {
 
 	offset := 0
 	for {
-		resp, err := http.Get(fmt.Sprintf("%s/getUpdates?offset=%d&timeout=60", apiURL, offset))
+		select {
+		case <-t.pollCtx.Done():
+			log.Printf("[telegram] polling stopped")
+			return
+		default:
+		}
+		req, err := http.NewRequestWithContext(t.pollCtx, http.MethodGet, fmt.Sprintf("%s/getUpdates?offset=%d&timeout=60", apiURL, offset), nil)
 		if err != nil {
+			log.Printf("[telegram] getUpdates request error: %v", err)
+			continue
+		}
+		resp, err := t.telegramLongPollClient().Do(req)
+		if err != nil {
+			if t.pollCtx.Err() != nil {
+				log.Printf("[telegram] polling stopped")
+				return
+			}
 			log.Printf("[telegram] getUpdates error: %v", err)
 			continue
 		}
@@ -612,14 +727,22 @@ func (t *TelegramBot) Start() {
 					t.lastUsedThreadID[key.chatID] = key.threadID
 					t.lastUsedMu.Unlock()
 				}
-				go t.handleMessage(key, msg.From.ID, msg.Text, msg.Caption, msg.Photo, msg.Voice, msg.Document, msg.MediaGroupID, msg.MessageID)
+				go func() {
+					done := globalJobTracker.Start("telegram.message")
+					defer done(nil)
+					t.handleMessage(key, msg.From.ID, msg.Text, msg.Caption, msg.Photo, msg.Voice, msg.Document, msg.MediaGroupID, msg.MessageID)
+				}()
 			}
 
 			// Handle callback queries (inline keyboard button clicks)
 			if update.CallbackQuery != nil && update.CallbackQuery.Message != nil {
 				query := update.CallbackQuery
 				key := chatKey{chatID: query.Message.Chat.ID, threadID: query.Message.MessageThreadID}
-				go t.handleCallbackQuery(key, query.From.ID, query.ID, query.Data)
+				go func() {
+					done := globalJobTracker.Start("telegram.callback")
+					defer done(nil)
+					t.handleCallbackQuery(key, query.From.ID, query.ID, query.Data)
+				}()
 			}
 		}
 	}
@@ -747,10 +870,14 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	if t.isHermesEnabled(key) {
 		projectDir := t.getAgent(key).ProjectDir()
 		if issueNum, ok := ParseIssueNumber(text); ok {
-			go t.startHermesFromIssue(key, issueNum, projectDir)
+			go t.runTrackedJob("hermes.issue", func() {
+				t.startHermesFromIssue(key, issueNum, projectDir)
+			})
 			return
 		}
-		go t.startHermesTask(key, text, projectDir)
+		go t.runTrackedJob("hermes.task", func() {
+			t.startHermesTask(key, text, projectDir)
+		})
 		return
 	}
 
@@ -772,13 +899,17 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			if strings.HasPrefix(cl.MatchedRule, "action-verb+issue-ref:") {
 				if issueNum, ok := ParseIssueNumber(text); ok {
 					t.send(key, fmt.Sprintf("🤖 判定為複雜任務（%s）— 拉取 Issue #%d 內容後啟動 Hermes", cl.MatchedRule, issueNum))
-					go t.startHermesFromIssue(key, issueNum, projectDir)
+					go t.runTrackedJob("hermes.issue", func() {
+						t.startHermesFromIssue(key, issueNum, projectDir)
+					})
 					return
 				}
 			}
 
 			t.send(key, fmt.Sprintf("🤖 判定為複雜任務（%s）— 自動啟動 Hermes 模式", cl.MatchedRule))
-			go t.startHermesTask(key, text, projectDir)
+			go t.runTrackedJob("hermes.task", func() {
+				t.startHermesTask(key, text, projectDir)
+			})
 			return
 		}
 	}
@@ -1341,14 +1472,12 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		}
 
 	case "/abort":
-		agent := t.getAgent(key)
-		if agent.IsProcessing() {
-			if agent.Abort() {
-				t.send(key, t.getLocalizedMessage(key.chatID, "task_aborted", nil))
-			} else {
-				t.send(key, t.getLocalizedMessage(key.chatID, "task_finished", nil))
-			}
-		} else {
+		switch t.abortActiveTask(key, 0) {
+		case abortTaskAborted:
+			t.send(key, t.getLocalizedMessage(key.chatID, "task_aborted", nil))
+		case abortTaskFinished:
+			t.send(key, t.getLocalizedMessage(key.chatID, "task_finished", nil))
+		default:
 			t.send(key, t.getLocalizedMessage(key.chatID, "no_running_task", nil))
 		}
 
@@ -1617,7 +1746,9 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 		t.send(key, fmt.Sprintf("🔍 正在讀取 GitHub Issue #%d…", issueNum))
 		projectDir := t.getAgent(key).ProjectDir()
 		t.setHermesTier(key, tier)
-		go t.startHermesFromIssue(key, issueNum, projectDir)
+		go t.runTrackedJob("hermes.issue", func() {
+			t.startHermesFromIssue(key, issueNum, projectDir)
+		})
 		return
 	}
 
@@ -1625,10 +1756,14 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 	case "issues", "list":
 		projectDir := t.getAgent(key).ProjectDir()
 		go func() {
+			done := globalJobTracker.Start("hermes.issues")
+			var jobErr error
+			defer func() { done(jobErr) }()
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			items, err := hermes.ListIssues(ctx, projectDir, 15)
 			if err != nil {
+				jobErr = err
 				t.send(key, fmt.Sprintf("❌ 無法取得 Issues：%v", err))
 				return
 			}
@@ -1674,10 +1809,14 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 		}
 		projectDir := t.getAgent(key).ProjectDir()
 		go func() {
+			done := globalJobTracker.Start("hermes.issues")
+			var jobErr error
+			defer func() { done(jobErr) }()
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			items, err := hermes.ListIssues(ctx, projectDir, 10)
 			if err != nil {
+				jobErr = err
 				t.send(key, "（無法取得 Issues 清單，請直接輸入任務說明或使用 /hermes #<number>）")
 				return
 			}
@@ -2308,10 +2447,12 @@ func (t *TelegramBot) buildTaskSyncHook(triggerSync bool, projectDir string) fun
 		return nil
 	}
 	return func(ctx context.Context) {
-		cmd := exec.CommandContext(ctx, "claude", "--print", "--dangerously-skip-permissions", "/task-sync")
-		cmd.Dir = projectDir
-		cmd.Env = cleanEnvForCLI()
-		if out, err := cmd.CombinedOutput(); err != nil {
+		out, err := runProcessCombinedOutput(ctx, ProcessOptions{
+			Dir:     projectDir,
+			Env:     cleanEnvForCLI(),
+			Timeout: defaultAgentProcessTimeout,
+		}, "claude", "--print", "--dangerously-skip-permissions", "/task-sync")
+		if err != nil {
 			log.Printf("[hermes] task-sync failed: %v (output: %s)", err, out)
 		} else {
 			log.Printf("[hermes] task-sync completed")
@@ -2506,7 +2647,7 @@ func (t *TelegramBot) sendMessageDirect(msg *TelegramMessage) bool {
 
 	// Make API call
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/%s", t.config.TelegramToken, msg.Method)
-	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
+	resp, err := t.telegramAPIClient().Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Printf("[telegram] %s error: %v", msg.Method, err)
 		return false
@@ -2616,7 +2757,7 @@ func (t *TelegramBot) sendMessageSync(method string, params map[string]interface
 	}
 
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/%s", t.config.TelegramToken, method)
-	resp, err := http.Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
+	resp, err := t.telegramAPIClient().Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("HTTP error: %w", err)
 	}
@@ -3414,17 +3555,15 @@ func (t *TelegramBot) handleCallbackQuery(key chatKey, userID int64, queryID, da
 		t.answerCallbackQuery(queryID, tasksStatusMessage(t.getChatLanguage(key.chatID), state))
 	case strings.HasPrefix(data, "stop_agent_"):
 		// Handle stop button click
-		agent := t.getAgent(key)
-		if agent.IsProcessing() {
-			if agent.Abort() {
-				abortMsg := t.getLocalizedMessage(key.chatID, "callback_task_aborted", nil)
-				t.answerCallbackQuery(queryID, abortMsg)
-				log.Printf("Agent task stopped by user via callback button (chat: %d, thread: %d)", key.chatID, key.threadID)
-			} else {
-				failMsg := t.getLocalizedMessage(key.chatID, "callback_abort_failed", nil)
-				t.answerCallbackQuery(queryID, failMsg)
-			}
-		} else {
+		switch t.abortActiveTask(key, 0) {
+		case abortTaskAborted:
+			abortMsg := t.getLocalizedMessage(key.chatID, "callback_task_aborted", nil)
+			t.answerCallbackQuery(queryID, abortMsg)
+			log.Printf("Task stopped by user via callback button (chat: %d, thread: %d)", key.chatID, key.threadID)
+		case abortTaskFinished:
+			failMsg := t.getLocalizedMessage(key.chatID, "callback_abort_failed", nil)
+			t.answerCallbackQuery(queryID, failMsg)
+		default:
 			noTaskMsg := t.getLocalizedMessage(key.chatID, "callback_no_running_task", nil)
 			t.answerCallbackQuery(queryID, noTaskMsg)
 		}
@@ -3970,18 +4109,14 @@ func resolveGitHubRepoURL(projectDir string) (string, error) {
 		return normalizeGitHubRepoURL(remote)
 	}
 
-	cmd := exec.Command("git", "remote", "get-url", "origin")
-	cmd.Dir = projectDir
-	output, err := cmd.Output()
+	output, err := runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "remote", "get-url", "origin")
 	if err == nil {
 		if repoURL := tryRemote(string(output)); repoURL != "" {
 			return repoURL, nil
 		}
 	}
 
-	cmd = exec.Command("git", "remote")
-	cmd.Dir = projectDir
-	output, err = cmd.Output()
+	output, err = runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "remote")
 	if err != nil {
 		return "", fmt.Errorf("no remotes found: %w", err)
 	}
@@ -3992,9 +4127,7 @@ func resolveGitHubRepoURL(projectDir string) (string, error) {
 	}
 
 	for _, remote := range remotes {
-		cmd = exec.Command("git", "remote", "get-url", remote)
-		cmd.Dir = projectDir
-		output, err = cmd.Output()
+		output, err = runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "remote", "get-url", remote)
 		if err != nil {
 			continue
 		}
@@ -4014,13 +4147,11 @@ func listGitHubIssuesForTasks(ctx context.Context, projectDir, state string, lim
 		limit = 20
 	}
 
-	cmd := exec.CommandContext(ctx, "gh", "issue", "list",
+	output, err := runProcessCombinedOutput(ctx, ProcessOptions{Dir: projectDir}, "gh", "issue", "list",
 		"--state", state,
 		"--limit", strconv.Itoa(limit),
 		"--json", "number,title,labels,milestone,url",
 	)
-	cmd.Dir = projectDir
-	output, err := cmd.CombinedOutput()
 	if err != nil {
 		lower := strings.ToLower(string(output) + " " + err.Error())
 		switch {
@@ -4913,7 +5044,7 @@ func (t *TelegramBot) DownloadTelegramFile(fileID, fileType string) (string, err
 	getFileURL := fmt.Sprintf("https://api.telegram.org/bot%s/getFile?file_id=%s",
 		t.config.TelegramToken, fileID)
 
-	resp, err := http.Get(getFileURL)
+	resp, err := t.telegramAPIClient().Get(getFileURL)
 	if err != nil {
 		return "", fmt.Errorf("getFile request failed: %w", err)
 	}
@@ -4947,7 +5078,7 @@ func (t *TelegramBot) DownloadTelegramFile(fileID, fileType string) (string, err
 	downloadURL := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s",
 		t.config.TelegramToken, fileResp.Result.FilePath)
 
-	downloadResp, err := http.Get(downloadURL)
+	downloadResp, err := t.telegramDownloadClient().Get(downloadURL)
 	if err != nil {
 		return "", fmt.Errorf("download file failed: %w", err)
 	}
@@ -5419,8 +5550,11 @@ Reply only with: fast / balanced / deep`
 		prompt,
 	}
 
-	cmd := exec.CommandContext(triageCtx, "claude", args...)
-	cmd.Env = cleanEnvForCLI()
+	cmd, cmdCancel := processCommand(triageCtx, ProcessOptions{
+		Env:     cleanEnvForCLI(),
+		Timeout: 15 * time.Second,
+	}, "claude", args...)
+	defer cmdCancel()
 
 	// Redirect stdin to /dev/null to prevent blocking on stdin reads
 	devNull, _ := os.Open(os.DevNull)
@@ -6232,6 +6366,8 @@ func (t *TelegramBot) handleParallelCommand(key chatKey, taskText string) {
 
 	// Execute in background
 	go func() {
+		done := globalJobTracker.Start("parallel.command")
+		defer done(nil)
 		execution := globalOrchestrator.ExecuteParallel(
 			tasks,
 			t.client,

@@ -166,9 +166,12 @@ func (c *CodexClient) runCodexStream(
 		}
 	}
 
-	cmd := exec.CommandContext(ctx, "codex", args...)
-	cmd.Dir = projectDir
-	cmd.Env = cleanEnvForCodex(c.OpenAIKey)
+	cmd, cancel := processCommand(ctx, ProcessOptions{
+		Dir:     projectDir,
+		Env:     cleanEnvForCodex(c.OpenAIKey),
+		Timeout: defaultAgentProcessTimeout,
+	}, "codex", args...)
+	defer cancel()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

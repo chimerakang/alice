@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -264,10 +265,58 @@ func (wi *WebInterface) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"status":    "healthy",
 			"timestamp": time.Now(),
 			"telegram":  "active",
+			"jobs":      globalJobTracker.Summary(),
+			"storage":   runtimeStorageHealth(),
 		}
 
 		json.NewEncoder(w).Encode(status)
 	})(w, r)
+}
+
+func runtimeStorageHealth() map[string]interface{} {
+	status := map[string]interface{}{
+		"enabled": globalStorage != nil,
+	}
+	if globalStorage == nil {
+		return status
+	}
+	if err := globalStorage.Health(); err != nil {
+		status["healthy"] = false
+		status["error"] = err.Error()
+		return status
+	}
+	status["healthy"] = true
+
+	sqliteStorage, ok := globalStorage.(*SQLiteStorage)
+	if !ok {
+		status["backend"] = "unknown"
+		return status
+	}
+	status["backend"] = "sqlite"
+	db, ok := sqliteStorage.GetDB().(*sql.DB)
+	if !ok {
+		status["backend_error"] = "sqlite db handle unavailable"
+		return status
+	}
+	if count, err := countRows(db, `SELECT COUNT(*) FROM tasks WHERE status IN ('planning','executing')`); err == nil {
+		status["active_tasks"] = count
+	} else {
+		status["active_tasks_error"] = err.Error()
+	}
+	if count, err := countRows(db, `SELECT COUNT(*) FROM hermes_task_states WHERE status IN ('planning','executing')`); err == nil {
+		status["active_hermes_tasks"] = count
+	} else {
+		status["active_hermes_tasks_error"] = err.Error()
+	}
+	return status
+}
+
+func countRows(db *sql.DB, query string, args ...any) (int64, error) {
+	var count int64
+	if err := db.QueryRow(query, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // handleStats returns basic statistics about the agent

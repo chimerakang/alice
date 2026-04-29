@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -11,7 +12,10 @@ import (
 	appengine "claude-tg-agent/internal/app/engine"
 )
 
-const maxSubTaskRetryAttempts = 3
+const (
+	maxSubTaskRetryAttempts = 3
+	retrySelectionTimeout   = 30 * time.Second
+)
 
 type retrySelection struct {
 	Task              UnifiedTask
@@ -156,7 +160,7 @@ func (s *SQLiteStorage) selectRetryTargetsAllFailed(ctx context.Context, taskID 
 		JOIN review_subtask_results rs ON rs.review_id = rr.id
 		JOIN sub_tasks st ON st.id = rs.sub_task_id
 		WHERE rr.id = (SELECT id FROM review_results WHERE task_id = ? ORDER BY created_at DESC, id DESC LIMIT 1)
-		  AND (rr.verdict IN ('partial', 'fail') OR rs.score < 70)
+		  AND rs.score < 70
 		ORDER BY rs.score ASC, st.idx ASC`, taskID)
 	if err != nil {
 		return nil, err
@@ -169,12 +173,20 @@ func (s *SQLiteStorage) selectRetryTargetsAllFailed(ctx context.Context, taskID 
 		if err != nil {
 			return nil, err
 		}
-		if err := s.populateRetryCount(ctx, &selection); err != nil {
-			return nil, err
-		}
 		out = append(out, selection)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if err := s.populateRetryCount(ctx, &out[i]); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
 }
 
 func (s *SQLiteStorage) resolveRetryTaskID(ctx context.Context, taskID string) (string, error) {
@@ -378,33 +390,49 @@ func (t *TelegramBot) handleRetryCommand(key chatKey, parts []string) {
 	}
 
 	go func() {
-		ctx := context.Background()
+		trackDone := globalJobTracker.Start("retry.command")
+		var jobErr error
+		defer func() { trackDone(jobErr) }()
+		commandID := fmt.Sprintf("retry-%d", time.Now().UnixNano())
+		started := time.Now()
+		log.Printf("[retry] %s start chat=%d thread=%d mode=%s task=%q idx=%d", commandID, key.chatID, key.threadID, mode, taskID, idx)
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[retry] %s panic: %v", commandID, r)
+				t.send(key, fmt.Sprintf("❌ Retry 發生未預期錯誤（%s）：%v", commandID, r))
+			}
+			log.Printf("[retry] %s done duration=%s", commandID, time.Since(started).Round(time.Millisecond))
+		}()
+
+		selectCtx, cancelSelect := context.WithTimeout(context.Background(), retrySelectionTimeout)
+		defer cancelSelect()
 		var selections []retrySelection
 		switch mode {
 		case "latest":
-			selection, selectErr := store.selectRetryTargetLatest(ctx, key)
+			selection, selectErr := store.selectRetryTargetLatest(selectCtx, key)
 			err = selectErr
 			if err == nil {
 				selections = []retrySelection{selection}
 			}
 		case "lowest":
-			selection, selectErr := store.selectRetryTargetLowest(ctx, taskID)
+			selection, selectErr := store.selectRetryTargetLowest(selectCtx, taskID)
 			err = selectErr
 			if err == nil {
 				selections = []retrySelection{selection}
 			}
 		case "index":
-			selection, selectErr := store.selectRetryTargetByIndex(ctx, taskID, idx)
+			selection, selectErr := store.selectRetryTargetByIndex(selectCtx, taskID, idx)
 			err = selectErr
 			if err == nil {
 				selections = []retrySelection{selection}
 			}
 		case "all-failed":
-			selections, err = store.selectRetryTargetsAllFailed(ctx, taskID)
+			selections, err = store.selectRetryTargetsAllFailed(selectCtx, taskID)
 		default:
 			err = fmt.Errorf("unknown retry mode %q", mode)
 		}
 		if err != nil {
+			jobErr = err
 			t.send(key, "❌ "+err.Error())
 			return
 		}
@@ -421,14 +449,25 @@ func (t *TelegramBot) handleRetryCommand(key chatKey, parts []string) {
 			if len(selections) > 1 {
 				t.send(key, fmt.Sprintf("🔁 all-failed retry %d/%d", i+1, len(selections)))
 			}
-			outcome, runErr := t.runSubTaskRetry(ctx, key, store, selection)
+			runCtx, cancelRun := context.WithTimeout(context.Background(), t.retryAttemptTimeout())
+			outcome, runErr := t.runSubTaskRetry(runCtx, key, store, selection)
+			cancelRun()
 			if runErr != nil {
+				jobErr = runErr
 				t.send(key, "❌ Retry 失敗："+runErr.Error())
 				continue
 			}
 			t.send(key, formatRetryCompletion(outcome))
 		}
 	}()
+}
+
+func (t *TelegramBot) retryAttemptTimeout() time.Duration {
+	minutes := 15
+	if t != nil && t.config != nil && t.config.CLITimeoutMinutes > 0 {
+		minutes = t.config.CLITimeoutMinutes
+	}
+	return time.Duration(minutes*2+5) * time.Minute
 }
 
 func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *SQLiteStorage, selection retrySelection) (retryOutcome, error) {
