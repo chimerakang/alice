@@ -1365,8 +1365,15 @@ func TestIsHermesIssueReferenceRequest(t *testing.T) {
 			t.Fatalf("expected issue reference request for %q", text)
 		}
 	}
-	if isHermesIssueReferenceRequest("剛剛 #137 是什麼狀態？") {
-		t.Fatal("status-style issue mention should not be treated as an issue launch request")
+	for _, text := range []string{
+		"剛剛 #137 是什麼狀態？",
+		"#184 要繼續處理嗎",
+		"所以目前 #182 還需要處理嗎",
+		"請問 #225 的子項目處理完畢了嗎",
+	} {
+		if isHermesIssueReferenceRequest(text) {
+			t.Fatalf("status-style issue mention should not be treated as an issue launch request: %q", text)
+		}
 	}
 }
 
@@ -1378,6 +1385,9 @@ func TestIsHermesIssueRestartRequest(t *testing.T) {
 	}
 	if isHermesIssueRestartRequest("繼續處理 #293") {
 		t.Fatal("continue issue mention should not be treated as restart")
+	}
+	if isHermesIssueRestartRequest("重新處理 #293 嗎") {
+		t.Fatal("restart question should not be treated as restart")
 	}
 }
 
@@ -1731,6 +1741,42 @@ func TestHandleMessageHermesContinuationWithIssueRefFetchesIssue(t *testing.T) {
 	case <-called:
 	case <-time.After(time.Second):
 		t.Fatal("expected issue-specific continuation to fetch GitHub issue")
+	}
+}
+
+func TestHandleMessageIssueStatusQuestionDoesNotFetchIssueInHermesMode(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	const userID int64 = 123
+	const projectDir = "/tmp/alice-project"
+
+	called := make(chan struct{}, 1)
+	oldFetchIssue := hermesFetchIssue
+	hermesFetchIssue = func(ctx context.Context, gotProjectDir string, gotIssueNumber int) (*hermes.IssueContext, error) {
+		called <- struct{}{}
+		return nil, errors.New("unexpected fetch")
+	}
+	defer func() { hermesFetchIssue = oldFetchIssue }()
+
+	bot := &TelegramBot{
+		agents: map[chatKey]*Agent{
+			key: NewAgent(&mockClient{}, projectDir, key.chatID, key.threadID),
+		},
+		allowIDs: map[int64]bool{userID: true},
+		config: &Config{
+			Hermes: HermesConfig{Enabled: true},
+		},
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {enabled: true},
+		},
+		messageQueue: make(chan *TelegramMessage, 10),
+	}
+
+	bot.handleMessage(key, userID, "#184 要繼續處理嗎", "", nil, nil, nil, "", 1)
+
+	select {
+	case <-called:
+		t.Fatal("status question should not fetch GitHub issue through Hermes")
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

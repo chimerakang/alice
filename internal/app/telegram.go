@@ -916,8 +916,11 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		}
 	}
 
-	// Hermes mode: route to Brain-Executor coordinator instead of normal agent
-	if t.isHermesEnabled(key) {
+	// Hermes mode: route to Brain-Executor coordinator instead of normal agent.
+	// Issue status/question mentions still belong to the normal agent path even
+	// while Hermes mode is enabled, otherwise a check-in like "#184 要繼續處理嗎"
+	// silently becomes a new Hermes launch.
+	if t.isHermesEnabled(key) && !isHermesIssueStatusQuery(text) {
 		projectDir := t.getAgent(key).ProjectDir()
 		if issueNum, ok := ParseIssueNumber(text); ok && isHermesIssueRestartRequest(text) {
 			go t.runTrackedJob("hermes.issue.restart", func() {
@@ -2905,6 +2908,9 @@ func isHermesIssueReferenceRequest(text string) bool {
 	if lower == "" {
 		return false
 	}
+	if isHermesIssueStatusQuery(lower) {
+		return false
+	}
 	return isHermesContinuationRequest(lower) ||
 		strings.Contains(lower, "繼續") ||
 		strings.Contains(lower, "接續") ||
@@ -2924,6 +2930,9 @@ func isHermesIssueRestartRequest(text string) bool {
 	if lower == "" {
 		return false
 	}
+	if isHermesIssueStatusQuery(lower) {
+		return false
+	}
 	return strings.HasPrefix(lower, "重新處理") ||
 		strings.HasPrefix(lower, "重新開始") ||
 		strings.HasPrefix(lower, "重新執行") ||
@@ -2932,6 +2941,29 @@ func isHermesIssueRestartRequest(text string) bool {
 		strings.HasPrefix(lower, "restart") ||
 		strings.HasPrefix(lower, "rerun") ||
 		strings.HasPrefix(lower, "redo")
+}
+
+func isHermesIssueStatusQuery(text string) bool {
+	if _, ok := ParseIssueNumber(text); !ok {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return false
+	}
+	if firstMatch(lower, statusQueryPatterns) != "" {
+		return true
+	}
+	for _, phrase := range []string{
+		"嗎", "么", "要繼續處理嗎", "需要處理嗎", "還需要處理",
+		"還要處理", "要處理嗎", "需要繼續", "可以繼續",
+		"should we", "do we need",
+	} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildHermesContinuationGoal(task hermes.TaskState, mode string) string {
