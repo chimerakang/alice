@@ -3072,28 +3072,29 @@ func (t *TelegramBot) recordExecutorSession(key chatKey, tier, sessionID string)
 	hc.executorSessionTier = tier
 }
 
-// startHermesTaskWithIssueTier is the common implementation that selects models
-// based on the tier ("" or "claude" → Claude; "codex" → GPT/Codex).
-func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir string, issueNumber int, budgetOverride HermesBudgetConfig, ghIntegration GithubIntegrationConfig, tier string) {
-	// Update tier and clear session IDs if tier changed (Issue #109)
-	t.setHermesTier(key, tier)
+type hermesRoleModels struct {
+	planner       string
+	executor      string
+	heavyExecutor string
+	reviewer      string
+}
 
-	ctx := context.Background()
-	cfg := HermesDefaults(t.config.Hermes)
-	strictCfg := t.resolveStrictModeConfig(key, goal)
-
+func (t *TelegramBot) resolveHermesRoleModels(tier string, cfg HermesConfig, strictCfg appengine.StrictModeConfig) hermesRoleModels {
 	var plannerModel, executorModel, heavyExecutorModel string
 	if tier == "codex" {
 		plannerModel = cfg.CodexPlannerModel
 		if plannerModel == "" {
 			plannerModel = t.config.ModelRouting.CodexDeepModel
 		}
+		plannerModel = codexModelOrFallback(plannerModel, t.config.ModelRouting.CodexDeepModel)
 		executorModel = cfg.CodexExecutorModel
 		if executorModel == "" {
 			executorModel = t.config.ModelRouting.CodexFastModel
 		}
+		executorModel = codexModelOrFallback(executorModel, t.config.ModelRouting.CodexFastModel)
 		heavyExecutorModel = cfg.CodexHeavyExecutorModel
-		// No SmartModel default for codex; if unset, heavy stays empty (single-tier).
+		heavyExecutorModel = codexModelOrFallback(heavyExecutorModel, "")
+		// No SmartModel default for codex; if unset or misconfigured, heavy stays empty (single-tier).
 	} else {
 		plannerModel = cfg.PlannerModel
 		if plannerModel == "" {
@@ -3108,8 +3109,9 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 			heavyExecutorModel = t.config.ModelRouting.SmartModel
 		}
 	}
-	var reviewModel string
+
 	reviewBackend := appengine.ResolveStrictReviewBackend(appengine.BackendKindForModel(executorModel), strictCfg, appengine.BackendClaude, appengine.BackendCodex)
+	var reviewModel string
 	switch reviewBackend {
 	case appengine.BackendCodex:
 		reviewModel = t.config.ModelRouting.CodexDeepModel
@@ -3124,7 +3126,30 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 			log.Printf("[hermes] deep_model empty; reviewer falls back to planner model %q", reviewModel)
 		}
 	}
-	reviewPhase := NewCLIReviewPhase(t.client, reviewModel)
+
+	return hermesRoleModels{
+		planner:       plannerModel,
+		executor:      executorModel,
+		heavyExecutor: heavyExecutorModel,
+		reviewer:      reviewModel,
+	}
+}
+
+// startHermesTaskWithIssueTier is the common implementation that selects models
+// based on the tier ("" or "claude" → Claude; "codex" → GPT/Codex).
+func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir string, issueNumber int, budgetOverride HermesBudgetConfig, ghIntegration GithubIntegrationConfig, tier string) {
+	// Update tier and clear session IDs if tier changed (Issue #109)
+	t.setHermesTier(key, tier)
+
+	ctx := context.Background()
+	cfg := HermesDefaults(t.config.Hermes)
+	strictCfg := t.resolveStrictModeConfig(key, goal)
+
+	models := t.resolveHermesRoleModels(tier, cfg, strictCfg)
+	plannerModel := models.planner
+	executorModel := models.executor
+	heavyExecutorModel := models.heavyExecutor
+	reviewPhase := NewCLIReviewPhase(t.client, models.reviewer)
 
 	planFn := makePlanFn(t.client, plannerModel)
 
@@ -7879,6 +7904,13 @@ func modelRequiresCodex(model string) bool {
 		strings.HasPrefix(lower, "o3") ||
 		strings.HasPrefix(lower, "o4") ||
 		strings.Contains(lower, "codex")
+}
+
+func codexModelOrFallback(model, fallback string) string {
+	if modelRequiresCodex(model) {
+		return model
+	}
+	return fallback
 }
 
 // handleModelCommand handles /model command for explicit model switching.
