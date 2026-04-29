@@ -3601,8 +3601,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		return
 	}
 	if len(worktreeChanges) > 0 {
-		t.send(key, formatHermesDirtyWorktreeMessage(worktreeChanges))
-		return
+		t.send(key, formatHermesDirtyWorktreeWarning(issueNumber, worktreeChanges))
 	}
 
 	// Update tier and clear session IDs if tier changed (Issue #109)

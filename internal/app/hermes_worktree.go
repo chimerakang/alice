@@ -39,13 +39,17 @@ func checkHermesCleanWorktree(ctx context.Context, projectDir string) ([]string,
 	return changes, nil
 }
 
-func formatHermesDirtyWorktreeMessage(changes []string) string {
-	const maxShown = 12
+func formatHermesDirtyWorktreeWarning(issueNumber int, changes []string) string {
+	const maxShown = 8
 
 	var b strings.Builder
-	b.WriteString("⚠️ Hermes 未啟動：目前工作樹有未提交或未追蹤的變更。\n\n")
-	b.WriteString("為避免 executor 把先前任務殘留誤判為本次修改，請先 commit、stash 或清理這些檔案後再執行 `/hermes`。\n\n")
-	b.WriteString("目前偵測到：\n")
+	if issueNumber > 0 {
+		fmt.Fprintf(&b, "⚠️ Git 工作樹目前有未提交變更；Hermes 會以此作為 Issue #%d 的啟動 baseline 繼續執行。\n\n", issueNumber)
+	} else {
+		b.WriteString("⚠️ Git 工作樹目前有未提交變更；Hermes 會以此作為啟動 baseline 繼續執行。\n\n")
+	}
+	b.WriteString("請注意：executor 會看見這些既有變更；最後驗證時應比對本次新增/修改內容，並確認工作樹沒有混入無關任務。\n\n")
+	b.WriteString("啟動 baseline 偵測到：\n")
 	for i, change := range changes {
 		if i >= maxShown {
 			fmt.Fprintf(&b, "- …另有 %d 筆\n", len(changes)-maxShown)

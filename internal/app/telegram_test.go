@@ -1723,35 +1723,12 @@ func TestCheckHermesCleanWorktreeReturnsDirtyPorcelainLines(t *testing.T) {
 	}
 }
 
-func TestStartHermesTaskWithIssueTierRejectsDirtyWorktree(t *testing.T) {
-	key := chatKey{chatID: 42, threadID: 7}
-	projectDir := t.TempDir()
-	if _, err := runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "init"); err != nil {
-		t.Fatalf("git init: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(projectDir, "leftover.txt"), []byte("stale change"), 0o644); err != nil {
-		t.Fatalf("write leftover: %v", err)
-	}
-
-	bot := &TelegramBot{
-		config:       &Config{Hermes: HermesConfig{Enabled: true}},
-		hermesCoords: make(map[chatKey]*hermesCoord),
-		messageQueue: make(chan *TelegramMessage, 1),
-	}
-
-	bot.startHermesTaskWithIssueTier(key, "處理 #131", projectDir, 131, HermesBudgetConfig{}, GithubIntegrationConfig{}, "codex")
-
-	select {
-	case msg := <-bot.messageQueue:
-		text, _ := msg.Params["text"].(string)
-		if !strings.Contains(text, "Hermes 未啟動") || !strings.Contains(text, "?? leftover.txt") {
-			t.Fatalf("unexpected dirty worktree message: %q", text)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("expected dirty worktree warning")
-	}
-	if _, ok := bot.hermesCoords[key]; ok {
-		t.Fatal("dirty worktree should not create Hermes coordinator state")
+func TestFormatHermesDirtyWorktreeWarningTreatsChangesAsBaseline(t *testing.T) {
+	msg := formatHermesDirtyWorktreeWarning(296, []string{" M apps/cm-web/example.tsx"})
+	if !strings.Contains(msg, "Issue #296") ||
+		!strings.Contains(msg, "啟動 baseline") ||
+		!strings.Contains(msg, " M apps/cm-web/example.tsx") {
+		t.Fatalf("unexpected warning message: %q", msg)
 	}
 }
 
