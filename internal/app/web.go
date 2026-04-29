@@ -105,6 +105,7 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/decisions/sources/stats", wi.handleSourceStats)
 	mux.HandleFunc("/api/decisions/sources/performance", wi.handleSourcePerformance)
 	mux.HandleFunc("/api/tasks", wi.handleUnifiedTasks)
+	mux.HandleFunc("/api/memory/preview", wi.handleMemoryPreview)
 	mux.HandleFunc("/api/quality/decomposition", wi.handleQualityDecomposition)
 	mux.HandleFunc("/api/quality/scores", wi.handleQualityScores)
 	mux.HandleFunc("/api/quality/insights", wi.handleQualityInsights)
@@ -868,6 +869,115 @@ func (wi *WebInterface) handleUnifiedTasks(w http.ResponseWriter, r *http.Reques
 			"timestamp": time.Now(),
 		})
 	})(w, r)
+}
+
+type memoryPreviewSection struct {
+	Source   string `json:"source"`
+	Scope    string `json:"scope"`
+	Priority int    `json:"priority"`
+	Size     int    `json:"size"`
+	Preview  string `json:"preview"`
+}
+
+func (wi *WebInterface) handleMemoryPreview(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		req, err := parseMemoryPreviewRequest(r)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		var taskSource hermesMemoryTaskSource
+		if wi != nil && wi.bot != nil && wi.bot.taskSvc != nil {
+			taskSource = wi.bot.taskSvc
+		}
+		if wi != nil && wi.bot != nil {
+			ctx := wi.bot.getChatContext(chatKey{chatID: req.ChatID, threadID: req.ThreadID}, req.ProjectDir)
+			req.RecentMessages = ctx.RecentMessagesSnapshot()
+			if req.ProjectDir == "" {
+				req.ProjectDir = ctx.ProjectDir
+			}
+		}
+
+		resolver := NewMemoryResolverWithSources(taskSource, globalGeneralMemorySource())
+		bundle, err := resolver.Resolve(r.Context(), req)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		sections := make([]memoryPreviewSection, 0, len(bundle.Sections))
+		for _, section := range bundle.Sections {
+			text := strings.TrimSpace(section.Text)
+			sections = append(sections, memoryPreviewSection{
+				Source:   section.Source,
+				Scope:    section.Scope,
+				Priority: section.Priority,
+				Size:     len([]rune(text)),
+				Preview:  clampMemoryText(text, 500),
+			})
+		}
+		rendered := bundle.Render()
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"sections":         sections,
+			"section_count":    len(sections),
+			"rendered_size":    len([]rune(rendered)),
+			"rendered_preview": clampMemoryText(rendered, 1000),
+			"timestamp":        time.Now(),
+		})
+	})(w, r)
+}
+
+func parseMemoryPreviewRequest(r *http.Request) (MemoryRequest, error) {
+	q := r.URL.Query()
+	chatIDRaw := strings.TrimSpace(q.Get("chat_id"))
+	if chatIDRaw == "" {
+		return MemoryRequest{}, fmt.Errorf("chat_id is required")
+	}
+	chatID, err := strconv.ParseInt(chatIDRaw, 10, 64)
+	if err != nil || chatID == 0 {
+		return MemoryRequest{}, fmt.Errorf("chat_id must be a non-zero integer")
+	}
+
+	req := MemoryRequest{
+		ChatID:      chatID,
+		ProjectDir:  strings.TrimSpace(q.Get("project_dir")),
+		UserMessage: strings.TrimSpace(q.Get("message")),
+		Mode:        strings.TrimSpace(q.Get("mode")),
+	}
+	if req.Mode == "" {
+		req.Mode = "preview"
+	}
+	if raw := strings.TrimSpace(q.Get("thread_id")); raw != "" {
+		threadID, err := strconv.Atoi(raw)
+		if err != nil {
+			return MemoryRequest{}, fmt.Errorf("thread_id must be an integer")
+		}
+		req.ThreadID = threadID
+	}
+	if raw := strings.TrimSpace(q.Get("issue")); raw != "" {
+		issueNumber, err := strconv.Atoi(raw)
+		if err != nil || issueNumber <= 0 {
+			return MemoryRequest{}, fmt.Errorf("issue must be a positive integer")
+		}
+		req.IssueNumber = issueNumber
+	}
+	if raw := strings.TrimSpace(q.Get("budget")); raw != "" {
+		budget, err := strconv.Atoi(raw)
+		if err != nil || budget <= 0 {
+			return MemoryRequest{}, fmt.Errorf("budget must be a positive integer")
+		}
+		req.BudgetChars = budget
+	}
+	return req, nil
 }
 
 func (wi *WebInterface) handleQualityDecomposition(w http.ResponseWriter, r *http.Request) {

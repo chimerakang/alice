@@ -38,6 +38,11 @@ Hermes now enters memory retrieval through `MemoryResolver` in
 `buildHermesGoalWithContext`. The older `loadHermesContextTasks` helper remains
 as a compatibility wrapper for tests and existing call sites.
 
+`GET /api/memory/preview` provides the first observability surface for memory
+resolution. It accepts `chat_id`, optional `thread_id`, `project_dir`, `issue`,
+`message`, `mode`, and `budget`, then returns section source/scope/priority,
+size, and preview text for the bundle that would be assembled.
+
 ## Retrieval Policy
 
 For each incoming message:
@@ -88,6 +93,5 @@ budgets because existing Hermes prompt assembly is character-based.
 - Make general persisted memory cards more explicit than the current
   decision-log/unified-task mirror, including touched files and continuation
   hints.
-- Add API/dashboard visibility for available memory sections and injected
-  bundle previews.
+- Add dashboard UI for available memory sections and injected bundle previews.
 - Add static project hints as a resolver source with strict attribution.
