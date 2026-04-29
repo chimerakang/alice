@@ -97,6 +97,7 @@ func (s *SQLiteTaskStore) migrate() error {
 		`CREATE TABLE IF NOT EXISTS hermes_task_states (
 			id                    TEXT PRIMARY KEY,
 			chat_id               INTEGER NOT NULL,
+			thread_id             INTEGER NOT NULL DEFAULT 0,
 			planner_session       TEXT NOT NULL DEFAULT '',
 			project_dir           TEXT NOT NULL DEFAULT '',
 			goal                  TEXT NOT NULL,
@@ -114,11 +115,14 @@ func (s *SQLiteTaskStore) migrate() error {
 		)`,
 		// Additive migrations for pre-existing tables.
 		// SQLite does not support IF NOT EXISTS on ALTER TABLE — ignore "duplicate column" error.
+		`ALTER TABLE hermes_task_states ADD COLUMN thread_id INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE hermes_task_states ADD COLUMN project_dir TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE hermes_task_states ADD COLUMN github_issue_number INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE hermes_task_states ADD COLUMN model_usages TEXT NOT NULL DEFAULT '[]'`,
 		`CREATE INDEX IF NOT EXISTS idx_hermes_tasks_chat_status
 			ON hermes_task_states(chat_id, status)`,
+		`CREATE INDEX IF NOT EXISTS idx_hermes_tasks_chat_thread
+			ON hermes_task_states(chat_id, thread_id)`,
 		`CREATE TABLE IF NOT EXISTS hermes_task_artifacts (
 			id          INTEGER PRIMARY KEY AUTOINCREMENT,
 			task_id     TEXT NOT NULL REFERENCES hermes_task_states(id),
@@ -247,11 +251,11 @@ func (s *SQLiteTaskStore) CreateTask(task TaskState) (TaskState, error) {
 	return task, s.execWithRetry(func() error {
 		_, err := s.db.Exec(`
 			INSERT INTO hermes_task_states
-				(id, chat_id, planner_session, project_dir, goal, current_idx, accumulated,
+				(id, chat_id, thread_id, planner_session, project_dir, goal, current_idx, accumulated,
 				 status, interrupted_by, interrupt_policy, token_budget, plan_json,
 				 github_issue_number, model_usages, created_at, updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-			task.ID, task.ChatID, task.PlannerSessionID, task.ProjectDir, task.Goal,
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			task.ID, task.ChatID, task.ThreadID, task.PlannerSessionID, task.ProjectDir, task.Goal,
 			task.CurrentIdx, task.Accumulated, string(task.Status),
 			task.InterruptedBy, string(task.InterruptPolicy),
 			string(budgetJSON), string(planJSON),
@@ -272,7 +276,7 @@ func (s *SQLiteTaskStore) CreateTask(task TaskState) (TaskState, error) {
 
 func (s *SQLiteTaskStore) GetTask(id string) (TaskState, error) {
 	row := s.db.QueryRow(`
-		SELECT id, chat_id, planner_session, project_dir, goal, current_idx, accumulated,
+		SELECT id, chat_id, thread_id, planner_session, project_dir, goal, current_idx, accumulated,
 		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
 		       github_issue_number, model_usages, created_at, updated_at
 		FROM hermes_task_states WHERE id = ?`, id)
@@ -281,7 +285,7 @@ func (s *SQLiteTaskStore) GetTask(id string) (TaskState, error) {
 
 func (s *SQLiteTaskStore) GetActiveTaskForChat(chatID int64) (TaskState, error) {
 	row := s.db.QueryRow(`
-		SELECT id, chat_id, planner_session, project_dir, goal, current_idx, accumulated,
+		SELECT id, chat_id, thread_id, planner_session, project_dir, goal, current_idx, accumulated,
 		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
 		       github_issue_number, model_usages, created_at, updated_at
 		FROM hermes_task_states
@@ -387,6 +391,16 @@ func (s *SQLiteTaskStore) MarkSubTaskStarted(taskID string, idx int) error {
 
 func (s *SQLiteTaskStore) AdvanceTask(taskID string, nextIdx int, status TaskStatus) error {
 	return s.execWithRetry(func() error {
+		var current string
+		if err := s.db.QueryRow(`SELECT status FROM hermes_task_states WHERE id = ?`, taskID).Scan(&current); err != nil {
+			if err == sql.ErrNoRows {
+				return ErrNoTask
+			}
+			return err
+		}
+		if err := ValidateTaskStatusTransition(taskID, TaskStatus(current), status); err != nil {
+			return err
+		}
 		_, err := s.db.Exec(
 			`UPDATE hermes_task_states SET current_idx = ?, status = ?, updated_at = ? WHERE id = ?`,
 			nextIdx, string(status), time.Now().Format(time.RFC3339), taskID,
@@ -443,6 +457,16 @@ func (s *SQLiteTaskStore) UpdatePlannerSession(taskID string, sessionID string) 
 
 func (s *SQLiteTaskStore) MarkInterrupted(taskID string, messageID int64) error {
 	return s.execWithRetry(func() error {
+		var current string
+		if err := s.db.QueryRow(`SELECT status FROM hermes_task_states WHERE id = ?`, taskID).Scan(&current); err != nil {
+			if err == sql.ErrNoRows {
+				return ErrNoTask
+			}
+			return err
+		}
+		if err := ValidateTaskStatusTransition(taskID, TaskStatus(current), TaskStatusInterrupted); err != nil {
+			return err
+		}
 		_, err := s.db.Exec(
 			`UPDATE hermes_task_states SET status = 'interrupted', interrupted_by = ?, updated_at = ? WHERE id = ?`,
 			messageID, time.Now().Format(time.RFC3339), taskID,
@@ -460,6 +484,16 @@ func (s *SQLiteTaskStore) MarkInterrupted(taskID string, messageID int64) error 
 
 func (s *SQLiteTaskStore) MarkStatus(taskID string, status TaskStatus) error {
 	return s.execWithRetry(func() error {
+		var current string
+		if err := s.db.QueryRow(`SELECT status FROM hermes_task_states WHERE id = ?`, taskID).Scan(&current); err != nil {
+			if err == sql.ErrNoRows {
+				return ErrNoTask
+			}
+			return err
+		}
+		if err := ValidateTaskStatusTransition(taskID, TaskStatus(current), status); err != nil {
+			return err
+		}
 		_, err := s.db.Exec(
 			`UPDATE hermes_task_states SET status = ?, updated_at = ? WHERE id = ?`,
 			string(status), time.Now().Format(time.RFC3339), taskID,
@@ -577,7 +611,7 @@ func (s *SQLiteTaskStore) AddModelUsage(taskID, model string, inputTokens, outpu
 
 func (s *SQLiteTaskStore) ListTasksForChat(chatID int64, limit int) ([]TaskState, error) {
 	rows, err := s.db.Query(`
-		SELECT id, chat_id, planner_session, project_dir, goal, current_idx, accumulated,
+		SELECT id, chat_id, thread_id, planner_session, project_dir, goal, current_idx, accumulated,
 		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
 		       github_issue_number, model_usages, created_at, updated_at
 		FROM hermes_task_states
@@ -626,7 +660,7 @@ func (s *SQLiteTaskStore) scanTask(row rowScanner) (TaskState, error) {
 	var createdStr, updatedStr string
 
 	err := row.Scan(
-		&task.ID, &task.ChatID, &task.PlannerSessionID, &task.ProjectDir, &task.Goal,
+		&task.ID, &task.ChatID, &task.ThreadID, &task.PlannerSessionID, &task.ProjectDir, &task.Goal,
 		&task.CurrentIdx, &task.Accumulated,
 		&statusStr, &interruptedBy, &policyStr,
 		&budgetJSON, &planJSON,
@@ -674,15 +708,6 @@ func (s *SQLiteTaskStore) scanTaskRowNoArtifacts(rows *sql.Rows) (TaskState, err
 	return s.scanRowsInto(rows)
 }
 
-func (s *SQLiteTaskStore) scanTaskRow(rows *sql.Rows) (TaskState, error) {
-	task, err := s.scanRowsInto(rows)
-	if err != nil {
-		return task, err
-	}
-	task.Artifacts, err = s.loadArtifacts(task.ID)
-	return task, err
-}
-
 func (s *SQLiteTaskStore) scanRowsInto(rows *sql.Rows) (TaskState, error) {
 	var task TaskState
 	var statusStr, policyStr, budgetJSON, planJSON, modelUsagesJSON string
@@ -690,7 +715,7 @@ func (s *SQLiteTaskStore) scanRowsInto(rows *sql.Rows) (TaskState, error) {
 	var createdStr, updatedStr string
 
 	err := rows.Scan(
-		&task.ID, &task.ChatID, &task.PlannerSessionID, &task.ProjectDir, &task.Goal,
+		&task.ID, &task.ChatID, &task.ThreadID, &task.PlannerSessionID, &task.ProjectDir, &task.Goal,
 		&task.CurrentIdx, &task.Accumulated,
 		&statusStr, &interruptedBy, &policyStr,
 		&budgetJSON, &planJSON,
@@ -758,9 +783,10 @@ func (s *SQLiteTaskStore) upsertUnifiedTask(task TaskState, endedAt *time.Time) 
 		INSERT INTO tasks
 			(id, chat_id, thread_id, project_dir, github_issue_number, goal, engine, backend, status,
 			 started_at, ended_at, total_input_tokens, total_output_tokens, total_cost_usd)
-		VALUES (?, ?, 0, ?, ?, ?, 'plan-execute', '', ?, ?, ?, ?, ?, 0)
+		VALUES (?, ?, ?, ?, ?, ?, 'plan-execute', '', ?, ?, ?, ?, ?, 0)
 		ON CONFLICT(id) DO UPDATE SET
 			chat_id = excluded.chat_id,
+			thread_id = excluded.thread_id,
 			project_dir = CASE
 				WHEN excluded.project_dir != '' THEN excluded.project_dir
 				ELSE tasks.project_dir
@@ -776,7 +802,7 @@ func (s *SQLiteTaskStore) upsertUnifiedTask(task TaskState, endedAt *time.Time) 
 			ended_at = excluded.ended_at,
 			total_input_tokens = excluded.total_input_tokens,
 			total_output_tokens = excluded.total_output_tokens`,
-		task.ID, task.ChatID, task.ProjectDir, task.GithubIssueNumber, task.Goal, string(task.Status),
+		task.ID, task.ChatID, task.ThreadID, task.ProjectDir, task.GithubIssueNumber, task.Goal, string(task.Status),
 		startedAt.Format(time.RFC3339Nano), formatUnifiedTime(endedAt), totalIn, totalOut,
 	)
 	return err

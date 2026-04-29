@@ -1,6 +1,9 @@
 package hermes
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // TaskStatus represents the lifecycle stage of a Hermes task.
 type TaskStatus string
@@ -41,6 +44,7 @@ const (
 type TaskState struct {
 	ID                string          `json:"id"`                            // UUID
 	ChatID            int64           `json:"chat_id"`                       // Telegram chat
+	ThreadID          int             `json:"thread_id,omitempty"`           // Telegram forum topic/thread
 	PlannerSessionID  string          `json:"planner_session_id"`            // Claude Code --resume ID
 	ExecutorSessionID string          `json:"executor_session_id,omitempty"` // executor thread resume ID (transient, not persisted to DB)
 	ProjectDir        string          `json:"project_dir,omitempty"`
@@ -74,6 +78,35 @@ func (t *TaskState) IsTerminal() bool {
 		return true
 	}
 	return false
+}
+
+// ValidTaskStatusTransition reports whether a task may move from one lifecycle
+// status to another. Terminal states are intentionally immutable so dashboard,
+// retry, and startup recovery never observe a finished task becoming active
+// again.
+func ValidTaskStatusTransition(from, to TaskStatus) bool {
+	if from == "" || from == to {
+		return true
+	}
+	switch from {
+	case TaskStatusPlanning:
+		return to == TaskStatusExecuting || to == TaskStatusDone || to == TaskStatusFailed || to == TaskStatusInterrupted
+	case TaskStatusExecuting:
+		return to == TaskStatusValidating || to == TaskStatusDone || to == TaskStatusFailed || to == TaskStatusInterrupted
+	case TaskStatusValidating:
+		return to == TaskStatusExecuting || to == TaskStatusDone || to == TaskStatusFailed || to == TaskStatusInterrupted
+	case TaskStatusDone, TaskStatusFailed, TaskStatusInterrupted:
+		return false
+	default:
+		return false
+	}
+}
+
+func ValidateTaskStatusTransition(taskID string, from, to TaskStatus) error {
+	if ValidTaskStatusTransition(from, to) {
+		return nil
+	}
+	return fmt.Errorf("invalid task status transition for %s: %s -> %s", taskID, from, to)
 }
 
 // AddUsage records token usage for a given model, accumulating into ModelUsages slice.

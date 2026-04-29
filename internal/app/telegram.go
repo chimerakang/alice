@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 	appengine "claude-tg-agent/internal/app/engine"
 	"claude-tg-agent/internal/app/hermes"
 	"claude-tg-agent/internal/app/security"
+	"claude-tg-agent/internal/app/task"
 )
 
 // chatKey 用於識別獨立對話（支援 Forum Topics）
@@ -124,6 +126,10 @@ type TelegramBot struct {
 	// Hermes Brain-Executor coordinators (per chat)
 	hermesCoords map[chatKey]*hermesCoord
 	hermesMu     sync.RWMutex
+
+	// Unified task graph — single TaskService instance shared across /retry,
+	// Hermes coordinator, and dashboard read paths for a consistent view.
+	taskSvc *task.Service
 }
 
 type telegramProgressSink struct {
@@ -307,6 +313,9 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 
 		// Hermes coordinators
 		hermesCoords: make(map[chatKey]*hermesCoord),
+
+		// Unified task graph — initialized here so all read paths share one store.
+		taskSvc: task.New(buildHermesTaskStore()),
 	}
 
 	// Start message queue worker
@@ -373,6 +382,7 @@ func (t *TelegramBot) registerCommands() {
 	commands := []map[string]string{
 		{"command": "project", "description": "Switch project directory"},
 		{"command": "reset", "description": "Clear conversation history"},
+		{"command": "menu", "description": "Open visual command menu"},
 		{"command": "status", "description": "View current status"},
 		{"command": "usage", "description": "View token usage"},
 		{"command": "fast", "description": "Switch to fast mode (Haiku)"},
@@ -866,6 +876,28 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		return
 	}
 
+	if t.config.Hermes.Enabled && isHermesIssueReferenceRequest(text) {
+		projectDir := t.getAgent(key).ProjectDir()
+		issueNum, _ := ParseIssueNumber(text)
+		t.send(key, fmt.Sprintf("🔍 偵測到指定 Issue #%d，將以該 Issue 為準啟動 Hermes…", issueNum))
+		go t.runTrackedJob("hermes.issue", func() {
+			t.startHermesFromIssue(key, issueNum, projectDir)
+		})
+		return
+	}
+
+	if t.config.Hermes.Enabled && isHermesContinuationRequest(text) {
+		projectDir := t.getAgent(key).ProjectDir()
+		if task, ok := t.resolveHermesContinuationTask(key, projectDir); ok {
+			mode := hermesContinuationModeFromRequest(text)
+			t.send(key, fmt.Sprintf("🔁 偵測到你想%s Hermes 任務 %s，將只規劃剩餘工作…", hermesContinuationVerb(mode), shortHermesTaskID(task.ID)))
+			go t.runTrackedJob("hermes."+mode, func() {
+				t.startHermesContinuationTask(key, task, projectDir, mode)
+			})
+			return
+		}
+	}
+
 	// Hermes mode: route to Brain-Executor coordinator instead of normal agent
 	if t.isHermesEnabled(key) {
 		projectDir := t.getAgent(key).ProjectDir()
@@ -1205,9 +1237,13 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		help += t.getLocalizedMessage(key.chatID, "help_agents_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_tasks_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_lang_desc", nil) + "\n"
+		help += "/menu - 開啟視覺化操作選單\n"
 		help += "/strict - 切換 strict review mode\n"
 		help += t.getLocalizedMessage(key.chatID, "help_id_desc", nil)
 		t.sendMarkdown(key, help)
+
+	case "/menu":
+		t.sendMenu(key)
 
 	case "/project":
 		if len(parts) < 2 {
@@ -1698,6 +1734,39 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 	}
 }
 
+func (t *TelegramBot) sendMenu(key chatKey) {
+	text := "📋 Alice 操作選單\n\n選擇下一步要做的事："
+	keyboard := map[string]interface{}{
+		"inline_keyboard": [][]map[string]interface{}{
+			{
+				{"text": "狀態", "callback_data": "menu:status"},
+				{"text": "Dashboard", "callback_data": "refresh_dashboard"},
+			},
+			{
+				{"text": "Tasks", "callback_data": "tasks:view:open"},
+				{"text": "Hermes", "callback_data": "menu:hermes_status"},
+			},
+			{
+				{"text": "Checkpoints", "callback_data": "show_checkpoints"},
+				{"text": "Usage", "callback_data": "menu:usage"},
+			},
+			{
+				{"text": "Help", "callback_data": "menu:help"},
+				{"text": "Abort", "callback_data": fmt.Sprintf("stop_agent_%d_%d", key.chatID, key.threadID)},
+			},
+		},
+	}
+	params := map[string]interface{}{
+		"chat_id":      strconv.FormatInt(key.chatID, 10),
+		"text":         sanitizeUTF8(text),
+		"reply_markup": keyboard,
+	}
+	if key.threadID != 0 {
+		params["message_thread_id"] = strconv.Itoa(key.threadID)
+	}
+	t.queueMessage("sendMessage", params)
+}
+
 // handleHermesCommand enables or queries Hermes mode for this chat.
 // tier: "" or "claude" → Claude tier (/hermes); "codex" → GPT tier (/ghermes).
 //
@@ -1771,18 +1840,49 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 		}()
 
 	case "status":
-		t.hermesMu.RLock()
-		hc := t.hermesCoords[key]
-		t.hermesMu.RUnlock()
-		if hc == nil || !hc.enabled {
-			t.send(key, "Hermes 模式：未啟用")
+		t.sendHermesStatus(key, t.getAgent(key).ProjectDir())
+
+	case "continue", "resume", "replan":
+		projectDir := t.getAgent(key).ProjectDir()
+		selector := ""
+		if len(parts) > 2 {
+			selector = parts[2]
+		}
+		task, ok, ambiguous := t.resolveHermesContinuationTaskBySelector(key, projectDir, selector)
+		if ambiguous {
+			t.send(key, fmt.Sprintf("⚠️ task id `%s` 對應到多個 Hermes 任務，請輸入更完整的 id。", selector))
 			return
 		}
-		if hc.coord != nil && hc.coord.IsRunning() {
-			t.send(key, fmt.Sprintf("Hermes 模式：執行中（任務 %s）", hc.coord.TaskID()))
-		} else {
-			t.send(key, "Hermes 模式：已啟用，等待下一則訊息")
+		if !ok {
+			if selector != "" {
+				t.send(key, fmt.Sprintf("ℹ️ 找不到可接續的 Hermes 任務 `%s`。可以用 `/hermes status` 查看候選。", selector))
+			} else {
+				t.send(key, "ℹ️ 找不到可接續的 Hermes 任務。可以用 `/hermes restart <任務說明>` 開始新的任務。")
+			}
+			return
 		}
+		mode := "continue"
+		if sub == "replan" {
+			mode = "replan"
+		}
+		t.setHermesTier(key, tier)
+		t.send(key, fmt.Sprintf("🔁 將根據任務 %s 的既有進度%s…", shortHermesTaskID(task.ID), hermesContinuationVerb(mode)))
+		go t.runTrackedJob("hermes.continue", func() {
+			t.startHermesContinuationTask(key, task, projectDir, mode)
+		})
+
+	case "restart":
+		t.setHermesTier(key, tier)
+		goal := strings.TrimSpace(strings.Join(parts[2:], " "))
+		if goal == "" {
+			t.send(key, "請提供要重新開始的任務說明，例如：`/hermes restart 修復登入流程`")
+			return
+		}
+		projectDir := t.getAgent(key).ProjectDir()
+		t.send(key, "🔄 已忽略既有 Hermes 進度，準備從頭開始。")
+		go t.runTrackedJob("hermes.restart", func() {
+			t.startHermesFreshTask(key, goal, projectDir)
+		})
 
 	case "stop":
 		t.hermesMu.Lock()
@@ -1794,6 +1894,15 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 		t.send(key, "Hermes 模式已停用，切回一般模式。")
 
 	default:
+		if len(parts) > 1 {
+			goal := strings.TrimSpace(strings.Join(parts[1:], " "))
+			projectDir := t.getAgent(key).ProjectDir()
+			t.setHermesTier(key, tier)
+			go t.runTrackedJob("hermes.command", func() {
+				t.startHermesGoalOrContinuation(key, goal, projectDir)
+			})
+			return
+		}
 		t.setHermesTier(key, tier)
 		t.hermesMu.Lock()
 		if hc := t.hermesCoords[key]; hc != nil {
@@ -1873,7 +1982,7 @@ func (t *TelegramBot) isHermesEnabled(key chatKey) bool {
 // insensitive), it signals the channel and returns true. Otherwise returns false.
 func (t *TelegramBot) trySignalBudgetContinue(key chatKey, text string) bool {
 	lower := strings.ToLower(strings.TrimSpace(text))
-	isContinue := strings.HasPrefix(lower, "繼續") || strings.HasPrefix(lower, "continue")
+	isContinue := isHermesContinuationRequest(lower)
 	if !isContinue {
 		return false
 	}
@@ -1922,6 +2031,17 @@ func (t *TelegramBot) startHermesFromIssue(key chatKey, issueNumber int, project
 	}
 
 	goal := hermes.BuildGoalFromIssue(issue)
+	if task, decision, ok := t.resolveHermesIssueTask(key, projectDir, issueNumber); ok {
+		switch decision {
+		case hermesSimilarContinue:
+			t.send(key, fmt.Sprintf("🔁 Issue #%d 已有 Hermes 任務 %s，將根據既有進度接續剩餘工作…", issueNumber, shortHermesTaskID(task.ID)))
+			t.startHermesContinuationTask(key, task, projectDir, "continue")
+			return
+		case hermesSimilarCompleted:
+			t.send(key, fmt.Sprintf("ℹ️ Issue #%d 在 24 小時內已有完成的 Hermes 任務 %s，為避免重複執行已先停止。\n若要重新開始，請使用 `/hermes restart %s`。", issueNumber, shortHermesTaskID(task.ID), goal))
+			return
+		}
+	}
 	t.send(key, fmt.Sprintf("🤖 **Hermes 啟動** — Issue #%d: %s\n%d 個待辦項目", issueNumber, issue.Title, func() int {
 		n := 0
 		for _, item := range issue.Checklist {
@@ -1938,7 +2058,38 @@ func (t *TelegramBot) startHermesFromIssue(key chatKey, issueNumber int, project
 // startHermesTask launches a Hermes coordinator for the given goal on the chat's current tier.
 // Uses context.Background() so the task survives handler cancellation.
 func (t *TelegramBot) startHermesTask(key chatKey, goal, projectDir string) {
+	t.startHermesGoalOrContinuation(key, goal, projectDir)
+}
+
+func (t *TelegramBot) startHermesGoalOrContinuation(key chatKey, goal, projectDir string) {
+	goal = strings.TrimSpace(goal)
+	if goal == "" {
+		return
+	}
+	if task, decision, ok := t.resolveSimilarHermesTask(key, projectDir, goal); ok {
+		switch decision {
+		case hermesSimilarContinue:
+			t.send(key, fmt.Sprintf("🔁 找到相似 Hermes 任務 %s，將根據既有進度接續剩餘工作…", shortHermesTaskID(task.ID)))
+			t.startHermesContinuationTask(key, task, projectDir, "continue")
+			return
+		case hermesSimilarCompleted:
+			t.send(key, fmt.Sprintf("ℹ️ 找到 24 小時內已完成的相似 Hermes 任務 %s，為避免重複執行已先停止。\n若要重新開始，請使用 `/hermes restart %s`。", shortHermesTaskID(task.ID), goal))
+			return
+		case hermesSimilarAmbiguous:
+			t.sendHermesCandidateActions(key, fmt.Sprintf("⚠️ 找到可能相關的 Hermes 任務 %s，為避免接錯任務，這次未自動執行。\n可以直接按下方按鈕接續或重新規劃；若要開新任務，請使用 `/hermes restart %s`。", shortHermesTaskID(task.ID), goal), task)
+			return
+		}
+	}
 	t.startHermesTaskWithIssueTier(key, t.buildHermesGoalWithContext(key, goal), projectDir, 0, HermesBudgetConfig{}, GithubIntegrationConfig{}, t.hermesTierFor(key))
+}
+
+func (t *TelegramBot) startHermesFreshTask(key chatKey, goal, projectDir string) {
+	t.startHermesTaskWithIssueTier(key, strings.TrimSpace(goal), projectDir, 0, HermesBudgetConfig{}, GithubIntegrationConfig{}, t.hermesTierFor(key))
+}
+
+func (t *TelegramBot) startHermesContinuationTask(key chatKey, task hermes.TaskState, projectDir, mode string) {
+	goal := buildHermesContinuationGoal(task, mode)
+	t.startHermesTaskWithIssueTier(key, goal, hermesContinuationProjectDir(task, projectDir), task.GithubIssueNumber, HermesBudgetConfig{}, t.config.Hermes.GithubIntegration, t.hermesTierFor(key))
 }
 
 // startHermesTaskWithIssue preserves the original signature for callers that don't
@@ -1959,14 +2110,564 @@ func (t *TelegramBot) buildHermesGoalWithContext(key chatKey, currentRequest str
 	return composeHermesGoalWithContext(currentRequest, taskHistory, recentMessages)
 }
 
-func (t *TelegramBot) loadHermesContextTasks(chatID int64, currentRequest string) []hermes.TaskState {
-	store := buildHermesTaskStore()
-	if store == nil {
-		return nil
+func (t *TelegramBot) resolveHermesContinuationTask(key chatKey, projectDir string) (hermes.TaskState, bool) {
+	task, ok, _ := t.resolveHermesContinuationTaskBySelector(key, projectDir, "")
+	return task, ok
+}
+
+func (t *TelegramBot) resolveHermesContinuationTaskBySelector(key chatKey, projectDir, selector string) (hermes.TaskState, bool, bool) {
+	tasks, err := t.taskSvc.ListForChat(key.chatID, 10)
+	if err != nil {
+		log.Printf("[hermes] failed to resolve continuation task for chat %d: %v", key.chatID, err)
+		return hermes.TaskState{}, false, false
+	}
+	if strings.TrimSpace(selector) != "" {
+		task, ok, ambiguous := selectHermesContinuationTaskByIDForScope(tasks, key.threadID, projectDir, selector)
+		return task, ok, ambiguous
+	}
+	task, ok := selectHermesContinuationTaskForScope(tasks, key.threadID, projectDir)
+	return task, ok, false
+}
+
+func selectHermesContinuationTask(tasks []hermes.TaskState, projectDir string) (hermes.TaskState, bool) {
+	return selectHermesContinuationTaskForScope(tasks, 0, projectDir)
+}
+
+func selectHermesContinuationTaskForScope(tasks []hermes.TaskState, threadID int, projectDir string) (hermes.TaskState, bool) {
+	candidates := selectHermesContinuationTasksForScope(tasks, threadID, projectDir, 1)
+	if len(candidates) == 0 {
+		return hermes.TaskState{}, false
+	}
+	return candidates[0], true
+}
+
+func selectHermesContinuationTaskByID(tasks []hermes.TaskState, projectDir, selector string) (hermes.TaskState, bool, bool) {
+	return selectHermesContinuationTaskByIDForScope(tasks, 0, projectDir, selector)
+}
+
+func selectHermesContinuationTaskByIDForScope(tasks []hermes.TaskState, threadID int, projectDir, selector string) (hermes.TaskState, bool, bool) {
+	selector = strings.ToLower(strings.TrimSpace(selector))
+	if selector == "" {
+		return hermes.TaskState{}, false, false
+	}
+	var matched hermes.TaskState
+	matchCount := 0
+	for _, task := range tasks {
+		id := strings.ToLower(strings.TrimSpace(task.ID))
+		if id == "" || !strings.HasPrefix(id, selector) {
+			continue
+		}
+		if !hermesTaskMatchesScope(task, threadID, projectDir) || !hermesTaskIsContinuable(task) {
+			continue
+		}
+		matched = task
+		matchCount++
+	}
+	if matchCount == 0 {
+		return hermes.TaskState{}, false, false
+	}
+	if matchCount > 1 {
+		return hermes.TaskState{}, false, true
+	}
+	return matched, true, false
+}
+
+func selectHermesContinuationTasks(tasks []hermes.TaskState, projectDir string, limit int) []hermes.TaskState {
+	return selectHermesContinuationTasksForScope(tasks, 0, projectDir, limit)
+}
+
+func selectHermesContinuationTasksForScope(tasks []hermes.TaskState, threadID int, projectDir string, limit int) []hermes.TaskState {
+	if limit <= 0 {
+		limit = 3
+	}
+	projectDir = strings.TrimSpace(projectDir)
+	type rankedTask struct {
+		task hermes.TaskState
+		rank int
+	}
+	var ranked []rankedTask
+	for _, task := range tasks {
+		if !hermesTaskMatchesScope(task, threadID, projectDir) {
+			continue
+		}
+		rank := hermesContinuationRank(task)
+		if rank < 0 {
+			continue
+		}
+		ranked = append(ranked, rankedTask{task: task, rank: rank})
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].rank != ranked[j].rank {
+			return ranked[i].rank < ranked[j].rank
+		}
+		return ranked[i].task.UpdatedAt.After(ranked[j].task.UpdatedAt)
+	})
+	out := make([]hermes.TaskState, 0, min(limit, len(ranked)))
+	for i := 0; i < len(ranked) && i < limit; i++ {
+		out = append(out, ranked[i].task)
+	}
+	return out
+}
+
+type hermesSimilarDecision int
+
+const (
+	hermesSimilarNone hermesSimilarDecision = iota
+	hermesSimilarContinue
+	hermesSimilarCompleted
+	hermesSimilarAmbiguous
+)
+
+func (t *TelegramBot) resolveSimilarHermesTask(key chatKey, projectDir, goal string) (hermes.TaskState, hermesSimilarDecision, bool) {
+	tasks, err := t.taskSvc.ListForChat(key.chatID, 10)
+	if err != nil {
+		log.Printf("[hermes] failed to resolve similar task for chat %d: %v", key.chatID, err)
+		return hermes.TaskState{}, hermesSimilarNone, false
+	}
+	task, decision, ok := selectSimilarHermesTaskForScope(tasks, key.threadID, projectDir, goal, time.Now())
+	return task, decision, ok
+}
+
+func (t *TelegramBot) resolveHermesIssueTask(key chatKey, projectDir string, issueNumber int) (hermes.TaskState, hermesSimilarDecision, bool) {
+	if issueNumber <= 0 {
+		return hermes.TaskState{}, hermesSimilarNone, false
+	}
+	tasks, err := t.taskSvc.ListForChat(key.chatID, 10)
+	if err != nil {
+		log.Printf("[hermes] failed to resolve issue task for chat %d issue #%d: %v", key.chatID, issueNumber, err)
+		return hermes.TaskState{}, hermesSimilarNone, false
+	}
+	return selectHermesIssueTaskForScope(tasks, key.threadID, projectDir, issueNumber)
+}
+
+func selectHermesIssueTask(tasks []hermes.TaskState, projectDir string, issueNumber int) (hermes.TaskState, hermesSimilarDecision, bool) {
+	return selectHermesIssueTaskForScope(tasks, 0, projectDir, issueNumber)
+}
+
+func selectHermesIssueTaskForScope(tasks []hermes.TaskState, threadID int, projectDir string, issueNumber int) (hermes.TaskState, hermesSimilarDecision, bool) {
+	projectDir = strings.TrimSpace(projectDir)
+	var best hermes.TaskState
+	bestDecision := hermesSimilarNone
+	bestRank := 99
+	for _, task := range tasks {
+		if task.GithubIssueNumber != issueNumber {
+			continue
+		}
+		if !hermesTaskMatchesScope(task, threadID, projectDir) {
+			continue
+		}
+		decision := hermesSimilarContinue
+		rank := hermesContinuationRank(task)
+		if task.Status == hermes.TaskStatusDone && time.Since(task.UpdatedAt) <= 24*time.Hour {
+			decision = hermesSimilarCompleted
+			rank = 4
+		} else if rank < 0 {
+			continue
+		}
+		if bestDecision == hermesSimilarNone || rank < bestRank || (rank == bestRank && task.UpdatedAt.After(best.UpdatedAt)) {
+			best = task
+			bestDecision = decision
+			bestRank = rank
+		}
+	}
+	if bestDecision == hermesSimilarNone {
+		return hermes.TaskState{}, hermesSimilarNone, false
+	}
+	return best, bestDecision, true
+}
+
+func selectSimilarHermesTask(tasks []hermes.TaskState, projectDir, goal string, now time.Time) (hermes.TaskState, hermesSimilarDecision, bool) {
+	return selectSimilarHermesTaskForScope(tasks, 0, projectDir, goal, now)
+}
+
+func selectSimilarHermesTaskForScope(tasks []hermes.TaskState, threadID int, projectDir, goal string, now time.Time) (hermes.TaskState, hermesSimilarDecision, bool) {
+	projectDir = strings.TrimSpace(projectDir)
+	goal = strings.TrimSpace(extractHermesActionableGoal(goal))
+	if goal == "" {
+		return hermes.TaskState{}, hermesSimilarNone, false
 	}
 
+	var best hermes.TaskState
+	bestScore := 0.0
+	bestDecision := hermesSimilarNone
+	for _, task := range tasks {
+		if !hermesTaskMatchesScope(task, threadID, projectDir) {
+			continue
+		}
+		taskGoal := strings.TrimSpace(extractHermesActionableGoal(task.Goal))
+		if taskGoal == "" {
+			continue
+		}
+		score := hermesGoalSimilarity(goal, taskGoal)
+		if score < 0.45 {
+			continue
+		}
+		decision := hermesSimilarContinue
+		if task.Status == hermes.TaskStatusDone && now.Sub(task.UpdatedAt) <= 24*time.Hour {
+			decision = hermesSimilarCompleted
+		} else if hermesContinuationRank(task) < 0 {
+			continue
+		}
+		if score < 0.75 {
+			decision = hermesSimilarAmbiguous
+		}
+		if score > bestScore || (score == bestScore && task.UpdatedAt.After(best.UpdatedAt)) {
+			best = task
+			bestScore = score
+			bestDecision = decision
+		}
+	}
+	if bestDecision == hermesSimilarNone {
+		return hermes.TaskState{}, hermesSimilarNone, false
+	}
+	return best, bestDecision, true
+}
+
+func hermesContinuationProjectDir(task hermes.TaskState, fallback string) string {
+	if taskProjectDir := strings.TrimSpace(task.ProjectDir); taskProjectDir != "" {
+		return taskProjectDir
+	}
+	return fallback
+}
+
+func hermesTaskMatchesProject(task hermes.TaskState, projectDir string) bool {
+	projectDir = cleanHermesProjectDir(projectDir)
+	taskProjectDir := cleanHermesProjectDir(task.ProjectDir)
+	if projectDir == "" {
+		return taskProjectDir == ""
+	}
+	return taskProjectDir == projectDir
+}
+
+func hermesTaskMatchesScope(task hermes.TaskState, threadID int, projectDir string) bool {
+	return task.ThreadID == threadID && hermesTaskMatchesProject(task, projectDir)
+}
+
+func cleanHermesProjectDir(projectDir string) string {
+	projectDir = strings.TrimSpace(projectDir)
+	if projectDir == "" {
+		return ""
+	}
+	return filepath.Clean(projectDir)
+}
+
+func hermesGoalSimilarity(a, b string) float64 {
+	aNorm := strings.ToLower(normalizeHermesGoal(a))
+	bNorm := strings.ToLower(normalizeHermesGoal(b))
+	if aNorm == "" || bNorm == "" {
+		return 0
+	}
+	if aNorm == bNorm {
+		return 1
+	}
+	if strings.Contains(aNorm, bNorm) || strings.Contains(bNorm, aNorm) {
+		shorter := len([]rune(aNorm))
+		longer := len([]rune(bNorm))
+		if shorter > longer {
+			shorter, longer = longer, shorter
+		}
+		if longer == 0 {
+			return 0
+		}
+		return float64(shorter) / float64(longer)
+	}
+
+	aTokens := hermesGoalTokens(aNorm)
+	bTokens := hermesGoalTokens(bNorm)
+	if len(aTokens) == 0 || len(bTokens) == 0 {
+		return 0
+	}
+	intersect := 0
+	for token := range aTokens {
+		if _, ok := bTokens[token]; ok {
+			intersect++
+		}
+	}
+	union := len(aTokens) + len(bTokens) - intersect
+	if union == 0 {
+		return 0
+	}
+	return float64(intersect) / float64(union)
+}
+
+func hermesGoalTokens(goal string) map[string]struct{} {
+	fields := strings.FieldsFunc(goal, func(r rune) bool {
+		return r == ' ' || r == '\t' || r == '\n' || r == '\r' ||
+			r == ',' || r == '.' || r == ':' || r == ';' ||
+			r == '，' || r == '。' || r == '：' || r == '；' ||
+			r == '(' || r == ')' || r == '（' || r == '）'
+	})
+	tokens := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		field = strings.TrimSpace(field)
+		if len([]rune(field)) < 2 {
+			continue
+		}
+		tokens[field] = struct{}{}
+	}
+	return tokens
+}
+
+func hermesContinuationRank(task hermes.TaskState) int {
+	switch task.Status {
+	case hermes.TaskStatusPlanning, hermes.TaskStatusExecuting, hermes.TaskStatusValidating:
+		return 0
+	case hermes.TaskStatusInterrupted:
+		return 1
+	case hermes.TaskStatusFailed:
+		if hermesTaskHasProgress(task) {
+			return 2
+		}
+		return 3
+	case hermes.TaskStatusDone:
+		if time.Since(task.UpdatedAt) <= 24*time.Hour && hermesTaskHasProgress(task) {
+			return 4
+		}
+	}
+	return -1
+}
+
+func hermesTaskIsContinuable(task hermes.TaskState) bool {
+	return hermesContinuationRank(task) >= 0
+}
+
+func hermesTaskHasProgress(task hermes.TaskState) bool {
+	if strings.TrimSpace(task.Accumulated) != "" {
+		return true
+	}
+	for _, sub := range task.Plan {
+		if sub.Status == hermes.SubTaskDone || sub.Status == hermes.SubTaskSkipped || strings.TrimSpace(sub.Result) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func isHermesContinuationRequest(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return false
+	}
+	return strings.HasPrefix(lower, "繼續") ||
+		strings.HasPrefix(lower, "接續") ||
+		strings.HasPrefix(lower, "續做") ||
+		strings.HasPrefix(lower, "重新規劃") ||
+		strings.HasPrefix(lower, "continue") ||
+		strings.HasPrefix(lower, "resume") ||
+		strings.HasPrefix(lower, "replan")
+}
+
+func hermesContinuationModeFromRequest(text string) string {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if strings.HasPrefix(lower, "重新規劃") || strings.HasPrefix(lower, "重規") || strings.HasPrefix(lower, "replan") {
+		return "replan"
+	}
+	return "continue"
+}
+
+func isHermesIssueReferenceRequest(text string) bool {
+	if _, ok := ParseIssueNumber(text); !ok {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return false
+	}
+	return isHermesContinuationRequest(lower) ||
+		strings.Contains(lower, "繼續") ||
+		strings.Contains(lower, "接續") ||
+		strings.Contains(lower, "續做") ||
+		strings.HasPrefix(lower, "處理") ||
+		strings.HasPrefix(lower, "請處理") ||
+		strings.HasPrefix(lower, "開始") ||
+		strings.HasPrefix(lower, "start") ||
+		strings.HasPrefix(lower, "work on")
+}
+
+func buildHermesContinuationGoal(task hermes.TaskState, mode string) string {
+	originalGoal := strings.TrimSpace(extractHermesActionableGoal(task.Goal))
+	if originalGoal == "" {
+		originalGoal = strings.TrimSpace(task.Goal)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("[Hermes continuation]\n")
+	sb.WriteString("Mode: ")
+	sb.WriteString(mode)
+	sb.WriteString("\nTask ID: ")
+	sb.WriteString(task.ID)
+	sb.WriteString("\nTask status: ")
+	sb.WriteString(string(task.Status))
+	if task.GithubIssueNumber > 0 {
+		sb.WriteString(fmt.Sprintf("\nGitHub issue: #%d", task.GithubIssueNumber))
+	}
+	sb.WriteString("\n\nOriginal goal:\n")
+	sb.WriteString(originalGoal)
+	sb.WriteString("\n\nCurrent progress:\n")
+	sb.WriteString(buildHermesProgressSummary(task))
+	sb.WriteString("\n\nInstructions:\n")
+	sb.WriteString("- Treat completed/skipped subtasks as already handled.\n")
+	sb.WriteString("- Do not repeat completed work unless the progress summary says it is invalid or incomplete.\n")
+	sb.WriteString("- Re-plan only the remaining, failed, interrupted, or unverified work.\n")
+	sb.WriteString("- Preserve useful context from accumulated progress and reviewer feedback.\n")
+	sb.WriteString("- Return a concrete plan for the remaining work, then execute it.\n")
+	return sb.String()
+}
+
+func buildHermesProgressSummary(task hermes.TaskState) string {
+	var lines []string
+	if acc := strings.TrimSpace(task.Accumulated); acc != "" {
+		lines = append(lines, "Accumulated summary:\n"+clampHermesContext(acc, hermesContextMaxChars))
+	}
+	if len(task.Plan) > 0 {
+		lines = append(lines, "Subtasks:")
+		for i, sub := range task.Plan {
+			desc := strings.TrimSpace(sub.Description)
+			if desc == "" {
+				desc = "(no description)"
+			}
+			line := fmt.Sprintf("%d. [%s] %s", i+1, sub.Status, desc)
+			if result := strings.TrimSpace(sub.Result); result != "" {
+				line += "\n   Result: " + clampHermesContext(result, 600)
+			}
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return "(No stored progress details.)"
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (t *TelegramBot) formatHermesStatus(key chatKey, projectDir string) string {
+	text, _ := t.hermesStatusTextAndCandidates(key, projectDir)
+	return text
+}
+
+func (t *TelegramBot) hermesStatusTextAndCandidates(key chatKey, projectDir string) (string, []hermes.TaskState) {
+	t.hermesMu.RLock()
+	hc := t.hermesCoords[key]
+	t.hermesMu.RUnlock()
+
+	var lines []string
+	if hc == nil || !hc.enabled {
+		lines = append(lines, "Hermes 模式：未啟用")
+	} else if hc.coord != nil && hc.coord.IsRunning() {
+		lines = append(lines, fmt.Sprintf("Hermes 模式：執行中（任務 %s）", shortHermesTaskID(hc.coord.TaskID())))
+	} else {
+		lines = append(lines, "Hermes 模式：已啟用，等待下一則訊息")
+	}
+
+	var candidates []hermes.TaskState
+	if tasks, err := t.taskSvc.ListForChat(key.chatID, 10); err == nil {
+		candidates = selectHermesContinuationTasksForScope(tasks, key.threadID, projectDir, 3)
+	} else {
+		log.Printf("[hermes] failed to format status candidates for chat %d: %v", key.chatID, err)
+	}
+	if len(candidates) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, "可接續任務候選：")
+		for _, task := range candidates {
+			lines = append(lines, formatHermesTaskLine(task))
+		}
+		lines = append(lines, "可用操作：直接按下方按鈕，或使用 /hermes continue <id>、/hermes replan <id>、/hermes restart <任務說明>")
+	}
+	return strings.Join(lines, "\n"), candidates
+}
+
+func (t *TelegramBot) sendHermesStatus(key chatKey, projectDir string) {
+	text, candidates := t.hermesStatusTextAndCandidates(key, projectDir)
+	if len(candidates) == 0 {
+		t.send(key, text)
+		return
+	}
+	t.sendHermesActionsMessage(key, text, candidates)
+}
+
+func (t *TelegramBot) sendHermesCandidateActions(key chatKey, text string, task hermes.TaskState) {
+	t.sendHermesActionsMessage(key, text, []hermes.TaskState{task})
+}
+
+func (t *TelegramBot) sendHermesActionsMessage(key chatKey, text string, tasks []hermes.TaskState) {
+	keyboard := map[string]interface{}{
+		"inline_keyboard": hermesCandidateActionRows(tasks),
+	}
+	params := map[string]interface{}{
+		"chat_id":      strconv.FormatInt(key.chatID, 10),
+		"text":         sanitizeUTF8(text),
+		"reply_markup": keyboard,
+	}
+	if key.threadID != 0 {
+		params["message_thread_id"] = strconv.Itoa(key.threadID)
+	}
+	t.queueMessage("sendMessage", params)
+}
+
+func hermesCandidateActionRows(tasks []hermes.TaskState) [][]map[string]interface{} {
+	rows := make([][]map[string]interface{}, 0, len(tasks)+1)
+	for _, task := range tasks {
+		if strings.TrimSpace(task.ID) == "" {
+			continue
+		}
+		id := task.ID
+		shortID := shortHermesTaskID(id)
+		rows = append(rows, []map[string]interface{}{
+			{
+				"text":          "▶️ 接續 " + shortID,
+				"callback_data": "hermes:continue:" + id,
+			},
+			{
+				"text":          "🧠 重規 " + shortID,
+				"callback_data": "hermes:replan:" + id,
+			},
+		})
+	}
+	rows = append(rows, []map[string]interface{}{
+		{
+			"text":          "取消",
+			"callback_data": "hermes:cancel",
+		},
+	})
+	return rows
+}
+
+func formatHermesTaskLine(task hermes.TaskState) string {
+	done, total := hermesTaskProgressCounts(task)
+	goal := clampHermesContext(extractHermesActionableGoal(task.Goal), 120)
+	if goal == "" {
+		goal = "(無目標摘要)"
+	}
+	return fmt.Sprintf("- %s [%s] %d/%d：%s", shortHermesTaskID(task.ID), task.Status, done, total, goal)
+}
+
+func hermesTaskProgressCounts(task hermes.TaskState) (done, total int) {
+	total = len(task.Plan)
+	for _, sub := range task.Plan {
+		if sub.Status == hermes.SubTaskDone || sub.Status == hermes.SubTaskSkipped {
+			done++
+		}
+	}
+	return done, total
+}
+
+func shortHermesTaskID(id string) string {
+	id = strings.TrimSpace(id)
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
+}
+
+func hermesContinuationVerb(mode string) string {
+	if mode == "replan" {
+		return "重新規劃剩餘工作"
+	}
+	return "接續剩餘工作"
+}
+
+func (t *TelegramBot) loadHermesContextTasks(chatID int64, currentRequest string) []hermes.TaskState {
 	var tasks []hermes.TaskState
-	active, err := store.GetActiveTaskForChat(chatID)
+	active, err := t.taskSvc.GetActiveForChat(chatID)
 	switch {
 	case err == nil:
 		tasks = append(tasks, active)
@@ -1974,7 +2675,7 @@ func (t *TelegramBot) loadHermesContextTasks(chatID int64, currentRequest string
 		log.Printf("[hermes] failed to load active task context for chat %d: %v", chatID, err)
 	}
 
-	history, err := store.ListTasksForChat(chatID, 3)
+	history, err := t.taskSvc.ListForChat(chatID, 3)
 	if err != nil {
 		log.Printf("[hermes] failed to list task context for chat %d: %v", chatID, err)
 		return tasks
@@ -2093,6 +2794,20 @@ func extractHermesActionableGoal(goal string) string {
 	goal = strings.TrimSpace(goal)
 	if goal == "" {
 		return ""
+	}
+
+	if strings.HasPrefix(goal, "[Hermes continuation]") {
+		const originalHeader = "Original goal:"
+		const progressHeader = "\n\nCurrent progress:"
+		if start := strings.Index(goal, originalHeader); start >= 0 {
+			actionable := strings.TrimSpace(goal[start+len(originalHeader):])
+			if end := strings.Index(actionable, progressHeader); end >= 0 {
+				actionable = strings.TrimSpace(actionable[:end])
+			}
+			if actionable != "" {
+				return extractHermesActionableGoal(actionable)
+			}
+		}
 	}
 
 	idx := strings.LastIndex(goal, hermesCurrentRequestHeader)
@@ -2286,7 +3001,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 
 	planFn := makePlanFn(t.client, plannerModel)
 
-	taskStore := buildHermesTaskStore()
+	taskStore := hermes.TaskStateStore(t.taskSvc)
 
 	verbosity := hermes.ParseVerbosity(cfg.ProgressVerbosity)
 	reporter := hermes.NewTextProgressReporter(verbosity, func(text string) {
@@ -2381,11 +3096,6 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		))
 	}
 
-	// Use a noop store when no DB is available yet (wired fully in #97→#98 integration)
-	if taskStore == nil {
-		taskStore = &hermes.NoopTaskStore{}
-	}
-
 	continueCh := make(chan struct{}, 1)
 	agent := t.getAgent(key)
 	if oneShot {
@@ -2399,6 +3109,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	direct := appengine.NewDirectEngine(newHermesExecutorRunner(agent, executorModel, heavyExecutorModel))
 	coord := appengine.NewPlanExecuteEngine(appengine.PlanExecuteConfig{
 		ChatID:                key.chatID,
+		ThreadID:              key.threadID,
 		ProjectDir:            projectDir,
 		PlannerModel:          plannerModel,
 		MaxPlannerJSONRetries: cfg.MaxPlannerJSONRetries,
@@ -3554,6 +4265,10 @@ func (t *TelegramBot) handleCallbackQuery(key chatKey, userID int64, queryID, da
 			return
 		}
 		t.answerCallbackQuery(queryID, tasksStatusMessage(t.getChatLanguage(key.chatID), state))
+	case strings.HasPrefix(data, "menu:"):
+		t.handleMenuCallback(key, queryID, data)
+	case strings.HasPrefix(data, "hermes:"):
+		t.handleHermesCallback(key, queryID, data)
 	case strings.HasPrefix(data, "stop_agent_"):
 		// Handle stop button click
 		switch t.abortActiveTask(key, 0) {
@@ -3572,6 +4287,86 @@ func (t *TelegramBot) handleCallbackQuery(key chatKey, userID int64, queryID, da
 		unknownMsg := t.getLocalizedMessage(key.chatID, "callback_unknown_operation", nil)
 		t.answerCallbackQuery(queryID, unknownMsg)
 	}
+}
+
+func (t *TelegramBot) handleMenuCallback(key chatKey, queryID, data string) {
+	action := strings.TrimPrefix(data, "menu:")
+	switch action {
+	case "status":
+		t.answerCallbackQuery(queryID, "顯示狀態")
+		t.handleCommand(key, "/status")
+	case "usage":
+		t.answerCallbackQuery(queryID, "顯示用量")
+		t.handleCommand(key, "/usage")
+	case "hermes_status":
+		t.answerCallbackQuery(queryID, "顯示 Hermes 狀態")
+		t.handleHermesCommand(key, []string{"/hermes", "status"}, "")
+	case "help":
+		t.answerCallbackQuery(queryID, "顯示說明")
+		t.handleCommand(key, "/help")
+	default:
+		t.answerCallbackQuery(queryID, "無法辨識選單操作")
+	}
+}
+
+func parseHermesCallbackData(data string) (mode string, taskID string, ok bool) {
+	if data == "hermes:cancel" {
+		return "cancel", "", true
+	}
+	mode, taskID, found := strings.Cut(strings.TrimPrefix(data, "hermes:"), ":")
+	if !found || taskID == "" {
+		return "", "", false
+	}
+	switch mode {
+	case "continue", "replan":
+		return mode, taskID, true
+	default:
+		return "", "", false
+	}
+}
+
+func (t *TelegramBot) handleHermesCallback(key chatKey, queryID, data string) {
+	mode, taskID, ok := parseHermesCallbackData(data)
+	if !ok {
+		t.answerCallbackQuery(queryID, "無法辨識 Hermes 操作")
+		return
+	}
+	if mode == "cancel" {
+		t.answerCallbackQuery(queryID, "已取消")
+		return
+	}
+
+	hermesTask, err := t.taskSvc.GetTask(taskID)
+	if err != nil {
+		log.Printf("[hermes] callback task lookup failed (task=%s): %v", taskID, err)
+		t.answerCallbackQuery(queryID, "找不到 Hermes 任務")
+		return
+	}
+	task := hermesTask
+	if task.ChatID != key.chatID {
+		t.answerCallbackQuery(queryID, "此任務不屬於目前對話")
+		return
+	}
+	if task.ThreadID != key.threadID {
+		t.answerCallbackQuery(queryID, "此任務不屬於目前 Topic")
+		return
+	}
+
+	projectDir := t.getAgent(key).ProjectDir()
+	if !hermesTaskMatchesProject(task, projectDir) {
+		t.answerCallbackQuery(queryID, "此任務不屬於目前專案")
+		return
+	}
+	if !hermesTaskIsContinuable(task) {
+		t.answerCallbackQuery(queryID, "此 Hermes 任務目前不可接續")
+		return
+	}
+
+	t.answerCallbackQuery(queryID, "準備"+hermesContinuationVerb(mode))
+	t.send(key, fmt.Sprintf("🔁 將根據任務 %s 的既有進度%s…", shortHermesTaskID(task.ID), hermesContinuationVerb(mode)))
+	go t.runTrackedJob("hermes.callback", func() {
+		t.startHermesContinuationTask(key, task, projectDir, mode)
+	})
 }
 
 // answerCallbackQuery answers callback query to remove loading indicator

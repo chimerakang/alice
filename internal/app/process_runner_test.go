@@ -1,7 +1,9 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,5 +45,35 @@ func TestRunProcessTimeoutKillsChildProcessGroup(t *testing.T) {
 		t.Fatalf("child process survived cancellation and wrote %s", marker)
 	} else if !os.IsNotExist(err) {
 		t.Fatalf("checking marker: %v", err)
+	}
+}
+
+func TestProcessCommandLogsLifecycle(t *testing.T) {
+	var buf bytes.Buffer
+	orig := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() {
+		log.SetOutput(orig)
+	})
+
+	cmd, cancel := processCommand(context.Background(), ProcessOptions{
+		CorrelationID: "corr-123",
+		LogPrefix:     "test.process",
+	}, "sh", "-c", "true")
+	defer cancel()
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("cmd.Start: %v", err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("cmd.Wait: %v", err)
+	}
+
+	got := buf.String()
+	if !strings.Contains(got, "[test.process] start corr=corr-123 cmd=sh -c true") {
+		t.Fatalf("logs missing start line: %s", got)
+	}
+	if !strings.Contains(got, "[test.process] done corr=corr-123 cmd=sh -c true exit=0") {
+		t.Fatalf("logs missing done line: %s", got)
 	}
 }

@@ -25,6 +25,49 @@ Assistant: 找到四個待修問題
 	}
 }
 
+func TestExtractHermesActionableGoalFromContinuationPrompt(t *testing.T) {
+	goal := `[Hermes continuation]
+Mode: replan
+Task ID: task-123
+Task status: interrupted
+
+Original goal:
+修復登入流程
+
+Current progress:
+Accumulated summary:
+已完成 cookie 修正
+
+Instructions:
+- Do not repeat completed work.`
+
+	if got := extractHermesActionableGoal(goal); got != "修復登入流程" {
+		t.Fatalf("expected original goal from continuation prompt, got %q", got)
+	}
+}
+
+func TestExtractHermesActionableGoalFromNestedContinuationPrompt(t *testing.T) {
+	goal := `[Hermes continuation]
+Mode: continue
+Task ID: task-456
+Task status: failed
+
+Original goal:
+[Previous conversation context]
+User: 先分析登入流程
+
+[Current request]
+補登入整合測試
+
+Current progress:
+Subtasks:
+1. [done] 修正 cookie`
+
+	if got := extractHermesActionableGoal(goal); got != "補登入整合測試" {
+		t.Fatalf("expected nested actionable goal, got %q", got)
+	}
+}
+
 func TestComposeHermesGoalWithContext(t *testing.T) {
 	tasks := []hermes.TaskState{
 		{
@@ -77,6 +120,580 @@ Assistant: 找到 4 個待修問題
 	}
 	if !strings.Contains(goal, "再幫我補測試") {
 		t.Fatalf("expected current request in goal, got:\n%s", goal)
+	}
+}
+
+func TestSelectHermesContinuationTaskPrefersActiveSameProject(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{
+			ID:         "old-failed",
+			ChatID:     42,
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusFailed,
+			Goal:       "修復舊問題",
+			Plan: []hermes.SubTask{
+				{Description: "已完成部分", Status: hermes.SubTaskDone},
+			},
+			UpdatedAt: now.Add(-time.Hour),
+		},
+		{
+			ID:         "active-task",
+			ChatID:     42,
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusExecuting,
+			Goal:       "修復登入流程",
+			UpdatedAt:  now.Add(-2 * time.Hour),
+		},
+		{
+			ID:         "other-project",
+			ChatID:     42,
+			ProjectDir: "/tmp/other",
+			Status:     hermes.TaskStatusExecuting,
+			Goal:       "其他專案",
+			UpdatedAt:  now,
+		},
+	}
+
+	got, ok := selectHermesContinuationTask(tasks, "/tmp/project")
+	if !ok {
+		t.Fatal("expected continuation candidate")
+	}
+	if got.ID != "active-task" {
+		t.Fatalf("candidate = %q, want active-task", got.ID)
+	}
+}
+
+func TestSelectHermesContinuationTaskSkipsLegacyEmptyProjectWhenCurrentProjectKnown(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{
+			ID:                "legacy-empty-project",
+			ChatID:            42,
+			ProjectDir:        "",
+			GithubIssueNumber: 77,
+			Status:            hermes.TaskStatusFailed,
+			Goal:              "舊專案任務",
+			Plan: []hermes.SubTask{
+				{Description: "已完成部分", Status: hermes.SubTaskDone},
+			},
+			UpdatedAt: now,
+		},
+		{
+			ID:         "same-project",
+			ChatID:     42,
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusInterrupted,
+			Goal:       "目前專案任務",
+			UpdatedAt:  now.Add(-time.Hour),
+		},
+	}
+
+	got, ok := selectHermesContinuationTask(tasks, "/tmp/project")
+	if !ok {
+		t.Fatal("expected same-project continuation candidate")
+	}
+	if got.ID != "same-project" {
+		t.Fatalf("candidate = %q, want same-project", got.ID)
+	}
+}
+
+func TestSelectHermesContinuationTaskForScopeSkipsOtherThread(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{
+			ID:         "other-thread",
+			ChatID:     42,
+			ThreadID:   8,
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusExecuting,
+			Goal:       "其他 topic 任務",
+			UpdatedAt:  now,
+		},
+		{
+			ID:         "same-thread",
+			ChatID:     42,
+			ThreadID:   7,
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusInterrupted,
+			Goal:       "目前 topic 任務",
+			UpdatedAt:  now.Add(-time.Minute),
+		},
+	}
+
+	got, ok := selectHermesContinuationTaskForScope(tasks, 7, "/tmp/project")
+	if !ok {
+		t.Fatal("expected same-thread continuation candidate")
+	}
+	if got.ID != "same-thread" {
+		t.Fatalf("candidate = %q, want same-thread", got.ID)
+	}
+}
+
+func TestSelectHermesContinuationTaskMatchesCleanProjectPath(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{
+			ID:         "same-project",
+			ChatID:     42,
+			ProjectDir: "/tmp/project/",
+			Status:     hermes.TaskStatusExecuting,
+			Goal:       "目前專案任務",
+			UpdatedAt:  now,
+		},
+	}
+
+	got, ok := selectHermesContinuationTask(tasks, "/tmp/project")
+	if !ok {
+		t.Fatal("expected continuation candidate")
+	}
+	if got.ID != "same-project" {
+		t.Fatalf("candidate = %q, want same-project", got.ID)
+	}
+}
+
+func TestSelectHermesContinuationTasksRanksMultipleCandidates(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{
+			ID:         "done-recent",
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusDone,
+			Goal:       "已完成",
+			Plan:       []hermes.SubTask{{Description: "done", Status: hermes.SubTaskDone}},
+			UpdatedAt:  now,
+		},
+		{
+			ID:         "interrupted-newer",
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusInterrupted,
+			Goal:       "中斷",
+			UpdatedAt:  now.Add(-time.Minute),
+		},
+		{
+			ID:         "executing-older",
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusExecuting,
+			Goal:       "執行中",
+			UpdatedAt:  now.Add(-time.Hour),
+		},
+	}
+
+	got := selectHermesContinuationTasks(tasks, "/tmp/project", 3)
+	if len(got) != 3 {
+		t.Fatalf("candidate count = %d, want 3", len(got))
+	}
+	want := []string{"executing-older", "interrupted-newer", "done-recent"}
+	for i := range want {
+		if got[i].ID != want[i] {
+			t.Fatalf("candidate[%d] = %q, want %q", i, got[i].ID, want[i])
+		}
+	}
+}
+
+func TestSelectHermesContinuationTaskByIDPrefix(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{
+			ID:         "6b1960ba-active",
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusInterrupted,
+			Goal:       "接續目標",
+			UpdatedAt:  now,
+		},
+		{
+			ID:         "aaaaaaaa-other",
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusExecuting,
+			Goal:       "其他目標",
+			UpdatedAt:  now,
+		},
+	}
+
+	got, ok, ambiguous := selectHermesContinuationTaskByID(tasks, "/tmp/project", "6b1960ba")
+	if !ok || ambiguous {
+		t.Fatalf("expected unambiguous match, ok=%v ambiguous=%v", ok, ambiguous)
+	}
+	if got.ID != "6b1960ba-active" {
+		t.Fatalf("task = %q, want 6b1960ba-active", got.ID)
+	}
+}
+
+func TestSelectHermesContinuationTaskByIDPrefixDetectsAmbiguous(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{ID: "6b1960ba-one", ProjectDir: "/tmp/project", Status: hermes.TaskStatusExecuting, UpdatedAt: now},
+		{ID: "6b1960ba-two", ProjectDir: "/tmp/project", Status: hermes.TaskStatusInterrupted, UpdatedAt: now},
+	}
+
+	_, ok, ambiguous := selectHermesContinuationTaskByID(tasks, "/tmp/project", "6b1960ba")
+	if ok || !ambiguous {
+		t.Fatalf("expected ambiguous prefix, ok=%v ambiguous=%v", ok, ambiguous)
+	}
+}
+
+func TestSelectHermesContinuationTaskByIDPrefixSkipsNonContinuable(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{ID: "6b1960ba-done-old", ProjectDir: "/tmp/project", Status: hermes.TaskStatusDone, UpdatedAt: now.Add(-48 * time.Hour)},
+	}
+
+	_, ok, ambiguous := selectHermesContinuationTaskByID(tasks, "/tmp/project", "6b1960ba")
+	if ok || ambiguous {
+		t.Fatalf("old completed task should not match, ok=%v ambiguous=%v", ok, ambiguous)
+	}
+}
+
+func TestHermesTaskIsContinuable(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name string
+		task hermes.TaskState
+		want bool
+	}{
+		{
+			name: "active",
+			task: hermes.TaskState{Status: hermes.TaskStatusExecuting, UpdatedAt: now},
+			want: true,
+		},
+		{
+			name: "failed with progress",
+			task: hermes.TaskState{Status: hermes.TaskStatusFailed, Accumulated: "已完成一部分", UpdatedAt: now},
+			want: true,
+		},
+		{
+			name: "recent done with progress",
+			task: hermes.TaskState{Status: hermes.TaskStatusDone, Accumulated: "已完成", UpdatedAt: now.Add(-time.Hour)},
+			want: true,
+		},
+		{
+			name: "old done",
+			task: hermes.TaskState{Status: hermes.TaskStatusDone, Accumulated: "已完成", UpdatedAt: now.Add(-48 * time.Hour)},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hermesTaskIsContinuable(tt.task); got != tt.want {
+				t.Fatalf("hermesTaskIsContinuable() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSelectSimilarHermesTaskContinuesActiveMatch(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{
+			ID:         "active-match",
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusExecuting,
+			Goal:       "修復登入流程",
+			UpdatedAt:  now.Add(-time.Hour),
+		},
+		{
+			ID:         "other-goal",
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusExecuting,
+			Goal:       "修復付款流程",
+			UpdatedAt:  now,
+		},
+	}
+
+	got, decision, ok := selectSimilarHermesTask(tasks, "/tmp/project", " 修復登入流程 ", now)
+	if !ok {
+		t.Fatal("expected similar task")
+	}
+	if got.ID != "active-match" || decision != hermesSimilarContinue {
+		t.Fatalf("similar task = (%q, %v), want active-match continue", got.ID, decision)
+	}
+}
+
+func TestSelectSimilarHermesTaskStopsRecentCompletedMatch(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{
+			ID:         "completed-match",
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusDone,
+			Goal:       "補 retry 測試",
+			Plan: []hermes.SubTask{
+				{Description: "補測試", Status: hermes.SubTaskDone},
+			},
+			UpdatedAt: now.Add(-2 * time.Hour),
+		},
+	}
+
+	got, decision, ok := selectSimilarHermesTask(tasks, "/tmp/project", "補 retry 測試", now)
+	if !ok {
+		t.Fatal("expected recent completed similar task")
+	}
+	if got.ID != "completed-match" || decision != hermesSimilarCompleted {
+		t.Fatalf("similar task = (%q, %v), want completed-match completed", got.ID, decision)
+	}
+}
+
+func TestSelectSimilarHermesTaskReturnsAmbiguousForMediumSimilarity(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{
+			ID:          "maybe-login",
+			ProjectDir:  "/tmp/project",
+			Status:      hermes.TaskStatusFailed,
+			Goal:        "修復登入流程並補測試",
+			Accumulated: "已完成 cookie 修正",
+			UpdatedAt:   now,
+		},
+	}
+
+	got, decision, ok := selectSimilarHermesTask(tasks, "/tmp/project", "修復登入流程", now)
+	if !ok {
+		t.Fatal("expected ambiguous similar task")
+	}
+	if got.ID != "maybe-login" || decision != hermesSimilarAmbiguous {
+		t.Fatalf("similar task = (%q, %v), want maybe-login ambiguous", got.ID, decision)
+	}
+}
+
+func TestParseHermesCallbackData(t *testing.T) {
+	tests := []struct {
+		name       string
+		data       string
+		wantMode   string
+		wantTaskID string
+		wantOK     bool
+	}{
+		{name: "continue", data: "hermes:continue:task-123", wantMode: "continue", wantTaskID: "task-123", wantOK: true},
+		{name: "replan", data: "hermes:replan:task-456", wantMode: "replan", wantTaskID: "task-456", wantOK: true},
+		{name: "cancel", data: "hermes:cancel", wantMode: "cancel", wantOK: true},
+		{name: "missing task", data: "hermes:continue:", wantOK: false},
+		{name: "unknown mode", data: "hermes:restart:task-123", wantOK: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotMode, gotTaskID, gotOK := parseHermesCallbackData(tt.data)
+			if gotMode != tt.wantMode || gotTaskID != tt.wantTaskID || gotOK != tt.wantOK {
+				t.Fatalf("parseHermesCallbackData(%q) = (%q, %q, %v), want (%q, %q, %v)", tt.data, gotMode, gotTaskID, gotOK, tt.wantMode, tt.wantTaskID, tt.wantOK)
+			}
+		})
+	}
+}
+
+func TestSendHermesCandidateActionsQueuesInlineKeyboard(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		messageQueue: make(chan *TelegramMessage, 1),
+	}
+
+	bot.sendHermesCandidateActions(key, "找到可能相關任務", hermes.TaskState{ID: "6b1960ba-1111-2222-3333-444444444444"})
+
+	select {
+	case msg := <-bot.messageQueue:
+		if msg.Method != "sendMessage" {
+			t.Fatalf("unexpected method: %s", msg.Method)
+		}
+		if msg.Params["chat_id"] != "42" || msg.Params["message_thread_id"] != "7" {
+			t.Fatalf("unexpected chat/thread params: %#v", msg.Params)
+		}
+		markup, ok := msg.Params["reply_markup"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("reply_markup missing or wrong type: %#v", msg.Params["reply_markup"])
+		}
+		rows, ok := markup["inline_keyboard"].([][]map[string]interface{})
+		if !ok {
+			t.Fatalf("inline_keyboard missing or wrong type: %#v", markup["inline_keyboard"])
+		}
+		if len(rows) != 2 || len(rows[0]) != 2 || len(rows[1]) != 1 {
+			t.Fatalf("unexpected keyboard shape: %#v", rows)
+		}
+		if rows[0][0]["callback_data"] != "hermes:continue:6b1960ba-1111-2222-3333-444444444444" {
+			t.Fatalf("unexpected continue button: %#v", rows[0][0])
+		}
+		if rows[0][1]["callback_data"] != "hermes:replan:6b1960ba-1111-2222-3333-444444444444" {
+			t.Fatalf("unexpected replan button: %#v", rows[0][1])
+		}
+		if rows[1][0]["callback_data"] != "hermes:cancel" {
+			t.Fatalf("unexpected cancel button: %#v", rows[1][0])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for Hermes candidate actions message")
+	}
+}
+
+func TestSendMenuQueuesInlineKeyboard(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		messageQueue: make(chan *TelegramMessage, 1),
+	}
+
+	bot.sendMenu(key)
+
+	select {
+	case msg := <-bot.messageQueue:
+		if msg.Method != "sendMessage" {
+			t.Fatalf("unexpected method: %s", msg.Method)
+		}
+		if msg.Params["chat_id"] != "42" || msg.Params["message_thread_id"] != "7" {
+			t.Fatalf("unexpected chat/thread params: %#v", msg.Params)
+		}
+		markup, ok := msg.Params["reply_markup"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("reply_markup missing or wrong type: %#v", msg.Params["reply_markup"])
+		}
+		rows, ok := markup["inline_keyboard"].([][]map[string]interface{})
+		if !ok {
+			t.Fatalf("inline_keyboard missing or wrong type: %#v", markup["inline_keyboard"])
+		}
+		if len(rows) != 4 {
+			t.Fatalf("expected 4 menu rows, got %d", len(rows))
+		}
+		if rows[1][0]["callback_data"] != "tasks:view:open" {
+			t.Fatalf("unexpected tasks button: %#v", rows[1][0])
+		}
+		if rows[1][1]["callback_data"] != "menu:hermes_status" {
+			t.Fatalf("unexpected Hermes button: %#v", rows[1][1])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for menu message")
+	}
+}
+
+func TestHermesCandidateActionRowsSupportsMultipleTasks(t *testing.T) {
+	rows := hermesCandidateActionRows([]hermes.TaskState{
+		{ID: "task-one-abcdef"},
+		{ID: "task-two-abcdef"},
+	})
+
+	if len(rows) != 3 {
+		t.Fatalf("row count = %d, want 3", len(rows))
+	}
+	if rows[0][0]["callback_data"] != "hermes:continue:task-one-abcdef" {
+		t.Fatalf("unexpected first continue button: %#v", rows[0][0])
+	}
+	if rows[1][1]["callback_data"] != "hermes:replan:task-two-abcdef" {
+		t.Fatalf("unexpected second replan button: %#v", rows[1][1])
+	}
+	if rows[2][0]["callback_data"] != "hermes:cancel" {
+		t.Fatalf("unexpected cancel row: %#v", rows[2])
+	}
+}
+
+func TestSelectSimilarHermesTaskSkipsEmptyProjectWhenCurrentProjectKnown(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{
+			ID:          "legacy-empty-project",
+			ProjectDir:  "",
+			Status:      hermes.TaskStatusFailed,
+			Goal:        "修復登入流程",
+			Accumulated: "已完成部分",
+			UpdatedAt:   now,
+		},
+	}
+
+	_, _, ok := selectSimilarHermesTask(tasks, "/tmp/project", "修復登入流程", now)
+	if ok {
+		t.Fatal("legacy empty-project task should not match a known current project")
+	}
+}
+
+func TestSelectSimilarHermesTaskForScopeSkipsOtherThread(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{
+			ID:         "other-thread",
+			ThreadID:   8,
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusExecuting,
+			Goal:       "修復登入流程",
+			UpdatedAt:  now,
+		},
+	}
+
+	_, _, ok := selectSimilarHermesTaskForScope(tasks, 7, "/tmp/project", "修復登入流程", now)
+	if ok {
+		t.Fatal("other-thread task should not match current topic")
+	}
+}
+
+func TestHermesContinuationProjectDirPrefersStoredTaskProject(t *testing.T) {
+	task := hermes.TaskState{ProjectDir: "/tmp/original"}
+	if got := hermesContinuationProjectDir(task, "/tmp/current"); got != "/tmp/original" {
+		t.Fatalf("project dir = %q, want stored task project", got)
+	}
+}
+
+func TestBuildHermesContinuationGoalIncludesProgressInstructions(t *testing.T) {
+	task := hermes.TaskState{
+		ID:          "task-1234567890",
+		Status:      hermes.TaskStatusInterrupted,
+		Goal:        "修復登入流程",
+		Accumulated: "已完成 session cookie 修正。",
+		Plan: []hermes.SubTask{
+			{Description: "修正 cookie", Status: hermes.SubTaskDone, Result: "PASS"},
+			{Description: "補登入測試", Status: hermes.SubTaskFailed, Result: "缺少 integration test"},
+		},
+	}
+
+	goal := buildHermesContinuationGoal(task, "replan")
+	for _, want := range []string{
+		"[Hermes continuation]",
+		"Mode: replan",
+		"Original goal:",
+		"修復登入流程",
+		"已完成 session cookie 修正",
+		"[done] 修正 cookie",
+		"[failed] 補登入測試",
+		"Do not repeat completed work",
+		"Re-plan only the remaining",
+	} {
+		if !strings.Contains(goal, want) {
+			t.Fatalf("continuation goal missing %q:\n%s", want, goal)
+		}
+	}
+}
+
+func TestIsHermesContinuationRequest(t *testing.T) {
+	for _, text := range []string{"繼續處理", "接續上一個", "重新規劃剩下的工作", "continue", "resume task", "replan task"} {
+		if !isHermesContinuationRequest(text) {
+			t.Fatalf("expected continuation request for %q", text)
+		}
+	}
+	if isHermesContinuationRequest("重新開始新的任務") {
+		t.Fatal("restart text should not be treated as continuation")
+	}
+}
+
+func TestHermesContinuationModeFromRequest(t *testing.T) {
+	tests := []struct {
+		text string
+		want string
+	}{
+		{text: "繼續處理", want: "continue"},
+		{text: "接續上一個", want: "continue"},
+		{text: "重新規劃剩下的工作", want: "replan"},
+		{text: "重規 #139", want: "replan"},
+		{text: "replan task", want: "replan"},
+		{text: "resume task", want: "continue"},
+	}
+
+	for _, tt := range tests {
+		if got := hermesContinuationModeFromRequest(tt.text); got != tt.want {
+			t.Fatalf("hermesContinuationModeFromRequest(%q) = %q, want %q", tt.text, got, tt.want)
+		}
+	}
+}
+
+func TestIsHermesIssueReferenceRequest(t *testing.T) {
+	for _, text := range []string{"繼續處理＃１３７", "好，繼續處理 #137", "接續 #137", "請處理 #137", "start #137"} {
+		if !isHermesIssueReferenceRequest(text) {
+			t.Fatalf("expected issue reference request for %q", text)
+		}
+	}
+	if isHermesIssueReferenceRequest("剛剛 #137 是什麼狀態？") {
+		t.Fatal("status-style issue mention should not be treated as an issue launch request")
 	}
 }
 
@@ -263,6 +880,115 @@ func TestHandleMessageHermesEnabledIssueRefFetchesIssue(t *testing.T) {
 	case <-called:
 	case <-time.After(time.Second):
 		t.Fatal("expected Hermes issue reference to fetch GitHub issue")
+	}
+}
+
+func TestHandleMessageHermesContinuationWithIssueRefFetchesIssue(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	const userID int64 = 123
+	const projectDir = "/tmp/alice-project"
+
+	called := make(chan struct{}, 1)
+	oldFetchIssue := hermesFetchIssue
+	hermesFetchIssue = func(ctx context.Context, gotProjectDir string, gotIssueNumber int) (*hermes.IssueContext, error) {
+		if gotProjectDir != projectDir {
+			t.Errorf("project dir: want %q, got %q", projectDir, gotProjectDir)
+		}
+		if gotIssueNumber != 137 {
+			t.Errorf("issue number: want 137, got %d", gotIssueNumber)
+		}
+		called <- struct{}{}
+		return nil, errors.New("stop after fetch")
+	}
+	defer func() { hermesFetchIssue = oldFetchIssue }()
+
+	bot := &TelegramBot{
+		agents: map[chatKey]*Agent{
+			key: NewAgent(&mockClient{}, projectDir, key.chatID, key.threadID),
+		},
+		allowIDs: map[int64]bool{userID: true},
+		config: &Config{
+			Hermes: HermesConfig{Enabled: true},
+		},
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {enabled: true},
+		},
+		messageQueue: make(chan *TelegramMessage, 10),
+	}
+
+	bot.handleMessage(key, userID, "繼續處理＃１３７", "", nil, nil, nil, "", 1)
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("expected issue-specific continuation to fetch GitHub issue")
+	}
+}
+
+func TestHandleMessageHermesIssueRefTakesPrecedenceOverContinuation(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	const userID int64 = 123
+	const projectDir = "/tmp/alice-project"
+
+	storage := newTestSQLiteStorage(t)
+	oldStorage := globalStorage
+	globalStorage = storage
+	t.Cleanup(func() { globalStorage = oldStorage })
+
+	store := buildHermesTaskStore()
+	if _, err := store.CreateTask(hermes.TaskState{
+		ID:         "continuable-task",
+		ChatID:     key.chatID,
+		ProjectDir: projectDir,
+		Status:     hermes.TaskStatusInterrupted,
+		Goal:       "修復登入流程",
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	fetchedIssue := make(chan struct{}, 1)
+	oldFetchIssue := hermesFetchIssue
+	hermesFetchIssue = func(ctx context.Context, gotProjectDir string, gotIssueNumber int) (*hermes.IssueContext, error) {
+		if gotProjectDir != projectDir {
+			t.Errorf("project dir: want %q, got %q", projectDir, gotProjectDir)
+		}
+		if gotIssueNumber != 137 {
+			t.Errorf("issue number: want 137, got %d", gotIssueNumber)
+		}
+		fetchedIssue <- struct{}{}
+		return nil, errors.New("stop after fetch")
+	}
+	defer func() { hermesFetchIssue = oldFetchIssue }()
+
+	bot := &TelegramBot{
+		agents: map[chatKey]*Agent{
+			key: NewAgent(&mockClient{}, projectDir, key.chatID, key.threadID),
+		},
+		allowIDs: map[int64]bool{userID: true},
+		config: &Config{
+			Hermes: HermesConfig{Enabled: true},
+		},
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {enabled: true},
+		},
+		messageQueue: make(chan *TelegramMessage, 20),
+	}
+
+	bot.handleMessage(key, userID, "繼續處理 #137", "", nil, nil, nil, "", 1)
+
+	select {
+	case <-fetchedIssue:
+	case <-time.After(time.Second):
+		t.Fatal("expected issue reference to fetch GitHub issue before generic continuation")
+	}
+
+	select {
+	case msg := <-bot.messageQueue:
+		text, _ := msg.Params["text"].(string)
+		if strings.Contains(text, "偵測到你想接續") && strings.Contains(text, "Hermes 任務") {
+			t.Fatalf("generic continuation should not run for issue-specific request, got %q", text)
+		}
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 

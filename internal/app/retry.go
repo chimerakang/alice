@@ -454,7 +454,7 @@ func (t *TelegramBot) handleRetryCommand(key chatKey, parts []string) {
 			cancelRun()
 			if runErr != nil {
 				jobErr = runErr
-				t.send(key, "❌ Retry 失敗："+runErr.Error())
+				t.send(key, formatRetryFailure(outcome, runErr))
 				continue
 			}
 			t.send(key, formatRetryCompletion(outcome))
@@ -509,7 +509,11 @@ func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *S
 	result, err := appengine.NewDirectEngine(agent).Run(ctx, prompt, agent.chatContext, progress)
 	agent.currentModelOverride = prevOverride
 	if err != nil {
-		return retryOutcome{Selection: selection, Result: result, Duration: time.Since(start)}, err
+		outcome := retryOutcome{Selection: selection, Result: result, Duration: time.Since(start)}
+		if persistErr := storeRetryFailureResult(store, selection, result, err); persistErr != nil {
+			log.Printf("[retry] persist retry failure task=%s subtask=%s: %v", selection.Task.ID, selection.SubTask.ID, persistErr)
+		}
+		return outcome, err
 	}
 
 	reviewModel := t.retryReviewModel(key)
@@ -544,6 +548,21 @@ func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *S
 		Improved:  retryScoreForSubTask(review, selection.SubTask.ID) > selection.SubTaskReview.Score,
 		Duration:  time.Since(start),
 	}, nil
+}
+
+func storeRetryFailureResult(store *SQLiteStorage, selection retrySelection, result appengine.Result, runErr error) error {
+	if store == nil {
+		return nil
+	}
+	now := time.Now()
+	subTask := selection.SubTask
+	subTask.Status = "failed"
+	subTask.ResultText = buildRetryFailureResult(result, runErr)
+	subTask.EndedAt = &now
+	if subTask.StartedAt.IsZero() {
+		subTask.StartedAt = now
+	}
+	return store.UpsertUnifiedSubTask(subTask)
 }
 
 func (t *TelegramBot) retryProjectDir(selection retrySelection, agent *Agent) string {
@@ -646,6 +665,19 @@ func buildRetryReviewSubTaskResult(selection retrySelection, retryResult string)
 	return b.String()
 }
 
+func buildRetryFailureResult(result appengine.Result, runErr error) string {
+	var b strings.Builder
+	b.WriteString("Retry failed.\n\nError:\n")
+	if runErr != nil {
+		b.WriteString(strings.TrimSpace(runErr.Error()))
+	}
+	if partial := strings.TrimSpace(result.Text); partial != "" {
+		b.WriteString("\n\nPartial output captured before failure:\n")
+		b.WriteString(partial)
+	}
+	return strings.TrimSpace(b.String())
+}
+
 func normalizeRetryReviewForSubTask(review appengine.ReviewResult, subTaskID string) appengine.ReviewResult {
 	if len(review.SubTaskResults) == 0 {
 		review.SubTaskResults = []appengine.ReviewSubTaskResult{{
@@ -689,6 +721,17 @@ func formatRetryCompletion(outcome retryOutcome) string {
 	}
 	if tags := retryReviewTagsForSubTask(outcome.Review, outcome.Selection.SubTask.ID); tags != "" {
 		message += "\nIssue tags: " + tags
+	}
+	return message
+}
+
+func formatRetryFailure(outcome retryOutcome, runErr error) string {
+	message := "❌ Retry 失敗：" + strings.TrimSpace(runErr.Error())
+	if partial := truncateRetryMessageField(outcome.Result.Text, 900); partial != "" {
+		message += "\n\n已捕捉到的 partial output：\n" + partial
+	}
+	if outcome.Duration > 0 {
+		message += "\n\n耗時: " + outcome.Duration.Round(time.Second).String()
 	}
 	return message
 }

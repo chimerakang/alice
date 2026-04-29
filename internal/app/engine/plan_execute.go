@@ -27,6 +27,7 @@ type PlanExecuteConfig struct {
 	PlannerModel string
 	ProjectDir   string
 	ChatID       int64
+	ThreadID     int
 
 	MaxPlannerJSONRetries int
 	InterruptPolicy       hermes.InterruptPolicy
@@ -140,6 +141,7 @@ func (e *PlanExecuteEngine) Start(ctx context.Context, goal string, cc *ChatCont
 	task := hermes.TaskState{
 		ID:                uuid.New().String(),
 		ChatID:            e.cfg.ChatID,
+		ThreadID:          e.cfg.ThreadID,
 		ProjectDir:        e.cfg.ProjectDir,
 		Goal:              goal,
 		Status:            hermes.TaskStatusPlanning,

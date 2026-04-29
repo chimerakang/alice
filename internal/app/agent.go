@@ -827,6 +827,7 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 		PlannerModel:          a.planModel,
 		ProjectDir:            a.projectDir,
 		ChatID:                a.chatID,
+		ThreadID:              a.threadID,
 		MaxPlannerJSONRetries: 1,
 		InterruptPolicy:       hermes.InterruptQueue,
 		Budget:                hermes.TokenBudget{},

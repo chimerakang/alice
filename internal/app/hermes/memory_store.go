@@ -93,9 +93,13 @@ func (s *MemoryTaskStore) MarkSubTaskStarted(taskID string, idx int) error {
 }
 
 func (s *MemoryTaskStore) AdvanceTask(taskID string, nextIdx int, status TaskStatus) error {
-	return s.update(taskID, func(task *TaskState) {
+	return s.updateErr(taskID, func(task *TaskState) error {
+		if err := ValidateTaskStatusTransition(taskID, task.Status, status); err != nil {
+			return err
+		}
 		task.CurrentIdx = nextIdx
 		task.Status = status
+		return nil
 	})
 }
 
@@ -118,15 +122,23 @@ func (s *MemoryTaskStore) UpdatePlannerSession(taskID string, sessionID string) 
 }
 
 func (s *MemoryTaskStore) MarkInterrupted(taskID string, messageID int64) error {
-	return s.update(taskID, func(task *TaskState) {
+	return s.updateErr(taskID, func(task *TaskState) error {
+		if err := ValidateTaskStatusTransition(taskID, task.Status, TaskStatusInterrupted); err != nil {
+			return err
+		}
 		task.Status = TaskStatusInterrupted
 		task.InterruptedBy = &messageID
+		return nil
 	})
 }
 
 func (s *MemoryTaskStore) MarkStatus(taskID string, status TaskStatus) error {
-	return s.update(taskID, func(task *TaskState) {
+	return s.updateErr(taskID, func(task *TaskState) error {
+		if err := ValidateTaskStatusTransition(taskID, task.Status, status); err != nil {
+			return err
+		}
 		task.Status = status
+		return nil
 	})
 }
 

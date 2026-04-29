@@ -26,6 +26,35 @@ func truncStderr(s string) string {
 	return s[:max] + "…"
 }
 
+func formatCLIStreamError(resp *CLIResponse, maxTurns int) string {
+	if resp == nil {
+		return "unknown stream error"
+	}
+	parts := []string{}
+	if detail := strings.TrimSpace(resp.Result); detail != "" {
+		parts = append(parts, detail)
+	} else {
+		parts = append(parts, "stream ended with is_error=true but no result text")
+	}
+	if resp.NumTurns > 0 {
+		if maxTurns > 0 {
+			parts = append(parts, fmt.Sprintf("turns=%d max_turns=%d", resp.NumTurns, maxTurns))
+			if resp.NumTurns >= maxTurns {
+				parts = append(parts, "likely exceeded --max-turns")
+			}
+		} else {
+			parts = append(parts, fmt.Sprintf("turns=%d", resp.NumTurns))
+		}
+	}
+	if resp.Subtype != "" {
+		parts = append(parts, "subtype="+resp.Subtype)
+	}
+	if partial := truncStderr(resp.TextContent); partial != "" {
+		parts = append(parts, "partial_text="+partial)
+	}
+	return strings.Join(parts, "; ")
+}
+
 // Client 定義統一的客戶端接口（支持 CLI 和 API）
 type Client interface {
 	Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error)
@@ -378,7 +407,7 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 	RecordAPICall(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(model))
 
 	if finalResp.IsError {
-		return finalResp, fmt.Errorf("CLI returned error: %s", finalResp.Result)
+		return finalResp, fmt.Errorf("CLI returned error: %s", formatCLIStreamError(finalResp, c.MaxTurns))
 	}
 
 	return finalResp, nil

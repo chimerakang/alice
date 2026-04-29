@@ -3,6 +3,7 @@ package hermes
 import (
 	"database/sql"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +56,7 @@ func makeTask(id string, chatID int64) TaskState {
 func TestCreateAndGetTask(t *testing.T) {
 	store := newTestStore(t)
 	orig := makeTask("task-1", 42)
+	orig.ThreadID = 7
 
 	created, err := store.CreateTask(orig)
 	if err != nil {
@@ -68,7 +70,7 @@ func TestCreateAndGetTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
-	if got.ID != "task-1" || got.ChatID != 42 {
+	if got.ID != "task-1" || got.ChatID != 42 || got.ThreadID != 7 {
 		t.Errorf("unexpected task: %+v", got)
 	}
 	if got.Goal != orig.Goal {
@@ -180,6 +182,52 @@ func TestAdvanceTask(t *testing.T) {
 	}
 	if got.Status != TaskStatusExecuting {
 		t.Errorf("Status: got %s, want executing", got.Status)
+	}
+}
+
+func TestSQLiteTaskStoreRejectsTerminalToActiveTransition(t *testing.T) {
+	store := newTestStore(t)
+	if _, err := store.CreateTask(makeTask("task-terminal", 2)); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := store.MarkStatus("task-terminal", TaskStatusDone); err != nil {
+		t.Fatalf("MarkStatus(done): %v", err)
+	}
+
+	err := store.MarkStatus("task-terminal", TaskStatusExecuting)
+	if err == nil || !strings.Contains(err.Error(), "invalid task status transition") {
+		t.Fatalf("MarkStatus(done -> executing) error = %v", err)
+	}
+
+	got, err := store.GetTask("task-terminal")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != TaskStatusDone {
+		t.Fatalf("status mutated after rejected transition: got %s, want %s", got.Status, TaskStatusDone)
+	}
+}
+
+func TestMemoryTaskStoreRejectsTerminalToActiveTransition(t *testing.T) {
+	store := NewMemoryTaskStore()
+	if _, err := store.CreateTask(makeTask("task-memory-terminal", 2)); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := store.MarkStatus("task-memory-terminal", TaskStatusFailed); err != nil {
+		t.Fatalf("MarkStatus(failed): %v", err)
+	}
+
+	err := store.AdvanceTask("task-memory-terminal", 1, TaskStatusExecuting)
+	if err == nil || !strings.Contains(err.Error(), "invalid task status transition") {
+		t.Fatalf("AdvanceTask(failed -> executing) error = %v", err)
+	}
+
+	got, err := store.GetTask("task-memory-terminal")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != TaskStatusFailed || got.CurrentIdx != 0 {
+		t.Fatalf("task mutated after rejected transition: status=%s idx=%d", got.Status, got.CurrentIdx)
 	}
 }
 
@@ -398,6 +446,42 @@ func containsStr(s, sub string) bool {
 	return false
 }
 
+// ── ListTasksForChat: artifact loading must not deadlock on MaxOpenConns(1) ────
+//
+// Regression for #137: loading artifacts requires a second DB query. If rows
+// from the outer task scan were still open, this would deadlock under
+// SetMaxOpenConns(1). The fix: scan all task rows, close rows, then load
+// artifacts per task. This test exercises that path explicitly.
+func TestListTasksWithArtifacts_NoDeadlock(t *testing.T) {
+	store := newTestStore(t) // MaxOpenConns(1) via openTestDB
+
+	// Create two tasks, each with an artifact.
+	for i, id := range []string{"dl-task-1", "dl-task-2"} {
+		task := makeTask(id, 55)
+		if _, err := store.CreateTask(task); err != nil {
+			t.Fatalf("CreateTask %d: %v", i, err)
+		}
+		art := Artifact{Path: "src/file.go", Hash: "deadbeef", SubTaskID: "s1"}
+		if err := store.AppendArtifact(id, art); err != nil {
+			t.Fatalf("AppendArtifact %d: %v", i, err)
+		}
+	}
+
+	// ListTasksForChat must complete without deadlock; artifacts must be present.
+	tasks, err := store.ListTasksForChat(55, 10)
+	if err != nil {
+		t.Fatalf("ListTasksForChat deadlocked or errored: %v", err)
+	}
+	if len(tasks) != 2 {
+		t.Fatalf("expected 2 tasks, got %d", len(tasks))
+	}
+	for _, task := range tasks {
+		if len(task.Artifacts) != 1 {
+			t.Errorf("task %s: expected 1 artifact, got %d", task.ID, len(task.Artifacts))
+		}
+	}
+}
+
 // ── UpdatePlannerSession ───────────────────────────────────────────────────────
 
 func TestUpdatePlannerSession(t *testing.T) {
@@ -450,6 +534,102 @@ func TestFileBackedStore_RoundTrip(t *testing.T) {
 
 // ── ResetBudgetStartedAt ───────────────────────────────────────────────────────
 
+// TestGetActiveTaskForChat_NoDeadlock verifies that GetActiveTaskForChat, which
+// internally calls scanTask → loadArtifacts (a second query on the same conn),
+// does not deadlock under SetMaxOpenConns(1).
+func TestGetActiveTaskForChat_NoDeadlock(t *testing.T) {
+	store := newTestStore(t)
+
+	task := makeTask("active-dl", 99)
+	if _, err := store.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	// Artifact forces loadArtifacts to issue a real second query.
+	art := Artifact{Path: "main.go", Hash: "aabbcc", SubTaskID: "s1"}
+	if err := store.AppendArtifact("active-dl", art); err != nil {
+		t.Fatalf("AppendArtifact: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := store.GetActiveTaskForChat(99)
+		if err == ErrNoTask {
+			err = nil
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("GetActiveTaskForChat error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("GetActiveTaskForChat deadlocked under SetMaxOpenConns(1)")
+	}
+}
+
+// TestUpdateSubTask_NoDeadlock verifies the retry subtask update path —
+// UpdateSubTask reads plan_json via QueryRow, patches it, writes back via Exec,
+// then calls upsertUnifiedSubTask — completes without deadlock.
+func TestUpdateSubTask_NoDeadlock(t *testing.T) {
+	store := newTestStore(t)
+
+	if _, err := store.CreateTask(makeTask("retry-dl", 77)); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- store.UpdateSubTask("retry-dl", 0, SubTaskDone, "completed ok", 500)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("UpdateSubTask error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("UpdateSubTask deadlocked under SetMaxOpenConns(1)")
+	}
+}
+
+// TestListThenUpdateSubTask_NoDeadlock simulates the dashboard+retry access
+// pattern: list tasks for a chat (rows + artifacts), then immediately update a
+// sub-task on the first result. Verifies connection is correctly released between
+// the two calls under SetMaxOpenConns(1).
+func TestListThenUpdateSubTask_NoDeadlock(t *testing.T) {
+	store := newTestStore(t)
+
+	if _, err := store.CreateTask(makeTask("combo-dl", 66)); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	art := Artifact{Path: "pkg/foo.go", Hash: "cafebabe", SubTaskID: "s1"}
+	if err := store.AppendArtifact("combo-dl", art); err != nil {
+		t.Fatalf("AppendArtifact: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		tasks, err := store.ListTasksForChat(66, 5)
+		if err != nil {
+			done <- err
+			return
+		}
+		if len(tasks) == 0 {
+			done <- nil
+			return
+		}
+		done <- store.UpdateSubTask(tasks[0].ID, 0, SubTaskDone, "ok", 100)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("list-then-update error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ListTasksForChat + UpdateSubTask deadlocked under SetMaxOpenConns(1)")
+	}
+}
+
 func TestResetBudgetStartedAt(t *testing.T) {
 	store := newTestStore(t)
 	task := makeTask("task-budget", 42)
@@ -476,5 +656,114 @@ func TestResetBudgetStartedAt(t *testing.T) {
 	}
 	if got.TokenBudget.MaxTotalTokens != created.TokenBudget.MaxTotalTokens {
 		t.Errorf("TokenBudget.MaxTotalTokens corrupted after reset")
+	}
+}
+
+// TestMarkInterrupted_NoDeadlock verifies that MarkInterrupted, which issues a
+// QueryRow (SELECT status) then two sequential Exec calls (UPDATE
+// hermes_task_states + UPDATE tasks via updateUnifiedTaskStatus), completes
+// without deadlocking under SetMaxOpenConns(1) and actually transitions the
+// task to interrupted status.
+func TestMarkInterrupted_NoDeadlock(t *testing.T) {
+	store := newTestStore(t)
+	task := makeTask("task-mark-int", 55)
+	if _, err := store.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- store.MarkInterrupted("task-mark-int", 1234)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("MarkInterrupted: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("MarkInterrupted deadlocked under SetMaxOpenConns(1)")
+	}
+
+	got, err := store.GetTask("task-mark-int")
+	if err != nil {
+		t.Fatalf("GetTask after MarkInterrupted: %v", err)
+	}
+	if got.Status != TaskStatusInterrupted {
+		t.Errorf("status = %q, want %q", got.Status, TaskStatusInterrupted)
+	}
+	if got.InterruptedBy == nil || *got.InterruptedBy != 1234 {
+		t.Errorf("InterruptedBy = %v, want 1234", got.InterruptedBy)
+	}
+}
+
+// TestMarkStatus_NoDeadlock verifies that MarkStatus, which issues a QueryRow
+// (SELECT status) then two sequential Exec calls (UPDATE hermes_task_states +
+// UPDATE tasks), completes without deadlocking under SetMaxOpenConns(1) and
+// persists the new status correctly.
+func TestMarkStatus_NoDeadlock(t *testing.T) {
+	store := newTestStore(t)
+	task := makeTask("task-mark-status", 56)
+	if _, err := store.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- store.MarkStatus("task-mark-status", TaskStatusExecuting)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("MarkStatus(planning->executing): %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("MarkStatus deadlocked under SetMaxOpenConns(1)")
+	}
+
+	got, err := store.GetTask("task-mark-status")
+	if err != nil {
+		t.Fatalf("GetTask after MarkStatus: %v", err)
+	}
+	if got.Status != TaskStatusExecuting {
+		t.Errorf("status = %q, want %q", got.Status, TaskStatusExecuting)
+	}
+}
+
+// TestMarkStatus_SequentialTransitions_NoDeadlock exercises the full
+// planning → executing → done lifecycle with three sequential MarkStatus calls
+// under SetMaxOpenConns(1) to confirm the read-then-write pattern never
+// deadlocks across multiple transitions.
+func TestMarkStatus_SequentialTransitions_NoDeadlock(t *testing.T) {
+	store := newTestStore(t)
+	task := makeTask("task-seq-trans", 57)
+	if _, err := store.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	transitions := []TaskStatus{TaskStatusExecuting, TaskStatusValidating, TaskStatusDone}
+	for _, next := range transitions {
+		done := make(chan error, 1)
+		go func(s TaskStatus) {
+			done <- store.MarkStatus("task-seq-trans", s)
+		}(next)
+
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("MarkStatus(->%s): %v", next, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("MarkStatus(->%s) deadlocked under SetMaxOpenConns(1)", next)
+		}
+	}
+
+	got, err := store.GetTask("task-seq-trans")
+	if err != nil {
+		t.Fatalf("GetTask after transitions: %v", err)
+	}
+	if got.Status != TaskStatusDone {
+		t.Errorf("final status = %q, want %q", got.Status, TaskStatusDone)
 	}
 }
