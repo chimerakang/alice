@@ -2122,7 +2122,7 @@ func (t *TelegramBot) resolveHermesContinuationTaskBySelector(key chatKey, proje
 		return hermes.TaskState{}, false, false
 	}
 	if strings.TrimSpace(selector) != "" {
-		task, ok, ambiguous := selectHermesContinuationTaskByIDForScope(tasks, key.threadID, projectDir, selector)
+		task, ok, ambiguous := selectHermesContinuationTaskByIDForSelectableScope(tasks, key.threadID, projectDir, selector)
 		return task, ok, ambiguous
 	}
 	task, ok := selectHermesContinuationTaskForScope(tasks, key.threadID, projectDir)
@@ -2146,6 +2146,14 @@ func selectHermesContinuationTaskByID(tasks []hermes.TaskState, projectDir, sele
 }
 
 func selectHermesContinuationTaskByIDForScope(tasks []hermes.TaskState, threadID int, projectDir, selector string) (hermes.TaskState, bool, bool) {
+	return selectHermesContinuationTaskByIDWithMatcher(tasks, threadID, projectDir, selector, hermesTaskMatchesScope)
+}
+
+func selectHermesContinuationTaskByIDForSelectableScope(tasks []hermes.TaskState, threadID int, projectDir, selector string) (hermes.TaskState, bool, bool) {
+	return selectHermesContinuationTaskByIDWithMatcher(tasks, threadID, projectDir, selector, hermesTaskMatchesSelectableScope)
+}
+
+func selectHermesContinuationTaskByIDWithMatcher(tasks []hermes.TaskState, threadID int, projectDir, selector string, matches func(hermes.TaskState, int, string) bool) (hermes.TaskState, bool, bool) {
 	selector = strings.ToLower(strings.TrimSpace(selector))
 	if selector == "" {
 		return hermes.TaskState{}, false, false
@@ -2157,7 +2165,7 @@ func selectHermesContinuationTaskByIDForScope(tasks []hermes.TaskState, threadID
 		if id == "" || !strings.HasPrefix(id, selector) {
 			continue
 		}
-		if !hermesTaskMatchesScope(task, threadID, projectDir) || !hermesTaskIsContinuable(task) {
+		if !matches(task, threadID, projectDir) || !hermesTaskIsContinuable(task) {
 			continue
 		}
 		matched = task
@@ -2207,6 +2215,20 @@ func selectHermesContinuationTasksForScope(tasks []hermes.TaskState, threadID in
 		out = append(out, ranked[i].task)
 	}
 	return out
+}
+
+func selectHermesLegacyContinuationTasksForScope(tasks []hermes.TaskState, threadID int, projectDir string, limit int) []hermes.TaskState {
+	if threadID == 0 {
+		return nil
+	}
+	var legacy []hermes.TaskState
+	for _, task := range tasks {
+		if task.ThreadID != 0 {
+			continue
+		}
+		legacy = append(legacy, task)
+	}
+	return selectHermesContinuationTasksForScope(legacy, 0, projectDir, limit)
 }
 
 type hermesSimilarDecision int
@@ -2341,6 +2363,13 @@ func hermesTaskMatchesProject(task hermes.TaskState, projectDir string) bool {
 
 func hermesTaskMatchesScope(task hermes.TaskState, threadID int, projectDir string) bool {
 	return task.ThreadID == threadID && hermesTaskMatchesProject(task, projectDir)
+}
+
+func hermesTaskMatchesSelectableScope(task hermes.TaskState, threadID int, projectDir string) bool {
+	if hermesTaskMatchesScope(task, threadID, projectDir) {
+		return true
+	}
+	return threadID != 0 && task.ThreadID == 0 && hermesTaskMatchesProject(task, projectDir)
 }
 
 func cleanHermesProjectDir(projectDir string) string {
@@ -2559,18 +2588,32 @@ func (t *TelegramBot) hermesStatusTextAndCandidates(key chatKey, projectDir stri
 	}
 
 	var candidates []hermes.TaskState
+	var legacyCandidates []hermes.TaskState
 	if tasks, err := t.taskSvc.ListForChat(key.chatID, 10); err == nil {
 		candidates = selectHermesContinuationTasksForScope(tasks, key.threadID, projectDir, 3)
+		if len(candidates) == 0 {
+			legacyCandidates = selectHermesLegacyContinuationTasksForScope(tasks, key.threadID, projectDir, 3)
+		}
 	} else {
 		log.Printf("[hermes] failed to format status candidates for chat %d: %v", key.chatID, err)
 	}
-	if len(candidates) > 0 {
+	if len(candidates) > 0 || len(legacyCandidates) > 0 {
 		lines = append(lines, "")
-		lines = append(lines, "可接續任務候選：")
-		for _, task := range candidates {
-			lines = append(lines, formatHermesTaskLine(task))
+		if len(candidates) > 0 {
+			lines = append(lines, "可接續任務候選：")
+			for _, task := range candidates {
+				lines = append(lines, formatHermesTaskLine(task))
+			}
+		} else {
+			lines = append(lines, "可接續舊版任務候選（Topic 未記錄，請確認 id 後操作）：")
+			for _, task := range legacyCandidates {
+				lines = append(lines, formatHermesTaskLine(task))
+			}
 		}
 		lines = append(lines, "可用操作：直接按下方按鈕，或使用 /hermes continue <id>、/hermes replan <id>、/hermes restart <任務說明>")
+	}
+	if len(candidates) == 0 {
+		candidates = legacyCandidates
 	}
 	return strings.Join(lines, "\n"), candidates
 }
@@ -4347,12 +4390,12 @@ func (t *TelegramBot) handleHermesCallback(key chatKey, queryID, data string) {
 		t.answerCallbackQuery(queryID, "此任務不屬於目前對話")
 		return
 	}
-	if task.ThreadID != key.threadID {
+	projectDir := t.getAgent(key).ProjectDir()
+	if !hermesTaskMatchesSelectableScope(task, key.threadID, projectDir) {
 		t.answerCallbackQuery(queryID, "此任務不屬於目前 Topic")
 		return
 	}
 
-	projectDir := t.getAgent(key).ProjectDir()
 	if !hermesTaskMatchesProject(task, projectDir) {
 		t.answerCallbackQuery(queryID, "此任務不屬於目前專案")
 		return

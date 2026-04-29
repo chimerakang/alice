@@ -230,6 +230,82 @@ func TestSelectHermesContinuationTaskForScopeSkipsOtherThread(t *testing.T) {
 	}
 }
 
+func TestSelectHermesContinuationTaskForScopeDoesNotAutoPickLegacyThread(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{
+			ID:         "legacy-thread",
+			ChatID:     42,
+			ThreadID:   0,
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusInterrupted,
+			Goal:       "舊版任務",
+			UpdatedAt:  now,
+		},
+	}
+
+	_, ok := selectHermesContinuationTaskForScope(tasks, 7, "/tmp/project")
+	if ok {
+		t.Fatal("legacy thread task should not be auto-selected for a topic")
+	}
+}
+
+func TestSelectHermesContinuationTaskByIDForSelectableScopeAcceptsLegacyThread(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{
+			ID:         "legacy-thread",
+			ChatID:     42,
+			ThreadID:   0,
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusInterrupted,
+			Goal:       "舊版任務",
+			UpdatedAt:  now,
+		},
+	}
+
+	got, ok, ambiguous := selectHermesContinuationTaskByIDForSelectableScope(tasks, 7, "/tmp/project", "legacy")
+	if !ok || ambiguous {
+		t.Fatalf("expected explicit legacy selection, ok=%v ambiguous=%v", ok, ambiguous)
+	}
+	if got.ID != "legacy-thread" {
+		t.Fatalf("task = %q, want legacy-thread", got.ID)
+	}
+}
+
+func TestSelectHermesLegacyContinuationTasksForScope(t *testing.T) {
+	now := time.Now()
+	tasks := []hermes.TaskState{
+		{
+			ID:         "legacy-thread",
+			ThreadID:   0,
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusInterrupted,
+			Goal:       "舊版任務",
+			UpdatedAt:  now,
+		},
+		{
+			ID:         "other-thread",
+			ThreadID:   8,
+			ProjectDir: "/tmp/project",
+			Status:     hermes.TaskStatusExecuting,
+			Goal:       "其他 topic 任務",
+			UpdatedAt:  now,
+		},
+	}
+
+	got := selectHermesLegacyContinuationTasksForScope(tasks, 7, "/tmp/project", 3)
+	if len(got) != 1 {
+		t.Fatalf("legacy candidate count = %d, want 1", len(got))
+	}
+	if got[0].ID != "legacy-thread" {
+		t.Fatalf("legacy candidate = %q, want legacy-thread", got[0].ID)
+	}
+	if got := selectHermesLegacyContinuationTasksForScope(tasks, 0, "/tmp/project", 3); len(got) != 0 {
+		t.Fatalf("general topic should not use legacy fallback, got %d candidates", len(got))
+	}
+}
+
 func TestSelectHermesContinuationTaskMatchesCleanProjectPath(t *testing.T) {
 	now := time.Now()
 	tasks := []hermes.TaskState{
