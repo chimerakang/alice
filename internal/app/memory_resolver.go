@@ -6,6 +6,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"time"
 
 	"claude-tg-agent/internal/app/hermes"
 )
@@ -86,12 +87,46 @@ type hermesMemoryTaskSource interface {
 	ListForChat(chatID int64, limit int) ([]hermes.TaskState, error)
 }
 
+type generalMemorySource interface {
+	ListGeneralMemoryCards(ctx context.Context, req MemoryRequest, limit int) ([]GeneralMemoryCard, error)
+}
+
+type GeneralMemoryCard struct {
+	ID                string
+	ChatID            int64
+	ThreadID          int
+	ProjectDir        string
+	GithubIssueNumber int
+	Goal              string
+	Result            string
+	Engine            string
+	Backend           string
+	Model             string
+	UpdatedAt         time.Time
+}
+
 type UnifiedMemoryResolver struct {
-	tasks hermesMemoryTaskSource
+	tasks   hermesMemoryTaskSource
+	general generalMemorySource
 }
 
 func NewMemoryResolver(tasks hermesMemoryTaskSource) *UnifiedMemoryResolver {
 	return &UnifiedMemoryResolver{tasks: tasks}
+}
+
+func NewMemoryResolverWithSources(tasks hermesMemoryTaskSource, general generalMemorySource) *UnifiedMemoryResolver {
+	return &UnifiedMemoryResolver{tasks: tasks, general: general}
+}
+
+func globalGeneralMemorySource() generalMemorySource {
+	if globalStorage == nil {
+		return nil
+	}
+	source, ok := globalStorage.(generalMemorySource)
+	if !ok {
+		return nil
+	}
+	return source
 }
 
 func (r *UnifiedMemoryResolver) Resolve(ctx context.Context, req MemoryRequest) (MemoryBundle, error) {
@@ -112,6 +147,15 @@ func (r *UnifiedMemoryResolver) Resolve(ctx context.Context, req MemoryRequest) 
 		}
 		if strings.TrimSpace(taskSection.Text) != "" {
 			sections = append(sections, taskSection)
+		}
+	}
+	if r != nil && r.general != nil {
+		generalSection, err := r.resolveGeneralMemorySection(ctx, req)
+		if err != nil {
+			return MemoryBundle{}, err
+		}
+		if strings.TrimSpace(generalSection.Text) != "" {
+			sections = append(sections, generalSection)
 		}
 	}
 	if issueNumber == 0 {
@@ -147,6 +191,65 @@ func memorySectionSummary(sections []MemorySection) string {
 	return strings.Join(parts, ",")
 }
 
+func buildGeneralMemoryContextSection(cards []GeneralMemoryCard) string {
+	if len(cards) == 0 {
+		return ""
+	}
+	sections := make([]string, 0, len(cards))
+	for _, card := range cards {
+		goal := strings.TrimSpace(stripLanguageDirective(card.Goal))
+		result := strings.TrimSpace(card.Result)
+		if goal == "" && result == "" {
+			continue
+		}
+		var sb strings.Builder
+		sb.WriteString("Persisted general work memory")
+		if !card.UpdatedAt.IsZero() {
+			sb.WriteString(" (")
+			sb.WriteString(card.UpdatedAt.Format(time.RFC3339))
+			sb.WriteString(")")
+		}
+		sb.WriteString(":\n")
+		if card.ID != "" {
+			sb.WriteString("- Task ID: ")
+			sb.WriteString(card.ID)
+			sb.WriteString("\n")
+		}
+		if card.Engine != "" {
+			sb.WriteString("- Engine: ")
+			sb.WriteString(card.Engine)
+			sb.WriteString("\n")
+		}
+		if card.Model != "" {
+			sb.WriteString("- Model: ")
+			sb.WriteString(card.Model)
+			sb.WriteString("\n")
+		}
+		if card.GithubIssueNumber > 0 {
+			sb.WriteString(fmt.Sprintf("- GitHub issue: #%d\n", card.GithubIssueNumber))
+		}
+		if goal != "" {
+			sb.WriteString("- Request: ")
+			sb.WriteString(clampHermesContext(goal, 800))
+			sb.WriteString("\n")
+		}
+		if result != "" {
+			sb.WriteString("- Result:\n")
+			sb.WriteString(indentHermesContext(clampHermesContext(result, 1200), "  "))
+		}
+		sections = append(sections, strings.TrimSpace(sb.String()))
+	}
+	if len(sections) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Persisted general task context:\n")
+	sb.WriteString("Use this as continuity for related direct/file/media work. Treat it as a summary, and verify concrete details before editing or making high-impact decisions.\n\n")
+	sb.WriteString(strings.Join(sections, "\n\n"))
+	return sb.String()
+}
+
 func (r *UnifiedMemoryResolver) resolveHermesTaskSection(ctx context.Context, req MemoryRequest) (MemorySection, error) {
 	select {
 	case <-ctx.Done():
@@ -176,6 +279,35 @@ func (r *UnifiedMemoryResolver) resolveHermesTaskSection(ctx context.Context, re
 		Scope:    scope,
 		Priority: priority,
 		Text:     buildHermesTaskContextSection(tasks),
+	}, nil
+}
+
+func (r *UnifiedMemoryResolver) resolveGeneralMemorySection(ctx context.Context, req MemoryRequest) (MemorySection, error) {
+	select {
+	case <-ctx.Done():
+		return MemorySection{}, ctx.Err()
+	default:
+	}
+	cards, err := r.general.ListGeneralMemoryCards(ctx, req, 3)
+	if err != nil {
+		return MemorySection{}, fmt.Errorf("list general memory: %w", err)
+	}
+	if len(cards) == 0 {
+		return MemorySection{}, nil
+	}
+
+	issueNumber := normalizedMemoryIssueNumber(req)
+	scope := memoryScopeForRequest(req)
+	priority := 60
+	if issueNumber > 0 {
+		scope = fmt.Sprintf("issue:%d", issueNumber)
+		priority = 90
+	}
+	return MemorySection{
+		Source:   "general_task",
+		Scope:    scope,
+		Priority: priority,
+		Text:     buildGeneralMemoryContextSection(cards),
 	}, nil
 }
 

@@ -323,6 +323,105 @@ func TestMemoryResolverClampsLowPrioritySections(t *testing.T) {
 	}
 }
 
+func TestSQLiteStorageListsGeneralMemoryCardsFromDecisionTasks(t *testing.T) {
+	storage := newTestSQLiteStorage(t)
+	now := time.Now().Add(-time.Hour)
+	if err := storage.InsertDecisionLog(DecisionLog{
+		Timestamp:     now,
+		SessionID:     "direct-session",
+		ProjectPath:   "/repo",
+		ChatID:        42,
+		ThreadID:      7,
+		UserPrompt:    "請分析文件並整理 #143 memory 架構",
+		AgentResponse: "已整理出 MemoryResolver 後續要讀 general task memory。",
+		Outcome: ExecutionOutcome{
+			Success:  true,
+			TaskType: "analysis",
+			Summary:  "整理 memory 架構",
+		},
+		Model: "gpt-5.5",
+	}); err != nil {
+		t.Fatalf("InsertDecisionLog: %v", err)
+	}
+	if err := storage.InsertDecisionLog(DecisionLog{
+		Timestamp:     now.Add(30 * time.Minute),
+		SessionID:     "other-session",
+		ProjectPath:   "/repo",
+		ChatID:        42,
+		ThreadID:      7,
+		UserPrompt:    "處理 #99 unrelated",
+		AgentResponse: "不應進入 #143 memory。",
+		Outcome: ExecutionOutcome{
+			Success:  true,
+			TaskType: "analysis",
+		},
+		Model: "gpt-5.5",
+	}); err != nil {
+		t.Fatalf("InsertDecisionLog(other): %v", err)
+	}
+
+	cards, err := storage.ListGeneralMemoryCards(context.Background(), MemoryRequest{
+		ChatID:      42,
+		ThreadID:    7,
+		ProjectDir:  "/repo",
+		UserMessage: "繼續 #143",
+	}, 3)
+	if err != nil {
+		t.Fatalf("ListGeneralMemoryCards: %v", err)
+	}
+	if len(cards) != 1 {
+		t.Fatalf("cards = %d, want 1: %#v", len(cards), cards)
+	}
+	if !strings.Contains(cards[0].Result, "general task memory") {
+		t.Fatalf("card result = %q, want #143 memory", cards[0].Result)
+	}
+}
+
+func TestMemoryResolverIncludesGeneralTaskMemory(t *testing.T) {
+	storage := newTestSQLiteStorage(t)
+	if err := storage.InsertDecisionLog(DecisionLog{
+		Timestamp:     time.Now().Add(-time.Hour),
+		SessionID:     "direct-session",
+		ProjectPath:   "/repo",
+		ChatID:        42,
+		ThreadID:      7,
+		UserPrompt:    "分析文件並規劃 #143 general memory",
+		AgentResponse: "決定先沿用 unified tasks 作為 general memory card。",
+		Outcome: ExecutionOutcome{
+			Success:  true,
+			TaskType: "analysis",
+		},
+		Model: "gpt-5.5",
+	}); err != nil {
+		t.Fatalf("InsertDecisionLog: %v", err)
+	}
+
+	resolver := NewMemoryResolverWithSources(nil, storage)
+	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
+		ChatID:      42,
+		ThreadID:    7,
+		ProjectDir:  "/repo",
+		UserMessage: "繼續處理 #143",
+		Mode:        "document",
+		RecentMessages: []contextMessage{
+			{Role: "assistant", Content: "這段 recent 應因 explicit issue 被跳過"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	rendered := bundle.Render()
+	if !strings.Contains(rendered, "unified tasks 作為 general memory card") {
+		t.Fatalf("rendered bundle missing general task memory:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "recent 應因 explicit issue") {
+		t.Fatalf("rendered bundle leaked generic recent messages:\n%s", rendered)
+	}
+	if len(bundle.Sections) != 1 || bundle.Sections[0].Source != "general_task" {
+		t.Fatalf("sections = %#v, want only general_task", bundle.Sections)
+	}
+}
+
 func TestComposeHermesGoalWithContextStripsNestedInjectedGoal(t *testing.T) {
 	tasks := []hermes.TaskState{
 		{

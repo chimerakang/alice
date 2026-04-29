@@ -2357,7 +2357,7 @@ func (t *TelegramBot) buildHermesGoalWithContext(key chatKey, currentRequest str
 	if t != nil && t.taskSvc != nil {
 		taskSource = t.taskSvc
 	}
-	resolver := NewMemoryResolver(taskSource)
+	resolver := NewMemoryResolverWithSources(taskSource, globalGeneralMemorySource())
 	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
 		ChatID:         key.chatID,
 		ThreadID:       key.threadID,
@@ -3186,7 +3186,7 @@ func (t *TelegramBot) loadHermesContextTasks(chatID int64, currentRequest string
 	if t != nil && t.taskSvc != nil {
 		taskSource = t.taskSvc
 	}
-	resolver := NewMemoryResolver(taskSource)
+	resolver := NewMemoryResolverWithSources(taskSource, globalGeneralMemorySource())
 	tasks, err := resolver.loadHermesMemoryTasks(MemoryRequest{
 		ChatID:      chatID,
 		UserMessage: currentRequest,
@@ -5645,7 +5645,7 @@ func (t *TelegramBot) resolveTelegramRunnerMemoryPrompt(ctx context.Context, key
 	if t != nil && t.taskSvc != nil {
 		taskSource = t.taskSvc
 	}
-	resolver := NewMemoryResolver(taskSource)
+	resolver := NewMemoryResolverWithSources(taskSource, globalGeneralMemorySource())
 	bundle, err := resolver.Resolve(ctx, MemoryRequest{
 		ChatID:         key.chatID,
 		ThreadID:       key.threadID,

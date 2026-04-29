@@ -19,6 +19,7 @@ target layering, and the first implementation boundary.
 | Session memory | Claude/Codex native session IDs in `ChatContext.Sessions` | Backend-defined; can disappear after timeout or model/backend change | Same backend session is available | Resume fails, user clears context, backend changes | No prompt budget because it lives in backend state |
 | Short-term recent bridge | `ChatContext.RecentMsgs` | Last 10 user/assistant messages per chat/thread | Model switch, resume fallback, Hermes follow-up | User clears context or messages age out | Clamp as a low-priority memory section |
 | Structured Hermes task memory | `hermes.TaskState` in SQLite or memory store | Persisted task state | Hermes continuation, same issue request, related chat follow-up | Task is unrelated to requested issue/project/thread | Highest priority for matching issue; compact task summary only |
+| General task memory | Unified `tasks/sub_tasks` rows mirrored from `decision_logs` | Until normal data retention cleanup | Direct/file/media follow-up and related issue/project requests | Task is unrelated to requested issue/project/thread | Compact request/result cards |
 | Issue-scoped memory | `TaskState.GithubIssueNumber` and issue-aware follow-up detection | Persists with Hermes tasks | Message explicitly references `#N` / `＃Ｎ` | Requested issue differs | Takes priority over unrelated active tasks |
 | Project/static knowledge | `CLAUDE.md`, `.claude/skills/*`, `docs/arch/*`, `docs/playbooks/*` | Repository-managed | New task planning, project-specific follow-up, skill routing | File changes or project changes | Future resolver source; include only targeted hints |
 | Observability/audit memory | Decision logs, tool events, future memory-card records | Persisted log data | Dashboard/API and debug inspection | Not prompt-critical unless queried | Do not inject by default |
@@ -30,7 +31,8 @@ The first version adds `internal/app/memory_resolver.go` with:
 - `MemoryRequest`: chat/thread/project/user message/issue/mode/budget/recent messages.
 - `MemoryBundle`: ordered `MemorySection` entries.
 - `MemorySection`: `Source`, `Scope`, `Priority`, and prompt-ready `Text`.
-- `UnifiedMemoryResolver`: combines recent messages and Hermes task memory.
+- `UnifiedMemoryResolver`: combines recent messages, Hermes task memory, and
+  general task memory.
 
 Hermes now enters memory retrieval through `MemoryResolver` in
 `buildHermesGoalWithContext`. The older `loadHermesContextTasks` helper remains
@@ -57,9 +59,9 @@ For each incoming message:
 | Runner / Path | Current Memory Status | Target |
 | --- | --- | --- |
 | Hermes issue/follow-up | Uses `MemoryResolver` for Hermes task + recent bridge | Add static hints and memory observability |
-| Direct Agent | Uses backend session; model switch and resume fallback assemble recent bridge through `MemoryResolver` | Add structured task/general memory sources |
-| File/document analysis | Stop-button document runner resolves prompt memory through `MemoryResolver` before calling Direct Agent | Later write general memory cards |
-| Multimedia analysis | Photo and voice runners resolve prompt memory through `MemoryResolver` before calling Direct Agent | Later persist media analysis summaries |
+| Direct Agent | Uses backend session; model switch and resume fallback assemble recent bridge and general task memory through `MemoryResolver` | Add richer task summaries and observability |
+| File/document analysis | Stop-button document runner resolves prompt memory through `MemoryResolver` before calling Direct Agent | Add richer file-specific memory metadata |
+| Multimedia analysis | Photo and voice runners resolve prompt memory through `MemoryResolver` before calling Direct Agent | Add richer media-specific memory metadata |
 | Retry/review/checkup | Reads task/review state through existing services | Use memory sections for prior task/review summaries |
 
 ## Continuation Rules
@@ -83,7 +85,9 @@ budgets because existing Hermes prompt assembly is character-based.
 
 ## Near-Term Work
 
-- Add a general persisted memory card for non-Hermes tasks.
+- Make general persisted memory cards more explicit than the current
+  decision-log/unified-task mirror, including touched files and continuation
+  hints.
 - Add API/dashboard visibility for available memory sections and injected
   bundle previews.
 - Add static project hints as a resolver source with strict attribution.

@@ -246,11 +246,17 @@ func (dl *DecisionLogger) LogDecision(decision DecisionLog) {
 
 	// 如果有 SQLite 儲存，將決策記錄寫入資料庫
 	if globalStorage != nil {
-		go func() {
-			if err := globalStorage.InsertDecisionLog(decision); err != nil {
+		storage := globalStorage
+		go func(storage Storage) {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("Warning: failed to persist decision log to database: panic: %v", r)
+				}
+			}()
+			if err := storage.InsertDecisionLog(decision); err != nil {
 				log.Printf("Warning: failed to persist decision log to database: %v", err)
 			}
-		}()
+		}(storage)
 	}
 
 	// 廣播決策事件到 WebSocket 客戶端
@@ -907,7 +913,7 @@ func (a *Agent) resolveAgentMemoryBridge(ctx context.Context, ps *projectState, 
 	if ps == nil || ps.ctx == nil {
 		return ""
 	}
-	resolver := NewMemoryResolver(nil)
+	resolver := NewMemoryResolverWithSources(nil, globalGeneralMemorySource())
 	bundle, err := resolver.Resolve(ctx, MemoryRequest{
 		ChatID:         ps.ctx.ChatID,
 		ThreadID:       ps.ctx.ThreadID,
