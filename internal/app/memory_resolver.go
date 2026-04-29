@@ -102,6 +102,8 @@ type GeneralMemoryCard struct {
 	Engine            string
 	Backend           string
 	Model             string
+	Files             []string
+	ContinuationHints []string
 	UpdatedAt         time.Time
 }
 
@@ -227,6 +229,22 @@ func buildGeneralMemoryContextSection(cards []GeneralMemoryCard) string {
 		}
 		if card.GithubIssueNumber > 0 {
 			sb.WriteString(fmt.Sprintf("- GitHub issue: #%d\n", card.GithubIssueNumber))
+		}
+		if len(card.Files) > 0 {
+			sb.WriteString("- Touched files:\n")
+			for _, path := range card.Files {
+				sb.WriteString("  - ")
+				sb.WriteString(clampHermesContext(path, 240))
+				sb.WriteString("\n")
+			}
+		}
+		if len(card.ContinuationHints) > 0 {
+			sb.WriteString("- Continuation hints:\n")
+			for _, hint := range card.ContinuationHints {
+				sb.WriteString("  - ")
+				sb.WriteString(clampHermesContext(hint, 320))
+				sb.WriteString("\n")
+			}
 		}
 		if goal != "" {
 			sb.WriteString("- Request: ")

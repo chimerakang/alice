@@ -52,7 +52,6 @@ func (s *SQLiteStorage) ListGeneralMemoryCards(ctx context.Context, req MemoryRe
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	currentNorm := normalizeHermesGoal(stripLanguageDirective(req.UserMessage))
 	cards := make([]GeneralMemoryCard, 0, limit)
@@ -74,6 +73,14 @@ func (s *SQLiteStorage) ListGeneralMemoryCards(ctx context.Context, req MemoryRe
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for i := range cards {
+		if err := s.populateGeneralMemoryMetadata(ctx, &cards[i]); err != nil {
+			return nil, err
+		}
 	}
 	return cards, nil
 }
@@ -99,6 +106,67 @@ func scanGeneralMemoryCard(rows *sql.Rows) (GeneralMemoryCard, error) {
 	}
 	card.UpdatedAt = parseDBTime(updatedAt.String)
 	return card, nil
+}
+
+func (s *SQLiteStorage) populateGeneralMemoryMetadata(ctx context.Context, card *GeneralMemoryCard) error {
+	if s == nil || s.db == nil || card == nil || card.ID == "" {
+		return nil
+	}
+	files, err := s.listGeneralMemoryFiles(ctx, card.ID, 8)
+	if err != nil {
+		return err
+	}
+	card.Files = files
+	card.ContinuationHints = buildGeneralMemoryContinuationHints(*card)
+	return nil
+}
+
+func (s *SQLiteStorage) listGeneralMemoryFiles(ctx context.Context, taskID string, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 8
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT a.path
+		FROM artifacts a
+		JOIN sub_tasks st ON st.id = a.sub_task_id
+		WHERE st.task_id = ?
+		  AND a.path <> ''
+		ORDER BY a.id ASC
+		LIMIT ?`, taskID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	files := make([]string, 0, limit)
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return nil, err
+		}
+		path = strings.TrimSpace(path)
+		if path != "" {
+			files = append(files, path)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return files, nil
+}
+
+func buildGeneralMemoryContinuationHints(card GeneralMemoryCard) []string {
+	hints := make([]string, 0, 3)
+	if len(card.Files) > 0 {
+		hints = append(hints, "Prefer checking the touched files first before broad rediscovery.")
+	}
+	if card.GithubIssueNumber > 0 {
+		hints = append(hints, fmt.Sprintf("Keep follow-up work scoped to GitHub issue #%d unless the user changes scope.", card.GithubIssueNumber))
+	}
+	if strings.TrimSpace(card.Result) != "" {
+		hints = append(hints, "Use the stored result as a summary, then verify concrete implementation details before editing.")
+	}
+	return hints
 }
 
 func memoryTextReferencesIssue(text string, issueNumber int) bool {

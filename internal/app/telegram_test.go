@@ -335,9 +335,10 @@ func TestSQLiteStorageListsGeneralMemoryCardsFromDecisionTasks(t *testing.T) {
 		UserPrompt:    "請分析文件並整理 #143 memory 架構",
 		AgentResponse: "已整理出 MemoryResolver 後續要讀 general task memory。",
 		Outcome: ExecutionOutcome{
-			Success:  true,
-			TaskType: "analysis",
-			Summary:  "整理 memory 架構",
+			Success:      true,
+			TaskType:     "analysis",
+			Summary:      "整理 memory 架構",
+			FilesChanged: []string{"internal/app/memory_resolver.go", "docs/arch/memory.md"},
 		},
 		Model: "gpt-5.5",
 	}); err != nil {
@@ -375,6 +376,15 @@ func TestSQLiteStorageListsGeneralMemoryCardsFromDecisionTasks(t *testing.T) {
 	if !strings.Contains(cards[0].Result, "general task memory") {
 		t.Fatalf("card result = %q, want #143 memory", cards[0].Result)
 	}
+	if len(cards[0].Files) != 2 {
+		t.Fatalf("card files = %#v, want touched files", cards[0].Files)
+	}
+	if !containsString(cards[0].Files, "internal/app/memory_resolver.go") {
+		t.Fatalf("card files missing memory_resolver.go: %#v", cards[0].Files)
+	}
+	if len(cards[0].ContinuationHints) == 0 {
+		t.Fatalf("expected continuation hints for card: %#v", cards[0])
+	}
 }
 
 func TestMemoryResolverIncludesGeneralTaskMemory(t *testing.T) {
@@ -388,8 +398,9 @@ func TestMemoryResolverIncludesGeneralTaskMemory(t *testing.T) {
 		UserPrompt:    "分析文件並規劃 #143 general memory",
 		AgentResponse: "決定先沿用 unified tasks 作為 general memory card。",
 		Outcome: ExecutionOutcome{
-			Success:  true,
-			TaskType: "analysis",
+			Success:      true,
+			TaskType:     "analysis",
+			FilesChanged: []string{"internal/app/general_memory_store.go"},
 		},
 		Model: "gpt-5.5",
 	}); err != nil {
@@ -414,12 +425,27 @@ func TestMemoryResolverIncludesGeneralTaskMemory(t *testing.T) {
 	if !strings.Contains(rendered, "unified tasks 作為 general memory card") {
 		t.Fatalf("rendered bundle missing general task memory:\n%s", rendered)
 	}
+	if !strings.Contains(rendered, "internal/app/general_memory_store.go") {
+		t.Fatalf("rendered bundle missing touched file metadata:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "Continuation hints") {
+		t.Fatalf("rendered bundle missing continuation hints:\n%s", rendered)
+	}
 	if strings.Contains(rendered, "recent 應因 explicit issue") {
 		t.Fatalf("rendered bundle leaked generic recent messages:\n%s", rendered)
 	}
 	if len(bundle.Sections) != 1 || bundle.Sections[0].Source != "general_task" {
 		t.Fatalf("sections = %#v, want only general_task", bundle.Sections)
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestComposeHermesGoalWithContextStripsNestedInjectedGoal(t *testing.T) {

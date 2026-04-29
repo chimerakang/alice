@@ -63,10 +63,10 @@ func TestHandleMemoryPreviewReturnsGeneralTaskSections(t *testing.T) {
 	if section.Scope != "issue:143" {
 		t.Fatalf("scope = %q, want issue:143", section.Scope)
 	}
-	if section.Size == 0 || !strings.Contains(section.Preview, "Memory preview API") {
+	if section.Size == 0 || !strings.Contains(section.Preview, "Continuation hints") {
 		t.Fatalf("unexpected preview section: %+v", section)
 	}
-	if !strings.Contains(payload.RenderedPreview, "section source") {
+	if !strings.Contains(payload.RenderedPreview, "Continuation hints") {
 		t.Fatalf("rendered preview missing memory content: %q", payload.RenderedPreview)
 	}
 }
