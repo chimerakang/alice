@@ -2353,7 +2353,11 @@ func (t *TelegramBot) buildHermesGoalWithContext(key chatKey, currentRequest str
 	}
 
 	recentMessages := t.getChatContext(key, "").RecentMessagesSnapshot()
-	resolver := NewMemoryResolver(t.taskSvc)
+	var taskSource hermesMemoryTaskSource
+	if t != nil && t.taskSvc != nil {
+		taskSource = t.taskSvc
+	}
+	resolver := NewMemoryResolver(taskSource)
 	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
 		ChatID:         key.chatID,
 		ThreadID:       key.threadID,
@@ -3178,7 +3182,11 @@ func hermesContinuationVerbKey(mode string) string {
 }
 
 func (t *TelegramBot) loadHermesContextTasks(chatID int64, currentRequest string) []hermes.TaskState {
-	resolver := NewMemoryResolver(t.taskSvc)
+	var taskSource hermesMemoryTaskSource
+	if t != nil && t.taskSvc != nil {
+		taskSource = t.taskSvc
+	}
+	resolver := NewMemoryResolver(taskSource)
 	tasks, err := resolver.loadHermesMemoryTasks(MemoryRequest{
 		ChatID:      chatID,
 		UserMessage: currentRequest,
@@ -5566,6 +5574,10 @@ func (t *TelegramBot) editMessageRemoveStopButton(key chatKey, messageID int, ne
 // runAgentWithStopButton runs agent.Run() with a stop button on the first status update,
 // and cleans up the stop button after completion. Used by multimedia handlers (photo/voice/document).
 func (t *TelegramBot) runAgentWithStopButton(key chatKey, agent *Agent, prompt string) (string, error) {
+	return t.runAgentWithStopButtonMode(key, agent, prompt, "multimedia")
+}
+
+func (t *TelegramBot) runAgentWithStopButtonMode(key chatKey, agent *Agent, prompt, mode string) (string, error) {
 	var statusMessageID int
 	var firstUpdate = true
 
@@ -5585,7 +5597,7 @@ func (t *TelegramBot) runAgentWithStopButton(key chatKey, agent *Agent, prompt s
 			}
 		}
 	}
-	response, err := t.runAgentForStopButton(key, agent, prompt, updateCallback)
+	response, err := t.runAgentForStopButtonMode(key, agent, prompt, mode, updateCallback)
 
 	// Remove stop button after completion
 	if statusMessageID != 0 {
@@ -5608,12 +5620,46 @@ func (t *TelegramBot) runAgentWithStopButton(key chatKey, agent *Agent, prompt s
 }
 
 func (t *TelegramBot) runAgentForStopButton(key chatKey, agent *Agent, prompt string, updateCallback func(string, bool)) (string, error) {
+	return t.runAgentForStopButtonMode(key, agent, prompt, "multimedia", updateCallback)
+}
+
+func (t *TelegramBot) runAgentForStopButtonMode(key chatKey, agent *Agent, prompt, mode string, updateCallback func(string, bool)) (string, error) {
 	t.applyExplicitUserModelPreference(key, agent, "multimedia")
+	prompt = t.resolveTelegramRunnerMemoryPrompt(context.Background(), key, agent, prompt, mode)
 	if agent.IsPlanMode() {
 		return agent.RunWithPlan(prompt, updateCallback)
 	}
 	result, err := appengine.NewDirectEngine(agent).Run(context.Background(), prompt, agent.chatContext, newTelegramProgressSink(updateCallback))
 	return result.Text, err
+}
+
+func (t *TelegramBot) resolveTelegramRunnerMemoryPrompt(ctx context.Context, key chatKey, agent *Agent, prompt, mode string) string {
+	if agent == nil {
+		return prompt
+	}
+	ps := agent.current()
+	if ps == nil || ps.ctx == nil {
+		return prompt
+	}
+	var taskSource hermesMemoryTaskSource
+	if t != nil && t.taskSvc != nil {
+		taskSource = t.taskSvc
+	}
+	resolver := NewMemoryResolver(taskSource)
+	bundle, err := resolver.Resolve(ctx, MemoryRequest{
+		ChatID:         key.chatID,
+		ThreadID:       key.threadID,
+		ProjectDir:     agent.ProjectDir(),
+		UserMessage:    prompt,
+		Mode:           mode,
+		BudgetChars:    defaultMemoryBudgetChars,
+		RecentMessages: ps.ctx.RecentMessagesSnapshot(),
+	})
+	if err != nil {
+		log.Printf("[telegram] memory resolve failed mode=%s chat=%d thread=%d: %v", mode, key.chatID, key.threadID, err)
+		return prompt
+	}
+	return bundle.RenderForPrompt(prompt)
 }
 
 // sendTelegram sends JSON data to Telegram API via the message queue
@@ -6595,7 +6641,7 @@ func (t *TelegramBot) handleMultiplePhotos(key chatKey, userID int64, photos []P
 		promptWithLang = "請用繁體中文回應。\n\n" + prompt
 	}
 
-	response, err := t.runAgentWithStopButton(key, agent, promptWithLang)
+	response, err := t.runAgentWithStopButtonMode(key, agent, promptWithLang, "photo")
 
 	if err != nil {
 		if strings.Contains(err.Error(), "agent aborted by user") {
@@ -6743,7 +6789,7 @@ func (t *TelegramBot) handleSinglePhoto(key chatKey, userID int64, photo []Photo
 		promptWithLang = "請用繁體中文回應。\n\n" + prompt
 	}
 
-	response, err := t.runAgentWithStopButton(key, agent, promptWithLang)
+	response, err := t.runAgentWithStopButtonMode(key, agent, promptWithLang, "photo")
 
 	if err != nil {
 		if strings.Contains(err.Error(), "agent aborted by user") {
@@ -6858,7 +6904,7 @@ func (t *TelegramBot) handlePhotoMessage(key chatKey, userID int64, photo []Phot
 		promptWithLang = "請用繁體中文回應。\n\n" + prompt
 	}
 
-	response, err := t.runAgentWithStopButton(key, agent, promptWithLang)
+	response, err := t.runAgentWithStopButtonMode(key, agent, promptWithLang, "photo")
 	if err != nil {
 		if strings.Contains(err.Error(), "agent aborted by user") {
 			return
@@ -7184,7 +7230,7 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 		promptWithLang = "請用繁體中文回應。\n\n" + prompt
 	}
 
-	response, err := t.runAgentWithStopButton(key, agent, promptWithLang)
+	response, err := t.runAgentWithStopButtonMode(key, agent, promptWithLang, "voice")
 	if err != nil {
 		if strings.Contains(err.Error(), "agent aborted by user") {
 			return
@@ -7704,7 +7750,7 @@ func (t *TelegramBot) handleDocumentMessage(key chatKey, userID int64, document 
 		promptWithLang = "請用繁體中文回應。\n\n" + prompt
 	}
 
-	response, err := t.runAgentWithStopButton(key, agent, promptWithLang)
+	response, err := t.runAgentWithStopButtonMode(key, agent, promptWithLang, "document")
 	if err != nil {
 		if strings.Contains(err.Error(), "agent aborted by user") {
 			return

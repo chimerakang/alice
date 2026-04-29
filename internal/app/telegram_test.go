@@ -1824,6 +1824,82 @@ func TestRunAgentForStopButtonUsesGPTDeepPreferenceForDocumentAnalysis(t *testin
 	}
 }
 
+func TestRunAgentForStopButtonUsesMemoryResolverForDocumentAnalysis(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	store := hermes.NewMemoryTaskStore()
+	if _, err := store.CreateTask(hermes.TaskState{
+		ID:                "issue-143",
+		ChatID:            key.chatID,
+		ThreadID:          key.threadID,
+		ProjectDir:        "/repo",
+		GithubIssueNumber: 143,
+		Status:            hermes.TaskStatusDone,
+		Goal:              "[GitHub #143] Unified Memory Architecture",
+		Accumulated:       "MemoryResolver 已成為文件 runner 需要共用的 memory 入口。",
+		CreatedAt:         time.Now().Add(-time.Hour),
+		UpdatedAt:         time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if _, err := store.CreateTask(hermes.TaskState{
+		ID:                "issue-99",
+		ChatID:            key.chatID,
+		ThreadID:          key.threadID,
+		ProjectDir:        "/repo",
+		GithubIssueNumber: 99,
+		Status:            hermes.TaskStatusExecuting,
+		Goal:              "Unrelated work",
+		Accumulated:       "這段 #99 active task 不應污染 #143 文件分析。",
+		CreatedAt:         time.Now().Add(-30 * time.Minute),
+		UpdatedAt:         time.Now().Add(-30 * time.Minute),
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	client := &modelRecordingClient{}
+	bot := &TelegramBot{
+		config: &Config{
+			DefaultProjectDir: "/repo",
+			ModelRouting: ModelRoutingConfig{
+				EnableDynamicRouting: true,
+			},
+		},
+		chatContexts: map[chatKey]*ChatContext{
+			key: NewChatContext(key.chatID, key.threadID, "/repo"),
+		},
+		taskSvc: tasksvc.New(store),
+	}
+	agent := NewAgent(client, "/repo", key.chatID, key.threadID)
+	agent.current().ctx.RecentMsgs = []contextMessage{
+		{Role: "user", Content: "剛剛在處理 #99"},
+		{Role: "assistant", Content: "這是 unrelated recent bridge"},
+	}
+
+	got, err := bot.runAgentForStopButtonMode(key, agent, "分析文件 temp/notes.md，延續 #143", "document", nil)
+	if err != nil {
+		t.Fatalf("runAgentForStopButtonMode: %v", err)
+	}
+	if got != "ok" {
+		t.Fatalf("response = %q, want ok", got)
+	}
+	if len(client.messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(client.messages))
+	}
+	prompt := client.messages[0]
+	if !strings.Contains(prompt, "MemoryResolver 已成為文件 runner") {
+		t.Fatalf("prompt did not include issue memory:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "unrelated recent bridge") {
+		t.Fatalf("prompt leaked generic recent bridge for explicit issue:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "不應污染 #143") {
+		t.Fatalf("prompt leaked different issue task memory:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "分析文件 temp/notes.md，延續 #143") {
+		t.Fatalf("prompt dropped current document request:\n%s", prompt)
+	}
+}
+
 func TestApplyExplicitUserModelPreferenceUsesPlanMode(t *testing.T) {
 	key := chatKey{chatID: 42, threadID: 7}
 	bot := &TelegramBot{

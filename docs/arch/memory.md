@@ -58,8 +58,8 @@ For each incoming message:
 | --- | --- | --- |
 | Hermes issue/follow-up | Uses `MemoryResolver` for Hermes task + recent bridge | Add static hints and memory observability |
 | Direct Agent | Uses backend session; model switch and resume fallback assemble recent bridge through `MemoryResolver` | Add structured task/general memory sources |
-| File/document analysis | Primarily session/recent-message dependent | Use `MemoryResolver`; later write general memory cards |
-| Multimedia analysis | Primarily runner-specific prompt context | Use `MemoryResolver`; later persist media analysis summaries |
+| File/document analysis | Stop-button document runner resolves prompt memory through `MemoryResolver` before calling Direct Agent | Later write general memory cards |
+| Multimedia analysis | Photo and voice runners resolve prompt memory through `MemoryResolver` before calling Direct Agent | Later persist media analysis summaries |
 | Retry/review/checkup | Reads task/review state through existing services | Use memory sections for prior task/review summaries |
 
 ## Continuation Rules
@@ -83,7 +83,6 @@ budgets because existing Hermes prompt assembly is character-based.
 
 ## Near-Term Work
 
-- Move Direct Agent model-switch/resume fallback bridge to `MemoryResolver`.
 - Add a general persisted memory card for non-Hermes tasks.
 - Add API/dashboard visibility for available memory sections and injected
   bundle previews.

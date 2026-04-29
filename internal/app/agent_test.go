@@ -10,6 +10,7 @@ type modelRecordingClient struct {
 	model    string
 	calls    []string
 	sessions []string
+	messages []string
 }
 
 func (c *modelRecordingClient) Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error) {
@@ -19,6 +20,7 @@ func (c *modelRecordingClient) Call(ctx context.Context, message, projectDir, se
 func (c *modelRecordingClient) CallStream(ctx context.Context, message, projectDir, sessionID, modelOverride string, onToolUse func(toolName string, toolInput map[string]interface{}), onContent func(contentType, text string)) (*CLIResponse, error) {
 	c.calls = append(c.calls, modelOverride)
 	c.sessions = append(c.sessions, sessionID)
+	c.messages = append(c.messages, message)
 	resp := &CLIResponse{
 		Result:       "ok",
 		TextContent:  "ok",
