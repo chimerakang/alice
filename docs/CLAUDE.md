@@ -39,6 +39,12 @@
 | #10840 | 2:19 PM | 🟣 | SUBTASK_FRAMEWORK.md created - comprehensive agent task splitting methodology | ~263 |
 | #10837 | 2:18 PM | 🔵 | Alice project uses auto-generated phase-based task tracking system | ~458 |
 | #10835 | 2:14 PM | 🔵 | Alice project subtask tracking methodology revealed | ~470 |
+
+### Apr 29, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #12218 | 8:33 PM | 🔵 | Confirmed GitHub #100 as deferred SDK hybrid exploration, not active implementation | ~475 |
 </claude-mem-context>
 
 ## Dynamic Model Routing 行為

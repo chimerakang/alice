@@ -25,7 +25,7 @@
 | P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 100% (1/1) | ✅ |
 | P11 - User Experience | 指令健全性和用戶體驗改善 | 100% (1/1) | ✅ |
 | P12 - Dashboard Analytics | Claude Code Hooks UI 增強：統計圖表 + 用戶指南 | 100% (1/1) | ✅ |
-| P13 - Future Enhancements | 未來功能增強與優化 | 64% (22/34) | 🔄 |
+| P13 - Future Enhancements | 未來功能增強與優化 | 67% (23/34) | 🔄 |
 | P14 - Commercialization Strategy | Alice AI Agent 商業化發展策略與產品定位 | 0% (0/6) | 🔄 |
 | P15 - Parallel Subagents & Orchestration | Implementation of parallel subagent execution with isolated contexts, tool-level parallelism, and orchestration | 83% (10/12) | 🔄 |
 | P16 - Multi-Backend Execution | Support for multiple execution backends: Local, Docker, SSH | 100% (1/1) | ✅ |
@@ -91,7 +91,7 @@
 | | — 用戶可依照文件快速設置 Claude Code Hooks | | ✅ |
 | | — 設置指南包含完整的故障排除說明 | | ✅ |
 
-## P13 - Future Enhancements (🔄 64%)
+## P13 - Future Enhancements (🔄 67%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
@@ -627,7 +627,7 @@
 | | — 最小排程間隔限制（≥ 5 分鐘，防止濫用） | | ☐ |
 | | — "command" 類型受限於 ToolExecutor 允許的命令 | | ☐ |
 | | — "prompt" 類型受限於用戶的 allowed_user_ids 權限 | | ☐ |
-| P13.32 | **bug: CallStream 丟棄 CLI exit error 時的 streaming 結果導致「執行錯誤」** | [#90](https://github.com/chimerakang/alice/issues/90) | 🔄 |
+| P13.32 | **bug: CallStream 丟棄 CLI exit error 時的 streaming 結果導致「執行錯誤」** | [#90](https://github.com/chimerakang/alice/issues/90) | ✅ |
 | | — `api.go` `CallStream()`: CLI exit error 時若 `finalResp` 存在，返回 `finalResp` 而非 `nil` | | ☐ |
 | | — `api.go` `Call()` (非 streaming): 同樣的修復 | | ☐ |
 | | — `enhanced_cli.go`: 檢查並修復相同模式 | | ☐ |
@@ -967,6 +967,13 @@
 | | — 端到端示範：`/hermes #<n>` 啟動 → 自動執行 → Issue checklist 同步 → 觸發 `/task-sync` | | ☐ |
 | | — Token 成本量測：對比純 Opus、純 routing、Hermes 三種模式的**訂閱額度消耗** | | ☐ |
 | | — Planner JSON 輸出穩定率量測（< 90% 即觸發 #100 再評估） | | ☐ |
+| | — Inspect GitHub #95 epic state and local Hermes implementation in /Volumes/eclipse/projects/alice, focusing on routes/commands for /hermes, issue checklist sync, task-sync trigger paths, token usage reporting, and Planner JSON retry/parse metrics; do not use docs/MASTER_TASKS.md as issue-state authority. | | ☐ |
+| | — Implement or finish the optional Hermes mode switch so /hermes can coexist with existing dynamic model routing, including any necessary command parsing, routing branch, and user-facing response behavior in the relevant internal/app files. | | ✅ |
+| | — Implement or finish the end-to-end /hermes #<n> GitHub workflow so it can fetch an issue, execute subtasks, update issue checklist/comment state, and trigger or document the existing /task-sync integration path without modifying forbidden files. | | ✅ |
+| | — Implement or finish token cost measurement/reporting for pure Opus, pure routing, and Hermes modes, using existing token accounting structures where available and adding focused tests for the comparison output. | | ✅ |
+| | — Implement or finish Planner JSON output stability measurement, including parse success/failure counters or logs, retry-rate reporting, and a clear threshold path for re-evaluating GitHub #100 when stability drops below 90%. | | ✅ |
+| | — Run the relevant Go test suite and build commands for /Volumes/eclipse/projects/alice, then verify the GitHub #95 acceptance items with concrete command output and file references. | | ☐ |
+| | — If all verification passes, update GitHub #95 checklist/comment state via gh CLI to reflect completed acceptance items and summarize any remaining deferred items such as #100. | | ☐ |
 | P15.3 | **Hermes: Tool Execution Hooks — Post-validator + Path guard** | [#96](https://github.com/chimerakang/alice/issues/96) | ✅ |
 | | — `PreHook` / `PostHook` interface 與註冊機制 | | ☐ |
 | | — `PathGuard` 實作 + 單元測試（denylist 邊界 case） | | ☐ |
@@ -1005,6 +1012,10 @@
 | | — 單一 chat 需要真正並行執行多個 SubTask（CLI subprocess 並行成本過高） | | ☐ |
 | | — Alice 走商業化路徑（#P14），多租戶情境下訂閱模型不再適用 | | ☐ |
 | | — Anthropic 推出針對 agent 場景的訂閱式 API（抹平成本差異） | | ☐ |
+| | — 在 /Volumes/eclipse/projects/alice 檢查 GitHub #100 相關背景與現有 Hermes/Planner 架構檔案，確認此 Deferred/Future issue 是否只需要記錄或標記觸發條件而非實作；不得修改 config.json、.git/、.env 或 *.pem。 | | ✅ |
+| | — 搜尋 repository 中與 #100、#95、Hermes Planner、SDK 混用、JSON 穩定率、SubTask 並行、商業化 #P14、Anthropic agent API 觀察相關的文件或任務追蹤位置，判斷四個 unchecked checklist 是否已有對應狀態或證據可更新。 | | ✅ |
+| | — 若專案有任務同步或 issue 狀態回寫流程，依現有格式更新 #100 對應的本地追蹤文件或產出回報內容，保留其 Deferred/Future 性質並逐項處理四個觸發條件；若沒有本地可改檔案，僅產出可回覆 GitHub issue 的狀態摘要。 | | ✅ |
+| | — 驗證本次未引入不必要程式碼變更：執行 git status --short 與必要的 diff 檢查，若有文件變更則確認只限 #100 相關內容且未碰禁止修改路徑。 | | ✅ |
 | P15.8 | **Hermes: GitHub Issue 整合層 — /hermes #N、checklist 同步、自動 comment** | [#101](https://github.com/chimerakang/alice/issues/101) | ✅ |
 | | — `/hermes #N` 指令可正確 fetch Issue 並啟動 Hermes | | ☐ |
 | | — Issue body checklist 存在時正確作為 SubTask 雛形 | | ☐ |
@@ -1575,7 +1586,7 @@
 | [#85](https://github.com/chimerakang/alice/issues/85) | 🧠 OpusPlan 兩階段模型調用 - 計劃用 Opus、執行用 Sonnet | P13 - Future Enhancements | ✅ |
 | [#86](https://github.com/chimerakang/alice/issues/86) | feat: Implement auto-skill generation system | P13 - Future Enhancements | ✅ |
 | [#89](https://github.com/chimerakang/alice/issues/89) | feat: Implement cron scheduler for automated tasks | P13 - Future Enhancements | ✅ |
-| [#90](https://github.com/chimerakang/alice/issues/90) | bug: CallStream 丟棄 CLI exit error 時的 streaming 結果導致「執行錯誤」 | P13 - Future Enhancements | 🔄 |
+| [#90](https://github.com/chimerakang/alice/issues/90) | bug: CallStream 丟棄 CLI exit error 時的 streaming 結果導致「執行錯誤」 | P13 - Future Enhancements | ✅ |
 | [#93](https://github.com/chimerakang/alice/issues/93) | Model routing 造成 session context 丟失：改採 Sticky + Follow-up detection | P13 - Future Enhancements | ✅ |
 | [#129](https://github.com/chimerakang/alice/issues/129) | 整合 OpenAI Image Generation (gpt-image-2 / DALL-E) 為遊戲開發鋪路 | P13 - Future Enhancements | 🔄 |
 | [#49](https://github.com/chimerakang/alice/issues/49) | Alice 商業化：單機版隱私優先定位策略 | P14 - Commercialization Strategy | 🔄 |
@@ -1637,8 +1648,8 @@
 ## Summary
 
 **Total Issues:** 90
-**Completed:** 70 ✅
-**In Progress:** 20 🔄
+**Completed:** 71 ✅
+**In Progress:** 19 🔄
 
-**Last sync:** 2026-04-29 10:43 UTC
+**Last sync:** 2026-04-29 13:56 UTC
 

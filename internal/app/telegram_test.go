@@ -13,6 +13,16 @@ import (
 	"claude-tg-agent/internal/app/hermes"
 )
 
+func writeTestExecutable(t *testing.T, dir, name, body string) string {
+	t.Helper()
+
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+	return path
+}
+
 func TestExtractHermesActionableGoal(t *testing.T) {
 	goal := `[Previous conversation context]
 User: 先分析 webrtc-server
@@ -709,6 +719,47 @@ func TestSendModelMenuQueuesSelector(t *testing.T) {
 	}
 }
 
+func TestSendModelMenuIncludesHermesTierSwitchWhenEnabled(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		config: &Config{
+			DefaultProjectDir: "/repo",
+			Hermes:            HermesConfig{Enabled: true},
+		},
+		chatContexts: map[chatKey]*ChatContext{key: NewChatContext(42, 7, "/repo")},
+		messageQueue: make(chan *TelegramMessage, 1),
+	}
+	bot.chatContexts[key].Pref = ModelPreference("auto")
+	bot.hermesCoords = map[chatKey]*hermesCoord{
+		key: &hermesCoord{enabled: true, tier: "codex"},
+	}
+
+	bot.sendModelMenu(key)
+
+	select {
+	case msg := <-bot.messageQueue:
+		markup, ok := msg.Params["reply_markup"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("reply_markup missing or wrong type: %#v", msg.Params["reply_markup"])
+		}
+		rows, ok := markup["inline_keyboard"].([][]map[string]interface{})
+		if !ok {
+			t.Fatalf("inline_keyboard missing or wrong type: %#v", markup["inline_keyboard"])
+		}
+		if len(rows) != 6 {
+			t.Fatalf("expected 6 model rows with Hermes enabled, got %d", len(rows))
+		}
+		if rows[4][0]["callback_data"] != "model:hermes-tier:claude" || rows[4][1]["callback_data"] != "model:hermes-tier:codex" {
+			t.Fatalf("unexpected Hermes tier row: %#v", rows[4])
+		}
+		if rows[4][1]["text"] != "✅ Hermes: GPT/Codex" {
+			t.Fatalf("unexpected Hermes tier label: %#v", rows[4][1]["text"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for model menu message")
+	}
+}
+
 func TestSendRetryConfirmationQueuesRunButton(t *testing.T) {
 	key := chatKey{chatID: 42, threadID: 7}
 	bot := &TelegramBot{messageQueue: make(chan *TelegramMessage, 1)}
@@ -1339,6 +1390,33 @@ func TestHermesTierForUsesGPTDeepPreferenceWhenNoCoordinator(t *testing.T) {
 	}
 }
 
+func TestBuildTaskSyncHookInvokesTaskSyncSlashCommand(t *testing.T) {
+	called := make(chan struct{}, 1)
+	oldRunTaskSyncCommand := runTaskSyncCommand
+	runTaskSyncCommand = func(ctx context.Context, projectDir string) ([]byte, error) {
+		if projectDir != "/repo" {
+			t.Fatalf("projectDir = %q, want /repo", projectDir)
+		}
+		called <- struct{}{}
+		return []byte("ok"), nil
+	}
+	t.Cleanup(func() { runTaskSyncCommand = oldRunTaskSyncCommand })
+
+	bot := &TelegramBot{}
+	hook := bot.buildTaskSyncHook(true, "/repo")
+	if hook == nil {
+		t.Fatal("expected task-sync hook when enabled")
+	}
+
+	hook(context.Background())
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("expected task-sync hook to call runTaskSyncCommand")
+	}
+}
+
 func TestResolveHermesRoleModelsKeepsCodexPlannerAndExecutorSeparate(t *testing.T) {
 	bot := &TelegramBot{
 		config: &Config{
@@ -1621,6 +1699,31 @@ func TestHandleHermesStatsCommandWeekQueuesWeeklyReviewReport(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected weekly report message")
+	}
+}
+
+func TestHandleHermesCommandUsesLocalizedMessages(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		config:          &Config{Hermes: HermesConfig{Enabled: true}},
+		i18n:            newTestI18nManager(t),
+		messageQueue:    make(chan *TelegramMessage, 2),
+		langPreferences: map[int64]string{},
+		hermesCoords:    map[chatKey]*hermesCoord{},
+	}
+	bot.setChatlanguage(key.chatID, "zh-TW")
+
+	bot.handleHermesCommand(key, []string{"/hermes", "restart"}, "")
+
+	select {
+	case msg := <-bot.messageQueue:
+		text, _ := msg.Params["text"].(string)
+		want := "請提供要重新開始的任務說明，例如：`/hermes restart 修復登入流程`"
+		if text != want {
+			t.Fatalf("unexpected localized restart usage text:\nwant: %s\ngot:  %s", want, text)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected localized restart usage message")
 	}
 }
 

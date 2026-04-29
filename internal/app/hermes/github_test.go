@@ -1,9 +1,22 @@
 package hermes
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func writeExecutableScript(t *testing.T, dir, name, body string) string {
+	t.Helper()
+
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatalf("write script %s: %v", name, err)
+	}
+	return path
+}
 
 // ── ExtractChecklist ──────────────────────────────────────────────────────────
 
@@ -237,6 +250,140 @@ func TestHasLabel(t *testing.T) {
 	}
 	if HasLabel(issue, "hermes-failed") {
 		t.Error("should not find hermes-failed")
+	}
+}
+
+func TestFetchIssueAndSyncChecklistFlow(t *testing.T) {
+	tmp := t.TempDir()
+	script := `#!/bin/sh
+set -eu
+log="$FAKE_GH_LOG"
+printf '%s\n' "$*" >>"$log"
+case "$*" in
+  "issue view 101 --json title,body,labels")
+    cat <<'JSON'
+{"title":"Hermes #101","body":"Intro\n- [ ] Step A\n- [x] Step B\n","labels":[{"name":"hermes-auto-close"},{"name":"complexity:medium"}]}
+JSON
+    exit 0
+    ;;
+  "issue view 101 --json body")
+    cat <<'JSON'
+{"body":"Intro\n- [ ] Step A\n- [x] Step B\n"}
+JSON
+    exit 0
+    ;;
+  issue\ edit\ 101\ --body\ *)
+    exit 0
+    ;;
+esac
+printf '%s\n' "unexpected: $*" >>"$log"
+exit 1
+`
+	writeExecutableScript(t, tmp, "gh", script)
+	t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logFile := filepath.Join(tmp, "gh.log")
+	t.Setenv("FAKE_GH_LOG", logFile)
+
+	ctx := context.Background()
+	issue, err := FetchIssue(ctx, "", 101)
+	if err != nil {
+		t.Fatalf("FetchIssue: %v", err)
+	}
+	if issue.Title != "Hermes #101" || len(issue.Checklist) != 2 {
+		t.Fatalf("unexpected issue parsed: %+v", issue)
+	}
+	if !HasLabel(issue, "hermes-auto-close") {
+		t.Fatalf("expected label to be parsed: %+v", issue.Labels)
+	}
+
+	if err := SyncChecklist(ctx, "", 101, []SubTask{{Description: "Step A", Status: SubTaskDone}}); err != nil {
+		t.Fatalf("SyncChecklist: %v", err)
+	}
+
+	logBytes, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("ReadFile log: %v", err)
+	}
+	got := string(logBytes)
+	if !strings.Contains(got, "issue view 101 --json title,body,labels") {
+		t.Fatalf("missing issue fetch invocation:\n%s", got)
+	}
+	if !strings.Contains(got, "issue view 101 --json body") {
+		t.Fatalf("missing issue body refetch:\n%s", got)
+	}
+	if !strings.Contains(got, "issue edit 101 --body") {
+		t.Fatalf("expected issue edit body update, got:\n%s", got)
+	}
+}
+
+func TestWritePlanToIssueReplacesExistingPlanSection(t *testing.T) {
+	tmp := t.TempDir()
+	script := `#!/bin/sh
+set -eu
+log="$FAKE_GH_LOG"
+printf '%s\n' "$*" >>"$log"
+case "$*" in
+  "issue view 7 --json body")
+    cat <<'JSON'
+{"body":"Intro\n## Hermes 執行計劃\n- [ ] Old step\n## Notes\nKeep this.\n"}
+JSON
+    exit 0
+    ;;
+  issue\ edit\ 7\ --body\ *)
+    exit 0
+    ;;
+esac
+printf '%s\n' "unexpected: $*" >>"$log"
+exit 1
+`
+	writeExecutableScript(t, tmp, "gh", script)
+	t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logFile := filepath.Join(tmp, "gh.log")
+	t.Setenv("FAKE_GH_LOG", logFile)
+
+	err := WritePlanToIssue(context.Background(), "", 7, "", []SubTask{{Description: "New step", Status: SubTaskPending}})
+	if err != nil {
+		t.Fatalf("WritePlanToIssue: %v", err)
+	}
+
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("ReadFile log: %v", err)
+	}
+	got := string(data)
+	if !strings.Contains(got, "issue view 7 --json body") {
+		t.Fatalf("missing issue body fetch:\n%s", got)
+	}
+	if !strings.Contains(got, "issue edit 7 --body") || !strings.Contains(got, "## Hermes 執行計劃") || !strings.Contains(got, "- [ ] New step") {
+		t.Fatalf("unexpected issue edit payload:\n%s", got)
+	}
+}
+
+func TestPostCommentEventCompleteUsesGh(t *testing.T) {
+	tmp := t.TempDir()
+	ghScript := `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$FAKE_GH_LOG"
+exit 0
+`
+	writeExecutableScript(t, tmp, "gh", ghScript)
+	t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ghLog := filepath.Join(tmp, "gh.log")
+	t.Setenv("FAKE_GH_LOG", ghLog)
+
+	if err := PostCommentEvent(context.Background(), "", 3, "complete", TaskState{Plan: []SubTask{{Status: SubTaskDone}}, TokenBudget: TokenBudget{UsedTokens: 42}}); err != nil {
+		t.Fatalf("PostCommentEvent: %v", err)
+	}
+
+	logBytes, err := os.ReadFile(ghLog)
+	if err != nil {
+		t.Fatalf("ReadFile log: %v", err)
+	}
+	if !strings.Contains(string(logBytes), "issue comment 3 --body") {
+		t.Fatalf("unexpected gh invocation:\n%s", string(logBytes))
+	}
+	if !strings.Contains(string(logBytes), "Hermes 完成") || !strings.Contains(string(logBytes), "42") {
+		t.Fatalf("comment body missing expected content:\n%s", string(logBytes))
 	}
 }
 

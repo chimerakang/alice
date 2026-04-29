@@ -12,6 +12,7 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #12218 | 8:33 PM | 🔵 | Confirmed GitHub #100 as deferred SDK hybrid exploration, not active implementation | ~475 |
 | #11729 | 1:34 AM | 🔵 | Review subtask results table schema locations identified | ~294 |
 | #11726 | " | 🔵 | Located sub-task ID namespacing function | ~197 |
 </claude-mem-context>

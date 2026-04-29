@@ -190,3 +190,90 @@ SQLite `hermes_task_states` 中，task `59958dc7-7ecc-4881-af15-fd979c01ca51` �
 - cost 統計 backend 分流的完整閉環
 - checklist sync 與 `complete` comment
 
+## 2026-04-29 補充驗證
+
+範圍：Issue #107 後續收尾（Hermes command i18n、GitHub integration tests、final Go validation）
+
+### 已完成補證
+
+- Hermes 在 2026-04-29 21:42:13 啟動後完成 5/5 subtasks，並在 GitHub #107 comment 留下 `✅ Hermes 完成 5/5 SubTasks`。
+- `internal/app/telegram.go` 中 `/hermes`、`/ghermes`、`/hermes-stats`、Issue resolution、status、callback 與 task id 等 Hermes 使用者回覆已改走 locale key。
+- `locales/zh-TW.json` 與 `locales/en.json` 已新增對應 `hermes_*` 訊息，且 JSON 結構通過 `jq empty` 驗證。
+- `internal/app/hermes/github_test.go` 新增 GitHub issue fetch、checklist sync、plan replacement、complete comment 的 gh CLI mock tests，補上 GPT tier 下 GitHub comment/checklist 路徑的單元驗證。
+- `internal/app/telegram_test.go` 新增 Hermes tier model menu、task-sync hook 與 Hermes command localization regression tests。
+
+### 2026-04-29 驗證指令
+
+- `go test ./internal/app/hermes ./internal/app`
+- `go test ./...`
+- `go vet ./...`
+- `go build ./...`
+
+上述四項在 2026-04-29 的 Hermes 收尾 comment 中均回報 exit code 0 / PASS；本段落後續提交前仍需再跑一次確認目前工作樹狀態。
+
+### 剩餘風險
+
+- 未重新跑真實 Telegram `/ghermes #<existing issue>` live smoke test。
+- 未在 live GitHub issue 上重新觀察 checklist sync 的實際呈現；目前是由 gh CLI mock tests 覆蓋。
+- Dashboard 端 GPT/Claude cost 分帳仍未做 live 對帳，只能確認 Hermes task/model usage 已有資料與單元路徑覆蓋。
+
+## 2026-04-29 live closure evidence
+
+範圍：補查 2026-04-29 21:42-21:55 這次 GPT/Codex tier `/ghermes #107` live run 的持久化狀態、GitHub sync 與 cost/model usage。
+
+### SQLite task state
+
+`data/alice.db` 中 `hermes_task_states` 顯示：
+
+- task `37bc08bf-8edf-45da-8eff-73e1d48bff95`
+- `status = done`
+- `project_dir = /Volumes/eclipse/projects/alice/`
+- `github_issue_number = 107`
+- `current_idx = 5`
+- `token_budget.used_tokens = 7432497`
+- `model_usages`：
+  - `gpt-5.5`: `input_tokens = 21731`, `output_tokens = 388`, `call_count = 1`
+  - `gpt-5.4-mini`: `input_tokens = 7351601`, `output_tokens = 58777`, `call_count = 5`
+
+這修正了 2026-04-26 觀察到的 `github_issue_number = 0` 風險；最新 live run 已能把 #107 issue number 持久化。
+
+### Planner JSON
+
+同一筆 task 的 `plan_json` 成功保存 5 個 subtask，且 5 個 `status` 皆為 `done`。這代表 Codex planner 在 codex-specific prompt rules 與 tier-aware prompt loading 後，至少這次 live `/ghermes #107` 已產出可被 Hermes 接受並完整執行的 schema。
+
+保守判定：本次只能證明最新 live run 成功，不能把它解讀成長期統計穩定率；若要量化 `< 10%` 失敗率，仍需要另外收集多次 planner run 統計。
+
+### Executor command_execution
+
+同一筆 task 的 5 個 subtask 都有 executor result，且 `model_usages` 顯示 executor 由 `gpt-5.4-mini` 實際呼叫 5 次。`decision_logs` 也有對應 GPT executor 紀錄，表示 Codex executor 已不再停在 planner 後，而是完整回到 Hermes coordinator 並完成 task。
+
+### Cost / backend split
+
+`decision_logs` 在 2026-04-29 21:40 之後、`project_path LIKE '%/alice%'` 的聚合結果顯示：
+
+- `gpt-5.4`: 5 筆，`tokens_total = 7410378`
+- `gpt-5.5`: 2 筆，`tokens_total = 1380655`
+
+這代表 GPT/Codex tier 成本已按 model/backend 進入 `decision_logs`，不會只有 Claude model 名稱。Dashboard 端完整 UI 對帳未另做瀏覽器驗證，但資料來源已具備 backend split 證據。
+
+### GitHub comment / checklist sync
+
+`alice.log` 顯示本次 live run 完成後實際呼叫：
+
+- `gh issue view 107 --json body`
+- `gh issue edit 107 --body ...`
+- `gh issue comment 107 --body ...`
+
+GitHub #107 comment 也已出現 `✅ Hermes 完成 5/5 SubTasks`。這代表 GPT tier 下 `complete` comment 與 checklist/body edit path 在 live run 中都有走到。
+
+### Updated closure judgment
+
+最新 live evidence 可支持關閉 #107 的主體工作：
+
+- `/ghermes #107` live run 已完成
+- planner JSON 在最新 run 成功
+- executor 已完成 5/5 subtasks
+- GPT model usage 已進入持久化 usage / decision logs
+- GitHub complete comment 與 body edit path 已觸發
+
+剩餘只是不具阻斷性的統計信心水準問題：planner 長期穩定率尚未以多次樣本量化。

@@ -908,7 +908,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		projectDir := t.getAgent(key).ProjectDir()
 		if task, ok := t.resolveHermesContinuationTask(key, projectDir); ok {
 			mode := hermesContinuationModeFromRequest(text)
-			t.send(key, fmt.Sprintf("🔁 偵測到你想%s Hermes 任務 %s，將只規劃剩餘工作…", hermesContinuationVerb(mode), shortHermesTaskID(task.ID)))
+			t.send(key, fmt.Sprintf("🔁 偵測到你想%s Hermes 任務 %s，將只規劃剩餘工作…", t.getLocalizedMessage(key.chatID, hermesContinuationVerbKey(mode), nil), shortHermesTaskID(task.ID)))
 			go t.runTrackedJob("hermes."+mode, func() {
 				t.startHermesContinuationTask(key, task, projectDir, mode)
 			})
@@ -1929,7 +1929,7 @@ func parseHermesRestartIssue(parts []string) (int, bool) {
 
 func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier string) {
 	if !t.config.Hermes.Enabled {
-		t.send(key, "Hermes 模式未啟用。請在 config.json 中設定 hermes.enabled = true。")
+		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_disabled_config", nil))
 		return
 	}
 
@@ -1942,18 +1942,18 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 		t.setHermesTier(key, tier)
 		goal := strings.TrimSpace(strings.Join(parts[2:], " "))
 		if goal == "" {
-			t.send(key, "請提供要重新開始的任務說明，例如：`/hermes restart 修復登入流程`")
+			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_restart_usage", nil))
 			return
 		}
 		projectDir := t.getAgent(key).ProjectDir()
 		if issueNum, ok := parseHermesRestartIssue(parts); ok {
-			t.send(key, fmt.Sprintf("🔄 已忽略 Issue #%d 的既有 Hermes 進度，準備從頭開始。", issueNum))
+			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_restart_ignore_issue", map[string]string{"issueNum": fmt.Sprintf("%d", issueNum)}))
 			go t.runTrackedJob("hermes.issue.restart", func() {
 				t.startHermesFreshFromIssue(key, issueNum, projectDir)
 			})
 			return
 		}
-		t.send(key, "🔄 已忽略既有 Hermes 進度，準備從頭開始。")
+		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_restart_ignore_progress", nil))
 		go t.runTrackedJob("hermes.restart", func() {
 			t.startHermesFreshTask(key, goal, projectDir)
 		})
@@ -1969,7 +1969,7 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 			t.sendHermesIssueResolution(key, raw, projectDir, tier)
 			return
 		}
-		t.send(key, fmt.Sprintf("🔍 正在讀取 GitHub Issue #%d…", issueNum))
+		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_loading", map[string]string{"issueNum": fmt.Sprintf("%d", issueNum)}))
 		projectDir := t.getAgent(key).ProjectDir()
 		t.setHermesTier(key, tier)
 		go t.runTrackedJob("hermes.issue", func() {
@@ -1990,7 +1990,7 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 			items, err := hermes.ListIssues(ctx, projectDir, 15)
 			if err != nil {
 				jobErr = err
-				t.send(key, fmt.Sprintf("❌ 無法取得 Issues：%v", err))
+				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_list_failed", map[string]string{"error": err.Error()}))
 				return
 			}
 			t.send(key, hermes.FormatIssueList(items))
@@ -2007,14 +2007,14 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 		}
 		task, ok, ambiguous := t.resolveHermesContinuationTaskBySelector(key, projectDir, selector)
 		if ambiguous {
-			t.send(key, fmt.Sprintf("⚠️ task id `%s` 對應到多個 Hermes 任務，請輸入更完整的 id。", selector))
+			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_continuation_ambiguous", map[string]string{"selector": selector}))
 			return
 		}
 		if !ok {
 			if selector != "" {
-				t.send(key, fmt.Sprintf("ℹ️ 找不到可接續的 Hermes 任務 `%s`。可以用 `/hermes status` 查看候選。", selector))
+				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_continuation_not_found_with_selector", map[string]string{"selector": selector}))
 			} else {
-				t.send(key, "ℹ️ 找不到可接續的 Hermes 任務。可以用 `/hermes restart <任務說明>` 開始新的任務。")
+				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_continuation_not_found", nil))
 			}
 			return
 		}
@@ -2023,7 +2023,10 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 			mode = "replan"
 		}
 		t.setHermesTier(key, tier)
-		t.send(key, fmt.Sprintf("🔁 將根據任務 %s 的既有進度%s…", shortHermesTaskID(task.ID), hermesContinuationVerb(mode)))
+		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_continuation_start", map[string]string{
+			"taskID": shortHermesTaskID(task.ID),
+			"action": t.getLocalizedMessage(key.chatID, hermesContinuationVerbKey(mode), nil),
+		}))
 		go t.runTrackedJob("hermes.continue", func() {
 			t.startHermesContinuationTask(key, task, projectDir, mode)
 		})
@@ -2035,7 +2038,7 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 			hc.enabled = false
 		}
 		t.hermesMu.Unlock()
-		t.send(key, "Hermes 模式已停用，切回一般模式。")
+		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_disabled", nil))
 
 	default:
 		if len(parts) > 1 {
@@ -2056,9 +2059,9 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 		}
 		t.hermesMu.Unlock()
 		if tier == "codex" {
-			t.send(key, "✅ Hermes 模式已啟用（GPT tier）。\n\n正在載入待處理 Issues…")
+			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_enabled_codex", nil))
 		} else {
-			t.send(key, "✅ Hermes 模式已啟用。\n\n正在載入待處理 Issues…")
+			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_enabled_default", nil))
 		}
 		projectDir := t.getAgent(key).ProjectDir()
 		go func() {
@@ -2070,7 +2073,7 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 			items, err := hermes.ListIssues(ctx, projectDir, 10)
 			if err != nil {
 				jobErr = err
-				t.send(key, "（無法取得 Issues 清單，請直接輸入任務說明或使用 /hermes #<number>）")
+				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_list_unavailable", nil))
 				return
 			}
 			t.send(key, hermes.FormatIssueList(items))
@@ -2085,13 +2088,13 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 //	/hermes-stats chat  — show aggregated stats for this chat
 func (t *TelegramBot) handleHermesStatsCommand(key chatKey, parts []string) {
 	if !t.config.Hermes.Enabled {
-		t.send(key, "Hermes 模式未啟用。")
+		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_disabled_simple", nil))
 		return
 	}
 
 	if len(parts) > 1 && strings.EqualFold(parts[1], "week") {
 		if globalStorage == nil {
-			t.send(key, "❌ 無法產生週報：storage 尚未初始化。")
+			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_stats_week_no_storage", nil))
 			return
 		}
 
@@ -2100,14 +2103,14 @@ func (t *TelegramBot) handleHermesStatsCommand(key chatKey, parts []string) {
 		lang := t.getChatLanguage(key.chatID)
 		report, err := globalStorage.GetPlannerRulesWeeklyReport(windowStart, windowEnd, t.i18n, lang)
 		if err != nil {
-			t.send(key, fmt.Sprintf("❌ 無法產生 review 週報：%v", err))
+			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_stats_week_failed", map[string]string{"error": err.Error()}))
 			return
 		}
 		t.send(key, FormatPlannerRulesWeeklyReport(t.i18n, lang, report))
 		return
 	}
 
-	t.send(key, "📊 使用方式：/hermes-stats week")
+	t.send(key, t.getLocalizedMessage(key.chatID, "hermes_stats_week_usage", nil))
 }
 
 // isHermesEnabled reports whether Hermes mode is active for this chat.
@@ -2141,7 +2144,7 @@ func (t *TelegramBot) trySignalBudgetContinue(key chatKey, text string) bool {
 
 	select {
 	case hc.continueCh <- struct{}{}:
-		t.send(key, "▶️ 繼續執行中…")
+		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_continue_signal", nil))
 		return true
 	default:
 		// Channel already full or already consumed — not waiting.
@@ -2163,11 +2166,11 @@ func (t *TelegramBot) sendHermesIssueResolution(key chatKey, rawQuery, projectDi
 		Limit:      3,
 	})
 	if err != nil {
-		t.send(key, fmt.Sprintf("❌ 無法搜尋 GitHub Issues：%v", err))
+		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_search_failed", map[string]string{"error": err.Error()}))
 		return
 	}
 	if len(candidates) == 0 {
-		t.send(key, fmt.Sprintf("找不到符合 `%s` 的 Issue。請改用 `/hermes #<number>` 或 `/hermes issues`。", query))
+		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_search_no_matches", map[string]string{"query": query}))
 		return
 	}
 	rows := make([][]map[string]interface{}, 0, len(candidates)+1)
@@ -2178,7 +2181,7 @@ func (t *TelegramBot) sendHermesIssueResolution(key chatKey, rawQuery, projectDi
 		})
 	}
 	rows = append(rows, []map[string]interface{}{{"text": t.getLocalizedMessage(key.chatID, "menu_btn_cancel", nil), "callback_data": "hermes:cancel"}})
-	t.sendMenuMessage(key, fmt.Sprintf("我找到 %d 個可能的 issue：", len(candidates)), rows)
+	t.sendMenuMessage(key, t.getLocalizedMessage(key.chatID, "hermes_issue_search_candidates", map[string]string{"count": fmt.Sprintf("%d", len(candidates))}), rows)
 }
 
 // startHermesFromIssue fetches a GitHub Issue and starts a Hermes task from it.
@@ -2194,7 +2197,10 @@ func (t *TelegramBot) startHermesFromIssueMode(key chatKey, issueNumber int, pro
 	ctx := context.Background()
 	issue, err := hermesFetchIssue(ctx, projectDir, issueNumber)
 	if err != nil {
-		t.send(key, fmt.Sprintf("❌ 無法讀取 Issue #%d：%v", issueNumber, err))
+		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_read_failed", map[string]string{
+			"issueNum": fmt.Sprintf("%d", issueNumber),
+			"error":    err.Error(),
+		}))
 		return
 	}
 
@@ -2219,17 +2225,44 @@ func (t *TelegramBot) startHermesFromIssueMode(key chatKey, issueNumber int, pro
 		if task, decision, ok := t.resolveHermesIssueTask(key, projectDir, issueNumber); ok {
 			switch decision {
 			case hermesSimilarContinue:
-				t.send(key, fmt.Sprintf("🔁 Issue #%d 已有 Hermes 任務 %s，將根據既有進度接續剩餘工作…", issueNumber, shortHermesTaskID(task.ID)))
+				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_continue_existing", map[string]string{
+					"issueNum": fmt.Sprintf("%d", issueNumber),
+					"taskID":   shortHermesTaskID(task.ID),
+					"action":   t.getLocalizedMessage(key.chatID, hermesContinuationVerbKey("continue"), nil),
+				}))
 				t.startHermesContinuationTask(key, task, projectDir, "continue")
 				return
 			case hermesSimilarCompleted:
-				t.send(key, fmt.Sprintf("ℹ️ Issue #%d 在 24 小時內已有完成的 Hermes 任務 %s，為避免重複執行已先停止。\n若要重新開始，請使用 `/hermes restart %s`。", issueNumber, shortHermesTaskID(task.ID), goal))
+				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_recent_completed", map[string]string{
+					"issueNum": fmt.Sprintf("%d", issueNumber),
+					"taskID":   shortHermesTaskID(task.ID),
+					"goal":     goal,
+				}))
 				return
 			}
 		}
 	}
 	if forceRestart {
-		t.send(key, fmt.Sprintf("🤖 **Hermes 重新啟動** — Issue #%d: %s\n%d 個待辦項目", issueNumber, issue.Title, func() int {
+		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_restart_title", map[string]string{
+			"issueNum": fmt.Sprintf("%d", issueNumber),
+			"title":    issue.Title,
+			"count": fmt.Sprintf("%d", func() int {
+				n := 0
+				for _, item := range issue.Checklist {
+					if !item.Checked {
+						n++
+					}
+				}
+				return n
+			}()),
+		}))
+		t.startHermesTaskWithIssueTier(key, goal, projectDir, issueNumber, budget, ghCfg, t.hermesTierFor(key))
+		return
+	}
+	t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_start_title", map[string]string{
+		"issueNum": fmt.Sprintf("%d", issueNumber),
+		"title":    issue.Title,
+		"count": fmt.Sprintf("%d", func() int {
 			n := 0
 			for _, item := range issue.Checklist {
 				if !item.Checked {
@@ -2237,19 +2270,8 @@ func (t *TelegramBot) startHermesFromIssueMode(key chatKey, issueNumber int, pro
 				}
 			}
 			return n
-		}()))
-		t.startHermesTaskWithIssueTier(key, goal, projectDir, issueNumber, budget, ghCfg, t.hermesTierFor(key))
-		return
-	}
-	t.send(key, fmt.Sprintf("🤖 **Hermes 啟動** — Issue #%d: %s\n%d 個待辦項目", issueNumber, issue.Title, func() int {
-		n := 0
-		for _, item := range issue.Checklist {
-			if !item.Checked {
-				n++
-			}
-		}
-		return n
-	}()))
+		}()),
+	}))
 
 	t.startHermesTaskWithIssue(key, goal, projectDir, issueNumber, budget, ghCfg)
 }
@@ -2268,14 +2290,23 @@ func (t *TelegramBot) startHermesGoalOrContinuation(key chatKey, goal, projectDi
 	if task, decision, ok := t.resolveSimilarHermesTask(key, projectDir, goal); ok {
 		switch decision {
 		case hermesSimilarContinue:
-			t.send(key, fmt.Sprintf("🔁 找到相似 Hermes 任務 %s，將根據既有進度接續剩餘工作…", shortHermesTaskID(task.ID)))
+			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_goal_continue_existing", map[string]string{
+				"taskID": shortHermesTaskID(task.ID),
+				"action": t.getLocalizedMessage(key.chatID, hermesContinuationVerbKey("continue"), nil),
+			}))
 			t.startHermesContinuationTask(key, task, projectDir, "continue")
 			return
 		case hermesSimilarCompleted:
-			t.send(key, fmt.Sprintf("ℹ️ 找到 24 小時內已完成的相似 Hermes 任務 %s，為避免重複執行已先停止。\n若要重新開始，請使用 `/hermes restart %s`。", shortHermesTaskID(task.ID), goal))
+			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_goal_recent_completed", map[string]string{
+				"taskID": shortHermesTaskID(task.ID),
+				"goal":   goal,
+			}))
 			return
 		case hermesSimilarAmbiguous:
-			t.sendHermesCandidateActions(key, fmt.Sprintf("⚠️ 找到可能相關的 Hermes 任務 %s，為避免接錯任務，這次未自動執行。\n可以直接按下方按鈕接續或重新規劃；若要開新任務，請使用 `/hermes restart %s`。", shortHermesTaskID(task.ID), goal), task)
+			t.sendHermesCandidateActions(key, t.getLocalizedMessage(key.chatID, "hermes_goal_ambiguous_candidate", map[string]string{
+				"taskID": shortHermesTaskID(task.ID),
+				"goal":   goal,
+			}), task)
 			return
 		}
 	}
@@ -2933,13 +2964,14 @@ func (t *TelegramBot) hermesStatusTextAndCandidates(key chatKey, projectDir stri
 	hc := t.hermesCoords[key]
 	t.hermesMu.RUnlock()
 
+	lang := t.getChatLanguage(key.chatID)
 	var lines []string
 	if hc == nil || !hc.enabled {
-		lines = append(lines, "Hermes 模式：未啟用")
+		lines = append(lines, t.getLocalizedMessage(key.chatID, "hermes_status_disabled", nil))
 	} else if hc.coord != nil && hc.coord.IsRunning() {
-		lines = append(lines, fmt.Sprintf("Hermes 模式：執行中（任務 %s）", shortHermesTaskID(hc.coord.TaskID())))
+		lines = append(lines, t.getLocalizedMessage(key.chatID, "hermes_status_running", map[string]string{"taskID": shortHermesTaskID(hc.coord.TaskID())}))
 	} else {
-		lines = append(lines, "Hermes 模式：已啟用，等待下一則訊息")
+		lines = append(lines, t.getLocalizedMessage(key.chatID, "hermes_status_enabled_waiting", nil))
 	}
 
 	var candidates []hermes.TaskState
@@ -2955,17 +2987,17 @@ func (t *TelegramBot) hermesStatusTextAndCandidates(key chatKey, projectDir stri
 	if len(candidates) > 0 || len(legacyCandidates) > 0 {
 		lines = append(lines, "")
 		if len(candidates) > 0 {
-			lines = append(lines, "可接續任務候選：")
+			lines = append(lines, t.getLocalizedMessage(key.chatID, "hermes_status_candidates_title", nil))
 			for _, task := range candidates {
-				lines = append(lines, formatHermesTaskLine(task))
+				lines = append(lines, formatHermesTaskLineWithLocale(lang, t.i18n, task))
 			}
 		} else {
-			lines = append(lines, "可接續舊版任務候選（Topic 未記錄，請確認 id 後操作）：")
+			lines = append(lines, t.getLocalizedMessage(key.chatID, "hermes_status_legacy_candidates_title", nil))
 			for _, task := range legacyCandidates {
-				lines = append(lines, formatHermesTaskLine(task))
+				lines = append(lines, formatHermesTaskLineWithLocale(lang, t.i18n, task))
 			}
 		}
-		lines = append(lines, "可用操作：直接按下方按鈕，或使用 /hermes continue <id>、/hermes replan <id>、/hermes restart <任務說明>")
+		lines = append(lines, t.getLocalizedMessage(key.chatID, "hermes_status_actions_hint", nil))
 	}
 	if len(candidates) == 0 {
 		candidates = legacyCandidates
@@ -3017,11 +3049,11 @@ func hermesCandidateActionRows(lang string, i18n *I18nManager, tasks []hermes.Ta
 		shortID := shortHermesTaskID(id)
 		rows = append(rows, []map[string]interface{}{
 			{
-				"text":          getMessage("hermes_candidate_continue", map[string]string{"{id}": shortID}),
+				"text":          getMessage("hermes_candidate_continue", map[string]string{"id": shortID}),
 				"callback_data": "hermes:continue:" + id,
 			},
 			{
-				"text":          getMessage("hermes_candidate_replan", map[string]string{"{id}": shortID}),
+				"text":          getMessage("hermes_candidate_replan", map[string]string{"id": shortID}),
 				"callback_data": "hermes:replan:" + id,
 			},
 		})
@@ -3035,13 +3067,25 @@ func hermesCandidateActionRows(lang string, i18n *I18nManager, tasks []hermes.Ta
 	return rows
 }
 
-func formatHermesTaskLine(task hermes.TaskState) string {
+func formatHermesTaskLineWithLocale(lang string, i18n *I18nManager, task hermes.TaskState) string {
+	getMessage := func(key string, vars map[string]string) string {
+		if i18n == nil {
+			return key
+		}
+		return i18n.GetMessage(lang, key, vars)
+	}
 	done, total := hermesTaskProgressCounts(task)
 	goal := clampHermesContext(extractHermesActionableGoal(task.Goal), 120)
 	if goal == "" {
-		goal = "(無目標摘要)"
+		goal = getMessage("hermes_status_no_goal_summary", nil)
 	}
-	return fmt.Sprintf("- %s [%s] %d/%d：%s", shortHermesTaskID(task.ID), task.Status, done, total, goal)
+	return getMessage("hermes_status_task_item", map[string]string{
+		"id":     shortHermesTaskID(task.ID),
+		"status": string(task.Status),
+		"done":   fmt.Sprintf("%d", done),
+		"total":  fmt.Sprintf("%d", total),
+		"goal":   goal,
+	})
 }
 
 func hermesTaskProgressCounts(task hermes.TaskState) (done, total int) {
@@ -3062,11 +3106,11 @@ func shortHermesTaskID(id string) string {
 	return id
 }
 
-func hermesContinuationVerb(mode string) string {
+func hermesContinuationVerbKey(mode string) string {
 	if mode == "replan" {
-		return "重新規劃剩餘工作"
+		return "hermes_continuation_replan"
 	}
-	return "接續剩餘工作"
+	return "hermes_continuation_continue"
 }
 
 func (t *TelegramBot) loadHermesContextTasks(chatID int64, currentRequest string) []hermes.TaskState {
@@ -3634,7 +3678,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 
 	taskID, err := coord.Start(ctx, goal, agent.chatContext)
 	if err != nil {
-		t.send(key, fmt.Sprintf("Hermes 啟動失敗：%v", err))
+		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_start_failed", map[string]string{"error": err.Error()}))
 		return
 	}
 	log.Printf("[hermes] chat %d started task %s", key.chatID, taskID)
@@ -3642,22 +3686,26 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	if len(displayTaskID) > 8 {
 		displayTaskID = displayTaskID[:8]
 	}
-	t.send(key, fmt.Sprintf("📌 任務編號：%s", displayTaskID))
+	t.send(key, t.getLocalizedMessage(key.chatID, "hermes_task_id_label", map[string]string{"taskID": displayTaskID}))
 }
 
 // buildTaskSyncHook returns a post-completion hook that refreshes MASTER_TASKS.md
 // when triggerSync is true. It intentionally uses Claude CLI because /task-sync
 // is a local Claude slash command, not a backend-neutral Alice command yet.
+var runTaskSyncCommand = func(ctx context.Context, projectDir string) ([]byte, error) {
+	return runProcessCombinedOutput(ctx, ProcessOptions{
+		Dir:     projectDir,
+		Env:     cleanEnvForCLI(),
+		Timeout: defaultAgentProcessTimeout,
+	}, "claude", "--print", "--dangerously-skip-permissions", "/task-sync")
+}
+
 func (t *TelegramBot) buildTaskSyncHook(triggerSync bool, projectDir string) func(ctx context.Context) {
 	if !triggerSync {
 		return nil
 	}
 	return func(ctx context.Context) {
-		out, err := runProcessCombinedOutput(ctx, ProcessOptions{
-			Dir:     projectDir,
-			Env:     cleanEnvForCLI(),
-			Timeout: defaultAgentProcessTimeout,
-		}, "claude", "--print", "--dangerously-skip-permissions", "/task-sync")
+		out, err := runTaskSyncCommand(ctx, projectDir)
 		if err != nil {
 			log.Printf("[hermes] task-sync failed: %v (output: %s)", err, out)
 		} else {
@@ -4904,19 +4952,13 @@ func (t *TelegramBot) sendModelMenu(key chatKey) {
 	if current == "" {
 		current = "auto"
 	}
-	hermesTier := t.hermesTierFor(key)
-	hermesTierLabel := "Hermes: Claude"
-	if hermesTier == "codex" {
-		hermesTierLabel = "Hermes: GPT/Codex"
-	}
 	label := func(mode, display string) string {
 		if current == mode {
 			return "✅ " + display
 		}
 		return display
 	}
-	text := t.getLocalizedMessage(key.chatID, "menu_model_title", map[string]string{"{mode}": current, "{tier}": hermesTierLabel})
-	t.sendMenuMessage(key, text, [][]map[string]interface{}{
+	rows := [][]map[string]interface{}{
 		{
 			{"text": label("fast", "Claude Fast"), "callback_data": "model:set:fast"},
 			{"text": label("smart", "Claude Smart"), "callback_data": "model:set:smart"},
@@ -4933,10 +4975,34 @@ func (t *TelegramBot) sendModelMenu(key chatKey) {
 			{"text": label("gpt-deep", "GPT Deep"), "callback_data": "model:set:gpt-deep"},
 			{"text": label("auto", "Auto"), "callback_data": "model:set:auto"},
 		},
-		{
-			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_back", nil), "callback_data": "menu:open"},
-		},
+	}
+	if t.config != nil && t.config.Hermes.Enabled {
+		hermesTier := t.hermesTierFor(key)
+		hermesLabel := func(tier, display string) string {
+			if hermesTier == tier && t.isHermesEnabled(key) {
+				return "✅ " + display
+			}
+			return display
+		}
+		rows = append(rows, []map[string]interface{}{
+			{"text": hermesLabel("claude", "Hermes: Claude"), "callback_data": "model:hermes-tier:claude"},
+			{"text": hermesLabel("codex", "Hermes: GPT/Codex"), "callback_data": "model:hermes-tier:codex"},
+		})
+	}
+	rows = append(rows, []map[string]interface{}{
+		{"text": t.getLocalizedMessage(key.chatID, "menu_btn_back", nil), "callback_data": "menu:open"},
 	})
+
+	text := t.getLocalizedMessage(key.chatID, "menu_model_title", map[string]string{"{mode}": current, "{tier}": t.hermesTierLabel(key)})
+	t.sendMenuMessage(key, text, rows)
+}
+
+func (t *TelegramBot) hermesTierLabel(key chatKey) string {
+	hermesTier := t.hermesTierFor(key)
+	if hermesTier == "codex" {
+		return "Hermes: GPT/Codex"
+	}
+	return "Hermes: Claude"
 }
 
 func (t *TelegramBot) handleModelCallback(key chatKey, queryID, data string) {
@@ -5249,17 +5315,17 @@ func parseHermesCallbackData(data string) (mode string, taskID string, ok bool) 
 func (t *TelegramBot) handleHermesCallback(key chatKey, queryID, data string) {
 	mode, taskID, ok := parseHermesCallbackData(data)
 	if !ok {
-		t.answerCallbackQuery(queryID, "無法辨識 Hermes 操作")
+		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_unknown_operation", nil))
 		return
 	}
 	if mode == "cancel" {
-		t.answerCallbackQuery(queryID, "已取消")
+		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_cancelled", nil))
 		return
 	}
 	if strings.HasPrefix(mode, "issue") {
 		issueNumber, err := strconv.Atoi(taskID)
 		if err != nil || issueNumber <= 0 {
-			t.answerCallbackQuery(queryID, "Issue 編號無效")
+			t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_invalid_issue_number", nil))
 			return
 		}
 		tier := ""
@@ -5268,8 +5334,8 @@ func (t *TelegramBot) handleHermesCallback(key chatKey, queryID, data string) {
 		}
 		projectDir := t.getAgent(key).ProjectDir()
 		t.setHermesTier(key, tier)
-		t.answerCallbackQuery(queryID, fmt.Sprintf("讀取 Issue #%d", issueNumber))
-		t.send(key, fmt.Sprintf("🔍 正在讀取 GitHub Issue #%d…", issueNumber))
+		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_issue_loading", map[string]string{"issueNum": fmt.Sprintf("%d", issueNumber)}))
+		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_loading", map[string]string{"issueNum": fmt.Sprintf("%d", issueNumber)}))
 		go t.runTrackedJob("hermes.issue.callback", func() {
 			t.startHermesFromIssue(key, issueNumber, projectDir)
 		})
@@ -5279,31 +5345,36 @@ func (t *TelegramBot) handleHermesCallback(key chatKey, queryID, data string) {
 	hermesTask, err := t.taskSvc.GetTask(taskID)
 	if err != nil {
 		log.Printf("[hermes] callback task lookup failed (task=%s): %v", taskID, err)
-		t.answerCallbackQuery(queryID, "找不到 Hermes 任務")
+		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_task_not_found", nil))
 		return
 	}
 	task := hermesTask
 	if task.ChatID != key.chatID {
-		t.answerCallbackQuery(queryID, "此任務不屬於目前對話")
+		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_not_current_chat", nil))
 		return
 	}
 	projectDir := t.getAgent(key).ProjectDir()
 	if !hermesTaskMatchesSelectableScope(task, key.threadID, projectDir) {
-		t.answerCallbackQuery(queryID, "此任務不屬於目前 Topic")
+		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_not_current_topic", nil))
 		return
 	}
 
 	if !hermesTaskMatchesProject(task, projectDir) {
-		t.answerCallbackQuery(queryID, "此任務不屬於目前專案")
+		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_not_current_project", nil))
 		return
 	}
 	if !hermesTaskIsContinuable(task) {
-		t.answerCallbackQuery(queryID, "此 Hermes 任務目前不可接續")
+		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_not_continuable", nil))
 		return
 	}
 
-	t.answerCallbackQuery(queryID, "準備"+hermesContinuationVerb(mode))
-	t.send(key, fmt.Sprintf("🔁 將根據任務 %s 的既有進度%s…", shortHermesTaskID(task.ID), hermesContinuationVerb(mode)))
+	t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_preparing", map[string]string{
+		"action": t.getLocalizedMessage(key.chatID, hermesContinuationVerbKey(mode), nil),
+	}))
+	t.send(key, t.getLocalizedMessage(key.chatID, "hermes_continuation_start", map[string]string{
+		"taskID": shortHermesTaskID(task.ID),
+		"action": t.getLocalizedMessage(key.chatID, hermesContinuationVerbKey(mode), nil),
+	}))
 	go t.runTrackedJob("hermes.callback", func() {
 		t.startHermesContinuationTask(key, task, projectDir, mode)
 	})
