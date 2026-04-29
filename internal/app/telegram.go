@@ -3113,8 +3113,12 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	taskStore := hermes.TaskStateStore(t.taskSvc)
 
 	verbosity := hermes.ParseVerbosity(cfg.ProgressVerbosity)
-	reporter := hermes.NewTextProgressReporter(verbosity, func(text string) {
-		t.send(key, text)
+	reporter := hermes.NewTextProgressReporterWithNotify(verbosity, func(text string, notify bool) {
+		if notify {
+			t.send(key, text)
+			return
+		}
+		t.sendSilent(key, text)
 	})
 
 	plannerSessionID := t.plannerSessionForTier(key, tier)
@@ -4871,9 +4875,10 @@ func (t *TelegramBot) sendMessageWithStopButton(key chatKey, text string) (int, 
 	}
 
 	params := map[string]interface{}{
-		"chat_id":      key.chatID,
-		"text":         cleanText,
-		"reply_markup": keyboard,
+		"chat_id":              key.chatID,
+		"text":                 cleanText,
+		"reply_markup":         keyboard,
+		"disable_notification": true,
 	}
 
 	if key.threadID != 0 {

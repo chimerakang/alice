@@ -56,11 +56,19 @@ type ProgressReporter interface {
 // them to a send function (e.g. TelegramBot.send).
 type TextProgressReporter struct {
 	verbosity Verbosity
-	sendFn    func(text string)
+	sendFn    func(text string, notify bool)
 }
 
 // NewTextProgressReporter creates a reporter that calls sendFn for each event.
 func NewTextProgressReporter(verbosity Verbosity, sendFn func(string)) *TextProgressReporter {
+	return NewTextProgressReporterWithNotify(verbosity, func(text string, _ bool) {
+		sendFn(text)
+	})
+}
+
+// NewTextProgressReporterWithNotify creates a reporter that labels whether each
+// event should produce a user-visible notification sound.
+func NewTextProgressReporterWithNotify(verbosity Verbosity, sendFn func(text string, notify bool)) *TextProgressReporter {
 	return &TextProgressReporter{verbosity: verbosity, sendFn: sendFn}
 }
 
@@ -70,14 +78,14 @@ func (r *TextProgressReporter) OnPlanReady(tasks []SubTask) {
 	for i, t := range tasks {
 		lines = append(lines, fmt.Sprintf("  %d. %s", i+1, t.Description))
 	}
-	r.sendFn(join(lines))
+	r.sendFn(join(lines), false)
 }
 
 func (r *TextProgressReporter) OnSubTaskStart(idx, total int, task SubTask) {
 	if r.verbosity < VerbosityNormal {
 		return
 	}
-	r.sendFn(fmt.Sprintf("[%d/%d] 執行：%s", idx+1, total, task.Description))
+	r.sendFn(fmt.Sprintf("[%d/%d] 執行：%s", idx+1, total, task.Description), false)
 }
 
 func (r *TextProgressReporter) OnSubTaskDone(idx, total int, task SubTask, success bool, result string) {
@@ -98,14 +106,14 @@ func (r *TextProgressReporter) OnSubTaskDone(idx, total int, task SubTask, succe
 	if result != "" && (!success || r.verbosity >= VerbosityVerbose) {
 		msg += "\n" + result
 	}
-	r.sendFn(msg)
+	r.sendFn(msg, false)
 }
 
 func (r *TextProgressReporter) OnRetry(idx, attempt, maxAttempts int, validationErr string) {
 	if r.verbosity < VerbosityVerbose {
 		return
 	}
-	r.sendFn(fmt.Sprintf("⚠️ 子任務 %d 重試中 (%d/%d)：%s", idx+1, attempt, maxAttempts, validationErr))
+	r.sendFn(fmt.Sprintf("⚠️ 子任務 %d 重試中 (%d/%d)：%s", idx+1, attempt, maxAttempts, validationErr), false)
 }
 
 func (r *TextProgressReporter) OnDone(state TaskState) {
@@ -167,7 +175,7 @@ func (r *TextProgressReporter) OnDone(state TaskState) {
 		lines = append(lines, "", summary.GenerateSummary())
 	}
 
-	r.sendFn(join(lines))
+	r.sendFn(join(lines), true)
 }
 
 func hasAnyResult(plan []SubTask) bool {
@@ -188,23 +196,23 @@ func truncateRunes(s string, max int) string {
 }
 
 func (r *TextProgressReporter) OnBudgetWarning(budget TokenBudget) {
-	r.sendFn(fmt.Sprintf("⚠️ 預算即將耗盡（%s），是否繼續？", budget.BudgetStatus()))
+	r.sendFn(fmt.Sprintf("⚠️ 預算即將耗盡（%s），是否繼續？", budget.BudgetStatus()), true)
 }
 
 func (r *TextProgressReporter) OnError(err error) {
-	r.sendFn(fmt.Sprintf("❌ Hermes 錯誤：%v", err))
+	r.sendFn(fmt.Sprintf("❌ Hermes 錯誤：%v", err), true)
 }
 
 // NoopProgressReporter silently discards all events.
 type NoopProgressReporter struct{}
 
-func (n *NoopProgressReporter) OnPlanReady(_ []SubTask)                                         {}
-func (n *NoopProgressReporter) OnSubTaskStart(_, _ int, _ SubTask)                              {}
-func (n *NoopProgressReporter) OnSubTaskDone(_, _ int, _ SubTask, _ bool, _ string)             {}
-func (n *NoopProgressReporter) OnRetry(_, _, _ int, _ string)                                   {}
-func (n *NoopProgressReporter) OnDone(_ TaskState)                                               {}
-func (n *NoopProgressReporter) OnBudgetWarning(_ TokenBudget)                                    {}
-func (n *NoopProgressReporter) OnError(_ error)                                                  {}
+func (n *NoopProgressReporter) OnPlanReady(_ []SubTask)                             {}
+func (n *NoopProgressReporter) OnSubTaskStart(_, _ int, _ SubTask)                  {}
+func (n *NoopProgressReporter) OnSubTaskDone(_, _ int, _ SubTask, _ bool, _ string) {}
+func (n *NoopProgressReporter) OnRetry(_, _, _ int, _ string)                       {}
+func (n *NoopProgressReporter) OnDone(_ TaskState)                                  {}
+func (n *NoopProgressReporter) OnBudgetWarning(_ TokenBudget)                       {}
+func (n *NoopProgressReporter) OnError(_ error)                                     {}
 
 func join(lines []string) string {
 	result := ""
