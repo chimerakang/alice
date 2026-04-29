@@ -407,6 +407,9 @@ func parseRetryArgs(parts []string) (mode, taskID string, idx int, err error) {
 	if len(parts) < 2 || strings.EqualFold(parts[1], "latest") {
 		return "latest", "", 0, nil
 	}
+	if strings.EqualFold(parts[1], "all-failed") {
+		return "all-failed-smart", "", 0, nil
+	}
 	taskID = strings.TrimSpace(parts[1])
 	if taskID == "" {
 		return "", "", 0, fmt.Errorf("missing task_id")
@@ -438,6 +441,10 @@ func (t *TelegramBot) handleRetryCommand(key chatKey, parts []string) {
 	mode, taskID, idx, err := parseRetryArgs(parts)
 	if err != nil {
 		t.send(key, "❌ 使用方式：/retry latest、/retry <task_id|#issue>、/retry <task_id|#issue> <idx>、/retry <task_id|#issue> all-failed")
+		return
+	}
+	if mode == "all-failed-smart" {
+		t.sendRetryAllFailedResolution(key)
 		return
 	}
 

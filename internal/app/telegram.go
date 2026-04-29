@@ -1827,7 +1827,8 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 	// for the first #N token.
 	if issueNum, raw, ok := findIssueRefInArgs(parts[1:]); ok {
 		if issueNum <= 0 {
-			t.send(key, fmt.Sprintf("❌ 無效的 Issue 編號：%s", raw))
+			projectDir := t.getAgent(key).ProjectDir()
+			t.sendHermesIssueResolution(key, raw, projectDir, tier)
 			return
 		}
 		t.send(key, fmt.Sprintf("🔍 正在讀取 GitHub Issue #%d…", issueNum))
@@ -2023,6 +2024,38 @@ func (t *TelegramBot) trySignalBudgetContinue(key chatKey, text string) bool {
 	}
 }
 
+func (t *TelegramBot) sendHermesIssueResolution(key chatKey, rawQuery, projectDir, tier string) {
+	query := strings.TrimSpace(rawQuery)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	candidates, err := t.resolveTargets(ctx, ResolveTargetRequest{
+		ChatID:     key.chatID,
+		ThreadID:   key.threadID,
+		ProjectDir: projectDir,
+		Intent:     "hermes_issue",
+		Query:      query,
+		Kinds:      []TargetKind{TargetGitHubIssue},
+		Limit:      3,
+	})
+	if err != nil {
+		t.send(key, fmt.Sprintf("❌ 無法搜尋 GitHub Issues：%v", err))
+		return
+	}
+	if len(candidates) == 0 {
+		t.send(key, fmt.Sprintf("找不到符合 `%s` 的 Issue。請改用 `/hermes #<number>` 或 `/hermes issues`。", query))
+		return
+	}
+	rows := make([][]map[string]interface{}, 0, len(candidates)+1)
+	for _, candidate := range candidates {
+		label := fmt.Sprintf("#%s · %.0f%% · %s", candidate.ID, candidate.Score*100, truncateForTelegram(candidate.Title, 34))
+		rows = append(rows, []map[string]interface{}{
+			{"text": label, "callback_data": "hermes:issue:" + candidate.ID + ":" + tier},
+		})
+	}
+	rows = append(rows, []map[string]interface{}{{"text": t.getLocalizedMessage(key.chatID, "menu_btn_cancel", nil), "callback_data": "hermes:cancel"}})
+	t.sendMenuMessage(key, fmt.Sprintf("我找到 %d 個可能的 issue：", len(candidates)), rows)
+}
+
 // startHermesFromIssue fetches a GitHub Issue and starts a Hermes task from it.
 func (t *TelegramBot) startHermesFromIssue(key chatKey, issueNumber int, projectDir string) {
 	ctx := context.Background()
@@ -2143,8 +2176,23 @@ func (t *TelegramBot) resolveHermesContinuationTaskBySelector(key chatKey, proje
 		task, ok, ambiguous := selectHermesContinuationTaskByIDForSelectableScope(tasks, key.threadID, projectDir, selector)
 		return task, ok, ambiguous
 	}
-	task, ok := selectHermesContinuationTaskForScope(tasks, key.threadID, projectDir)
-	return task, ok, false
+	candidates := resolveTargetCandidates(ResolveTargetRequest{
+		ChatID:     key.chatID,
+		ThreadID:   key.threadID,
+		ProjectDir: projectDir,
+		Intent:     "hermes_continue",
+		Kinds:      []TargetKind{TargetHermesTask},
+		Limit:      1,
+	}, targetResolverSources{Tasks: tasks, Now: time.Now()})
+	if len(candidates) == 0 {
+		return hermes.TaskState{}, false, false
+	}
+	task, err := t.taskSvc.GetTask(candidates[0].ID)
+	if err != nil {
+		log.Printf("[hermes] failed to load resolved continuation task %s: %v", candidates[0].ID, err)
+		return hermes.TaskState{}, false, false
+	}
+	return task, true, false
 }
 
 func selectHermesContinuationTask(tasks []hermes.TaskState, projectDir string) (hermes.TaskState, bool) {
@@ -4516,6 +4564,51 @@ func retryCandidateButtonText(candidate retryTaskCandidate) string {
 	return fmt.Sprintf("%s · %d failed · %s", prefix, candidate.FailedCount, goal)
 }
 
+func (t *TelegramBot) sendRetryAllFailedResolution(key chatKey) {
+	ctx, cancel := context.WithTimeout(context.Background(), retrySelectionTimeout)
+	defer cancel()
+	candidates, err := t.resolveTargets(ctx, ResolveTargetRequest{
+		ChatID:   key.chatID,
+		ThreadID: key.threadID,
+		Intent:   "retry_all_failed",
+		Kinds:    []TargetKind{TargetReviewResult},
+		Limit:    3,
+	})
+	if err != nil {
+		t.send(key, "❌ 無法解析 retry 目標："+err.Error())
+		return
+	}
+	if len(candidates) == 0 {
+		t.send(key, "✅ 找不到低分或 partial/fail 的 task 可 retry。")
+		return
+	}
+	if len(candidates) == 1 && candidates[0].Score >= 0.75 {
+		candidate := candidates[0]
+		text := fmt.Sprintf("準備 retry task `%s` 的所有 failed subtasks\n\n%s\n%s",
+			shortHermesTaskID(candidate.ID),
+			truncateForTelegram(candidate.Title, 120),
+			candidate.Reason,
+		)
+		t.sendMenuMessage(key, text, [][]map[string]interface{}{
+			{
+				{"text": t.getLocalizedMessage(key.chatID, "menu_retry_confirm_btn", nil), "callback_data": "retry:run:all:" + candidate.ID},
+				{"text": t.getLocalizedMessage(key.chatID, "menu_btn_cancel", nil), "callback_data": "retry:cancel"},
+			},
+			{
+				{"text": t.getLocalizedMessage(key.chatID, "menu_btn_back", nil), "callback_data": "retry:menu"},
+			},
+		})
+		return
+	}
+	rows := make([][]map[string]interface{}, 0, len(candidates)+1)
+	for _, candidate := range candidates {
+		label := fmt.Sprintf("%s · %.0f%% · %s", shortHermesTaskID(candidate.ID), candidate.Score*100, truncateForTelegram(candidate.Title, 34))
+		rows = append(rows, []map[string]interface{}{{"text": label, "callback_data": "retry:task:" + candidate.ID}})
+	}
+	rows = append(rows, []map[string]interface{}{{"text": t.getLocalizedMessage(key.chatID, "menu_btn_cancel", nil), "callback_data": "retry:cancel"}})
+	t.sendMenuMessage(key, "你要 retry 哪個 task？", rows)
+}
+
 func (t *TelegramBot) sendRetryTaskMenu(key chatKey, taskID string) {
 	if globalStorage == nil {
 		t.send(key, "❌ Storage 尚未啟用，無法讀取 review 結果。")
@@ -4665,6 +4758,17 @@ func parseHermesCallbackData(data string) (mode string, taskID string, ok bool) 
 	if data == "hermes:cancel" {
 		return "cancel", "", true
 	}
+	if strings.HasPrefix(data, "hermes:issue:") {
+		rest := strings.TrimPrefix(data, "hermes:issue:")
+		issueID, tier, _ := strings.Cut(rest, ":")
+		if strings.TrimSpace(issueID) == "" {
+			return "", "", false
+		}
+		if tier != "" {
+			return "issue:" + tier, issueID, true
+		}
+		return "issue", issueID, true
+	}
 	mode, taskID, found := strings.Cut(strings.TrimPrefix(data, "hermes:"), ":")
 	if !found || taskID == "" {
 		return "", "", false
@@ -4685,6 +4789,25 @@ func (t *TelegramBot) handleHermesCallback(key chatKey, queryID, data string) {
 	}
 	if mode == "cancel" {
 		t.answerCallbackQuery(queryID, "已取消")
+		return
+	}
+	if strings.HasPrefix(mode, "issue") {
+		issueNumber, err := strconv.Atoi(taskID)
+		if err != nil || issueNumber <= 0 {
+			t.answerCallbackQuery(queryID, "Issue 編號無效")
+			return
+		}
+		tier := ""
+		if _, rawTier, found := strings.Cut(mode, ":"); found {
+			tier = rawTier
+		}
+		projectDir := t.getAgent(key).ProjectDir()
+		t.setHermesTier(key, tier)
+		t.answerCallbackQuery(queryID, fmt.Sprintf("讀取 Issue #%d", issueNumber))
+		t.send(key, fmt.Sprintf("🔍 正在讀取 GitHub Issue #%d…", issueNumber))
+		go t.runTrackedJob("hermes.issue.callback", func() {
+			t.startHermesFromIssue(key, issueNumber, projectDir)
+		})
 		return
 	}
 
