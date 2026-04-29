@@ -3594,10 +3594,20 @@ func (t *TelegramBot) resolveHermesRoleModels(tier string, cfg HermesConfig, str
 // startHermesTaskWithIssueTier is the common implementation that selects models
 // based on the tier ("" or "claude" → Claude; "codex" → GPT/Codex).
 func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir string, issueNumber int, budgetOverride HermesBudgetConfig, ghIntegration GithubIntegrationConfig, tier string) {
+	ctx := context.Background()
+	worktreeChanges, worktreeErr := checkHermesCleanWorktree(ctx, projectDir)
+	if worktreeErr != nil {
+		t.send(key, "⚠️ Hermes 未啟動：無法確認 Git 工作樹是否乾淨。\n\n錯誤："+worktreeErr.Error())
+		return
+	}
+	if len(worktreeChanges) > 0 {
+		t.send(key, formatHermesDirtyWorktreeMessage(worktreeChanges))
+		return
+	}
+
 	// Update tier and clear session IDs if tier changed (Issue #109)
 	t.setHermesTier(key, tier)
 
-	ctx := context.Background()
 	cfg := HermesDefaults(t.config.Hermes)
 	strictCfg := t.resolveStrictModeConfig(key, goal)
 

@@ -102,6 +102,7 @@ func (r *UnifiedMemoryResolver) Resolve(ctx context.Context, req MemoryRequest) 
 	if budget <= 0 {
 		budget = defaultMemoryBudgetChars
 	}
+	issueNumber := normalizedMemoryIssueNumber(req)
 
 	var sections []MemorySection
 	if r != nil && r.tasks != nil {
@@ -113,20 +114,37 @@ func (r *UnifiedMemoryResolver) Resolve(ctx context.Context, req MemoryRequest) 
 			sections = append(sections, taskSection)
 		}
 	}
-	if bridge := strings.TrimSpace(buildContextBridge(req.RecentMessages)); bridge != "" {
-		sections = append(sections, MemorySection{
-			Source:   "recent_messages",
-			Scope:    memoryScopeForRequest(req),
-			Priority: 20,
-			Text:     clampHermesContext(bridge, hermesContextMaxChars),
-		})
+	if issueNumber == 0 {
+		bridge := strings.TrimSpace(buildContextBridge(req.RecentMessages))
+		if bridge != "" {
+			sections = append(sections, MemorySection{
+				Source:   "recent_messages",
+				Scope:    memoryScopeForRequest(req),
+				Priority: 20,
+				Text:     clampHermesContext(bridge, hermesContextMaxChars),
+			})
+		}
+	} else if len(req.RecentMessages) > 0 {
+		log.Printf("[memory] skipped recent_messages for explicit issue scope issue=%d chat=%d thread=%d",
+			issueNumber, req.ChatID, req.ThreadID)
 	}
 
 	bundle := MemoryBundle{Sections: sections}
 	bundle.Sections = clampMemorySections(bundle.Sections, budget)
-	log.Printf("[memory] resolved sections=%d mode=%s chat=%d thread=%d issue=%d budget=%d",
-		len(bundle.Sections), req.Mode, req.ChatID, req.ThreadID, normalizedMemoryIssueNumber(req), budget)
+	log.Printf("[memory] resolved sections=%d mode=%s chat=%d thread=%d issue=%d budget=%d sources=%s",
+		len(bundle.Sections), req.Mode, req.ChatID, req.ThreadID, issueNumber, budget, memorySectionSummary(bundle.Sections))
 	return bundle, nil
+}
+
+func memorySectionSummary(sections []MemorySection) string {
+	if len(sections) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(sections))
+	for _, section := range sections {
+		parts = append(parts, fmt.Sprintf("%s/%s/%d", section.Source, section.Scope, len([]rune(section.Text))))
+	}
+	return strings.Join(parts, ",")
 }
 
 func (r *UnifiedMemoryResolver) resolveHermesTaskSection(ctx context.Context, req MemoryRequest) (MemorySection, error) {

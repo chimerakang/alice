@@ -198,7 +198,7 @@ func TestLoadHermesContextTasksPrioritizesMatchingIssue(t *testing.T) {
 	}
 }
 
-func TestMemoryResolverOrdersIssueBeforeRecentMessages(t *testing.T) {
+func TestMemoryResolverSkipsRecentMessagesForExplicitIssue(t *testing.T) {
 	store := hermes.NewMemoryTaskStore()
 	now := time.Date(2026, 4, 29, 13, 0, 0, 0, time.UTC)
 	for _, task := range []hermes.TaskState{
@@ -241,8 +241,8 @@ func TestMemoryResolverOrdersIssueBeforeRecentMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
-	if len(bundle.Sections) != 2 {
-		t.Fatalf("sections = %d, want 2: %#v", len(bundle.Sections), bundle.Sections)
+	if len(bundle.Sections) != 1 {
+		t.Fatalf("sections = %d, want only issue memory: %#v", len(bundle.Sections), bundle.Sections)
 	}
 	if bundle.Sections[0].Source != "issue_task" {
 		t.Fatalf("first source = %q, want issue_task", bundle.Sections[0].Source)
@@ -253,6 +253,35 @@ func TestMemoryResolverOrdersIssueBeforeRecentMessages(t *testing.T) {
 	}
 	if strings.Contains(rendered, "不應污染 #143") {
 		t.Fatalf("different issue memory leaked into bundle:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "那是 #99 的內容") {
+		t.Fatalf("recent messages leaked into explicit issue bundle:\n%s", rendered)
+	}
+}
+
+func TestMemoryResolverIncludesRecentMessagesWithoutExplicitIssue(t *testing.T) {
+	resolver := NewMemoryResolver(tasksvc.New(hermes.NewMemoryTaskStore()))
+	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
+		ChatID:      42,
+		ThreadID:    7,
+		UserMessage: "好，繼續",
+		Mode:        "hermes",
+		RecentMessages: []contextMessage{
+			{Role: "user", Content: "先分析 context bridge"},
+			{Role: "assistant", Content: "找到 recent bridge 脈絡"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(bundle.Sections) != 1 {
+		t.Fatalf("sections = %d, want recent bridge only: %#v", len(bundle.Sections), bundle.Sections)
+	}
+	if bundle.Sections[0].Source != "recent_messages" {
+		t.Fatalf("source = %q, want recent_messages", bundle.Sections[0].Source)
+	}
+	if !strings.Contains(bundle.Render(), "找到 recent bridge 脈絡") {
+		t.Fatalf("expected recent bridge content, got:\n%s", bundle.Render())
 	}
 }
 
@@ -1652,6 +1681,77 @@ func TestBuildTaskSyncHookInvokesTaskSyncSlashCommand(t *testing.T) {
 	case <-called:
 	case <-time.After(time.Second):
 		t.Fatal("expected task-sync hook to call runTaskSyncCommand")
+	}
+}
+
+func TestCheckHermesCleanWorktreeReturnsDirtyPorcelainLines(t *testing.T) {
+	projectDir := t.TempDir()
+	if _, err := runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "init"); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+
+	changes, err := checkHermesCleanWorktree(context.Background(), projectDir)
+	if err != nil {
+		t.Fatalf("clean worktree check: %v", err)
+	}
+	if len(changes) != 0 {
+		t.Fatalf("expected clean worktree, got %v", changes)
+	}
+
+	if err := os.WriteFile(filepath.Join(projectDir, "leftover.txt"), []byte("stale change"), 0o644); err != nil {
+		t.Fatalf("write leftover: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "tracked.txt"), []byte("initial"), 0o644); err != nil {
+		t.Fatalf("write tracked: %v", err)
+	}
+	if _, err := runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "add", "tracked.txt"); err != nil {
+		t.Fatalf("git add: %v", err)
+	}
+	if _, err := runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "-c", "user.email=test@example.com", "-c", "user.name=Test User", "commit", "-m", "initial"); err != nil {
+		t.Fatalf("git commit: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "tracked.txt"), []byte("modified"), 0o644); err != nil {
+		t.Fatalf("modify tracked: %v", err)
+	}
+
+	changes, err = checkHermesCleanWorktree(context.Background(), projectDir)
+	if err != nil {
+		t.Fatalf("dirty worktree check: %v", err)
+	}
+	if len(changes) != 2 || changes[0] != " M tracked.txt" || changes[1] != "?? leftover.txt" {
+		t.Fatalf("unexpected dirty changes: %#v", changes)
+	}
+}
+
+func TestStartHermesTaskWithIssueTierRejectsDirtyWorktree(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	projectDir := t.TempDir()
+	if _, err := runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "init"); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "leftover.txt"), []byte("stale change"), 0o644); err != nil {
+		t.Fatalf("write leftover: %v", err)
+	}
+
+	bot := &TelegramBot{
+		config:       &Config{Hermes: HermesConfig{Enabled: true}},
+		hermesCoords: make(map[chatKey]*hermesCoord),
+		messageQueue: make(chan *TelegramMessage, 1),
+	}
+
+	bot.startHermesTaskWithIssueTier(key, "處理 #131", projectDir, 131, HermesBudgetConfig{}, GithubIntegrationConfig{}, "codex")
+
+	select {
+	case msg := <-bot.messageQueue:
+		text, _ := msg.Params["text"].(string)
+		if !strings.Contains(text, "Hermes 未啟動") || !strings.Contains(text, "?? leftover.txt") {
+			t.Fatalf("unexpected dirty worktree message: %q", text)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected dirty worktree warning")
+	}
+	if _, ok := bot.hermesCoords[key]; ok {
+		t.Fatal("dirty worktree should not create Hermes coordinator state")
 	}
 }
 

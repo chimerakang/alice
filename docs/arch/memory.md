@@ -47,7 +47,9 @@ For each incoming message:
 3. If no issue is explicit, load the newest active chat task, then recent chat
    task history.
 4. Skip task history whose actionable goal exactly matches the current request.
-5. Append recent messages as lower-priority continuity.
+5. Append recent messages as lower-priority continuity only when the request is
+   not explicitly issue-scoped. Generic recent messages must not be injected
+   into `#N` requests unless Alice can prove they belong to the same issue/task.
 6. Sort sections by priority and clamp within `BudgetChars`.
 
 ## Runner Coverage
