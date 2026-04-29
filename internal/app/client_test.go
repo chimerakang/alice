@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -44,5 +46,131 @@ func TestFormatCLIStreamErrorIncludesMaxTurnsAndPartialOutput(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("formatCLIStreamError() = %q, want substring %q", got, want)
 		}
+	}
+}
+
+func installFakeClaude(t *testing.T, script string) {
+	t.Helper()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "claude")
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+script), 0755); err != nil {
+		t.Fatalf("write fake claude: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestCallReturnsParsedResponseWhenCLIExitsWithError(t *testing.T) {
+	installFakeClaude(t, `cat <<'JSON'
+{"type":"result","session_id":"session-1","is_error":false,"num_turns":51,"result":"completed before exit","usage":{"input_tokens":10,"output_tokens":5}}
+JSON
+echo "max turns exceeded" >&2
+exit 1
+`)
+
+	client := &CLIClient{Model: "fake-model", MaxTurns: 50}
+	resp, err := client.Call(context.Background(), "message", t.TempDir(), "", "")
+	if err == nil {
+		t.Fatal("Call() error = nil, want CLI exit error")
+	}
+	if resp == nil {
+		t.Fatal("Call() response = nil, want parsed response")
+	}
+	if !resp.IsError {
+		t.Fatal("Call() response IsError = false, want true after non-zero CLI exit")
+	}
+	if resp.Result != "completed before exit" {
+		t.Fatalf("Call() result = %q, want parsed result", resp.Result)
+	}
+}
+
+func TestCallStreamReturnsPartialResponseWhenCLIExitsWithError(t *testing.T) {
+	installFakeClaude(t, `cat <<'JSON'
+{"type":"assistant","message":{"content":[{"type":"text","text":"partial answer"},{"type":"tool_use","name":"Bash","input":{"cmd":"go test"}}]}}
+{"type":"result","session_id":"session-1","is_error":false,"num_turns":51,"result":"completed before exit","usage":{"input_tokens":10,"output_tokens":5}}
+JSON
+echo "max turns exceeded" >&2
+exit 1
+`)
+
+	client := &CLIClient{Model: "fake-model", MaxTurns: 50}
+	var textChunks []string
+	var toolName string
+	resp, err := client.CallStream(context.Background(), "message", t.TempDir(), "", "",
+		func(name string, input map[string]interface{}) {
+			toolName = name
+		},
+		func(contentType, text string) {
+			if contentType == "text" {
+				textChunks = append(textChunks, text)
+			}
+		},
+	)
+
+	if err == nil {
+		t.Fatal("CallStream() error = nil, want CLI exit error")
+	}
+	if resp == nil {
+		t.Fatal("CallStream() response = nil, want parsed streaming response")
+	}
+	if !resp.IsError {
+		t.Fatal("CallStream() response IsError = false, want true after non-zero CLI exit")
+	}
+	if resp.Result != "completed before exit" {
+		t.Fatalf("CallStream() result = %q, want parsed result", resp.Result)
+	}
+	if resp.TextContent != "partial answer" {
+		t.Fatalf("CallStream() TextContent = %q, want streamed text", resp.TextContent)
+	}
+	if len(textChunks) != 1 || textChunks[0] != "partial answer" {
+		t.Fatalf("CallStream() text callbacks = %#v, want partial answer", textChunks)
+	}
+	if toolName != "Bash" {
+		t.Fatalf("CallStream() tool callback = %q, want Bash", toolName)
+	}
+	if !strings.Contains(err.Error(), "likely exceeded --max-turns") {
+		t.Fatalf("CallStream() error = %q, want max-turns hint", err)
+	}
+}
+
+func TestEnhancedCallStreamWithFilesReturnsPartialResponseWhenCLIExitsWithError(t *testing.T) {
+	installFakeClaude(t, `cat <<'JSON'
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"checking files"},{"type":"text","text":"image analysis summary"}]}}
+{"type":"result","session_id":"session-1","is_error":false,"num_turns":51,"result":"completed before exit","usage":{"input_tokens":10,"output_tokens":5}}
+JSON
+echo "max turns exceeded" >&2
+exit 1
+`)
+
+	client := NewEnhancedCLIClient("fake-model")
+	client.MaxTurns = 50
+	var contentTypes []string
+	resp, err := client.CallStreamWithFiles(context.Background(), "message", nil, t.TempDir(), "",
+		nil,
+		func(contentType, text string) {
+			contentTypes = append(contentTypes, contentType+":"+text)
+		},
+	)
+
+	if err == nil {
+		t.Fatal("CallStreamWithFiles() error = nil, want CLI exit error")
+	}
+	if resp == nil {
+		t.Fatal("CallStreamWithFiles() response = nil, want parsed streaming response")
+	}
+	if !resp.IsError {
+		t.Fatal("CallStreamWithFiles() response IsError = false, want true after non-zero CLI exit")
+	}
+	if resp.TextContent != "image analysis summary" {
+		t.Fatalf("CallStreamWithFiles() TextContent = %q, want streamed text", resp.TextContent)
+	}
+	if resp.ThinkingContent != "checking files" {
+		t.Fatalf("CallStreamWithFiles() ThinkingContent = %q, want streamed thinking", resp.ThinkingContent)
+	}
+	if got := strings.Join(contentTypes, ","); got != "thinking:checking files,text:image analysis summary" {
+		t.Fatalf("CallStreamWithFiles() content callbacks = %q", got)
+	}
+	if !strings.Contains(err.Error(), "likely exceeded --max-turns") {
+		t.Fatalf("CallStreamWithFiles() error = %q, want max-turns hint", err)
 	}
 }

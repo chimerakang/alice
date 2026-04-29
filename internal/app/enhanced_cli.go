@@ -181,8 +181,9 @@ func (c *EnhancedCLIClient) CallStreamWithFiles(ctx context.Context, message str
 		return nil, fmt.Errorf("claude CLI start: %w", err)
 	}
 
-	// 處理流式輸出（簡化版，專注於最終結果）
 	var finalResp *CLIResponse
+	var thinkingBlocks []string
+	var textBlocks []string
 
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -194,11 +195,24 @@ func (c *EnhancedCLIClient) CallStreamWithFiles(ctx context.Context, message str
 		}
 
 		var event struct {
-			Type      string `json:"type"`
-			SessionID string `json:"session_id"`
-			IsError   bool   `json:"is_error"`
-			Result    string `json:"result"`
-			Usage     struct {
+			Type    string `json:"type"`
+			Subtype string `json:"subtype"`
+			Message *struct {
+				Content []struct {
+					Type     string                 `json:"type"`
+					Name     string                 `json:"name"`
+					Input    map[string]interface{} `json:"input"`
+					Text     string                 `json:"text"`
+					Thinking string                 `json:"thinking"`
+				} `json:"content"`
+			} `json:"message"`
+			SessionID    string  `json:"session_id"`
+			IsError      bool    `json:"is_error"`
+			NumTurns     int     `json:"num_turns"`
+			Result       string  `json:"result"`
+			TotalCostUSD float64 `json:"total_cost_usd"`
+			DurationMs   int     `json:"duration_ms"`
+			Usage        struct {
 				InputTokens  int `json:"input_tokens"`
 				OutputTokens int `json:"output_tokens"`
 			} `json:"usage"`
@@ -208,27 +222,65 @@ func (c *EnhancedCLIClient) CallStreamWithFiles(ctx context.Context, message str
 			continue // 忽略無法解析的行
 		}
 
-		// 只關注最終結果
-		if event.Type == "result" {
-			finalResp = &CLIResponse{
-				Type:      event.Type,
-				SessionID: event.SessionID,
-				IsError:   event.IsError,
-				Result:    event.Result,
-				Usage:     event.Usage,
+		switch event.Type {
+		case "assistant":
+			if event.Message == nil {
+				continue
 			}
-			break
+			for _, c := range event.Message.Content {
+				switch c.Type {
+				case "tool_use":
+					if onToolUse != nil {
+						onToolUse(c.Name, c.Input)
+					}
+				case "thinking":
+					if c.Thinking != "" {
+						thinkingBlocks = append(thinkingBlocks, c.Thinking)
+						if onContent != nil {
+							onContent("thinking", c.Thinking)
+						}
+					}
+				case "text":
+					if c.Text != "" {
+						textBlocks = append(textBlocks, c.Text)
+						if onContent != nil {
+							onContent("text", c.Text)
+						}
+					}
+				}
+			}
+		case "result":
+			finalResp = &CLIResponse{
+				Type:         event.Type,
+				Subtype:      event.Subtype,
+				SessionID:    event.SessionID,
+				IsError:      event.IsError,
+				NumTurns:     event.NumTurns,
+				Result:       event.Result,
+				TotalCostUSD: event.TotalCostUSD,
+				DurationMs:   event.DurationMs,
+			}
+			finalResp.Usage.InputTokens = event.Usage.InputTokens
+			finalResp.Usage.OutputTokens = event.Usage.OutputTokens
 		}
 	}
 
-	if err := cmd.Wait(); err != nil && ctx.Err() != context.Canceled {
+	if finalResp != nil {
+		finalResp.ThinkingContent = strings.Join(thinkingBlocks, "\n\n---\n\n")
+		finalResp.TextContent = strings.Join(textBlocks, "\n\n")
+	}
+
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() == context.Canceled {
+			return nil, fmt.Errorf("agent aborted by user")
+		}
 		// CLI exited with error — but we may already have a result from streaming
 		if finalResp != nil {
-			log.Printf("[enhanced-cli] CLI exited with error but streaming captured result (is_error=%v)", finalResp.IsError)
+			log.Printf("[enhanced-cli] CLI exited with error but streaming captured result (is_error=%v, turns=%d, text_len=%d)", finalResp.IsError, finalResp.NumTurns, len(finalResp.TextContent))
 			if !finalResp.IsError {
 				finalResp.IsError = true
 			}
-			return finalResp, fmt.Errorf("CLI exited with error: %s", finalResp.Result)
+			return finalResp, fmt.Errorf("CLI returned error: %s", formatCLIStreamError(finalResp, c.MaxTurns))
 		}
 		if stderrBuf.Len() > 0 {
 			return nil, fmt.Errorf("claude CLI error: %s", stderrBuf.String())
