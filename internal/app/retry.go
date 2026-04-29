@@ -614,6 +614,9 @@ func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *S
 	if projectDir != "" {
 		agent.SetProject(projectDir)
 	}
+	if agent.IsProcessing() {
+		return retryOutcome{Selection: selection, Duration: time.Since(start)}, fmt.Errorf("目前這個 topic 的 bot 還在執行上一個請求，請等它完成或先按 Stop 後再 retry")
+	}
 
 	progress := newTelegramProgressSink(func(update string, silent bool) {
 		if !silent && strings.TrimSpace(update) != "" {
@@ -626,7 +629,7 @@ func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *S
 		agent.currentModelOverride = retryModel
 		agent.ClearSessionForModel(retryModel)
 	}
-	result, err := appengine.NewDirectEngine(agent).Run(ctx, prompt, agent.chatContext, progress)
+	result, err := t.runRetryDirectWithWatchdog(ctx, agent, prompt, progress)
 	agent.currentModelOverride = prevOverride
 	if err != nil {
 		outcome := retryOutcome{Selection: selection, Result: result, Duration: time.Since(start)}
@@ -668,6 +671,36 @@ func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *S
 		Improved:  retryScoreForSubTask(review, selection.SubTask.ID) > selection.SubTaskReview.Score,
 		Duration:  time.Since(start),
 	}, nil
+}
+
+func (t *TelegramBot) runRetryDirectWithWatchdog(ctx context.Context, agent *Agent, prompt string, progress appengine.ProgressSink) (appengine.Result, error) {
+	type retryRunResult struct {
+		result appengine.Result
+		err    error
+	}
+	done := make(chan retryRunResult, 1)
+	go func() {
+		result, err := appengine.NewDirectEngine(agent).Run(ctx, prompt, agent.chatContext, progress)
+		done <- retryRunResult{result: result, err: err}
+	}()
+
+	select {
+	case outcome := <-done:
+		return outcome.result, outcome.err
+	case <-ctx.Done():
+		if agent != nil {
+			agent.Abort()
+		}
+		select {
+		case outcome := <-done:
+			if outcome.err != nil {
+				return outcome.result, outcome.err
+			}
+			return outcome.result, ctx.Err()
+		case <-time.After(5 * time.Second):
+			return appengine.Result{}, fmt.Errorf("retry execution timed out or was canceled: %w", ctx.Err())
+		}
+	}
 }
 
 func storeRetryFailureResult(store *SQLiteStorage, selection retrySelection, result appengine.Result, runErr error) error {
@@ -827,10 +860,8 @@ func normalizeRetryReviewForSubTask(review appengine.ReviewResult, subTaskID str
 func formatRetryCompletion(outcome retryOutcome) string {
 	newScore := retryScoreForSubTask(outcome.Review, outcome.Selection.SubTask.ID)
 	delta := newScore - outcome.Selection.SubTaskReview.Score
-	status := "✅ Retry 完成"
-	if delta <= 0 {
-		status = "⚠️ Retry 未改善，建議人工介入"
-	}
+	reviewPassed := retryReviewPassed(outcome.Review.Verdict)
+	status := retryCompletionStatus(reviewPassed, delta)
 	message := fmt.Sprintf(
 		"%s\n   原分數: %d → %d (%+d)\n   驗證: %s\n   耗時: %s",
 		status,
@@ -849,7 +880,33 @@ func formatRetryCompletion(outcome retryOutcome) string {
 	if tags := retryReviewTagsForSubTask(outcome.Review, outcome.Selection.SubTask.ID); tags != "" {
 		message += "\nIssue tags: " + tags
 	}
+	if !reviewPassed {
+		message += "\n\n判讀：Retry job 已結束，但 reviewer 仍判定未通過；這不代表 issue 已完成。"
+		message += "\n下一步：依 Review 回饋和 issue tags 修正實作或補齊成功路徑驗證，再重新 retry。"
+	}
 	return message
+}
+
+func retryReviewPassed(verdict appengine.ReviewVerdict) bool {
+	switch verdict {
+	case appengine.VerdictPass, appengine.VerdictAllow:
+		return true
+	default:
+		return false
+	}
+}
+
+func retryCompletionStatus(reviewPassed bool, delta int) string {
+	if reviewPassed {
+		if delta <= 0 {
+			return "✅ Retry 驗證通過（分數未提升）"
+		}
+		return "✅ Retry 驗證通過"
+	}
+	if delta > 0 {
+		return "⚠️ Retry 執行完成，但驗證仍未通過"
+	}
+	return "❌ Retry 執行完成，驗證仍未通過且未改善"
 }
 
 func formatRetryFailure(outcome retryOutcome, runErr error) string {

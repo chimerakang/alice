@@ -14,6 +14,10 @@ type retryCommandTestClient struct {
 	planCalls   int
 }
 
+type blockingRetryClient struct {
+	started chan struct{}
+}
+
 func (c *retryCommandTestClient) Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error) {
 	return nil, nil
 }
@@ -49,6 +53,24 @@ func (c *retryCommandTestClient) CallPlan(ctx context.Context, message, projectD
 
 func (c *retryCommandTestClient) GetModel() string {
 	return "gpt-5.4"
+}
+
+func (c *blockingRetryClient) Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error) {
+	return nil, nil
+}
+
+func (c *blockingRetryClient) CallStream(ctx context.Context, message, projectDir, sessionID, modelOverride string, onToolUse func(toolName string, toolInput map[string]interface{}), onContent func(contentType, text string)) (*CLIResponse, error) {
+	close(c.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (c *blockingRetryClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+	return nil, ctx.Err()
+}
+
+func (c *blockingRetryClient) GetModel() string {
+	return "gpt-5.5"
 }
 
 func seedRetryReview(t *testing.T, s *SQLiteStorage, taskID string, score int, source string) int64 {
@@ -386,12 +408,56 @@ func TestHandleRetryCommandIndexLowScoreExecutesRetry(t *testing.T) {
 	if !strings.Contains(startText, "原分數 61/100") {
 		t.Fatalf("retry start message missing score: %q", startText)
 	}
-	doneText := waitRetryMessageContaining(t, bot, "Retry 完成")
+	doneText := waitRetryMessageContaining(t, bot, "Retry 驗證通過")
 	if !strings.Contains(doneText, "原分數: 61 → 84") || !strings.Contains(doneText, "Review 回饋：\nok") {
 		t.Fatalf("unexpected retry completion message: %q", doneText)
 	}
 	if client.streamCalls != 1 || client.planCalls != 1 {
 		t.Fatalf("client calls = stream %d plan %d, want 1/1", client.streamCalls, client.planCalls)
+	}
+}
+
+func TestRunSubTaskRetryReturnsBusyWhenAgentAlreadyProcessing(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	agent := NewAgent(&retryCommandTestClient{}, "/repo", key.chatID, key.threadID)
+	agent.processing = true
+	bot := &TelegramBot{
+		config:       &Config{DefaultProjectDir: "/repo"},
+		agents:       map[chatKey]*Agent{key: agent},
+		chatContexts: map[chatKey]*ChatContext{key: agent.chatContext},
+		messageQueue: make(chan *TelegramMessage, 4),
+	}
+
+	_, err := bot.runSubTaskRetry(context.Background(), key, nil, retrySelection{
+		Task:          UnifiedTask{ProjectDir: "/repo"},
+		SubTask:       UnifiedSubTask{Description: "retry blocked work"},
+		SubTaskReview: UnifiedReviewSubTaskResult{Score: 61},
+	})
+	if err == nil || !strings.Contains(err.Error(), "bot 還在執行上一個請求") {
+		t.Fatalf("runSubTaskRetry busy error = %v", err)
+	}
+}
+
+func TestRunRetryDirectWithWatchdogAbortsOnContextTimeout(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	client := &blockingRetryClient{started: make(chan struct{})}
+	agent := NewAgent(client, "/repo", key.chatID, key.threadID)
+	agent.cliTimeoutMinutes = 1
+	bot := &TelegramBot{}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := bot.runRetryDirectWithWatchdog(ctx, agent, "retry prompt", nil)
+	if err == nil {
+		t.Fatal("runRetryDirectWithWatchdog error = nil, want timeout/cancel error")
+	}
+	select {
+	case <-client.started:
+	default:
+		t.Fatal("blocking client was not started")
+	}
+	if agent.IsProcessing() {
+		t.Fatal("agent still processing after watchdog abort")
 	}
 }
 
@@ -780,11 +846,50 @@ func TestFormatRetryCompletionIncludesResultAndReviewFeedback(t *testing.T) {
 
 	got := formatRetryCompletion(outcome)
 	for _, want := range []string{
-		"✅ Retry 完成",
+		"✅ Retry 驗證通過",
 		"原分數: 55 → 82 (+27)",
 		"執行結果：\nmake proto pass; npm run typecheck pass",
 		"Review 回饋：\nvalidation evidence is now present",
 		"Issue tags: missing_validation",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("formatRetryCompletion missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestFormatRetryCompletionClarifiesFailedVerdict(t *testing.T) {
+	outcome := retryOutcome{
+		Selection: retrySelection{
+			SubTask: UnifiedSubTask{ID: "task:s6"},
+			SubTaskReview: UnifiedReviewSubTaskResult{
+				Score: 82,
+			},
+		},
+		Result: appengine.Result{
+			Text: "runtime smoke found HTTP 501",
+		},
+		Review: appengine.ReviewResult{
+			Verdict:      appengine.VerdictFail,
+			OverallScore: 88,
+			SubTaskResults: []appengine.ReviewSubTaskResult{{
+				SubTaskID: "task:s6",
+				Score:     88,
+				Feedback:  "server-streaming path still returns 501",
+				IssueTags: []appengine.ReviewIssueTag{"runtime_streaming_failure"},
+			}},
+		},
+		Duration: 5*time.Minute + 6*time.Second,
+	}
+
+	got := formatRetryCompletion(outcome)
+	for _, want := range []string{
+		"⚠️ Retry 執行完成，但驗證仍未通過",
+		"原分數: 82 → 88 (+6)",
+		"驗證: fail",
+		"判讀：Retry job 已結束，但 reviewer 仍判定未通過；這不代表 issue 已完成。",
+		"下一步：依 Review 回饋和 issue tags 修正實作或補齊成功路徑驗證，再重新 retry。",
+		"Issue tags: runtime_streaming_failure",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("formatRetryCompletion missing %q:\n%s", want, got)
