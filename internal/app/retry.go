@@ -43,6 +43,19 @@ type retryTaskCandidate struct {
 	LatestReviewAt    time.Time
 }
 
+func retrySelectionNeedsRetry(selection retrySelection) bool {
+	verdict := strings.ToLower(strings.TrimSpace(selection.Review.Verdict))
+	return verdict == "partial" || verdict == "fail" || selection.SubTaskReview.Score < 70
+}
+
+func formatRetryNoRetryNeeded(selection retrySelection) string {
+	verdict := strings.TrimSpace(selection.Review.Verdict)
+	if verdict == "" {
+		verdict = "unknown"
+	}
+	return fmt.Sprintf("✅ Sub-task #%d 評分 %d/100，review verdict=%s，無需 retry。", selection.DisplaySubTaskIdx, selection.SubTaskReview.Score, verdict)
+}
+
 func composeRetryPrompt(description, verdict string, score int, feedback string, issueTags []string, previousResult string) string {
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("[Retry — 上一輪 review 給 %s %d/100]\n\n", strings.TrimSpace(verdict), score))
@@ -173,6 +186,47 @@ func (s *SQLiteStorage) selectRetryTargetByIndex(ctx context.Context, taskID str
 	if err != nil {
 		return retrySelection{}, err
 	}
+	subTaskIdx := displayIdx - 1
+	var subTaskID string
+	err = s.db.QueryRowContext(ctx, `
+		SELECT id
+		FROM sub_tasks
+		WHERE task_id = ? AND idx = ?
+		LIMIT 1`, taskID, subTaskIdx).Scan(&subTaskID)
+	if err == sql.ErrNoRows {
+		return retrySelection{}, fmt.Errorf("找不到 task %s 的 sub-task #%d", shortHermesTaskID(taskID), displayIdx)
+	}
+	if err != nil {
+		return retrySelection{}, err
+	}
+
+	var latestReviewID int64
+	err = s.db.QueryRowContext(ctx, `
+		SELECT id
+		FROM review_results
+		WHERE task_id = ?
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1`, taskID).Scan(&latestReviewID)
+	if err == sql.ErrNoRows {
+		return retrySelection{}, fmt.Errorf("task %s 尚無 review 結果可 retry", shortHermesTaskID(taskID))
+	}
+	if err != nil {
+		return retrySelection{}, err
+	}
+
+	var reviewSubTaskID int64
+	err = s.db.QueryRowContext(ctx, `
+		SELECT id
+		FROM review_subtask_results
+		WHERE review_id = ? AND sub_task_id = ?
+		LIMIT 1`, latestReviewID, subTaskID).Scan(&reviewSubTaskID)
+	if err == sql.ErrNoRows {
+		return retrySelection{}, fmt.Errorf("最新 review 沒有 sub-task #%d 的評分資料，請改用通知列出的 #<n> 或 /retry %s all-failed", displayIdx, shortHermesTaskID(taskID))
+	}
+	if err != nil {
+		return retrySelection{}, err
+	}
+
 	return s.scanRetrySelection(ctx, `
 		SELECT t.id, t.chat_id, t.thread_id, t.project_dir, t.goal, t.engine, t.backend, t.status,
 		       t.github_issue_number, t.started_at, t.ended_at,
@@ -187,9 +241,9 @@ func (s *SQLiteStorage) selectRetryTargetByIndex(ctx context.Context, taskID str
 		JOIN tasks t ON t.id = rr.task_id
 		JOIN sub_tasks st ON st.task_id = t.id
 		JOIN review_subtask_results rs ON rs.review_id = rr.id AND rs.sub_task_id = st.id
-		WHERE rr.task_id = ? AND st.idx = ?
+		WHERE rr.id = ? AND st.id = ?
 		ORDER BY rr.created_at DESC, rr.id DESC
-		LIMIT 1`, taskID, displayIdx-1)
+		LIMIT 1`, latestReviewID, subTaskID)
 }
 
 func (s *SQLiteStorage) selectRetryTargetsAllFailed(ctx context.Context, taskID string) ([]retrySelection, error) {
@@ -483,6 +537,10 @@ func (t *TelegramBot) handleRetryCommand(key chatKey, parts []string) {
 			selection, selectErr := store.selectRetryTargetByIndex(selectCtx, taskID, idx)
 			err = selectErr
 			if err == nil {
+				if !retrySelectionNeedsRetry(selection) {
+					t.send(key, formatRetryNoRetryNeeded(selection))
+					return
+				}
 				selections = []retrySelection{selection}
 			}
 		case "all-failed":
@@ -507,6 +565,9 @@ func (t *TelegramBot) handleRetryCommand(key chatKey, parts []string) {
 			}
 			if len(selections) > 1 {
 				t.send(key, fmt.Sprintf("🔁 all-failed retry %d/%d", i+1, len(selections)))
+			}
+			if mode == "index" && selection.SubTaskReview.Score >= 70 {
+				t.send(key, fmt.Sprintf("ℹ️ sub-task #%d 目前評分 %d/100，仍依人工指定執行 retry。", selection.DisplaySubTaskIdx, selection.SubTaskReview.Score))
 			}
 			runCtx, cancelRun := context.WithTimeout(context.Background(), t.retryAttemptTimeout())
 			outcome, runErr := t.runSubTaskRetry(runCtx, key, store, selection)
@@ -655,13 +716,13 @@ func (t *TelegramBot) retryExecutionModel(key chatKey, selection retrySelection)
 		selection.Task.Backend,
 	}, " ")
 	if selection.PreferCodex || strings.Contains(strings.ToLower(backendHint), "gpt") || strings.Contains(strings.ToLower(backendHint), "codex") {
-		if cfg.CodexHeavyExecutorModel != "" {
+		if modelRequiresCodex(cfg.CodexHeavyExecutorModel) {
 			return cfg.CodexHeavyExecutorModel
 		}
 		if t.config.ModelRouting.CodexSmartModel != "" {
 			return t.config.ModelRouting.CodexSmartModel
 		}
-		if cfg.CodexExecutorModel != "" {
+		if modelRequiresCodex(cfg.CodexExecutorModel) {
 			return cfg.CodexExecutorModel
 		}
 		return t.config.ModelRouting.CodexDeepModel
@@ -679,29 +740,7 @@ func (t *TelegramBot) retryExecutionModel(key chatKey, selection retrySelection)
 }
 
 func (t *TelegramBot) retryModelForUserPreference(key chatKey) string {
-	if t == nil || t.config == nil || !t.config.ModelRouting.EnableDynamicRouting {
-		return ""
-	}
-	switch pref := strings.TrimSpace(t.getUserModelPreference(key)); pref {
-	case "":
-		return ""
-	case "fast":
-		return t.config.ModelRouting.FastModel
-	case "smart":
-		return t.config.ModelRouting.SmartModel
-	case "deep":
-		return t.config.ModelRouting.DeepModel
-	case "gpt-fast":
-		return t.config.ModelRouting.CodexFastModel
-	case "gpt-smart":
-		return t.config.ModelRouting.CodexSmartModel
-	case "gpt-deep":
-		return t.config.ModelRouting.CodexDeepModel
-	case "plan":
-		return t.config.ModelRouting.ExecuteModel
-	default:
-		return pref
-	}
+	return t.modelForUserPreference(key)
 }
 
 func (t *TelegramBot) retryReviewModel(key chatKey) string {

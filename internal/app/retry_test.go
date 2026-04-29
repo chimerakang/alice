@@ -9,6 +9,48 @@ import (
 	appengine "claude-tg-agent/internal/app/engine"
 )
 
+type retryCommandTestClient struct {
+	streamCalls int
+	planCalls   int
+}
+
+func (c *retryCommandTestClient) Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error) {
+	return nil, nil
+}
+
+func (c *retryCommandTestClient) CallStream(ctx context.Context, message, projectDir, sessionID, modelOverride string, onToolUse func(toolName string, toolInput map[string]interface{}), onContent func(contentType, text string)) (*CLIResponse, error) {
+	c.streamCalls++
+	return &CLIResponse{
+		Result:      "retry evidence",
+		TextContent: "retry evidence",
+		SessionID:   "retry-session",
+		Usage: struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+		}{InputTokens: 10, OutputTokens: 5},
+	}, nil
+}
+
+func (c *retryCommandTestClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+	c.planCalls++
+	reviewJSON := `{"verdict":"pass","overall_score":84,"feedback":"retry fixed validation","issue_tags":[],"sub_task_results":[{"score":84,"feedback":"ok","issue_tags":[]}]}`
+	if onContent != nil {
+		onContent("text", reviewJSON)
+	}
+	return &CLIResponse{
+		Result:      reviewJSON,
+		TextContent: reviewJSON,
+		Usage: struct {
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
+		}{InputTokens: 7, OutputTokens: 3},
+	}, nil
+}
+
+func (c *retryCommandTestClient) GetModel() string {
+	return "gpt-5.4"
+}
+
 func seedRetryReview(t *testing.T, s *SQLiteStorage, taskID string, score int, source string) int64 {
 	t.Helper()
 	now := time.Now().UTC().Truncate(time.Second)
@@ -70,6 +112,22 @@ func seedRetryReview(t *testing.T, s *SQLiteStorage, taskID string, score int, s
 		t.Fatalf("InsertUnifiedReviewSubTaskResult weak: %v", err)
 	}
 	return reviewID
+}
+
+func waitRetryMessageContaining(t *testing.T, bot *TelegramBot, want string) string {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case msg := <-bot.messageQueue:
+			text, _ := msg.Params["text"].(string)
+			if strings.Contains(text, want) {
+				return text
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for retry message containing %q", want)
+		}
+	}
 }
 
 func TestSelectRetryTaskCandidatesListsLatestFailedReviewTasks(t *testing.T) {
@@ -169,7 +227,7 @@ func TestRetrySelectionRemembersCodexReviewHistory(t *testing.T) {
 		Verdict:       "partial",
 		OverallScore:  65,
 		Source:        "initial",
-		CreatedAt:     time.Now().UTC(),
+		CreatedAt:     time.Now().UTC().Add(-20 * time.Minute),
 	}); err != nil {
 		t.Fatalf("InsertUnifiedReviewResult codex marker: %v", err)
 	}
@@ -222,6 +280,319 @@ func TestSelectRetryTargetByIndexAcceptsLegacyGitHubIssueGoal(t *testing.T) {
 	}
 	if selection.Task.ID != "legacy-issue-linked-task" || selection.DisplaySubTaskIdx != 2 {
 		t.Fatalf("unexpected legacy issue ref selection: %+v", selection)
+	}
+}
+
+func TestSelectRetryTargetByIndexAllowsHighScoreManualRetry(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	seedRetryReview(t, s, "task-high-score-manual", 61, "initial")
+
+	selection, err := s.selectRetryTargetByIndex(context.Background(), "task-high-score-manual", 1)
+	if err != nil {
+		t.Fatalf("selectRetryTargetByIndex high score: %v", err)
+	}
+	if selection.SubTask.ID != "task-high-score-manual:s1" || selection.SubTaskReview.Score != 90 {
+		t.Fatalf("unexpected high-score selection: %+v", selection)
+	}
+	if !retrySelectionNeedsRetry(selection) {
+		t.Fatalf("partial review selection should remain retryable: %+v", selection)
+	}
+}
+
+func TestHandleRetryCommandIndexHighScorePassReturnsNoRetryNeeded(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	taskID := "task-high-score-pass"
+	subTaskID := taskID + ":s4"
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:         taskID,
+		ChatID:     42,
+		ThreadID:   7,
+		ProjectDir: "/repo",
+		Goal:       "high score pass",
+		Engine:     "plan_execute",
+		Backend:    "codex",
+		Status:     "done",
+		StartedAt:  now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+		ID:          subTaskID,
+		TaskID:      taskID,
+		Idx:         3,
+		Description: "already good",
+		Status:      "done",
+		ResultText:  "done",
+		StartedAt:   now.Add(-30 * time.Minute),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedSubTask: %v", err)
+	}
+	if err := s.StoreReviewWithSource(context.Background(), taskID, appengine.ReviewResult{
+		ReviewerModel: "gpt-5.5",
+		Verdict:       appengine.VerdictPass,
+		OverallScore:  93,
+		Feedback:      "ok",
+		SubTaskResults: []appengine.ReviewSubTaskResult{{
+			SubTaskID: subTaskID,
+			Score:     93,
+			Feedback:  "ok",
+		}},
+	}, "review"); err != nil {
+		t.Fatalf("StoreReviewWithSource: %v", err)
+	}
+
+	oldStorage := globalStorage
+	globalStorage = s
+	t.Cleanup(func() { globalStorage = oldStorage })
+
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{messageQueue: make(chan *TelegramMessage, 1)}
+	bot.handleRetryCommand(key, []string{"/retry", taskID, "4"})
+
+	select {
+	case msg := <-bot.messageQueue:
+		text, _ := msg.Params["text"].(string)
+		if !strings.Contains(text, "Sub-task #4 評分 93/100") || !strings.Contains(text, "無需 retry") {
+			t.Fatalf("unexpected no-retry message: %q", text)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for no-retry message")
+	}
+}
+
+func TestHandleRetryCommandIndexLowScoreExecutesRetry(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	taskID := "task-low-score-index-retry"
+	seedRetryReview(t, s, taskID, 61, "review")
+
+	oldStorage := globalStorage
+	globalStorage = s
+	t.Cleanup(func() { globalStorage = oldStorage })
+
+	key := chatKey{chatID: 42, threadID: 7}
+	client := &retryCommandTestClient{}
+	bot := &TelegramBot{
+		config:       &Config{DefaultProjectDir: "/repo"},
+		client:       client,
+		agents:       make(map[chatKey]*Agent),
+		chatContexts: make(map[chatKey]*ChatContext),
+		messageQueue: make(chan *TelegramMessage, 8),
+	}
+
+	bot.handleRetryCommand(key, []string{"/retry", taskID, "2"})
+
+	startText := waitRetryMessageContaining(t, bot, "Retrying sub-task #2")
+	if !strings.Contains(startText, "原分數 61/100") {
+		t.Fatalf("retry start message missing score: %q", startText)
+	}
+	doneText := waitRetryMessageContaining(t, bot, "Retry 完成")
+	if !strings.Contains(doneText, "原分數: 61 → 84") || !strings.Contains(doneText, "Review 回饋：\nok") {
+		t.Fatalf("unexpected retry completion message: %q", doneText)
+	}
+	if client.streamCalls != 1 || client.planCalls != 1 {
+		t.Fatalf("client calls = stream %d plan %d, want 1/1", client.streamCalls, client.planCalls)
+	}
+}
+
+func TestHandleRetryCommandIndexMissingSubTaskReturnsNotFound(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	taskID := "task-index-not-found"
+	seedRetryReview(t, s, taskID, 61, "review")
+
+	oldStorage := globalStorage
+	globalStorage = s
+	t.Cleanup(func() { globalStorage = oldStorage })
+
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{messageQueue: make(chan *TelegramMessage, 1)}
+	bot.handleRetryCommand(key, []string{"/retry", taskID, "3"})
+
+	text := waitRetryMessageContaining(t, bot, "找不到 task task-ind 的 sub-task #3")
+	if !strings.HasPrefix(text, "❌ ") {
+		t.Fatalf("missing idx should be returned as error message: %q", text)
+	}
+}
+
+func TestSelectRetryTargetByIndexReportsMissingSubTask(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	seedRetryReview(t, s, "task-missing-index", 61, "initial")
+
+	_, err := s.selectRetryTargetByIndex(context.Background(), "task-missing-index", 3)
+	if err == nil {
+		t.Fatal("selectRetryTargetByIndex missing sub-task expected error")
+	}
+	if !strings.Contains(err.Error(), "找不到 task task-mis 的 sub-task #3") {
+		t.Fatalf("unexpected missing sub-task error: %v", err)
+	}
+}
+
+func TestSelectRetryTargetByIndexReportsMissingLatestReviewRow(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	seedRetryReview(t, s, "task-missing-review-row", 61, "initial")
+	if _, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        "task-missing-review-row",
+		ReviewerModel: "gpt-5.5",
+		Verdict:       "partial",
+		OverallScore:  72,
+		FeedbackText:  "latest summary omitted per-subtask rows",
+		Source:        "review",
+		CreatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("InsertUnifiedReviewResult latest without rows: %v", err)
+	}
+
+	_, err := s.selectRetryTargetByIndex(context.Background(), "task-missing-review-row", 2)
+	if err == nil {
+		t.Fatal("selectRetryTargetByIndex missing review row expected error")
+	}
+	if !strings.Contains(err.Error(), "最新 review 沒有 sub-task #2 的評分資料") ||
+		!strings.Contains(err.Error(), "/retry task-mis all-failed") {
+		t.Fatalf("unexpected missing review row error: %v", err)
+	}
+}
+
+func TestSelectRetryTargetsAllFailedFiltersLikeRetryableLowScoreSet(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	taskID := "task-all-failed-filter"
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:         taskID,
+		ChatID:     42,
+		ThreadID:   7,
+		ProjectDir: "/repo",
+		Goal:       "filter all failed",
+		Engine:     "plan_execute",
+		Backend:    "codex",
+		Status:     "done",
+		StartedAt:  now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	for idx, desc := range []string{"passed high score", "failed low score", "partial high score"} {
+		if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+			ID:          taskID + ":s" + string(rune('1'+idx)),
+			TaskID:      taskID,
+			Idx:         idx,
+			Description: desc,
+			Status:      "done",
+			ResultText:  "done",
+			StartedAt:   now.Add(-30 * time.Minute),
+		}); err != nil {
+			t.Fatalf("UpsertUnifiedSubTask %d: %v", idx+1, err)
+		}
+	}
+	reviewID, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        taskID,
+		ReviewerModel: "gpt-5.5",
+		Verdict:       "pass",
+		OverallScore:  80,
+		FeedbackText:  "one low score",
+		Source:        "review",
+		CreatedAt:     now.Add(-10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("InsertUnifiedReviewResult: %v", err)
+	}
+	for _, row := range []struct {
+		subTaskID string
+		score     int
+	}{
+		{taskID + ":s1", 93},
+		{taskID + ":s2", 62},
+		{taskID + ":s3", 88},
+	} {
+		if err := s.InsertUnifiedReviewSubTaskResult(UnifiedReviewSubTaskResult{
+			ReviewID:  reviewID,
+			SubTaskID: row.subTaskID,
+			Score:     row.score,
+			Feedback:  "review row",
+		}); err != nil {
+			t.Fatalf("InsertUnifiedReviewSubTaskResult %s: %v", row.subTaskID, err)
+		}
+	}
+
+	selections, err := s.selectRetryTargetsAllFailed(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("selectRetryTargetsAllFailed: %v", err)
+	}
+	if len(selections) != 1 {
+		t.Fatalf("selection count = %d, want 1: %+v", len(selections), selections)
+	}
+	if selections[0].SubTask.ID != taskID+":s2" || selections[0].DisplaySubTaskIdx != 2 || selections[0].SubTaskReview.Score != 62 {
+		t.Fatalf("all-failed should include only low-score subtask: %+v", selections[0])
+	}
+
+	highSelection, err := s.selectRetryTargetByIndex(context.Background(), taskID, 1)
+	if err != nil {
+		t.Fatalf("selectRetryTargetByIndex high score: %v", err)
+	}
+	if retrySelectionNeedsRetry(highSelection) {
+		t.Fatalf("high-score pass-equivalent selection should not be retryable: %+v", highSelection)
+	}
+	lowSelection, err := s.selectRetryTargetByIndex(context.Background(), taskID, 2)
+	if err != nil {
+		t.Fatalf("selectRetryTargetByIndex low score: %v", err)
+	}
+	if !retrySelectionNeedsRetry(lowSelection) {
+		t.Fatalf("low-score index selection should be retryable: %+v", lowSelection)
+	}
+}
+
+func TestReviewNotificationRetryIndexMatchesSelectRetryTargetByIndex(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	taskID := "12345678-review-index"
+	subTaskID := taskID + ":s5"
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:         taskID,
+		ChatID:     42,
+		ThreadID:   7,
+		ProjectDir: "/repo",
+		Goal:       "single high-score review row",
+		Engine:     "plan_execute",
+		Backend:    "codex",
+		Status:     "done",
+		StartedAt:  now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+		ID:          subTaskID,
+		TaskID:      taskID,
+		Idx:         4,
+		Description: "subtask stored at DB idx 4",
+		Status:      "done",
+		ResultText:  "done",
+		StartedAt:   now.Add(-30 * time.Minute),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedSubTask: %v", err)
+	}
+	review := appengine.ReviewResult{
+		ReviewerModel: "gpt-5.5",
+		Verdict:       appengine.VerdictPass,
+		OverallScore:  93,
+		Feedback:      "ok",
+		SubTaskResults: []appengine.ReviewSubTaskResult{{
+			SubTaskID: subTaskID,
+			Score:     93,
+			Feedback:  "ok",
+		}},
+	}
+	if err := s.StoreReviewWithSource(context.Background(), taskID, review, "review"); err != nil {
+		t.Fatalf("StoreReviewWithSource: %v", err)
+	}
+
+	text := appengine.BuildReviewNotification(taskID, review).TelegramText()
+	if !strings.Contains(text, "/retry 12345678 5") {
+		t.Fatalf("telegram text did not use retryable DB display idx:\n%s", text)
+	}
+	selection, err := s.selectRetryTargetByIndex(context.Background(), "12345678", 5)
+	if err != nil {
+		t.Fatalf("selectRetryTargetByIndex notification idx: %v", err)
+	}
+	if selection.SubTask.ID != subTaskID || selection.SubTaskReview.Score != 93 {
+		t.Fatalf("unexpected notification idx selection: %+v", selection)
 	}
 }
 
@@ -346,6 +717,23 @@ func TestRetryExecutionModelHonorsGPTDeepPreference(t *testing.T) {
 
 	if got := bot.retryExecutionModel(key, selection); got != "gpt-5.5" {
 		t.Fatalf("retryExecutionModel = %q, want gpt-5.5", got)
+	}
+}
+
+func TestRetryExecutionModelIgnoresMisconfiguredClaudeCodexHeavyModel(t *testing.T) {
+	bot := &TelegramBot{config: &Config{
+		Hermes: HermesConfig{
+			CodexHeavyExecutorModel: "claude-sonnet-4-6",
+		},
+		ModelRouting: ModelRoutingConfig{
+			CodexSmartModel: "gpt-5.4",
+			CodexDeepModel:  "gpt-5.5",
+		},
+	}}
+	selection := retrySelection{PreferCodex: true}
+
+	if got := bot.retryExecutionModel(chatKey{}, selection); got != "gpt-5.4" {
+		t.Fatalf("retryExecutionModel = %q, want gpt-5.4", got)
 	}
 }
 

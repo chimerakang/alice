@@ -877,6 +877,23 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		return
 	}
 
+	// Smart intent parser: intercept natural-language shorthand for high-risk
+	// operations and surface confirmation buttons instead of executing directly.
+	if intent, ok := detectSmartIntent(text); ok {
+		t.handleSmartIntent(key, intent)
+		return
+	}
+
+	if t.config.Hermes.Enabled && isHermesIssueRestartRequest(text) {
+		projectDir := t.getAgent(key).ProjectDir()
+		issueNum, _ := ParseIssueNumber(text)
+		t.send(key, fmt.Sprintf("🔄 偵測到重新處理 Issue #%d，將忽略 24 小時內完成任務並從頭開始…", issueNum))
+		go t.runTrackedJob("hermes.issue.restart", func() {
+			t.startHermesFreshFromIssue(key, issueNum, projectDir)
+		})
+		return
+	}
+
 	if t.config.Hermes.Enabled && isHermesIssueReferenceRequest(text) {
 		projectDir := t.getAgent(key).ProjectDir()
 		issueNum, _ := ParseIssueNumber(text)
@@ -902,6 +919,12 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	// Hermes mode: route to Brain-Executor coordinator instead of normal agent
 	if t.isHermesEnabled(key) {
 		projectDir := t.getAgent(key).ProjectDir()
+		if issueNum, ok := ParseIssueNumber(text); ok && isHermesIssueRestartRequest(text) {
+			go t.runTrackedJob("hermes.issue.restart", func() {
+				t.startHermesFreshFromIssue(key, issueNum, projectDir)
+			})
+			return
+		}
 		if issueNum, ok := ParseIssueNumber(text); ok {
 			go t.runTrackedJob("hermes.issue", func() {
 				t.startHermesFromIssue(key, issueNum, projectDir)
@@ -1752,32 +1775,99 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 	}
 }
 
+// buildContextAwareRows inspects the current chat state and returns inline keyboard rows
+// for the most relevant quick actions. Returns nil if nothing noteworthy is active.
+func (t *TelegramBot) buildContextAwareRows(key chatKey) [][]map[string]interface{} {
+	var rows [][]map[string]interface{}
+
+	// Active Hermes coordinator (in-memory).
+	t.hermesMu.RLock()
+	hc := t.hermesCoords[key]
+	t.hermesMu.RUnlock()
+	if hc != nil && hc.coord != nil && hc.coord.IsRunning() {
+		taskID := hc.coord.TaskID()
+		label := t.getLocalizedMessage(key.chatID, "menu_ctx_running", map[string]string{"{id}": shortHermesTaskID(taskID)})
+		rows = append(rows, []map[string]interface{}{
+			{"text": label, "callback_data": "menu:hermes_status"},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_ctx_stop", nil), "callback_data": "menu:abort_confirm"},
+		})
+	} else {
+		// No running coordinator — check DB for a continuable task.
+		if t.taskSvc != nil {
+			if active, err := t.taskSvc.GetActiveForChat(key.chatID); err == nil && hermesTaskIsContinuable(active) {
+				label := t.getLocalizedMessage(key.chatID, "menu_ctx_continue", map[string]string{"{id}": shortHermesTaskID(active.ID)})
+				rows = append(rows, []map[string]interface{}{
+					{"text": label, "callback_data": "hermes:continue:" + active.ID},
+					{"text": t.getLocalizedMessage(key.chatID, "menu_ctx_hermes_status", nil), "callback_data": "menu:hermes_status"},
+				})
+			}
+		}
+	}
+
+	// Failed review candidates.
+	if store, ok := globalStorage.(*SQLiteStorage); ok && store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if candidates, err := store.selectRetryTaskCandidates(ctx, key, 3); err == nil && len(candidates) > 0 {
+			totalFailed := 0
+			for _, c := range candidates {
+				totalFailed += c.FailedCount
+			}
+			label := t.getLocalizedMessage(key.chatID, "menu_ctx_review_failed", map[string]string{"{count}": fmt.Sprintf("%d", totalFailed)})
+			rows = append(rows, []map[string]interface{}{
+				{"text": label, "callback_data": "retry:menu"},
+			})
+		}
+	}
+
+	// Checkpoints.
+	agent := t.getAgent(key)
+	if globalCheckpointManager != nil && globalCheckpointManager.IsEnabled() && agent != nil && agent.projectDir != "" {
+		if cps, err := globalCheckpointManager.ListCheckpoints(agent.projectDir, 1); err == nil && len(cps) > 0 {
+			rows = append(rows, []map[string]interface{}{
+				{"text": t.getLocalizedMessage(key.chatID, "menu_ctx_checkpoint", nil), "callback_data": "show_checkpoints"},
+			})
+		}
+	}
+
+	// Non-default model preference.
+	if pref := t.getUserModelPreference(key); pref != "" && pref != "auto" {
+		rows = append(rows, []map[string]interface{}{
+			{"text": t.getLocalizedMessage(key.chatID, "menu_ctx_model_prefix", map[string]string{"{mode}": pref}), "callback_data": "model:menu"},
+		})
+	}
+
+	return rows
+}
+
 func (t *TelegramBot) sendMenu(key chatKey) {
-	text := "📋 Alice 操作選單\n\n選擇下一步要做的事："
-	keyboard := map[string]interface{}{
-		"inline_keyboard": [][]map[string]interface{}{
-			{
-				{"text": "狀態", "callback_data": "menu:status"},
-				{"text": "Dashboard", "callback_data": "refresh_dashboard"},
-			},
-			{
-				{"text": "Tasks", "callback_data": "menu:tasks"},
-				{"text": "Hermes", "callback_data": "menu:hermes_status"},
-			},
-			{
-				{"text": "Retry", "callback_data": "retry:menu"},
-				{"text": "Model", "callback_data": "model:menu"},
-			},
-			{
-				{"text": "Checkpoints", "callback_data": "show_checkpoints"},
-				{"text": "Usage", "callback_data": "menu:usage"},
-			},
-			{
-				{"text": "Help", "callback_data": "menu:help"},
-				{"text": "Abort", "callback_data": "menu:abort_confirm"},
-			},
+	text := t.getLocalizedMessage(key.chatID, "menu_title", nil)
+
+	staticRows := [][]map[string]interface{}{
+		{
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_project", nil), "callback_data": "menu:project"},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_checkpoints", nil), "callback_data": "show_checkpoints"},
+		},
+		{
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_tasks", nil), "callback_data": "menu:tasks"},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_hermes", nil), "callback_data": "menu:hermes_status"},
+		},
+		{
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_retry", nil), "callback_data": "retry:menu"},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_model", nil), "callback_data": "model:menu"},
+		},
+		{
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_dashboard", nil), "callback_data": "refresh_dashboard"},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_settings", nil), "callback_data": "menu:settings"},
+		},
+		{
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_status", nil), "callback_data": "menu:status"},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_abort", nil), "callback_data": "menu:abort_confirm"},
 		},
 	}
+
+	allRows := append(t.buildContextAwareRows(key), staticRows...)
+	keyboard := map[string]interface{}{"inline_keyboard": allRows}
 	params := map[string]interface{}{
 		"chat_id":      strconv.FormatInt(key.chatID, 10),
 		"text":         sanitizeUTF8(text),
@@ -1829,6 +1919,14 @@ func findIssueRefInArgs(args []string) (int, string, bool) {
 	return 0, "", false
 }
 
+func parseHermesRestartIssue(parts []string) (int, bool) {
+	if len(parts) < 3 || !strings.EqualFold(parts[1], "restart") {
+		return 0, false
+	}
+	issueNum, _, ok := findIssueRefInArgs(parts[2:])
+	return issueNum, ok && issueNum > 0
+}
+
 func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier string) {
 	if !t.config.Hermes.Enabled {
 		t.send(key, "Hermes 模式未啟用。請在 config.json 中設定 hermes.enabled = true。")
@@ -1838,6 +1936,28 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 	sub := ""
 	if len(parts) > 1 {
 		sub = strings.ToLower(parts[1])
+	}
+
+	if sub == "restart" {
+		t.setHermesTier(key, tier)
+		goal := strings.TrimSpace(strings.Join(parts[2:], " "))
+		if goal == "" {
+			t.send(key, "請提供要重新開始的任務說明，例如：`/hermes restart 修復登入流程`")
+			return
+		}
+		projectDir := t.getAgent(key).ProjectDir()
+		if issueNum, ok := parseHermesRestartIssue(parts); ok {
+			t.send(key, fmt.Sprintf("🔄 已忽略 Issue #%d 的既有 Hermes 進度，準備從頭開始。", issueNum))
+			go t.runTrackedJob("hermes.issue.restart", func() {
+				t.startHermesFreshFromIssue(key, issueNum, projectDir)
+			})
+			return
+		}
+		t.send(key, "🔄 已忽略既有 Hermes 進度，準備從頭開始。")
+		go t.runTrackedJob("hermes.restart", func() {
+			t.startHermesFreshTask(key, goal, projectDir)
+		})
+		return
 	}
 
 	// /hermes #N — fetch GitHub Issue and start task immediately.
@@ -1906,19 +2026,6 @@ func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier stri
 		t.send(key, fmt.Sprintf("🔁 將根據任務 %s 的既有進度%s…", shortHermesTaskID(task.ID), hermesContinuationVerb(mode)))
 		go t.runTrackedJob("hermes.continue", func() {
 			t.startHermesContinuationTask(key, task, projectDir, mode)
-		})
-
-	case "restart":
-		t.setHermesTier(key, tier)
-		goal := strings.TrimSpace(strings.Join(parts[2:], " "))
-		if goal == "" {
-			t.send(key, "請提供要重新開始的任務說明，例如：`/hermes restart 修復登入流程`")
-			return
-		}
-		projectDir := t.getAgent(key).ProjectDir()
-		t.send(key, "🔄 已忽略既有 Hermes 進度，準備從頭開始。")
-		go t.runTrackedJob("hermes.restart", func() {
-			t.startHermesFreshTask(key, goal, projectDir)
 		})
 
 	case "stop":
@@ -2076,6 +2183,14 @@ func (t *TelegramBot) sendHermesIssueResolution(key chatKey, rawQuery, projectDi
 
 // startHermesFromIssue fetches a GitHub Issue and starts a Hermes task from it.
 func (t *TelegramBot) startHermesFromIssue(key chatKey, issueNumber int, projectDir string) {
+	t.startHermesFromIssueMode(key, issueNumber, projectDir, false)
+}
+
+func (t *TelegramBot) startHermesFreshFromIssue(key chatKey, issueNumber int, projectDir string) {
+	t.startHermesFromIssueMode(key, issueNumber, projectDir, true)
+}
+
+func (t *TelegramBot) startHermesFromIssueMode(key chatKey, issueNumber int, projectDir string, forceRestart bool) {
 	ctx := context.Background()
 	issue, err := hermesFetchIssue(ctx, projectDir, issueNumber)
 	if err != nil {
@@ -2100,16 +2215,31 @@ func (t *TelegramBot) startHermesFromIssue(key chatKey, issueNumber int, project
 	}
 
 	goal := hermes.BuildGoalFromIssue(issue)
-	if task, decision, ok := t.resolveHermesIssueTask(key, projectDir, issueNumber); ok {
-		switch decision {
-		case hermesSimilarContinue:
-			t.send(key, fmt.Sprintf("🔁 Issue #%d 已有 Hermes 任務 %s，將根據既有進度接續剩餘工作…", issueNumber, shortHermesTaskID(task.ID)))
-			t.startHermesContinuationTask(key, task, projectDir, "continue")
-			return
-		case hermesSimilarCompleted:
-			t.send(key, fmt.Sprintf("ℹ️ Issue #%d 在 24 小時內已有完成的 Hermes 任務 %s，為避免重複執行已先停止。\n若要重新開始，請使用 `/hermes restart %s`。", issueNumber, shortHermesTaskID(task.ID), goal))
-			return
+	if !forceRestart {
+		if task, decision, ok := t.resolveHermesIssueTask(key, projectDir, issueNumber); ok {
+			switch decision {
+			case hermesSimilarContinue:
+				t.send(key, fmt.Sprintf("🔁 Issue #%d 已有 Hermes 任務 %s，將根據既有進度接續剩餘工作…", issueNumber, shortHermesTaskID(task.ID)))
+				t.startHermesContinuationTask(key, task, projectDir, "continue")
+				return
+			case hermesSimilarCompleted:
+				t.send(key, fmt.Sprintf("ℹ️ Issue #%d 在 24 小時內已有完成的 Hermes 任務 %s，為避免重複執行已先停止。\n若要重新開始，請使用 `/hermes restart %s`。", issueNumber, shortHermesTaskID(task.ID), goal))
+				return
+			}
 		}
+	}
+	if forceRestart {
+		t.send(key, fmt.Sprintf("🤖 **Hermes 重新啟動** — Issue #%d: %s\n%d 個待辦項目", issueNumber, issue.Title, func() int {
+			n := 0
+			for _, item := range issue.Checklist {
+				if !item.Checked {
+					n++
+				}
+			}
+			return n
+		}()))
+		t.startHermesTaskWithIssueTier(key, goal, projectDir, issueNumber, budget, ghCfg, t.hermesTierFor(key))
+		return
 	}
 	t.send(key, fmt.Sprintf("🤖 **Hermes 啟動** — Issue #%d: %s\n%d 個待辦項目", issueNumber, issue.Title, func() int {
 		n := 0
@@ -2570,6 +2700,129 @@ func isHermesContinuationRequest(text string) bool {
 		strings.HasPrefix(lower, "replan")
 }
 
+// smartIntent represents a parsed natural-language shorthand command.
+type smartIntent struct {
+	kind string // "retry", "model", "menu"
+	// model intent carries the target mode when unambiguous
+	modelMode string
+}
+
+// detectSmartIntent matches natural-language text to a known shorthand action.
+// Returns false when no intent is detected so the caller continues normal routing.
+func detectSmartIntent(text string) (smartIntent, bool) {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return smartIntent{}, false
+	}
+
+	// Retry / re-run review intents
+	retryPhrases := []string{
+		"重跑失敗", "重試失敗", "重跑 review", "重試 review",
+		"retry failed", "re-run failed", "重跑失敗的", "重試任務",
+		"重新跑失敗", "重跑上次失敗", "retry review",
+	}
+	for _, p := range retryPhrases {
+		if strings.Contains(lower, p) {
+			return smartIntent{kind: "retry"}, true
+		}
+	}
+
+	// Model switch intents — map common phrases to a target mode when clear
+	modelSwitches := []struct {
+		phrase string
+		mode   string
+	}{
+		{"切到 gpt deep", "gpt-deep"},
+		{"切換到 gpt deep", "gpt-deep"},
+		{"切 gpt deep", "gpt-deep"},
+		{"switch to gpt deep", "gpt-deep"},
+		{"切到 gpt smart", "gpt-smart"},
+		{"切換到 gpt smart", "gpt-smart"},
+		{"切 gpt smart", "gpt-smart"},
+		{"切到 gpt fast", "gpt-fast"},
+		{"切換到 gpt fast", "gpt-fast"},
+		{"切 gpt fast", "gpt-fast"},
+		{"切到 gpt", "gpt-smart"},
+		{"切換到 gpt", "gpt-smart"},
+		{"切 gpt", "gpt-smart"},
+		{"switch to gpt", "gpt-smart"},
+		{"切到 claude deep", "deep"},
+		{"切換到 claude deep", "deep"},
+		{"切 claude deep", "deep"},
+		{"切到 claude fast", "fast"},
+		{"切換到 claude fast", "fast"},
+		{"切 claude fast", "fast"},
+		{"切到 claude smart", "smart"},
+		{"切換到 claude smart", "smart"},
+		{"切 claude smart", "smart"},
+		{"切到 claude", "smart"},
+		{"切換到 claude", "smart"},
+		{"切 claude", "smart"},
+		{"switch to claude", "smart"},
+	}
+	for _, sw := range modelSwitches {
+		if strings.Contains(lower, sw.phrase) {
+			return smartIntent{kind: "model", modelMode: sw.mode}, true
+		}
+	}
+
+	// Ambiguous model-switch phrases (show full selector)
+	modelAmbiguous := []string{
+		"換模型", "切換模型", "切換 model", "換 model",
+		"change model", "switch model", "switch backend",
+		"切換 backend", "換 backend",
+	}
+	for _, p := range modelAmbiguous {
+		if strings.Contains(lower, p) {
+			return smartIntent{kind: "model"}, true
+		}
+	}
+
+	// "What can I do" → show main menu
+	menuPhrases := []string{
+		"可以做什麼", "有什麼可以", "有什麼操作", "有什麼功能",
+		"操作清單", "指令清單", "功能清單", "show menu",
+		"what can i do", "what can you do", "help menu",
+	}
+	for _, p := range menuPhrases {
+		if strings.Contains(lower, p) {
+			return smartIntent{kind: "menu"}, true
+		}
+	}
+
+	return smartIntent{}, false
+}
+
+// handleSmartIntent responds to a detected natural-language intent by surfacing
+// confirmation buttons rather than executing the action directly.
+func (t *TelegramBot) handleSmartIntent(key chatKey, intent smartIntent) {
+	switch intent.kind {
+	case "retry":
+		t.send(key, t.getLocalizedMessage(key.chatID, "smart_intent_retry_prompt", nil))
+		t.sendRetryMenu(key)
+	case "model":
+		if intent.modelMode != "" {
+			confirmText := t.getLocalizedMessage(key.chatID, "smart_intent_model_confirm", map[string]string{"{mode}": intent.modelMode})
+			confirmBtn := t.getLocalizedMessage(key.chatID, "smart_intent_model_confirm_btn", nil)
+			cancelBtn := t.getLocalizedMessage(key.chatID, "smart_intent_model_cancel_btn", nil)
+			allModelsBtn := t.getLocalizedMessage(key.chatID, "smart_intent_model_all_btn", nil)
+			t.sendMenuMessage(key, confirmText, [][]map[string]interface{}{
+				{
+					{"text": confirmBtn, "callback_data": "model:set:" + intent.modelMode},
+					{"text": cancelBtn, "callback_data": "menu:cancel"},
+				},
+				{
+					{"text": allModelsBtn, "callback_data": "model:menu"},
+				},
+			})
+		} else {
+			t.sendModelMenu(key)
+		}
+	case "menu":
+		t.sendMenu(key)
+	}
+}
+
 func hermesContinuationModeFromRequest(text string) string {
 	lower := strings.ToLower(strings.TrimSpace(text))
 	if strings.HasPrefix(lower, "重新規劃") || strings.HasPrefix(lower, "重規") || strings.HasPrefix(lower, "replan") {
@@ -2595,6 +2848,24 @@ func isHermesIssueReferenceRequest(text string) bool {
 		strings.HasPrefix(lower, "開始") ||
 		strings.HasPrefix(lower, "start") ||
 		strings.HasPrefix(lower, "work on")
+}
+
+func isHermesIssueRestartRequest(text string) bool {
+	if _, ok := ParseIssueNumber(text); !ok {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return false
+	}
+	return strings.HasPrefix(lower, "重新處理") ||
+		strings.HasPrefix(lower, "重新開始") ||
+		strings.HasPrefix(lower, "重新執行") ||
+		strings.HasPrefix(lower, "重做") ||
+		strings.HasPrefix(lower, "重跑") ||
+		strings.HasPrefix(lower, "restart") ||
+		strings.HasPrefix(lower, "rerun") ||
+		strings.HasPrefix(lower, "redo")
 }
 
 func buildHermesContinuationGoal(task hermes.TaskState, mode string) string {
@@ -2717,7 +2988,7 @@ func (t *TelegramBot) sendHermesCandidateActions(key chatKey, text string, task 
 
 func (t *TelegramBot) sendHermesActionsMessage(key chatKey, text string, tasks []hermes.TaskState) {
 	keyboard := map[string]interface{}{
-		"inline_keyboard": hermesCandidateActionRows(tasks),
+		"inline_keyboard": hermesCandidateActionRows(t.getChatLanguage(key.chatID), t.i18n, tasks),
 	}
 	params := map[string]interface{}{
 		"chat_id":      strconv.FormatInt(key.chatID, 10),
@@ -2730,7 +3001,13 @@ func (t *TelegramBot) sendHermesActionsMessage(key chatKey, text string, tasks [
 	t.queueMessage("sendMessage", params)
 }
 
-func hermesCandidateActionRows(tasks []hermes.TaskState) [][]map[string]interface{} {
+func hermesCandidateActionRows(lang string, i18n *I18nManager, tasks []hermes.TaskState) [][]map[string]interface{} {
+	getMessage := func(key string, vars map[string]string) string {
+		if i18n == nil {
+			return key
+		}
+		return i18n.GetMessage(lang, key, vars)
+	}
 	rows := make([][]map[string]interface{}, 0, len(tasks)+1)
 	for _, task := range tasks {
 		if strings.TrimSpace(task.ID) == "" {
@@ -2740,18 +3017,18 @@ func hermesCandidateActionRows(tasks []hermes.TaskState) [][]map[string]interfac
 		shortID := shortHermesTaskID(id)
 		rows = append(rows, []map[string]interface{}{
 			{
-				"text":          "▶️ 接續 " + shortID,
+				"text":          getMessage("hermes_candidate_continue", map[string]string{"{id}": shortID}),
 				"callback_data": "hermes:continue:" + id,
 			},
 			{
-				"text":          "🧠 重規 " + shortID,
+				"text":          getMessage("hermes_candidate_replan", map[string]string{"{id}": shortID}),
 				"callback_data": "hermes:replan:" + id,
 			},
 		})
 	}
 	rows = append(rows, []map[string]interface{}{
 		{
-			"text":          "取消",
+			"text":          getMessage("hermes_candidate_cancel", nil),
 			"callback_data": "hermes:cancel",
 		},
 	})
@@ -2965,15 +3242,76 @@ func clampHermesContext(s string, maxRunes int) string {
 	return strings.TrimSpace(string(runes[:maxRunes])) + "..."
 }
 
-// hermesTierFor returns the active Hermes tier for this chat ("" or "codex"),
-// derived from the chat's hermesCoord (set by /hermes vs /ghermes).
+// hermesTierFor returns the active Hermes tier for this chat ("" or "codex").
+// A live Hermes coordinator wins. Otherwise an explicit GPT/Codex model
+// preference (/gfast, /gsmart, /gdeep, or /model gpt-*) should launch Hermes on
+// the Codex tier too; otherwise "繼續處理#N" after /gdeep silently falls back to
+// Claude-tier planner/executor/reviewer models.
 func (t *TelegramBot) hermesTierFor(key chatKey) string {
 	t.hermesMu.RLock()
-	defer t.hermesMu.RUnlock()
 	if hc := t.hermesCoords[key]; hc != nil {
-		return hc.tier
+		if hc.enabled || (hc.coord != nil && hc.coord.IsRunning()) {
+			t.hermesMu.RUnlock()
+			return hc.tier
+		}
+	}
+	t.hermesMu.RUnlock()
+	if modelRequiresCodex(t.modelForUserPreference(key)) {
+		return "codex"
 	}
 	return ""
+}
+
+func (t *TelegramBot) modelForUserPreference(key chatKey) string {
+	if t == nil || t.config == nil || !t.config.ModelRouting.EnableDynamicRouting {
+		return ""
+	}
+	switch pref := strings.TrimSpace(t.getUserModelPreference(key)); pref {
+	case "":
+		return ""
+	case "fast":
+		return t.config.ModelRouting.FastModel
+	case "smart":
+		return t.config.ModelRouting.SmartModel
+	case "deep":
+		return t.config.ModelRouting.DeepModel
+	case "gpt-fast":
+		return t.config.ModelRouting.CodexFastModel
+	case "gpt-smart":
+		return t.config.ModelRouting.CodexSmartModel
+	case "gpt-deep":
+		return t.config.ModelRouting.CodexDeepModel
+	case "plan":
+		return t.config.ModelRouting.ExecuteModel
+	default:
+		return pref
+	}
+}
+
+func (t *TelegramBot) applyExplicitUserModelPreference(key chatKey, agent *Agent, source string) bool {
+	if t == nil || agent == nil || t.config == nil || !t.config.ModelRouting.EnableDynamicRouting {
+		return false
+	}
+	userPref := strings.TrimSpace(t.getUserModelPreference(key))
+	if userPref == "" {
+		return false
+	}
+	if userPref == "plan" {
+		if t.config.ModelRouting.PlanModel == "" || t.config.ModelRouting.ExecuteModel == "" {
+			return false
+		}
+		agent.SetPlanMode(true, t.config.ModelRouting.PlanModel, t.config.ModelRouting.ExecuteModel)
+		log.Printf("[telegram] %s model routing: using plan mode (user preference)", source)
+		return true
+	}
+	modelOverride := t.modelForUserPreference(key)
+	if modelOverride == "" {
+		return false
+	}
+	agent.SetPlanMode(false, "", "")
+	agent.SetModelOverride(modelOverride)
+	log.Printf("[telegram] %s model routing: using model %s (user preference=%s)", source, modelOverride, userPref)
+	return true
 }
 
 // setHermesTier updates the active tier for a chat and clears cached Planner
@@ -4407,7 +4745,11 @@ func (t *TelegramBot) handleCallbackQuery(key chatKey, userID int64, queryID, da
 				state = parts[2]
 			}
 		}
-		if err := t.sendTasksMessage(key, t.getAgent(key).ProjectDir(), state); err != nil {
+		projectDir, pdErr := t.resolveTasksProjectDir(key)
+		if pdErr != nil {
+			projectDir = t.getAgent(key).ProjectDir()
+		}
+		if err := t.sendTasksMessage(key, projectDir, state); err != nil {
 			if errors.Is(err, errTasksGitHubAuthRequired) {
 				t.answerCallbackQuery(queryID, tasksAuthRequiredMessage(t.getChatLanguage(key.chatID)))
 				return
@@ -4466,6 +4808,24 @@ func (t *TelegramBot) handleMenuCallback(key chatKey, queryID, data string) {
 	case "tasks":
 		t.answerCallbackQuery(queryID, "顯示 Tasks 選單")
 		t.sendTasksSelector(key)
+	case "project":
+		t.answerCallbackQuery(queryID, "顯示 Project 選單")
+		t.sendProjectMenu(key)
+	case "project_switch":
+		t.answerCallbackQuery(queryID, "輸入新專案路徑")
+		t.send(key, t.getLocalizedMessage(key.chatID, "menu_project_switch_prompt", nil))
+	case "settings":
+		t.answerCallbackQuery(queryID, "顯示設定選單")
+		t.sendSettingsMenu(key)
+	case "settings_lang":
+		t.answerCallbackQuery(queryID, "語言設定")
+		t.handleCommand(key, "/lang")
+	case "settings_id":
+		t.answerCallbackQuery(queryID, "顯示 ID")
+		t.handleCommand(key, "/id")
+	case "settings_skills":
+		t.answerCallbackQuery(queryID, "顯示 Skills")
+		t.handleCommand(key, "/skills")
 	case "hermes_status":
 		t.answerCallbackQuery(queryID, "顯示 Hermes 狀態")
 		t.handleHermesCommand(key, []string{"/hermes", "status"}, "")
@@ -4480,8 +4840,42 @@ func (t *TelegramBot) handleMenuCallback(key chatKey, queryID, data string) {
 	}
 }
 
+func (t *TelegramBot) sendProjectMenu(key chatKey) {
+	agent := t.getAgent(key)
+	var projectInfo string
+	if agent != nil && agent.projectDir != "" {
+		projectInfo = t.getLocalizedMessage(key.chatID, "menu_project_current_info", map[string]string{"{path}": agent.projectDir})
+	}
+	title := t.getLocalizedMessage(key.chatID, "menu_project_title", map[string]string{"{info}": projectInfo})
+	t.sendMenuMessage(key, title, [][]map[string]interface{}{
+		{
+			{"text": t.getLocalizedMessage(key.chatID, "menu_project_show", nil), "callback_data": "menu:status"},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_project_switch", nil), "callback_data": "menu:project_switch"},
+		},
+		{
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_back", nil), "callback_data": "menu:open"},
+		},
+	})
+}
+
+func (t *TelegramBot) sendSettingsMenu(key chatKey) {
+	t.sendMenuMessage(key, t.getLocalizedMessage(key.chatID, "menu_settings_title", nil), [][]map[string]interface{}{
+		{
+			{"text": t.getLocalizedMessage(key.chatID, "menu_settings_lang", nil), "callback_data": "menu:settings_lang"},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_settings_id", nil), "callback_data": "menu:settings_id"},
+		},
+		{
+			{"text": t.getLocalizedMessage(key.chatID, "menu_settings_skills", nil), "callback_data": "menu:settings_skills"},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_settings_usage", nil), "callback_data": "menu:usage"},
+		},
+		{
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_back", nil), "callback_data": "menu:open"},
+		},
+	})
+}
+
 func (t *TelegramBot) sendTasksSelector(key chatKey) {
-	t.sendMenuMessage(key, "📌 Tasks\n\n選擇要查看的 task 狀態。", [][]map[string]interface{}{
+	t.sendMenuMessage(key, t.getLocalizedMessage(key.chatID, "menu_tasks_selector_title", nil), [][]map[string]interface{}{
 		{
 			{"text": "Open", "callback_data": "tasks:view:open"},
 			{"text": "Closed", "callback_data": "tasks:view:closed"},
@@ -4491,16 +4885,16 @@ func (t *TelegramBot) sendTasksSelector(key chatKey) {
 			{"text": "Refresh Closed", "callback_data": "tasks:refresh:closed"},
 		},
 		{
-			{"text": "回主選單", "callback_data": "menu:open"},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_back", nil), "callback_data": "menu:open"},
 		},
 	})
 }
 
 func (t *TelegramBot) sendAbortConfirmation(key chatKey) {
-	t.sendMenuMessage(key, "⚠️ 確定要中斷目前正在執行的任務嗎？", [][]map[string]interface{}{
+	t.sendMenuMessage(key, t.getLocalizedMessage(key.chatID, "menu_abort_confirm_text", nil), [][]map[string]interface{}{
 		{
-			{"text": "確認中斷", "callback_data": fmt.Sprintf("stop_agent_%d_%d", key.chatID, key.threadID)},
-			{"text": "取消", "callback_data": "menu:cancel"},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_abort_confirm", nil), "callback_data": fmt.Sprintf("stop_agent_%d_%d", key.chatID, key.threadID)},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_cancel", nil), "callback_data": "menu:cancel"},
 		},
 	})
 }
@@ -4510,27 +4904,37 @@ func (t *TelegramBot) sendModelMenu(key chatKey) {
 	if current == "" {
 		current = "auto"
 	}
-	text := fmt.Sprintf("🧭 Model / Backend\n\n目前模式：%s", current)
+	hermesTier := t.hermesTierFor(key)
+	hermesTierLabel := "Hermes: Claude"
+	if hermesTier == "codex" {
+		hermesTierLabel = "Hermes: GPT/Codex"
+	}
+	label := func(mode, display string) string {
+		if current == mode {
+			return "✅ " + display
+		}
+		return display
+	}
+	text := t.getLocalizedMessage(key.chatID, "menu_model_title", map[string]string{"{mode}": current, "{tier}": hermesTierLabel})
 	t.sendMenuMessage(key, text, [][]map[string]interface{}{
 		{
-			{"text": "Claude Fast", "callback_data": "model:set:fast"},
-			{"text": "Claude Smart", "callback_data": "model:set:smart"},
+			{"text": label("fast", "Claude Fast"), "callback_data": "model:set:fast"},
+			{"text": label("smart", "Claude Smart"), "callback_data": "model:set:smart"},
 		},
 		{
-			{"text": "Claude Deep", "callback_data": "model:set:deep"},
-			{"text": "Plan", "callback_data": "model:set:plan"},
+			{"text": label("deep", "Claude Deep"), "callback_data": "model:set:deep"},
+			{"text": label("plan", "Plan"), "callback_data": "model:set:plan"},
 		},
 		{
-			{"text": "GPT Fast", "callback_data": "model:set:gpt-fast"},
-			{"text": "GPT Smart", "callback_data": "model:set:gpt-smart"},
+			{"text": label("gpt-fast", "GPT Fast"), "callback_data": "model:set:gpt-fast"},
+			{"text": label("gpt-smart", "GPT Smart"), "callback_data": "model:set:gpt-smart"},
 		},
 		{
-			{"text": "GPT Deep", "callback_data": "model:set:gpt-deep"},
-			{"text": "Auto", "callback_data": "model:set:auto"},
+			{"text": label("gpt-deep", "GPT Deep"), "callback_data": "model:set:gpt-deep"},
+			{"text": label("auto", "Auto"), "callback_data": "model:set:auto"},
 		},
 		{
-			{"text": "Backend 狀態", "callback_data": "model:backend"},
-			{"text": "回主選單", "callback_data": "menu:open"},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_back", nil), "callback_data": "menu:open"},
 		},
 	})
 }
@@ -4561,6 +4965,18 @@ func (t *TelegramBot) handleModelCallback(key chatKey, queryID, data string) {
 		}
 		t.answerCallbackQuery(queryID, "切換模型")
 		t.handleCommand(key, command)
+	case strings.HasPrefix(data, "model:hermes-tier:"):
+		tier := strings.TrimPrefix(data, "model:hermes-tier:")
+		if tier != "claude" && tier != "codex" {
+			t.answerCallbackQuery(queryID, "無法辨識 Hermes tier")
+			return
+		}
+		t.answerCallbackQuery(queryID, "切換 Hermes tier")
+		if tier == "codex" {
+			t.handleCommand(key, "/ghermes")
+		} else {
+			t.handleCommand(key, "/hermes")
+		}
 	default:
 		t.answerCallbackQuery(queryID, "無法辨識模型操作")
 	}
@@ -4569,14 +4985,14 @@ func (t *TelegramBot) handleModelCallback(key chatKey, queryID, data string) {
 func (t *TelegramBot) sendRetryMenu(key chatKey) {
 	rows := [][]map[string]interface{}{
 		{
-			{"text": "Retry latest", "callback_data": "retry:confirm:latest"},
-			{"text": "回主選單", "callback_data": "menu:open"},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_retry_latest", nil), "callback_data": "retry:confirm:latest"},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_back", nil), "callback_data": "menu:open"},
 		},
 	}
-	text := "🔁 Retry\n\n選擇要重跑的 review sub-task。"
+	text := t.getLocalizedMessage(key.chatID, "menu_retry_title", nil)
 	store, ok := globalStorage.(*SQLiteStorage)
 	if globalStorage == nil || !ok {
-		text += "\n\nStorage 尚未啟用，暫時只能使用 slash command。"
+		text += t.getLocalizedMessage(key.chatID, "menu_retry_no_storage", nil)
 		t.sendMenuMessage(key, text, rows)
 		return
 	}
@@ -4584,7 +5000,7 @@ func (t *TelegramBot) sendRetryMenu(key chatKey) {
 	defer cancel()
 	candidates, err := store.selectRetryTaskCandidates(ctx, key, 5)
 	if err != nil {
-		text += "\n\n讀取候選任務失敗：" + err.Error()
+		text += t.getLocalizedMessage(key.chatID, "menu_retry_load_error", map[string]string{"{error}": err.Error()})
 		t.sendMenuMessage(key, text, rows)
 		return
 	}
@@ -4594,7 +5010,7 @@ func (t *TelegramBot) sendRetryMenu(key chatKey) {
 		})
 	}
 	if len(candidates) == 0 {
-		text += "\n\n目前沒有找到這個 topic 的 retry 候選任務。"
+		text += t.getLocalizedMessage(key.chatID, "menu_retry_no_candidates", nil)
 	}
 	t.sendMenuMessage(key, text, rows)
 }
@@ -4658,12 +5074,12 @@ func (t *TelegramBot) sendRetryAllFailedResolution(key chatKey) {
 
 func (t *TelegramBot) sendRetryTaskMenu(key chatKey, taskID string) {
 	if globalStorage == nil {
-		t.send(key, "❌ Storage 尚未啟用，無法讀取 review 結果。")
+		t.send(key, t.getLocalizedMessage(key.chatID, "menu_retry_no_storage_alert", nil))
 		return
 	}
 	store, ok := globalStorage.(*SQLiteStorage)
 	if !ok {
-		t.send(key, "❌ 目前 storage backend 不支援 retry 選單。")
+		t.send(key, t.getLocalizedMessage(key.chatID, "menu_retry_backend_unsupported", nil))
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), retrySelectionTimeout)
@@ -4675,8 +5091,8 @@ func (t *TelegramBot) sendRetryTaskMenu(key chatKey, taskID string) {
 	}
 	rows := [][]map[string]interface{}{
 		{
-			{"text": "最低分 sub-task", "callback_data": "retry:confirm:lowest:" + taskID},
-			{"text": "全部失敗", "callback_data": "retry:confirm:all:" + taskID},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_retry_lowest", nil), "callback_data": "retry:confirm:lowest:" + taskID},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_retry_all_failed", nil), "callback_data": "retry:confirm:all:" + taskID},
 		},
 	}
 	for _, selection := range selections {
@@ -4687,8 +5103,9 @@ func (t *TelegramBot) sendRetryTaskMenu(key chatKey, taskID string) {
 			},
 		})
 	}
-	rows = append(rows, []map[string]interface{}{{"text": "回 Retry", "callback_data": "retry:menu"}})
-	t.sendMenuMessage(key, fmt.Sprintf("🔁 Retry task `%s`\n\n選擇要重跑的範圍。", shortHermesTaskID(taskID)), rows)
+	rows = append(rows, []map[string]interface{}{{"text": t.getLocalizedMessage(key.chatID, "menu_retry_back", nil), "callback_data": "retry:menu"}})
+	taskTitle := t.getLocalizedMessage(key.chatID, "menu_retry_task_title", map[string]string{"{id}": shortHermesTaskID(taskID)})
+	t.sendMenuMessage(key, taskTitle, rows)
 }
 
 func (t *TelegramBot) sendRetryConfirmation(key chatKey, mode, taskID string, idx int) {
@@ -4696,19 +5113,20 @@ func (t *TelegramBot) sendRetryConfirmation(key chatKey, mode, taskID string, id
 	runData := "retry:run:latest"
 	switch mode {
 	case "lowest":
-		label = "這個 task 的最低分 sub-task"
+		label = t.getLocalizedMessage(key.chatID, "retry_label_lowest", nil)
 		runData = "retry:run:lowest:" + taskID
 	case "all":
-		label = "這個 task 的所有失敗 sub-task"
+		label = t.getLocalizedMessage(key.chatID, "retry_label_all", nil)
 		runData = "retry:run:all:" + taskID
 	case "index":
-		label = fmt.Sprintf("這個 task 的 sub-task #%d", idx)
+		label = t.getLocalizedMessage(key.chatID, "retry_label_index", map[string]string{"{idx}": fmt.Sprintf("%d", idx)})
 		runData = fmt.Sprintf("retry:run:index:%s:%d", taskID, idx)
 	}
-	t.sendMenuMessage(key, "⚠️ 確認執行 retry？\n\n將重跑 "+label+"。", [][]map[string]interface{}{
+	confirmText := t.getLocalizedMessage(key.chatID, "menu_retry_confirm_text", map[string]string{"{label}": label})
+	t.sendMenuMessage(key, confirmText, [][]map[string]interface{}{
 		{
-			{"text": "確認執行", "callback_data": runData},
-			{"text": "取消", "callback_data": "retry:cancel"},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_retry_confirm_btn", nil), "callback_data": runData},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_cancel", nil), "callback_data": "retry:cancel"},
 		},
 	})
 }
@@ -6572,6 +6990,7 @@ func (t *TelegramBot) handleVoiceMessage(key chatKey, userID int64, voice *Voice
 
 	// 發送給 Agent 處理
 	agent := t.getAgent(key)
+	t.applyExplicitUserModelPreference(key, agent, "voice")
 
 	// Add language preference hint
 	userLang := t.getChatLanguage(key.chatID)

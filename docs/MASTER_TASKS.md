@@ -1,7 +1,7 @@
-# Master Tasks
+# Alice - Master Tasks
 
 > Auto-generated from GitHub Issues.
-> Last updated: 2026-04-28
+> Last updated: 2026-04-29
 > Run `/task-sync` to regenerate.
 
 ## Status Legend
@@ -25,10 +25,10 @@
 | P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 100% (1/1) | ✅ |
 | P11 - User Experience | 指令健全性和用戶體驗改善 | 100% (1/1) | ✅ |
 | P12 - Dashboard Analytics | Claude Code Hooks UI 增強：統計圖表 + 用戶指南 | 100% (1/1) | ✅ |
-| P13 - Future Enhancements | 未來功能增強與優化 | 52% (18/34) | 🔄 |
+| P13 - Future Enhancements | 未來功能增強與優化 | 64% (22/34) | 🔄 |
 | P14 - Commercialization Strategy | Alice AI Agent 商業化發展策略與產品定位 | 0% (0/6) | 🔄 |
-| P15 - Parallel Subagents & Orchestration | Implementation of parallel subagent execution with isolated contexts, tool-level parallelism, and orchestration | 50% (6/12) | 🔄 |
-| P16 - Multi-Backend Execution | Support for multiple execution backends: Local, Docker, SSH | 0% (0/1) | 🔄 |
+| P15 - Parallel Subagents & Orchestration | Implementation of parallel subagent execution with isolated contexts, tool-level parallelism, and orchestration | 83% (10/12) | 🔄 |
+| P16 - Multi-Backend Execution | Support for multiple execution backends: Local, Docker, SSH | 100% (1/1) | ✅ |
 | P2 - Monitoring | Web Dashboard + API + 監控系統 | 100% (7/7) | ✅ |
 | P3 - Data Layer | 持久化 + Git 整合 + Checkpoint | 100% (5/5) | ✅ |
 | P4 - Proto-First | Protocol Buffers 架構遷移 | 100% (1/1) | ✅ |
@@ -91,7 +91,7 @@
 | | — 用戶可依照文件快速設置 Claude Code Hooks | | ✅ |
 | | — 設置指南包含完整的故障排除說明 | | ✅ |
 
-## P13 - Future Enhancements (🔄 52%)
+## P13 - Future Enhancements (🔄 64%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
@@ -538,6 +538,10 @@
 | | — 修改 `/usage` handler，增加從 storage 查詢 per-model token 用量 | | ✅ |
 | | — 顯示每個模型的呼叫次數、input/output tokens、費用 | | ✅ |
 | | — 無 storage 或無數據時 graceful fallback（僅顯示現有整體統計） | | ✅ |
+| | — 在 /Volumes/eclipse/projects/gameA 讀取 tools/ai_tests/scenarios/town_npc_trading.json 與 tools/ai_tests/scenarios/town_npc_interaction_order.json，整理 scenario 內覆蓋的 NPC、購買/收購步驟、金幣與背包斷言重點行號作為留言證據 | | ✅ |
+| | — 在 /Volumes/eclipse/projects/gameA 執行 ./tools/godot_validate.sh text、godot --path . --headless --script tools/validate_town_maps.gd 與 python3 -m tools.ai_tests.run --list | rg 'town_npc_trading|town_npc_interaction_order'，記錄最新輸出片段 | | ✅ |
+| | — 在 /Volumes/eclipse/projects/gameA 嘗試 python3 -m tools.ai_tests.run town_npc_trading 與 python3 -m tools.ai_tests.run town_npc_interaction_order，若 AI test server 未連線則記錄錯誤訊息作為剩餘風險證據，不修改任何檔案 | | ✅ |
+| | — 在 /Volumes/eclipse/projects/gameA 使用 gh issue comment 77 -F 發表結構化中文留言，內容包含三項驗收對應證據、s2/s3 命令輸出摘要、scenario 路徑與行號、剩餘風險（互動實測需遊戲調試模式），最後 gh issue view 77 --comments | tail -n 40 確認張貼成功 | | ✅ |
 | P13.23 | **Add project_path field to performance_metrics table for per-project token cost tracking** | [#78](https://github.com/chimerakang/alice/issues/78) | ✅ |
 | | — Add `project_path` VARCHAR column to `performance_metrics` table migration | | ☐ |
 | | — Update `PerformanceMetrics` struct in performance.go to include ProjectPath field | | ☐ |
@@ -575,7 +579,7 @@
 | | — 測試各種 URL（外部、內部、無效） | | ☐ |
 | | — 性能優化和超時處理 | | ☐ |
 | | — 文檔更新 | | ☐ |
-| P13.29 | **🧠 OpusPlan 兩階段模型調用 - 計劃用 Opus、執行用 Sonnet** | [#85](https://github.com/chimerakang/alice/issues/85) | 🔄 |
+| P13.29 | **🧠 OpusPlan 兩階段模型調用 - 計劃用 Opus、執行用 Sonnet** | [#85](https://github.com/chimerakang/alice/issues/85) | ✅ |
 | | — `api.go`: `CallStream()` 新增 `maxTurns` 參數支援 | | ☐ |
 | | — `agent.go`: 實作兩階段調用邏輯（plan + execute） | | ☐ |
 | | — `agent.go`: 計劃階段的 system prompt 設計 | | ☐ |
@@ -585,7 +589,7 @@
 | | — i18n: 新增 zh-TW / en 訊息 keys | | ☐ |
 | | — 成本追蹤：兩階段的 token/cost 合併計算 | | ☐ |
 | | — 測試：驗證計劃品質與執行正確性 | | ☐ |
-| P13.30 | **feat: Implement auto-skill generation system** | [#86](https://github.com/chimerakang/alice/issues/86) | 🔄 |
+| P13.30 | **feat: Implement auto-skill generation system** | [#86](https://github.com/chimerakang/alice/issues/86) | ✅ |
 | | — 在 storage.go 中新增 `auto_skills` 表的 schema 和遷移 | | ☐ |
 | | — 實現 AutoSkill 結構體和數據模型（`internal/app/skills.go`） | | ☐ |
 | | — 在 agent.go 中實現 Skill 識別邏輯（工具序列監測） | | ☐ |
@@ -599,7 +603,7 @@
 | | — 添加 Telegram 命令：`/skills`（列出）、`/skill delete`（刪除） | | ☐ |
 | | — Dashboard 顯示 Skill 列表和統計 | | ☐ |
 | | — 記錄 Skill 命中率和節省的 token 數 | | ☐ |
-| P13.31 | **feat: Implement cron scheduler for automated tasks** | [#89](https://github.com/chimerakang/alice/issues/89) | 🔄 |
+| P13.31 | **feat: Implement cron scheduler for automated tasks** | [#89](https://github.com/chimerakang/alice/issues/89) | ✅ |
 | | — 新增 `internal/app/cron.go` | | ☐ |
 | | — 實現 CronScheduler 結構體 | | ☐ |
 | | — 在 storage.go 中新增 `scheduled_tasks` 表和 CRUD | | ☐ |
@@ -635,7 +639,7 @@
 | | — 帶入最近對話的 context 摘要到新 session | | ☐ |
 | | — Haiku triage timeout (`signal: killed`): 考慮增加 timeout 或改用更輕量的方式 | | ☐ |
 | | — Voice analysis 空 stderr: 檢查 stdout JSON 中的 error 訊息 | | ☐ |
-| P13.33 | **Model routing 造成 session context 丟失：改採 Sticky + Follow-up detection** | [#93](https://github.com/chimerakang/alice/issues/93) | 🔄 |
+| P13.33 | **Model routing 造成 session context 丟失：改採 Sticky + Follow-up detection** | [#93](https://github.com/chimerakang/alice/issues/93) | ✅ |
 | | — [agent.go](../blob/main/internal/app/agent.go) — 重構 model routing 邏輯，加入 sticky 判斷 | | ☐ |
 | | — [agent.go](../blob/main/internal/app/agent.go) — 重寫 \`isContinuationMessage()\` | | ☐ |
 | | — [security.go](../blob/main/internal/app/security.go) — \`ModelRoutingConfig\` 加入 \`SessionIdleTimeout\`、\`StickyMode\` 設定 | | ☐ |
@@ -647,6 +651,14 @@
 | | — 手動切換模型時，使用者收到「上下文將重置」提示 | | ☐ |
 | | — Session 閒置 > 閒置超時後，下一則訊息重新進入 triage | | ☐ |
 | | — Follow-up 測試案例（上述事故流程）可重現修復結果 | | ☐ |
+| | — Inspect the current implementation and tests around GitHub #93 in internal/app/agent.go, internal/app/security.go, internal/app/telegram.go, i18n JSON files, docs/CLAUDE.md, and existing git diff to determine what is already implemented and what remains. | | ✅ |
+| | — Modify internal/app/agent.go so model routing uses sticky session behavior by default, only re-triages after configured idle timeout or explicit reset/model switch, and prevents auto-triage from switching models during continuous conversations. | | ✅ |
+| | — Rewrite isContinuationMessage() in internal/app/agent.go and add or update focused Go tests covering explicit continuation phrases, pronoun references, short why/how follow-ups, and short-message follow-up behavior from the issue scenario. | | ✅ |
+| | — Update internal/app/security.go to add ModelRoutingConfig fields SessionIdleTimeout and StickyMode with conservative defaults and ensure existing config loading/validation continues to work. | | ✅ |
+| | — Update internal/app/telegram.go so /fast, /smart, and /deep manual model switches warn that context will reset, and add /clear and /reset handling to explicitly reset the current session. | | ✅ |
+| | — Add the required i18n message keys for model-switch reset warnings and clear/reset responses in zh-TW.json and en.json, preserving valid JSON formatting. | | ✅ |
+| | — Update docs/CLAUDE.md to document the new sticky routing behavior, follow-up detection rules, manual model switch reset warning, /clear or /reset behavior, and idle-timeout re-triage behavior. | | ✅ |
+| | — Run focused verification for #93, including go test ./internal/app/... and any targeted tests for routing, telegram commands, i18n loading, idle timeout, and follow-up detection; fix failures caused by the implementation. | | ✅ |
 | P13.34 | **整合 OpenAI Image Generation (gpt-image-2 / DALL-E) 為遊戲開發鋪路** | [#129](https://github.com/chimerakang/alice/issues/129) | 🔄 |
 | | — 決定方案 A vs B（或混合） | | ☐ |
 | | — 新增 config schema：`multimedia.image_generation_provider`、`multimedia.image_model`（預設 `gpt-image-2`，fallback `dall-e-3`）、預設尺寸、單次/每日配額 | | ☐ |
@@ -915,11 +927,11 @@
 | | — 客戶付款延遲：建立付款保障機制 | | ☐ |
 | | — 投資回報不佳：設定止損線 | | ☐ |
 
-## P15 - Parallel Subagents & Orchestration (🔄 50%)
+## P15 - Parallel Subagents & Orchestration (🔄 83%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
-| P15.1 | **feat: Implement parallel subagent execution with isolated contexts** | [#87](https://github.com/chimerakang/alice/issues/87) | 🔄 |
+| P15.1 | **feat: Implement parallel subagent execution with isolated contexts** | [#87](https://github.com/chimerakang/alice/issues/87) | ✅ |
 | | — 實現 SubAgentOrchestrator 結構體和並行邏輯 | | ☐ |
 | | — 修改 `ExecuteCoordinatedTask()` 從序列改為並行 | | ☐ |
 | | — 實現 semaphore 控制最大並發數 | | ☐ |
@@ -1030,7 +1042,7 @@
 | | — 開關 `enabled: false` 時完全不推送（但 `/hermes-stats` 仍可手動查詢） | | ☐ |
 | | — 所有輸出文字走 `alice-i18n`（zh-TW + en） | | ☐ |
 | | — 文件：`docs/hermes/summary-report.md` | | ☐ |
-| P15.10 | **Hermes: 過度拆解防護 — Complexity Gate + 粒度規則 + 數量上限** | [#103](https://github.com/chimerakang/alice/issues/103) | 🔄 |
+| P15.10 | **Hermes: 過度拆解防護 — Complexity Gate + 粒度規則 + 數量上限** | [#103](https://github.com/chimerakang/alice/issues/103) | ✅ |
 | | — `classifyComplexity()` heuristic 實作 + 單元測試（含邊界 case） | | ☐ |
 | | — 可選升級 Haiku 分類的開關與實作 | | ☐ |
 | | — Complexity gate 在 Hermes 入口 bypass trivial/moderate 到現有 routing | | ☐ |
@@ -1042,7 +1054,7 @@
 | | — 回歸測試：複雜任務「重構 i18n 系統」確認仍走 Hermes | | ☐ |
 | | — 量測：Hermes 啟動率（bypass vs engage 比例）加入 #102 summary report | | ☐ |
 | | — 文件：`docs/hermes/overdecomposition-prevention.md` | | ☐ |
-| P15.11 | **[Experiment] Hermes: VS Code UserPromptSubmit hook 攔截實驗** | [#104](https://github.com/chimerakang/alice/issues/104) | 🔄 |
+| P15.11 | **[Experiment] Hermes: VS Code UserPromptSubmit hook 攔截實驗** | [#104](https://github.com/chimerakang/alice/issues/104) | ✅ |
 | | — 新增 endpoint `POST /api/hooks/user-prompt-submit` | | ☐ |
 | | — Payload：`session_id`, `cwd`, `prompt`, `source`（從 env / parent process 推測） | | ☐ |
 | | — 執行 #103 的 `classifyComplexity()` heuristic（純本地，零成本） | | ☐ |
@@ -1062,17 +1074,17 @@
 | | — 量測 1 週累積至少 50 個樣本 | | ☐ |
 | | — 手動標註 20 個樣本的實際複雜度，計算 heuristic 準確率 | | ☐ |
 | | — 決策會議：是否進入 Phase 2 | | ☐ |
-| P15.12 | **Hermes: FetchIssue/gh 呼叫沒傳 project_dir，跨 repo 情境 exit status 1** | [#105](https://github.com/chimerakang/alice/issues/105) | 🔄 |
+| P15.12 | **Hermes: FetchIssue/gh 呼叫沒傳 project_dir，跨 repo 情境 exit status 1** | [#105](https://github.com/chimerakang/alice/issues/105) | ✅ |
 | | — 所有 \`gh\` 呼叫都在正確 project_dir 下執行 | | ☐ |
 | | — 跨 repo 測試：Alice chat 用 \`/hermes #1\`，其他 repo chat 用 \`/hermes #239\` 都能成功 | | ☐ |
 | | — Coordinator 取得 project_dir 的路徑有單元測試 | | ☐ |
 | | — 相容性：若某些內部流程呼叫時沒有 project_dir（backward compat），fallback 到 cwd 不崩潰 | | ☐ |
 
-## P16 - Multi-Backend Execution (🔄 0%)
+## P16 - Multi-Backend Execution (✅ 100%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
-| P16.1 | **feat: Implement multi-backend execution environment support** | [#88](https://github.com/chimerakang/alice/issues/88) | 🔄 |
+| P16.1 | **feat: Implement multi-backend execution environment support** | [#88](https://github.com/chimerakang/alice/issues/88) | ✅ |
 | | — 設計 ExecutionBackend 介面（`internal/app/backend.go`） | | ☐ |
 | | — 實現 BackendManager | | ☐ |
 | | — 實現 LocalBackend（封裝現有 os/exec 行為） | | ☐ |
@@ -1560,11 +1572,11 @@
 | [#81](https://github.com/chimerakang/alice/issues/81) | 🔀 Smart Routing 上下文橋接：continuation 偵測 + model 切換時保留對話記憶 | P13 - Future Enhancements | ✅ |
 | [#82](https://github.com/chimerakang/alice/issues/82) | Agent 媒體發送功能 - 圖片/影片/文件回傳到 Telegram chat | P13 - Future Enhancements | 🔄 |
 | [#83](https://github.com/chimerakang/alice/issues/83) | 實現 Bot 網頁截圖預覽功能 - 使用 Puppeteer 支援任意 URL 截圖 | P13 - Future Enhancements | 🔄 |
-| [#85](https://github.com/chimerakang/alice/issues/85) | 🧠 OpusPlan 兩階段模型調用 - 計劃用 Opus、執行用 Sonnet | P13 - Future Enhancements | 🔄 |
-| [#86](https://github.com/chimerakang/alice/issues/86) | feat: Implement auto-skill generation system | P13 - Future Enhancements | 🔄 |
-| [#89](https://github.com/chimerakang/alice/issues/89) | feat: Implement cron scheduler for automated tasks | P13 - Future Enhancements | 🔄 |
+| [#85](https://github.com/chimerakang/alice/issues/85) | 🧠 OpusPlan 兩階段模型調用 - 計劃用 Opus、執行用 Sonnet | P13 - Future Enhancements | ✅ |
+| [#86](https://github.com/chimerakang/alice/issues/86) | feat: Implement auto-skill generation system | P13 - Future Enhancements | ✅ |
+| [#89](https://github.com/chimerakang/alice/issues/89) | feat: Implement cron scheduler for automated tasks | P13 - Future Enhancements | ✅ |
 | [#90](https://github.com/chimerakang/alice/issues/90) | bug: CallStream 丟棄 CLI exit error 時的 streaming 結果導致「執行錯誤」 | P13 - Future Enhancements | 🔄 |
-| [#93](https://github.com/chimerakang/alice/issues/93) | Model routing 造成 session context 丟失：改採 Sticky + Follow-up detection | P13 - Future Enhancements | 🔄 |
+| [#93](https://github.com/chimerakang/alice/issues/93) | Model routing 造成 session context 丟失：改採 Sticky + Follow-up detection | P13 - Future Enhancements | ✅ |
 | [#129](https://github.com/chimerakang/alice/issues/129) | 整合 OpenAI Image Generation (gpt-image-2 / DALL-E) 為遊戲開發鋪路 | P13 - Future Enhancements | 🔄 |
 | [#49](https://github.com/chimerakang/alice/issues/49) | Alice 商業化：單機版隱私優先定位策略 | P14 - Commercialization Strategy | 🔄 |
 | [#51](https://github.com/chimerakang/alice/issues/51) | 多人版架構設計：從單機到團隊協作 | P14 - Commercialization Strategy | 🔄 |
@@ -1572,7 +1584,7 @@
 | [#54](https://github.com/chimerakang/alice/issues/54) | 產品授權與定價模式設計 | P14 - Commercialization Strategy | 🔄 |
 | [#56](https://github.com/chimerakang/alice/issues/56) | 品牌定位與行銷策略規劃 | P14 - Commercialization Strategy | 🔄 |
 | [#58](https://github.com/chimerakang/alice/issues/58) | Alice 商業化執行藍圖：6個月行動計畫 | P14 - Commercialization Strategy | 🔄 |
-| [#87](https://github.com/chimerakang/alice/issues/87) | feat: Implement parallel subagent execution with isolated contexts | P15 - Parallel Subagents & Orchestration | 🔄 |
+| [#87](https://github.com/chimerakang/alice/issues/87) | feat: Implement parallel subagent execution with isolated contexts | P15 - Parallel Subagents & Orchestration | ✅ |
 | [#95](https://github.com/chimerakang/alice/issues/95) | [Epic] Alice Hermes 化路徑圖：Brain-Executor 架構遷移 | P15 - Parallel Subagents & Orchestration | 🔄 |
 | [#96](https://github.com/chimerakang/alice/issues/96) | Hermes: Tool Execution Hooks — Post-validator + Path guard | P15 - Parallel Subagents & Orchestration | ✅ |
 | [#97](https://github.com/chimerakang/alice/issues/97) | Hermes: Task State 持久化層 — state.json for cold-start executors | P15 - Parallel Subagents & Orchestration | ✅ |
@@ -1581,10 +1593,10 @@
 | [#100](https://github.com/chimerakang/alice/issues/100) | Hermes (Future): SDK 混用方案探索 — 結構化輸出與並行優化 | P15 - Parallel Subagents & Orchestration | 🔄 |
 | [#101](https://github.com/chimerakang/alice/issues/101) | Hermes: GitHub Issue 整合層 — /hermes #N、checklist 同步、自動 comment | P15 - Parallel Subagents & Orchestration | ✅ |
 | [#102](https://github.com/chimerakang/alice/issues/102) | Hermes: Task Summary Report — token 用量分拆與可切換開關 | P15 - Parallel Subagents & Orchestration | ✅ |
-| [#103](https://github.com/chimerakang/alice/issues/103) | Hermes: 過度拆解防護 — Complexity Gate + 粒度規則 + 數量上限 | P15 - Parallel Subagents & Orchestration | 🔄 |
-| [#104](https://github.com/chimerakang/alice/issues/104) | [Experiment] Hermes: VS Code UserPromptSubmit hook 攔截實驗 | P15 - Parallel Subagents & Orchestration | 🔄 |
-| [#105](https://github.com/chimerakang/alice/issues/105) | Hermes: FetchIssue/gh 呼叫沒傳 project_dir，跨 repo 情境 exit status 1 | P15 - Parallel Subagents & Orchestration | 🔄 |
-| [#88](https://github.com/chimerakang/alice/issues/88) | feat: Implement multi-backend execution environment support | P16 - Multi-Backend Execution | 🔄 |
+| [#103](https://github.com/chimerakang/alice/issues/103) | Hermes: 過度拆解防護 — Complexity Gate + 粒度規則 + 數量上限 | P15 - Parallel Subagents & Orchestration | ✅ |
+| [#104](https://github.com/chimerakang/alice/issues/104) | [Experiment] Hermes: VS Code UserPromptSubmit hook 攔截實驗 | P15 - Parallel Subagents & Orchestration | ✅ |
+| [#105](https://github.com/chimerakang/alice/issues/105) | Hermes: FetchIssue/gh 呼叫沒傳 project_dir，跨 repo 情境 exit status 1 | P15 - Parallel Subagents & Orchestration | ✅ |
+| [#88](https://github.com/chimerakang/alice/issues/88) | feat: Implement multi-backend execution environment support | P16 - Multi-Backend Execution | ✅ |
 | [#1](https://github.com/chimerakang/alice/issues/1) | 🎛️ Web Dashboard Integration | P2 - Monitoring | ✅ |
 | [#2](https://github.com/chimerakang/alice/issues/2) | 🔍 AI Agent Transparency & Decision Logging | P2 - Monitoring | ✅ |
 | [#3](https://github.com/chimerakang/alice/issues/3) | 🤖 Multi-Agent Coordination System | P2 - Monitoring | ✅ |
@@ -1625,8 +1637,8 @@
 ## Summary
 
 **Total Issues:** 90
-**Completed:** 61 ✅
-**In Progress:** 29 🔄
+**Completed:** 70 ✅
+**In Progress:** 20 🔄
 
-**Last sync:** 2026-04-28 11:57 UTC
+**Last sync:** 2026-04-29 10:43 UTC
 

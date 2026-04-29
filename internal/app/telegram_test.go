@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	appengine "claude-tg-agent/internal/app/engine"
 	"claude-tg-agent/internal/app/hermes"
 )
 
@@ -601,6 +602,10 @@ func TestSendHermesCandidateActionsQueuesInlineKeyboard(t *testing.T) {
 func TestSendMenuQueuesInlineKeyboard(t *testing.T) {
 	key := chatKey{chatID: 42, threadID: 7}
 	bot := &TelegramBot{
+		config:       &Config{DefaultProjectDir: "/tmp"},
+		agents:       map[chatKey]*Agent{},
+		chatContexts: map[chatKey]*ChatContext{},
+		hermesCoords: map[chatKey]*hermesCoord{},
 		messageQueue: make(chan *TelegramMessage, 1),
 	}
 
@@ -729,7 +734,7 @@ func TestSendRetryConfirmationQueuesRunButton(t *testing.T) {
 }
 
 func TestHermesCandidateActionRowsSupportsMultipleTasks(t *testing.T) {
-	rows := hermesCandidateActionRows([]hermes.TaskState{
+	rows := hermesCandidateActionRows("zh-TW", nil, []hermes.TaskState{
 		{ID: "task-one-abcdef"},
 		{ID: "task-two-abcdef"},
 	})
@@ -862,6 +867,38 @@ func TestIsHermesIssueReferenceRequest(t *testing.T) {
 	}
 	if isHermesIssueReferenceRequest("剛剛 #137 是什麼狀態？") {
 		t.Fatal("status-style issue mention should not be treated as an issue launch request")
+	}
+}
+
+func TestIsHermesIssueRestartRequest(t *testing.T) {
+	for _, text := range []string{"重新處理#293", "重新開始 #293", "重做 ＃２９３", "restart #293", "rerun #293"} {
+		if !isHermesIssueRestartRequest(text) {
+			t.Fatalf("expected issue restart request for %q", text)
+		}
+	}
+	if isHermesIssueRestartRequest("繼續處理 #293") {
+		t.Fatal("continue issue mention should not be treated as restart")
+	}
+}
+
+func TestParseHermesRestartIssue(t *testing.T) {
+	tests := []struct {
+		name  string
+		parts []string
+		want  int
+		ok    bool
+	}{
+		{name: "plain issue", parts: []string{"/ghermes", "restart", "#293"}, want: 293, ok: true},
+		{name: "issue in generated hint", parts: []string{"/hermes", "restart", "[GitHub", "#293]", "title"}, want: 293, ok: true},
+		{name: "non restart", parts: []string{"/ghermes", "處理", "#293"}, ok: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := parseHermesRestartIssue(tt.parts)
+			if got != tt.want || ok != tt.ok {
+				t.Fatalf("parseHermesRestartIssue(%v) = (%d, %v), want (%d, %v)", tt.parts, got, ok, tt.want, tt.ok)
+			}
+		})
 	}
 }
 
@@ -1275,6 +1312,174 @@ func TestHermesPlannerSessionCacheReusesSameTier(t *testing.T) {
 	bot.recordPlannerSession(key, "codex", "sess-123")
 	if got := bot.plannerSessionForTier(key, "codex"); got != "sess-123" {
 		t.Fatalf("expected cached planner session, got %q", got)
+	}
+}
+
+func TestHermesTierForUsesGPTDeepPreferenceWhenNoCoordinator(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		config: &Config{
+			DefaultProjectDir: "/repo",
+			ModelRouting: ModelRoutingConfig{
+				EnableDynamicRouting: true,
+				CodexDeepModel:       "gpt-5.5",
+			},
+		},
+		chatContexts: map[chatKey]*ChatContext{
+			key: NewChatContext(key.chatID, key.threadID, "/repo"),
+		},
+	}
+	bot.chatContexts[key].Pref = ModelPreference("gpt-deep")
+
+	if got := bot.hermesTierFor(key); got != "codex" {
+		t.Fatalf("hermesTierFor = %q, want codex", got)
+	}
+	if got := bot.modelForUserPreference(key); got != "gpt-5.5" {
+		t.Fatalf("modelForUserPreference = %q, want gpt-5.5", got)
+	}
+}
+
+func TestResolveHermesRoleModelsKeepsCodexPlannerAndExecutorSeparate(t *testing.T) {
+	bot := &TelegramBot{
+		config: &Config{
+			DefaultProjectDir: "/repo",
+			ModelRouting: ModelRoutingConfig{
+				EnableDynamicRouting: true,
+				CodexDeepModel:       "gpt-5.5",
+				CodexFastModel:       "gpt-5.4-mini",
+				DeepModel:            "claude-opus-4-5-20251101",
+			},
+		},
+	}
+
+	models := bot.resolveHermesRoleModels("codex", HermesConfig{}, appengine.StrictModeConfig{})
+
+	if models.planner != "gpt-5.5" {
+		t.Fatalf("planner = %q, want gpt-5.5", models.planner)
+	}
+	if models.executor != "gpt-5.4-mini" {
+		t.Fatalf("executor = %q, want gpt-5.4-mini", models.executor)
+	}
+	if models.heavyExecutor != "" {
+		t.Fatalf("heavyExecutor = %q, want empty when codex heavy model is unset", models.heavyExecutor)
+	}
+	if models.reviewer != "gpt-5.5" {
+		t.Fatalf("reviewer = %q, want gpt-5.5", models.reviewer)
+	}
+}
+
+func TestApplyExplicitUserModelPreferenceUsesGPTDeepForVoice(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		config: &Config{
+			DefaultProjectDir: "/repo",
+			ModelRouting: ModelRoutingConfig{
+				EnableDynamicRouting: true,
+				CodexDeepModel:       "gpt-5.5",
+			},
+		},
+		chatContexts: map[chatKey]*ChatContext{
+			key: NewChatContext(key.chatID, key.threadID, "/repo"),
+		},
+	}
+	bot.chatContexts[key].Pref = ModelPreference("gpt-deep")
+	agent := NewAgent(nil, "/repo", key.chatID, key.threadID)
+	agent.SetModelOverride("claude-haiku-4-5-20251001")
+
+	if !bot.applyExplicitUserModelPreference(key, agent, "voice") {
+		t.Fatalf("applyExplicitUserModelPreference returned false")
+	}
+	if agent.currentModelOverride != "gpt-5.5" {
+		t.Fatalf("currentModelOverride = %q, want gpt-5.5", agent.currentModelOverride)
+	}
+	if agent.enablePlanMode {
+		t.Fatalf("enablePlanMode = true, want false")
+	}
+}
+
+func TestApplyExplicitUserModelPreferenceUsesPlanMode(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		config: &Config{
+			DefaultProjectDir: "/repo",
+			ModelRouting: ModelRoutingConfig{
+				EnableDynamicRouting: true,
+				PlanModel:            "claude-opus-4-5-20251101",
+				ExecuteModel:         "gpt-5.5",
+			},
+		},
+		chatContexts: map[chatKey]*ChatContext{
+			key: NewChatContext(key.chatID, key.threadID, "/repo"),
+		},
+	}
+	bot.chatContexts[key].Pref = ModelPreference("plan")
+	agent := NewAgent(nil, "/repo", key.chatID, key.threadID)
+
+	if !bot.applyExplicitUserModelPreference(key, agent, "voice") {
+		t.Fatalf("applyExplicitUserModelPreference returned false")
+	}
+	if !agent.enablePlanMode {
+		t.Fatalf("enablePlanMode = false, want true")
+	}
+	if agent.planModel != "claude-opus-4-5-20251101" || agent.executeModel != "gpt-5.5" {
+		t.Fatalf("plan/execute = %q/%q, want claude-opus-4-5-20251101/gpt-5.5", agent.planModel, agent.executeModel)
+	}
+}
+
+func TestHermesTierForCoordinatorOverridesModelPreference(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		config: &Config{
+			DefaultProjectDir: "/repo",
+			ModelRouting: ModelRoutingConfig{
+				EnableDynamicRouting: true,
+				CodexDeepModel:       "gpt-5.5",
+			},
+		},
+		chatContexts: map[chatKey]*ChatContext{
+			key: NewChatContext(key.chatID, key.threadID, "/repo"),
+		},
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {enabled: true, tier: "claude"},
+		},
+	}
+	bot.chatContexts[key].Pref = ModelPreference("gpt-deep")
+
+	if got := bot.hermesTierFor(key); got != "claude" {
+		t.Fatalf("hermesTierFor = %q, want existing coordinator tier claude", got)
+	}
+}
+
+func TestHermesTierForIgnoresDisabledCoordinatorWhenGPTDeepPreferred(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		config: &Config{
+			DefaultProjectDir: "/repo",
+			ModelRouting: ModelRoutingConfig{
+				EnableDynamicRouting: true,
+				CodexDeepModel:       "gpt-5.5",
+			},
+		},
+		chatContexts: map[chatKey]*ChatContext{
+			key: NewChatContext(key.chatID, key.threadID, "/repo"),
+		},
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {enabled: false, tier: "claude"},
+		},
+	}
+	bot.chatContexts[key].Pref = ModelPreference("gpt-deep")
+
+	if got := bot.hermesTierFor(key); got != "codex" {
+		t.Fatalf("hermesTierFor = %q, want codex from current gpt-deep preference", got)
+	}
+}
+
+func TestCodexModelOrFallbackRejectsClaudeModel(t *testing.T) {
+	if got := codexModelOrFallback("claude-haiku-4-5-20251001", "gpt-5.4-mini"); got != "gpt-5.4-mini" {
+		t.Fatalf("codexModelOrFallback returned %q, want fallback gpt-5.4-mini", got)
+	}
+	if got := codexModelOrFallback("gpt-5.5", "gpt-5.4-mini"); got != "gpt-5.5" {
+		t.Fatalf("codexModelOrFallback returned %q, want gpt-5.5", got)
 	}
 }
 

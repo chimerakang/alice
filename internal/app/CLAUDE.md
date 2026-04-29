@@ -1,23 +1,6 @@
 <claude-mem-context>
 # Recent Activity
 
-### Feb 28, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #5537 | 8:37 PM | 🔵 | @mention command rejection logic found in Telegram handler | ~328 |
-| #5535 | 8:30 PM | ✅ | Committed Forum @mention Command Fix | ~293 |
-| #5532 | 8:28 PM | 🔴 | Fixed @mention Commands Not Working in Telegram Forums | ~371 |
-| #5529 | 8:27 PM | 🔵 | /help Command Handler Implementation Found | ~382 |
-
-### Mar 9, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #5908 | 1:32 PM | 🟣 | Implemented recoverActualThreadID function using single-topic heuristic | ~367 |
-| #5907 | " | ✅ | Added threadID recovery logic for @bot_name commands | ~326 |
-| #5890 | 1:29 PM | 🔵 | Telegram bot extracts threadID directly from MessageThreadID field | ~277 |
-
 ### Mar 12, 2026
 
 | ID | Time | T | Title | Read |
@@ -29,7 +12,6 @@
 | #6244 | " | 🔵 | Examined media upload architecture and sendPhoto implementation | ~306 |
 | #6243 | 1:23 PM | 🔵 | Analyzed testPhotoUpload function implementation | ~284 |
 | #6242 | " | 🔵 | Examined /test-photo command implementation | ~219 |
-| #6241 | " | 🔵 | Identified photo upload functionality in Telegram bot | ~241 |
 
 ### Apr 21, 2026
 
@@ -85,6 +67,14 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
+| #12132 | 4:29 PM | 🔴 | Tasks callback handler now respects topic-specific project directory settings | ~312 |
+| #12130 | " | 🔵 | Tasks message handler integrates GitHub API with fallback to legacy MASTER_TASKS.md | ~409 |
+| #12129 | 4:28 PM | 🔵 | Tasks selector menu already implemented with GitHub issue list integration | ~377 |
+| #12126 | " | 🟣 | Telegram bot retry command guided builder with confirmation flow | ~308 |
+| #12127 | " | 🟣 | Model selector menu with visual current-selection indicator and Hermes tier switching | ~291 |
+| #12116 | 4:27 PM | 🔵 | Model selector integrates with persistent preference storage and tier management | ~477 |
+| #12113 | " | 🔵 | Model/backend selector menu already implemented with direct command routing | ~465 |
+| #12112 | 4:26 PM | 🟣 | Telegram bot visual menu system with guided retry command builder | ~215 |
 | #11732 | 1:35 AM | 🔴 | Fixed foreign key constraint failure in retry review storage | ~373 |
 | #11729 | 1:34 AM | 🔵 | Review subtask results table schema locations identified | ~294 |
 | #11724 | 1:33 AM | 🔵 | Review result storage mechanism with source tracking | ~327 |
