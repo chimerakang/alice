@@ -475,10 +475,9 @@ func (a *Agent) expireIdleStickySession(ps *projectState, now time.Time) {
 	if ps.ctx.LastActivity.IsZero() || now.Sub(ps.ctx.LastActivity) <= timeout {
 		return
 	}
-	log.Printf("[agent] sticky session expired after %s idle; clearing session and re-triaging", now.Sub(ps.ctx.LastActivity).Round(time.Second))
+	log.Printf("[agent] sticky session expired after %s idle; clearing stale session context", now.Sub(ps.ctx.LastActivity).Round(time.Second))
 	ps.ctx.ClearSession(BackendKindForModel(a.lastUsedModel))
 	ps.ctx.RecentMsgs = nil
-	a.currentModelOverride = ""
 	a.lastUsedModel = ""
 }
 
