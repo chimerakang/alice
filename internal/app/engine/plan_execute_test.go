@@ -113,6 +113,16 @@ func (n *recordingReviewNotifier) Notify(ctx context.Context, state hermes.TaskS
 	n.lastSummary = notification
 }
 
+type statusRecordingStore struct {
+	hermes.TaskStateStore
+	statuses []hermes.TaskStatus
+}
+
+func (s *statusRecordingStore) MarkStatus(taskID string, status hermes.TaskStatus) error {
+	s.statuses = append(s.statuses, status)
+	return s.TaskStateStore.MarkStatus(taskID, status)
+}
+
 func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 	store := hermes.NewMemoryTaskStore()
 	runner := &planExecuteRunner{}
@@ -265,6 +275,70 @@ func TestPlanExecuteEngineDoesNotRetryFailedSubTask(t *testing.T) {
 	}
 	if state.Plan[0].Status != hermes.SubTaskFailed {
 		t.Fatalf("first sub-task status = %s, want failed", state.Plan[0].Status)
+	}
+}
+
+func TestPlanExecuteEngineUsesValidatingDuringTaskReviewRetry(t *testing.T) {
+	baseStore := hermes.NewMemoryTaskStore()
+	store := &statusRecordingStore{TaskStateStore: baseStore}
+	runner := &planExecuteRunner{}
+	reviewPhase := &scriptedReviewPhase{
+		results: []ReviewResult{
+			{Verdict: VerdictFail, OverallScore: 40, Feedback: "missing validation"},
+			{Verdict: VerdictPass, OverallScore: 95, Feedback: "ok"},
+		},
+	}
+	planCalls := 0
+	planFn := func(ctx context.Context, message, projectDir string) (string, string, int, int, error) {
+		planCalls++
+		if planCalls == 1 {
+			return "```json\n" +
+				`[{"id":"s1","description":"first"},{"id":"s2","description":"second"}]` +
+				"\n```", "", 0, 0, nil
+		}
+		return "```json\n" +
+			`[{"id":"s1","description":"replanned first"},{"id":"s2","description":"replanned second"}]` +
+			"\n```", "", 0, 0, nil
+	}
+
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		PlannerModel:          "planner-model",
+		ProjectDir:            "/repo",
+		ChatID:                42,
+		MaxPlannerJSONRetries: 1,
+		InterruptPolicy:       hermes.InterruptQueue,
+		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
+		AccumulatedCfg:        hermes.AccumulatedConfig{},
+		ReviewPhase:           reviewPhase,
+		ReviewMode:            ReviewModePerTask,
+		TaskRetry:             TaskRetryConfig{Enabled: true, ScoreThreshold: 70, MaxTaskRetries: 1},
+	}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
+
+	taskID, err := engine.Start(context.Background(), "complex retry goal", NewChatContext(42, 0, "/repo"))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitForPlanExecute(t, engine)
+
+	state, err := baseStore.GetTask(taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if state.Status != hermes.TaskStatusDone {
+		t.Fatalf("status = %s, want done", state.Status)
+	}
+	wantStatuses := []hermes.TaskStatus{
+		hermes.TaskStatusExecuting,
+		hermes.TaskStatusValidating,
+		hermes.TaskStatusExecuting,
+		hermes.TaskStatusValidating,
+		hermes.TaskStatusDone,
+	}
+	if !reflect.DeepEqual(store.statuses, wantStatuses) {
+		t.Fatalf("statuses:\n got %#v\nwant %#v", store.statuses, wantStatuses)
+	}
+	if reviewPhase.calls != 1 || planCalls != 1 || len(runner.prompts) != 3 {
+		t.Fatalf("calls: review=%d plan=%d runner=%d", reviewPhase.calls, planCalls, len(runner.prompts))
 	}
 }
 

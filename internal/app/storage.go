@@ -1919,7 +1919,7 @@ func InitStorage(dbPath string) error {
 	if db, ok := storage.GetDB().(*sql.DB); ok {
 		now := time.Now().Format(time.RFC3339Nano)
 		if res, err := db.Exec(
-			`UPDATE tasks SET status='failed', ended_at=COALESCE(ended_at, ?) WHERE status IN ('executing','planning')`,
+			`UPDATE tasks SET status='failed', ended_at=COALESCE(ended_at, ?) WHERE status IN ('executing','planning','validating')`,
 			now,
 		); err != nil {
 			log.Printf("[storage] zombie sweep tasks: %v", err)
@@ -1927,7 +1927,7 @@ func InitStorage(dbPath string) error {
 			log.Printf("[storage] marked %d dangling tasks as failed (process restart recovery)", n)
 		}
 		if res, err := db.Exec(
-			`UPDATE hermes_task_states SET status='failed', updated_at=? WHERE status IN ('executing','planning')`,
+			`UPDATE hermes_task_states SET status='failed', updated_at=? WHERE status IN ('executing','planning','validating')`,
 			now,
 		); err != nil {
 			log.Printf("[storage] zombie sweep hermes_task_states: %v", err)

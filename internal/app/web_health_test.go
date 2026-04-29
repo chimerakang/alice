@@ -29,6 +29,16 @@ func TestHandleHealthIncludesStorageAndJobs(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpsertUnifiedTask: %v", err)
 	}
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:        "task-health-validating",
+		Goal:      "health validating",
+		Engine:    "test",
+		Backend:   "test",
+		Status:    "validating",
+		StartedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask(validating): %v", err)
+	}
 	done := globalJobTracker.Start("test.job")
 	defer done(nil)
 
@@ -51,8 +61,8 @@ func TestHandleHealthIncludesStorageAndJobs(t *testing.T) {
 	if storage["healthy"] != true || storage["backend"] != "sqlite" {
 		t.Fatalf("storage health = %+v", storage)
 	}
-	if got := storage["active_tasks"]; got != float64(1) {
-		t.Fatalf("active_tasks = %v, want 1", got)
+	if got := storage["active_tasks"]; got != float64(2) {
+		t.Fatalf("active_tasks = %v, want 2", got)
 	}
 	jobs, ok := body["jobs"].(map[string]any)
 	if !ok {

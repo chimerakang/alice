@@ -298,12 +298,12 @@ func runtimeStorageHealth() map[string]interface{} {
 		status["backend_error"] = "sqlite db handle unavailable"
 		return status
 	}
-	if count, err := countRows(db, `SELECT COUNT(*) FROM tasks WHERE status IN ('planning','executing')`); err == nil {
+	if count, err := countRows(db, `SELECT COUNT(*) FROM tasks WHERE status IN ('planning','executing','validating')`); err == nil {
 		status["active_tasks"] = count
 	} else {
 		status["active_tasks_error"] = err.Error()
 	}
-	if count, err := countRows(db, `SELECT COUNT(*) FROM hermes_task_states WHERE status IN ('planning','executing')`); err == nil {
+	if count, err := countRows(db, `SELECT COUNT(*) FROM hermes_task_states WHERE status IN ('planning','executing','validating')`); err == nil {
 		status["active_hermes_tasks"] = count
 	} else {
 		status["active_hermes_tasks_error"] = err.Error()

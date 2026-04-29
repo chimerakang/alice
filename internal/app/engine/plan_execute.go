@@ -339,14 +339,17 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 		lastTasks = tasks
 		lastCompleted = completed
 
-		_ = e.store.MarkStatus(taskID, hermes.TaskStatusDone)
-		finalState, _ := e.store.GetTask(taskID)
-
 		// Per-subtask strict mode handles its own reviews — task-level
 		// retry only applies to per-task review mode.
 		if reviewMode != ReviewModePerTask {
+			_ = e.store.MarkStatus(taskID, hermes.TaskStatusDone)
 			break
 		}
+
+		// Keep the task active while the final review decides whether this
+		// attempt is actually complete or must be re-planned.
+		_ = e.store.MarkStatus(taskID, hermes.TaskStatusValidating)
+		finalState, _ := e.store.GetTask(taskID)
 
 		// Run review with notify=false: the engine itself decides whether
 		// to surface the review or trigger a re-plan based on the result.
@@ -362,6 +365,9 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 			prevPlan = tasks
 			continue
 		}
+
+		_ = e.store.MarkStatus(taskID, hermes.TaskStatusDone)
+		finalState, _ = e.store.GetTask(taskID)
 
 		// Final attempt — surface whichever outcome the reviewer produced.
 		switch {
