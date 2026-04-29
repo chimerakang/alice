@@ -906,6 +906,110 @@ func TestChatContextKeepsBackendSessionsIndependent(t *testing.T) {
 	}
 }
 
+func TestManualModelSwitchCommandsWarnContextReset(t *testing.T) {
+	tests := []struct {
+		command       string
+		lastUsedModel string
+		want          string
+	}{
+		{command: "/fast", lastUsedModel: "claude-sonnet-4-6", want: "快速模式"},
+		{command: "/smart", lastUsedModel: "claude-haiku-4-5", want: "智能模式"},
+		{command: "/deep", lastUsedModel: "claude-sonnet-4-6", want: "深度模式"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			key := chatKey{chatID: 42, threadID: 7}
+			agent := NewAgent(&mockClient{}, "/tmp/alice-project", key.chatID, key.threadID)
+			agent.current().ctx.SetSession(BackendClaude, "claude-session")
+			agent.lastUsedModel = tt.lastUsedModel
+
+			bot := &TelegramBot{
+				agents: map[chatKey]*Agent{
+					key: agent,
+				},
+				config: &Config{
+					DefaultProjectDir: "/tmp/alice-project",
+					ModelRouting: ModelRoutingConfig{
+						EnableDynamicRouting: true,
+						FastModel:            "claude-haiku-4-5",
+						SmartModel:           "claude-sonnet-4-6",
+						DeepModel:            "claude-opus-4-5",
+					},
+				},
+				i18n:            newTestI18nManager(t),
+				messageQueue:    make(chan *TelegramMessage, 1),
+				langPreferences: map[int64]string{},
+			}
+			bot.setChatlanguage(key.chatID, "zh-TW")
+
+			bot.handleCommand(key, tt.command)
+
+			select {
+			case msg := <-bot.messageQueue:
+				text, _ := msg.Params["text"].(string)
+				if !strings.Contains(text, tt.want) {
+					t.Fatalf("message %q does not contain mode text %q", text, tt.want)
+				}
+				if !strings.Contains(text, "切換模型將在下一則訊息時開始新的 backend session") {
+					t.Fatalf("message %q does not contain context reset warning", text)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for model switch response")
+			}
+
+			if got := agent.current().ctx.Session(BackendClaude); got != "" {
+				t.Fatalf("claude session after %s = %q, want empty", tt.command, got)
+			}
+		})
+	}
+}
+
+func TestClearAndResetCommandsResetSession(t *testing.T) {
+	tests := []struct {
+		command string
+		want    string
+	}{
+		{command: "/clear", want: "Session 上下文已清除"},
+		{command: "/reset", want: "對話已清除"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.command, func(t *testing.T) {
+			key := chatKey{chatID: 42, threadID: 7}
+			agent := NewAgent(&mockClient{}, "/tmp/alice-project", key.chatID, key.threadID)
+			agent.current().ctx.SetSession(BackendClaude, "claude-session")
+			agent.current().ctx.SetSession(BackendCodex, "codex-thread")
+			agent.current().ctx.RecentMsgs = []contextMessage{{Role: "user", Content: "前一則訊息"}}
+			agent.lastUsedModel = "claude-sonnet-4-6"
+
+			bot := &TelegramBot{
+				agents: map[chatKey]*Agent{
+					key: agent,
+				},
+				config:          &Config{DefaultProjectDir: "/tmp/alice-project"},
+				i18n:            newTestI18nManager(t),
+				messageQueue:    make(chan *TelegramMessage, 1),
+				langPreferences: map[int64]string{},
+			}
+			bot.setChatlanguage(key.chatID, "zh-TW")
+
+			bot.handleCommand(key, tt.command)
+
+			assertQueuedMessageContains(t, bot.messageQueue, tt.want)
+			if got := agent.current().ctx.Session(BackendClaude); got != "" {
+				t.Fatalf("claude session after %s = %q, want empty", tt.command, got)
+			}
+			if got := agent.current().ctx.Session(BackendCodex); got != "" {
+				t.Fatalf("codex session after %s = %q, want empty", tt.command, got)
+			}
+			if got := len(agent.current().ctx.RecentMsgs); got != 0 {
+				t.Fatalf("recent messages after %s = %d, want 0", tt.command, got)
+			}
+		})
+	}
+}
+
 func TestChatContextRestoresModelPreferenceFromStorage(t *testing.T) {
 	storage := newTestSQLiteStorage(t)
 	if err := storage.SaveTopicModelPreference(42, 7, "/tmp/alice-project", "gpt-5.5"); err != nil {

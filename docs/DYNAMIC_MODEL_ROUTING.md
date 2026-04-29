@@ -10,7 +10,9 @@ Alice implements an intelligent model routing system to optimize token costs whi
 
 ## Three-Tier Routing Priority
 
-The system uses a hierarchical priority system to select models:
+The system uses sticky sessions by default. Once a Claude/Codex session is active, Alice keeps using the current model for follow-up turns so the CLI can preserve tool history and file-change context. Auto-triage only runs for a new conversation, after the idle timeout, or after the user explicitly resets/switches context.
+
+The Telegram routing priority is:
 
 ### 1. User Command Override (Priority 1 - 0ms latency)
 
@@ -18,25 +20,33 @@ Explicit user commands take highest priority:
 
 ```
 /fast  → Forces Haiku model (fast, cheap)
+/smart → Forces Sonnet model (balanced)
 /deep  → Forces Opus model (deep, powerful)
+/clear → Clears the active session/context
 /auto  → Returns to automatic routing
 ```
 
 **Implementation**: Telegram handler detects commands and calls `agent.SetModelOverride(model)`
 
 **Behavior**:
-- Setting a new model clears the session to ensure fresh context
-- Session ID is reset when model changes (prevents context pollution)
+- Setting a new model clears the target backend session and recent bridge context unless the same active model is re-selected
+- `/clear` clears the current session, sticky model, plan mode, and recent bridge context while preserving usage stats
 - Command preference persists until user sends `/auto`
 
-### 2. AI Triage with GPT-4o-mini (Priority 2 - ~300ms latency)
+### 2. Sticky Session / Follow-up Detection (Priority 2 - 0ms latency)
 
-When enabled, uses OpenAI's GPT-4o-mini to classify task complexity:
+When `sticky_session` is enabled and the current session has not exceeded `session_idle_timeout_min`, Alice keeps the current model and skips triage. If there is no active sticky session, short follow-up messages and messages starting with continuation words or pronouns also inherit the current model.
+
+### 3. Hybrid Triage (Priority 3)
+
+For new topics, Telegram first uses a local complexity heuristic. Ambiguous messages can be classified by the configured lightweight triage model:
 
 ```json
 {
   "model_routing": {
     "enable_dynamic_routing": true,
+    "sticky_session": true,
+    "session_idle_timeout_min": 5,
     "use_gpt4o_mini_for_triage": true
   }
 }
@@ -46,12 +56,12 @@ When enabled, uses OpenAI's GPT-4o-mini to classify task complexity:
 - **Fast tasks** (→ Haiku): Translation, explanation, formatting, simple code viewing
 - **Deep tasks** (→ Opus): Refactoring, architecture, debugging, complex algorithms
 
-**Implementation**: `triageWithGPT4oMini()` in telegram.go
+**Implementation**: `evaluateTaskComplexityScore()` and `triageWithHaiku()` in telegram.go
 - Uses existing OpenAI API key (shared with voice transcription)
 - Minimal cost: max_tokens=10, temperature=0
 - Graceful fallback to "fast" if API key not configured
 
-### 3. Static Rules-Based Routing (Priority 3 - <5ms latency)
+### 4. Static Rules-Based Routing (Agent Fallback - <5ms latency)
 
 Keyword pattern matching provides fast, deterministic routing:
 
@@ -95,10 +105,19 @@ func GetDefaultModelRoutes() []ModelRoute
 - Defines routing rules with patterns and priorities
 - Returns list of ModelRoute structs
 
+**`internal/app/config_types.go`**:
+```go
+type ModelRoutingConfig struct {
+    StickySession         bool
+    SessionIdleTimeoutMin int
+}
+```
+- Controls sticky mode and the idle timeout for treating a message as a new topic
+
 **`internal/app/telegram.go`**:
-- Handles `/fast`, `/deep`, `/auto` commands
+- Handles `/fast`, `/smart`, `/deep`, `/clear`, `/auto` commands
 - Manages user model preferences with RWMutex for thread safety
-- Runs AI triage if enabled
+- Applies sticky/follow-up routing before hybrid triage
 
 ### Decision Flow in Agent.Run()
 
@@ -109,7 +128,11 @@ Agent.Run(userMessage)
    ├─ If set → use it, reason = "user_command"
    └─ If empty → go to step 2
     ↓
-2. Call selectModel(userMessage)
+2. Check active sticky session
+   ├─ If lastUsedModel has a live backend session → use it, reason = "sticky_session"
+   └─ If no sticky model/session → go to step 3
+    ↓
+3. Call selectModel(userMessage)
    ├─ Match against static rules
    ├─ Return selected model, reason = "static_rule"
    └─ Fallback to "sonnet", reason = "default"
@@ -165,7 +188,10 @@ Uses Agent.selectModel() for all decisions, ignores `/fast` and `/deep` commands
   "model_routing": {
     "enable_dynamic_routing": true,
     "fast_model": "claude-haiku-4-5-20251001",
+    "smart_model": "claude-sonnet-4-6",
     "deep_model": "claude-opus-4-6",
+    "sticky_session": true,
+    "session_idle_timeout_min": 5,
     "use_gpt4o_mini_for_triage": true
   }
 }
@@ -219,6 +245,12 @@ Bot: ✅ 已切換至深度模式 (Switched to deep mode)
 
 User: refactor my code (any message)
 Agent: Routes to Opus, performs refactoring
+
+User: 那 TV Timer RN 有沒有修？
+Agent: Keeps the active Opus session; no auto-triage/model switch
+
+User: /clear
+Bot: 🔄 Session context cleared. The next message starts fresh
 
 User: /auto
 Bot: ✅ 已切換至自動路由模式 (Switched to auto mode)

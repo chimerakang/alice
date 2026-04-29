@@ -1,5 +1,7 @@
 package app
 
+import "encoding/json"
+
 // MultimediaConfig 多媒體處理設定
 type MultimediaConfig struct {
 	EnablePhotoSupport  bool   `json:"enable_photo_support"`
@@ -31,6 +33,68 @@ type ModelRoutingConfig struct {
 	UseGPT4oMini          bool   `json:"use_gpt4o_mini_for_triage"`
 	StickySession         bool   `json:"sticky_session"`
 	SessionIdleTimeoutMin int    `json:"session_idle_timeout_min"`
+	StickyMode            bool   `json:"sticky_mode"`
+	SessionIdleTimeout    int    `json:"session_idle_timeout"`
+}
+
+// UnmarshalJSON accepts both the original sticky_session/session_idle_timeout_min
+// keys and the #93 sticky_mode/session_idle_timeout aliases.
+func (c *ModelRoutingConfig) UnmarshalJSON(data []byte) error {
+	type alias ModelRoutingConfig
+	next := alias(*c)
+	if err := json.Unmarshal(data, &next); err != nil {
+		return err
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	if _, ok := raw["sticky_mode"]; ok {
+		next.StickySession = next.StickyMode
+	} else if _, ok := raw["sticky_session"]; ok {
+		next.StickyMode = next.StickySession
+	}
+
+	if _, ok := raw["session_idle_timeout"]; ok {
+		next.SessionIdleTimeoutMin = next.SessionIdleTimeout
+	} else if _, ok := raw["session_idle_timeout_min"]; ok {
+		next.SessionIdleTimeout = next.SessionIdleTimeoutMin
+	}
+
+	*c = ModelRoutingConfig(next)
+	c.Normalize()
+	return nil
+}
+
+func (c *ModelRoutingConfig) Normalize() {
+	if c.SessionIdleTimeout > 0 {
+		c.SessionIdleTimeoutMin = c.SessionIdleTimeout
+	} else if c.SessionIdleTimeoutMin > 0 {
+		c.SessionIdleTimeout = c.SessionIdleTimeoutMin
+	} else {
+		c.SessionIdleTimeout = 5
+		c.SessionIdleTimeoutMin = 5
+	}
+	if c.StickyMode || c.StickySession {
+		c.StickyMode = true
+		c.StickySession = true
+	}
+}
+
+func (c ModelRoutingConfig) StickyEnabled() bool {
+	return c.StickyMode || c.StickySession
+}
+
+func (c ModelRoutingConfig) IdleTimeoutMinutes() int {
+	if c.SessionIdleTimeout > 0 {
+		return c.SessionIdleTimeout
+	}
+	if c.SessionIdleTimeoutMin > 0 {
+		return c.SessionIdleTimeoutMin
+	}
+	return 5
 }
 
 // ModelRoute 單一路由規則

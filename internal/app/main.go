@@ -350,6 +350,8 @@ func LoadConfig() (*Config, error) {
 			UseGPT4oMini:          false,
 			StickySession:         true,
 			SessionIdleTimeoutMin: 5,
+			StickyMode:            true,
+			SessionIdleTimeout:    5,
 		},
 	}
 
@@ -367,6 +369,7 @@ func LoadConfig() (*Config, error) {
 			return nil, fmt.Errorf("parse config.json: %w", err)
 		}
 	}
+	config.ModelRouting.Normalize()
 
 	// 環境變數覆蓋（方便 Docker 部署）
 	if v := os.Getenv("TELEGRAM_BOT_TOKEN"); v != "" {

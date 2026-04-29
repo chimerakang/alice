@@ -354,6 +354,8 @@ type Agent struct {
 	planModel            string                   // model for planning phase
 	executeModel         string                   // model for execution phase
 	cliTimeoutMinutes    int                      // CLI 執行逾時（分鐘），0=無限制
+	stickySession        bool                     // keep model/session during active conversations
+	sessionIdleTimeout   time.Duration            // idle duration after which routing starts fresh
 	runMu                sync.Mutex               // serializes CLI runs for shared agent/session state
 	// Abort control
 	cancelFunc context.CancelFunc // 取消正在執行的 CLI 子程序
@@ -379,12 +381,14 @@ func NewAgentWithContext(client Client, chatCtx *ChatContext) *Agent {
 		chatCtx = NewChatContext(0, 0, "")
 	}
 	return &Agent{
-		client:      client,
-		projectDir:  chatCtx.ProjectDir,
-		projects:    make(map[string]*projectState),
-		chatID:      chatCtx.ChatID,
-		threadID:    chatCtx.ThreadID,
-		chatContext: chatCtx,
+		client:             client,
+		projectDir:         chatCtx.ProjectDir,
+		projects:           make(map[string]*projectState),
+		chatID:             chatCtx.ChatID,
+		threadID:           chatCtx.ThreadID,
+		chatContext:        chatCtx,
+		stickySession:      true,
+		sessionIdleTimeout: 5 * time.Minute,
 	}
 }
 
@@ -412,6 +416,13 @@ func (a *Agent) SetModelOverride(model string) {
 	a.currentModelOverride = model
 }
 
+// SetRoutingConfig applies sticky routing behavior to direct Agent runs.
+func (a *Agent) SetRoutingConfig(cfg ModelRoutingConfig) {
+	a.stickySession = cfg.StickyEnabled()
+	timeoutMin := cfg.IdleTimeoutMinutes()
+	a.sessionIdleTimeout = time.Duration(timeoutMin) * time.Minute
+}
+
 // SetPlanMode 啟用或停用 Plan/Execute 兩階段模式
 func (a *Agent) SetPlanMode(enabled bool, planModel, executeModel string) {
 	a.enablePlanMode = enabled
@@ -422,6 +433,53 @@ func (a *Agent) SetPlanMode(enabled bool, planModel, executeModel string) {
 // IsPlanMode 回報是否啟用 Plan/Execute 模式
 func (a *Agent) IsPlanMode() bool {
 	return a.enablePlanMode
+}
+
+// LastUsedModel returns the model used by the most recent successful or
+// in-flight direct run. Empty means the agent has no sticky model yet.
+func (a *Agent) LastUsedModel() string {
+	return a.lastUsedModel
+}
+
+func (a *Agent) activeStickyModel(ps *projectState) string {
+	if !a.stickySession || ps == nil || ps.ctx == nil || a.lastUsedModel == "" {
+		return ""
+	}
+	if ps.ctx.Session(BackendKindForModel(a.lastUsedModel)) == "" {
+		return ""
+	}
+	return a.lastUsedModel
+}
+
+func (a *Agent) activeContinuationModel(ps *projectState, userMessage string) string {
+	if ps == nil || ps.ctx == nil || a.lastUsedModel == "" || !isContinuationMessage(userMessage) {
+		return ""
+	}
+	if ps.ctx.Session(BackendKindForModel(a.lastUsedModel)) == "" {
+		return ""
+	}
+	return a.lastUsedModel
+}
+
+func (a *Agent) expireIdleStickySession(ps *projectState, now time.Time) {
+	if !a.stickySession || ps == nil || ps.ctx == nil || a.lastUsedModel == "" {
+		return
+	}
+	timeout := a.sessionIdleTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	if ps.ctx.Session(BackendKindForModel(a.lastUsedModel)) == "" {
+		return
+	}
+	if ps.ctx.LastActivity.IsZero() || now.Sub(ps.ctx.LastActivity) <= timeout {
+		return
+	}
+	log.Printf("[agent] sticky session expired after %s idle; clearing session and re-triaging", now.Sub(ps.ctx.LastActivity).Round(time.Second))
+	ps.ctx.ClearSession(BackendKindForModel(a.lastUsedModel))
+	ps.ctx.RecentMsgs = nil
+	a.currentModelOverride = ""
+	a.lastUsedModel = ""
 }
 
 // opusPlanPrompt 產生計劃階段的 prompt 包裝
@@ -469,6 +527,86 @@ func (a *Agent) selectModel(userMessage string) (model string, routingReason str
 	return "sonnet", "default"
 }
 
+func isContinuationMessage(message string) bool {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return false
+	}
+	if strings.Contains(trimmed, "```") {
+		return false
+	}
+
+	runeCount := len([]rune(trimmed))
+	lower := strings.ToLower(trimmed)
+
+	explicitPrefixes := []string{
+		"但是", "但", "那", "繼續", "继续", "還有", "还有", "所以",
+		"另外", "接著", "然後", "再來", "而且", "不過", "可是",
+		"but", "and", "also", "continue", "what about",
+		"furthermore", "moreover", "then", "next", "additionally",
+	}
+	for _, prefix := range explicitPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+
+	explicitContains := []string{
+		"那", "呢", "繼續", "继续", "還有", "还有",
+	}
+	for _, phrase := range explicitContains {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+
+	pronounPhrases := []string{
+		"這個", "这个", "那個", "那个", "它", "這", "这",
+		"這樣", "这样", "那樣", "那样", "這裡", "这里", "那裡", "那里",
+	}
+	for _, phrase := range pronounPhrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+
+	englishPronouns := []string{"this", "that", "it", "them", "those", "these"}
+	for _, word := range englishPronouns {
+		if regexp.MustCompile(`\b` + regexp.QuoteMeta(word) + `\b`).MatchString(lower) {
+			return true
+		}
+	}
+
+	shortQuestionPrefixes := []string{"為什麼", "为什么", "怎麼", "怎么", "如何", "哪裡", "哪里", "什麼時候", "什么时候", "why", "how", "where", "when"}
+	if runeCount < 30 {
+		for _, prefix := range shortQuestionPrefixes {
+			if strings.HasPrefix(lower, prefix) {
+				return true
+			}
+		}
+		shortQuestionPhrases := []string{"有沒有", "有没有", "是否", "是不是", "了嗎", "了吗", "了沒", "了没"}
+		for _, phrase := range shortQuestionPhrases {
+			if strings.Contains(lower, phrase) {
+				return true
+			}
+		}
+	}
+
+	exactWords := []string{
+		"好", "是", "對", "行", "嗯", "去", "做", "試試",
+		"好啊", "好的", "好了", "可以", "繼續", "繼續吧", "繼續做", "繼續進行", "請繼續",
+		"修正", "下一步", "之後", "做吧", "沒問題",
+		"ok", "yes", "y", "go", "sure", "continue", "proceed", "fix", "fix it", "next",
+	}
+	for _, word := range exactWords {
+		if lower == word {
+			return true
+		}
+	}
+
+	return runeCount < 15
+}
+
 // current 取得目前專案的狀態，不存在則建立
 func (a *Agent) current() *projectState {
 	if ps, ok := a.projects[a.projectDir]; ok {
@@ -514,6 +652,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	}()
 
 	ps := a.current()
+	a.expireIdleStickySession(ps, startTime)
 
 	// Handle model selection with three-tier routing priority
 	var routingReason string
@@ -524,6 +663,16 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	if a.currentModelOverride != "" {
 		selectedModel = a.currentModelOverride
 		routingReason = "user_command"
+		routingLatency = 0
+	} else if a.activeStickyModel(ps) != "" {
+		// Sticky session fallback for non-Telegram callers or Telegram paths that
+		// intentionally leave override empty for a follow-up turn.
+		selectedModel = a.activeStickyModel(ps)
+		routingReason = "sticky_session"
+		routingLatency = 0
+	} else if a.activeContinuationModel(ps, userMessage) != "" {
+		selectedModel = a.activeContinuationModel(ps, userMessage)
+		routingReason = "follow_up"
 		routingLatency = 0
 	} else {
 		// Priority 2: Static rules-based routing
@@ -1063,6 +1212,11 @@ func formatToolUpdate(name string, input map[string]interface{}) string {
 // Reset clears the current project's session and stats
 func (a *Agent) Reset() {
 	delete(a.projects, a.projectDir)
+	a.currentModelOverride = ""
+	a.lastUsedModel = ""
+	a.enablePlanMode = false
+	a.planModel = ""
+	a.executeModel = ""
 	if a.chatContext != nil {
 		a.chatContext.Sessions = make(map[BackendKind]string)
 		a.chatContext.RecentMsgs = nil
@@ -1070,14 +1224,37 @@ func (a *Agent) Reset() {
 	}
 }
 
-// ClearSession resets only the current backend session ID while preserving usage stats.
+// ClearSession resets backend session IDs while preserving usage stats.
 func (a *Agent) ClearSession() {
 	ps := a.current()
-	ps.ctx.ClearSession(ps.ctx.LastBackend)
+	ps.ctx.Sessions = make(map[BackendKind]string)
+	ps.ctx.RecentMsgs = nil
+	a.currentModelOverride = ""
+	a.lastUsedModel = ""
+	a.enablePlanMode = false
+	a.planModel = ""
+	a.executeModel = ""
 }
 
 func (a *Agent) ClearSessionForModel(model string) {
 	a.current().ctx.ClearSession(BackendKindForModel(model))
+}
+
+// PrepareManualModelSwitch clears native session/context state when the user
+// explicitly changes models. It returns true when existing context was dropped.
+func (a *Agent) PrepareManualModelSwitch(model string) bool {
+	ps := a.current()
+	targetBackend := BackendKindForModel(model)
+	sameActiveModel := a.lastUsedModel == model && ps.ctx.Session(targetBackend) != ""
+	if sameActiveModel {
+		return false
+	}
+	hadContext := ps.ctx.Session(targetBackend) != "" || a.lastUsedModel != "" || len(ps.ctx.RecentMsgs) > 0
+	ps.ctx.ClearSession(targetBackend)
+	ps.ctx.RecentMsgs = nil
+	a.currentModelOverride = ""
+	a.lastUsedModel = ""
+	return hadContext
 }
 
 // SetProject switches the working directory (preserves all project sessions)

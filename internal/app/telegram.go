@@ -441,6 +441,7 @@ func (t *TelegramBot) getAgent(key chatKey) *Agent {
 
 	agent := NewAgentWithContext(t.client, t.getChatContext(key, projectDir))
 	agent.cliTimeoutMinutes = t.config.CLITimeoutMinutes
+	agent.SetRoutingConfig(t.config.ModelRouting)
 	t.agents[key] = agent
 	return agent
 }
@@ -983,12 +984,13 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			log.Printf("[telegram] model routing: using custom model %s (user preference)", userPref)
 		} else if t.isStickySession(agent) {
 			// Priority 2: Sticky session — session active and not idle, skip triage entirely
+			modelOverride = agent.LastUsedModel()
 			log.Printf("[telegram] model routing: sticky session active (last activity: %v ago), keeping current model + session",
 				time.Since(agent.LastActivity()).Round(time.Second))
 		} else if isContinuationMessage(text) {
 			// Priority 3: Continuation message — inherit current model + session, skip triage
+			modelOverride = agent.LastUsedModel()
 			log.Printf("[telegram] model routing: continuation message detected, keeping current model + session")
-			// modelOverride stays empty → agent keeps lastUsedModel + sessionID unchanged
 		} else {
 			// Priority 4: Hybrid triage
 			// Phase A: local heuristic for high-confidence cases (0ms)
@@ -1017,9 +1019,9 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 					log.Printf("[telegram] model routing: classified as deep (model=%s)", modelOverride)
 				}
 			case "balanced":
-				// Keep default model - no override needed.
+				modelOverride = t.config.ModelRouting.SmartModel
 				agent.SetPlanMode(false, "", "") // Ensure plan mode is off
-				log.Printf("[telegram] model routing: classified as balanced (default model)")
+				log.Printf("[telegram] model routing: classified as balanced (model=%s)", modelOverride)
 			default: // "fast"
 				agent.SetPlanMode(false, "", "") // Ensure plan mode is off
 				modelOverride = t.config.ModelRouting.FastModel
@@ -1529,11 +1531,11 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			return
 		}
 		agent := t.getAgent(key)
-		hasSession := agent.LastBackend() == BackendClaude && agent.SessionIDForModel(t.config.ModelRouting.FastModel) != ""
+		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.FastModel)
 		t.setUserModelPreference(key, "fast")
 		agent.SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_fast", map[string]string{"model": t.config.ModelRouting.FastModel})
-		if hasSession {
+		if contextReset {
 			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
 		}
 		t.send(key, msg)
@@ -1544,11 +1546,11 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			return
 		}
 		agent := t.getAgent(key)
-		hasSession := agent.LastBackend() == BackendClaude && agent.SessionIDForModel(t.config.ModelRouting.SmartModel) != ""
+		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.SmartModel)
 		t.setUserModelPreference(key, "smart")
 		agent.SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_smart", map[string]string{"model": t.config.ModelRouting.SmartModel})
-		if hasSession {
+		if contextReset {
 			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
 		}
 		t.send(key, msg)
@@ -1559,11 +1561,11 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			return
 		}
 		agent := t.getAgent(key)
-		hasSession := agent.LastBackend() == BackendClaude && agent.SessionIDForModel(t.config.ModelRouting.DeepModel) != ""
+		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.DeepModel)
 		t.setUserModelPreference(key, "deep")
 		agent.SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_deep", map[string]string{"model": t.config.ModelRouting.DeepModel})
-		if hasSession {
+		if contextReset {
 			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
 		}
 		t.send(key, msg)
@@ -1577,9 +1579,13 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			return
 		}
 		agent := t.getAgent(key)
+		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.CodexFastModel)
 		t.setUserModelPreference(key, "gpt-fast")
 		agent.SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_gpt_fast", map[string]string{"model": t.config.ModelRouting.CodexFastModel})
+		if contextReset {
+			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
+		}
 		t.send(key, msg)
 
 	case "/gsmart":
@@ -1591,9 +1597,13 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			return
 		}
 		agent := t.getAgent(key)
+		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.CodexSmartModel)
 		t.setUserModelPreference(key, "gpt-smart")
 		agent.SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_gpt_smart", map[string]string{"model": t.config.ModelRouting.CodexSmartModel})
+		if contextReset {
+			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
+		}
 		t.send(key, msg)
 
 	case "/gdeep":
@@ -1605,9 +1615,13 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			return
 		}
 		agent := t.getAgent(key)
+		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.CodexDeepModel)
 		t.setUserModelPreference(key, "gpt-deep")
 		agent.SetPlanMode(false, "", "") // Disable plan mode
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_gpt_deep", map[string]string{"model": t.config.ModelRouting.CodexDeepModel})
+		if contextReset {
+			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
+		}
 		t.send(key, msg)
 
 	case "/auto":
@@ -1638,11 +1652,15 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		}
 		t.setUserModelPreference(key, "plan")
 		agent := t.getAgent(key)
+		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.ExecuteModel)
 		agent.SetPlanMode(true, t.config.ModelRouting.PlanModel, t.config.ModelRouting.ExecuteModel)
 		msg := t.getLocalizedMessage(key.chatID, "mode_switched_plan", map[string]string{
 			"plan_model":    t.config.ModelRouting.PlanModel,
 			"execute_model": t.config.ModelRouting.ExecuteModel,
 		})
+		if contextReset {
+			msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
+		}
 		t.send(key, msg)
 
 	case "/savings":
@@ -6585,98 +6603,14 @@ func getModelTag(model string) string {
 // isStickySession 判斷 agent 是否處於黏性 session 狀態（session 活躍且未閒置超時）
 // 黏性 session 期間一律沿用當前模型，不重新 triage
 func (t *TelegramBot) isStickySession(agent *Agent) bool {
-	if !t.config.ModelRouting.StickySession {
+	if !t.config.ModelRouting.StickyEnabled() {
 		return false
 	}
 	if agent.SessionID() == "" {
 		return false
 	}
-	timeoutMin := t.config.ModelRouting.SessionIdleTimeoutMin
-	if timeoutMin <= 0 {
-		timeoutMin = 5
-	}
+	timeoutMin := t.config.ModelRouting.IdleTimeoutMinutes()
 	return time.Since(agent.LastActivity()) < time.Duration(timeoutMin)*time.Minute
-}
-
-// isContinuationMessage 偵測是否為 follow-up（接續語或短問句）
-// 當 sticky session 未啟用或 session 不活躍時，用此作為次要防線避免不必要的 triage
-func isContinuationMessage(msg string) bool {
-	msg = strings.TrimSpace(msg)
-	if msg == "" {
-		return false
-	}
-	// 含程式碼區塊代表有實質內容
-	if strings.Contains(msg, "```") {
-		return false
-	}
-
-	runes := []rune(msg)
-	msgLower := strings.ToLower(msg)
-
-	// 短訊息（< 15 字）預設視為 follow-up（排除程式碼和完整問題陳述）
-	if len(runes) < 15 {
-		return true
-	}
-
-	// 明確接續語氣詞（前綴匹配）
-	continuationPrefixes := []string{
-		// 中文接續詞
-		"但是", "那", "繼續", "還有", "所以", "那…呢", "那呢",
-		"另外", "接著", "然後", "再來", "而且", "不過", "可是",
-		// 英文接續詞
-		"but ", "and ", "also ", "continue", "furthermore", "moreover",
-		"then ", "next ", "additionally",
-	}
-	for _, prefix := range continuationPrefixes {
-		if strings.HasPrefix(msgLower, strings.ToLower(prefix)) {
-			return true
-		}
-	}
-
-	// 代名詞指涉開頭（短問句，< 50 字）
-	if len(runes) < 50 {
-		pronounPrefixes := []string{
-			"這個", "那個", "它", "這樣", "那樣", "這裡", "那裡",
-			"this ", "that ", "it ", "them ", "those ", "these ",
-		}
-		for _, prefix := range pronounPrefixes {
-			if strings.HasPrefix(msgLower, strings.ToLower(prefix)) {
-				return true
-			}
-		}
-	}
-
-	// 追問短句：以疑問詞開頭且 < 30 字
-	if len(runes) < 30 {
-		questionPrefixes := []string{
-			"為什麼", "怎麼", "如何", "哪裡", "什麼時候",
-			"why ", "how ", "where ", "when ",
-		}
-		for _, prefix := range questionPrefixes {
-			if strings.HasPrefix(msgLower, strings.ToLower(prefix)) {
-				return true
-			}
-		}
-	}
-
-	// 精確匹配的確認／繼續詞
-	exactWords := []string{
-		"好", "是", "對", "行", "嗯", "去", "做", "試試",
-		"ok", "yes", "y", "go", "sure",
-		"好啊", "好的", "好了", "可以", "ok",
-		"繼續", "繼續吧", "繼續做", "繼續進行", "請繼續",
-		"continue", "proceed",
-		"修正", "fix", "fix it",
-		"下一步", "next", "之後",
-		"做吧", "沒問題",
-	}
-	for _, word := range exactWords {
-		if msgLower == strings.ToLower(word) {
-			return true
-		}
-	}
-
-	return false
 }
 
 // evaluateTaskComplexityScore 計算任務複雜度原始分數（供 hybrid triage 使用）
@@ -7971,15 +7905,11 @@ func (t *TelegramBot) handleModelCommand(key chatKey, parts []string) {
 	if modelRequiresCodex(modelName) && !t.codexTierAvailable(key) {
 		return
 	}
-	targetBackend := BackendKindForModel(modelName)
-	hasSession := agent.LastBackend() == targetBackend && agent.SessionIDForModel(modelName) != ""
-	if hasSession {
-		agent.ClearSessionForModel(modelName)
-	}
+	contextReset := agent.PrepareManualModelSwitch(modelName)
 	t.setUserModelPreference(key, modelName)
 	agent.SetPlanMode(false, "", "")
 	msg := t.getLocalizedMessage(key.chatID, "model_command_switched", map[string]string{"model": modelName})
-	if hasSession {
+	if contextReset {
 		msg += "\n\n" + t.getLocalizedMessage(key.chatID, "model_switch_context_reset", nil)
 	}
 	t.send(key, msg)
