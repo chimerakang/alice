@@ -904,23 +904,11 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		return
 	}
 
-	if t.config.Hermes.Enabled && isHermesContinuationRequest(text) {
-		projectDir := t.getAgent(key).ProjectDir()
-		if task, ok := t.resolveHermesContinuationTask(key, projectDir); ok {
-			mode := hermesContinuationModeFromRequest(text)
-			t.send(key, fmt.Sprintf("🔁 偵測到你想%s Hermes 任務 %s，將只規劃剩餘工作…", t.getLocalizedMessage(key.chatID, hermesContinuationVerbKey(mode), nil), shortHermesTaskID(task.ID)))
-			go t.runTrackedJob("hermes."+mode, func() {
-				t.startHermesContinuationTask(key, task, projectDir, mode)
-			})
-			return
-		}
-	}
-
 	// Hermes mode: route to Brain-Executor coordinator instead of normal agent.
-	// Issue status/question mentions still belong to the normal agent path even
-	// while Hermes mode is enabled, otherwise a check-in like "#184 要繼續處理嗎"
-	// silently becomes a new Hermes launch.
-	if t.isHermesEnabled(key) && !isHermesIssueStatusQuery(text) {
+	// Issue status/question mentions and bare continuation phrases still belong
+	// to the normal agent path even while Hermes mode is enabled; otherwise
+	// check-ins like "#184 要繼續處理嗎" or "繼續處理" silently revive Hermes tasks.
+	if t.isHermesEnabled(key) && !isHermesIssueStatusQuery(text) && !isHermesContinuationRequest(text) {
 		projectDir := t.getAgent(key).ProjectDir()
 		if issueNum, ok := ParseIssueNumber(text); ok && isHermesIssueRestartRequest(text) {
 			go t.runTrackedJob("hermes.issue.restart", func() {

@@ -1780,6 +1780,56 @@ func TestHandleMessageIssueStatusQuestionDoesNotFetchIssueInHermesMode(t *testin
 	}
 }
 
+func TestHandleMessageBareContinuationUsesNormalAgent(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	const userID int64 = 123
+	const projectDir = "/tmp/alice-project"
+
+	store := hermes.NewMemoryTaskStore()
+	taskService := tasksvc.New(store)
+	if _, err := taskService.CreateTask(hermes.TaskState{
+		ID:          "continuable-task",
+		ChatID:      key.chatID,
+		ThreadID:    key.threadID,
+		ProjectDir:  projectDir,
+		Status:      hermes.TaskStatusInterrupted,
+		Goal:        "修復登入流程",
+		Accumulated: "已完成 cookie 修正",
+		UpdatedAt:   time.Now(),
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	bot := &TelegramBot{
+		agents: map[chatKey]*Agent{
+			key: NewAgent(&mockClient{}, projectDir, key.chatID, key.threadID),
+		},
+		allowIDs: map[int64]bool{userID: true},
+		config: &Config{
+			Hermes: HermesConfig{Enabled: true},
+		},
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {enabled: true},
+		},
+		taskSvc:      taskService,
+		messageQueue: make(chan *TelegramMessage, 20),
+	}
+
+	bot.handleMessage(key, userID, "繼續處理", "", nil, nil, nil, "", 1)
+
+	for {
+		select {
+		case msg := <-bot.messageQueue:
+			text, _ := msg.Params["text"].(string)
+			if strings.Contains(text, "Hermes 任務") || strings.Contains(text, "偵測到你想") {
+				t.Fatalf("bare continuation should stay on normal agent path, got queued text %q", text)
+			}
+		default:
+			return
+		}
+	}
+}
+
 func TestHandleMessageHermesIssueRefTakesPrecedenceOverContinuation(t *testing.T) {
 	key := chatKey{chatID: 42, threadID: 7}
 	const userID int64 = 123
