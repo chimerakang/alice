@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"sort"
 	"strings"
@@ -168,11 +169,14 @@ var DefaultStrictBlockTags = []ReviewIssueTag{
 }
 
 // DefaultStrictModeConfig returns the hard-gate defaults described by #124.
+// ReviewTimeout: 120s. opus-class reviewers with --max-turns 3 (one tool round
+// allowed) regularly run 20-28s on prompts up to ~40KB; the previous 30s ceiling
+// killed ~21% of reviews mid-flight. See issue #147.
 func DefaultStrictModeConfig() StrictModeConfig {
 	return StrictModeConfig{
 		BlockTags:        append([]ReviewIssueTag(nil), DefaultStrictBlockTags...),
 		MaxRetriesPerSub: 2,
-		ReviewTimeout:    30 * time.Second,
+		ReviewTimeout:    120 * time.Second,
 		OpponentBackend:  BackendAuto,
 	}
 }
@@ -186,7 +190,7 @@ func (c StrictModeConfig) WithDefaults() StrictModeConfig {
 		c.MaxRetriesPerSub = 2
 	}
 	if c.ReviewTimeout <= 0 {
-		c.ReviewTimeout = 30 * time.Second
+		c.ReviewTimeout = 120 * time.Second
 	}
 	if c.OpponentBackend != BackendAuto && c.OpponentBackend != BackendCodex {
 		c.OpponentBackend = BackendAuto
@@ -324,7 +328,14 @@ func ReviewPhaseWithTimeout(ctx context.Context, phase ReviewPhase, req ReviewRe
 	reviewCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	start := time.Now()
 	result, err := phase.Review(reviewCtx, req)
+	elapsed := time.Since(start)
+	// Surface near-timeout reviews so operators can tell whether the limit is
+	// being approached without (yet) firing. See issue #147.
+	if elapsed >= 60*time.Second {
+		log.Printf("[review] slow review: model=%s duration=%s timeout=%s", strings.TrimSpace(result.ReviewerModel), elapsed.Round(time.Millisecond), timeout)
+	}
 	if err == nil {
 		return result, nil
 	}

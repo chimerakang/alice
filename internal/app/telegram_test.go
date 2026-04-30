@@ -1646,6 +1646,31 @@ func TestResolveStrictModeConfigAutoEnablesFromGoal(t *testing.T) {
 	}
 }
 
+// Issue #147: HermesConfig.ReviewTimeoutSeconds must override the engine default
+// so operators can tune review timeout from config.json without recompiling.
+func TestResolveStrictModeConfigUsesHermesReviewTimeoutOverride(t *testing.T) {
+	key := chatKey{chatID: 99, threadID: 3}
+	bot := &TelegramBot{
+		config: &Config{
+			Hermes: HermesConfig{ReviewTimeoutSeconds: 300},
+		},
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: &hermesCoord{},
+		},
+	}
+
+	cfg := bot.resolveStrictModeConfig(key, "any goal")
+	if cfg.ReviewTimeout != 300*time.Second {
+		t.Fatalf("ReviewTimeout = %s, want 300s (from HermesConfig override)", cfg.ReviewTimeout)
+	}
+
+	bot.config.Hermes.ReviewTimeoutSeconds = 0
+	cfg = bot.resolveStrictModeConfig(key, "any goal")
+	if cfg.ReviewTimeout != 120*time.Second {
+		t.Fatalf("ReviewTimeout fallback = %s, want 120s (engine default)", cfg.ReviewTimeout)
+	}
+}
+
 func assertQueuedMessageContains(t *testing.T, queue <-chan *TelegramMessage, want string) {
 	t.Helper()
 

@@ -4113,6 +4113,9 @@ func reviewModeForStrict(strictCfg appengine.StrictModeConfig) appengine.ReviewM
 func (t *TelegramBot) resolveStrictModeConfig(key chatKey, goal string) appengine.StrictModeConfig {
 	cfg := appengine.DefaultStrictModeConfig()
 	cfg.Enabled = t.strictModeEnabled(key, goal)
+	if t != nil && t.config != nil && t.config.Hermes.ReviewTimeoutSeconds > 0 {
+		cfg.ReviewTimeout = time.Duration(t.config.Hermes.ReviewTimeoutSeconds) * time.Second
+	}
 	return cfg
 }
 

@@ -161,7 +161,7 @@ func TestBuildReviewNotificationAndTelegramText(t *testing.T) {
 
 func TestStrictReviewDefaultsAndTagBlocking(t *testing.T) {
 	cfg := DefaultStrictModeConfig()
-	if cfg.MaxRetriesPerSub != 2 || cfg.ReviewTimeout != 30*time.Second || cfg.OpponentBackend != BackendAuto {
+	if cfg.MaxRetriesPerSub != 2 || cfg.ReviewTimeout != 120*time.Second || cfg.OpponentBackend != BackendAuto {
 		t.Fatalf("unexpected strict defaults: %+v", cfg)
 	}
 	if len(cfg.BlockTags) != len(DefaultStrictBlockTags) {

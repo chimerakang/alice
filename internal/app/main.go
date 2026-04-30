@@ -99,6 +99,11 @@ type HermesConfig struct {
 	// StrictModeEnabled enables hard review gating by default.
 	StrictModeEnabled bool `json:"strict_mode_enabled"`
 
+	// ReviewTimeoutSeconds caps the per-review CLI call. 0 = use engine default
+	// (currently 120s). Operators bump this when reviewing on opus or with very
+	// large prompts; lower it when running haiku. See issue #147.
+	ReviewTimeoutSeconds int `json:"review_timeout_seconds"`
+
 	// Model overrides (defaults to ModelRoutingConfig values when empty)
 	PlannerModel  string `json:"planner_model"`  // e.g. "claude-opus-4-7"
 	ExecutorModel string `json:"executor_model"` // e.g. "claude-haiku-4-5-20251001"
