@@ -34,13 +34,20 @@ type ProgressReporter interface {
 // TextProgressReporter formats events as human-readable strings and forwards
 // them to a send function (e.g. TelegramBot.send).
 //
-// Lifecycle messaging is intentionally minimal: a plan summary up front, a
-// diagnostic only when a sub-task fails, and the OnDone final report. Per
-// sub-task start/success spam was removed — operators rely on OnDone (which
-// surfaces every sub-task's Result, artifacts, and token usage) and the
-// dashboard for in-progress detail.
+// When configured with edit-in-place via WithEditCapability, plan summary +
+// per-sub-task progress collapse onto a single message that updates as work
+// advances. Failures still post their own diagnostic so operators see the
+// error immediately; OnDone posts the final report as a separate message.
+//
+// Without edit support, the reporter falls back to a quiet stream: plan
+// summary up front, diagnostic only on failure, and the OnDone final report.
 type TextProgressReporter struct {
-	sendFn func(text string, notify bool)
+	sendFn        func(text string, notify bool)
+	sendCaptureFn func(text string) (int, error) // optional; nil disables edit-in-place
+	editFn        func(messageID int, text string) error
+
+	progressMsgID int
+	planSummary   string // header reused across edits
 }
 
 // NewTextProgressReporter creates a reporter that calls sendFn for each event.
@@ -56,31 +63,77 @@ func NewTextProgressReporterWithNotify(sendFn func(text string, notify bool)) *T
 	return &TextProgressReporter{sendFn: sendFn}
 }
 
+// WithEditCapability enables edit-in-place mode: OnPlanReady posts an initial
+// progress message and remembers its ID; subsequent OnSubTaskStart and
+// successful OnSubTaskDone events rewrite that single message instead of
+// flooding the chat. Pass nil functions to leave the reporter in fallback
+// (send-only) mode.
+func (r *TextProgressReporter) WithEditCapability(
+	sendCapture func(text string) (int, error),
+	edit func(messageID int, text string) error,
+) *TextProgressReporter {
+	r.sendCaptureFn = sendCapture
+	r.editFn = edit
+	return r
+}
+
+func (r *TextProgressReporter) editProgress(text string) {
+	if r.editFn == nil || r.progressMsgID == 0 {
+		return
+	}
+	if err := r.editFn(r.progressMsgID, text); err != nil {
+		// Edit failed (e.g. message deleted or unchanged). Disable further
+		// edit attempts so we do not spam the API with retries.
+		r.progressMsgID = 0
+	}
+}
+
 func (r *TextProgressReporter) OnPlanReady(tasks []SubTask) {
-	r.sendFn(fmt.Sprintf("📋 計畫完成，共 %d 個子任務", len(tasks)), false)
+	r.planSummary = fmt.Sprintf("📋 計畫完成，共 %d 個子任務", len(tasks))
+	initial := r.planSummary + "\n⏳ 準備開始…"
+	if r.sendCaptureFn != nil {
+		if id, err := r.sendCaptureFn(initial); err == nil {
+			r.progressMsgID = id
+			return
+		}
+	}
+	r.sendFn(initial, false)
 }
 
 func (r *TextProgressReporter) OnSubTaskStart(idx, total int, task SubTask) {
-	// Silent. OnDone surfaces every sub-task's outcome at task end.
+	if r.progressMsgID == 0 {
+		// Fallback mode: stay silent so we don't flood without edit-in-place.
+		return
+	}
+	desc := truncateRunes(task.Description, 140)
+	r.editProgress(fmt.Sprintf("%s\n▶ [%d/%d] %s", r.planSummary, idx+1, total, desc))
 }
 
 func (r *TextProgressReporter) OnSubTaskDone(idx, total int, task SubTask, success bool, result string) {
-	// Silent on success. Surface failures immediately so the operator sees the
-	// diagnostic without waiting for OnDone.
-	if success {
+	if !success {
+		// Surface failures as a new message so the diagnostic is sticky and
+		// not overwritten by the next sub-task's start edit.
+		msg := fmt.Sprintf("❌ [%d/%d] %s", idx+1, total, task.Description)
+		if result != "" {
+			msg += "\n" + result
+		}
+		r.sendFn(msg, false)
+		if r.progressMsgID != 0 {
+			r.editProgress(fmt.Sprintf("%s\n❌ [%d/%d] 失敗", r.planSummary, idx+1, total))
+		}
 		return
 	}
-	msg := fmt.Sprintf("❌ [%d/%d] %s", idx+1, total, task.Description)
-	if result != "" {
-		msg += "\n" + result
+	if r.progressMsgID == 0 {
+		return
 	}
-	r.sendFn(msg, false)
+	r.editProgress(fmt.Sprintf("%s\n✓ [%d/%d] 完成，準備下一步…", r.planSummary, idx+1, total))
 }
 
 func (r *TextProgressReporter) OnRetry(idx, attempt, maxAttempts int, validationErr string) {
-	// Silent. Retry detail is captured in sub-task Attempts and surfaced via
-	// the dashboard; operator-facing notifications only fire on terminal
-	// failure (OnSubTaskDone with success=false) or final OnDone.
+	if r.progressMsgID == 0 {
+		return
+	}
+	r.editProgress(fmt.Sprintf("%s\n🔁 [%d/?] 重試中 (%d/%d)", r.planSummary, idx+1, attempt, maxAttempts))
 }
 
 func (r *TextProgressReporter) OnDone(state TaskState) {
@@ -90,6 +143,13 @@ func (r *TextProgressReporter) OnDone(state TaskState) {
 		if t.Status == SubTaskDone {
 			done++
 		}
+	}
+
+	// Wrap up the in-place progress message so it stops looking pending. The
+	// real summary is sent below as a fresh, sticky message.
+	if r.progressMsgID != 0 {
+		r.editProgress(fmt.Sprintf("%s\n✅ 完成（%d/%d 子任務成功）", r.planSummary, done, total))
+		r.progressMsgID = 0
 	}
 
 	lines := []string{

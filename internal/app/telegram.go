@@ -3661,7 +3661,10 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 			return
 		}
 		t.sendSilent(key, text)
-	})
+	}).WithEditCapability(
+		func(text string) (int, error) { return t.sendCapturingID(key, text) },
+		func(messageID int, text string) error { return t.editMessageText(key, messageID, text) },
+	)
 
 	plannerSessionID := t.plannerSessionForTier(key, tier)
 	executorSessionID := t.executorSessionForTier(key, tier)
@@ -5578,22 +5581,55 @@ func (t *TelegramBot) Close() {
 	}
 }
 
-// editMessageRemoveStopButton removes the stop button from a message.
-// Uses synchronous send to guarantee delivery (async queue can drop messages under load).
-func (t *TelegramBot) editMessageRemoveStopButton(key chatKey, messageID int, newText string) {
+// editMessageText edits an existing message's text. Returns the underlying
+// Telegram error so callers that care about success can react; the typical
+// progress-bar use case logs and continues.
+func (t *TelegramBot) editMessageText(key chatKey, messageID int, newText string) error {
 	params := map[string]interface{}{
 		"chat_id":    key.chatID,
 		"message_id": messageID,
-		"text":       newText,
+		"text":       sanitizeUTF8(newText),
 	}
-
 	if key.threadID != 0 {
 		params["message_thread_id"] = key.threadID
 	}
+	_, err := t.sendMessageSync("editMessageText", params)
+	return err
+}
 
-	if _, err := t.sendMessageSync("editMessageText", params); err != nil {
+// editMessageRemoveStopButton removes the stop button from a message.
+// Uses synchronous send to guarantee delivery (async queue can drop messages under load).
+func (t *TelegramBot) editMessageRemoveStopButton(key chatKey, messageID int, newText string) {
+	if err := t.editMessageText(key, messageID, newText); err != nil {
 		log.Printf("[telegram] editMessageRemoveStopButton error (chat=%d, msg=%d): %v", key.chatID, messageID, err)
 	}
+}
+
+// sendCapturingID sends a message synchronously and returns its Telegram
+// message_id. Used by the Hermes progress reporter to anchor an
+// edit-in-place progress line. Returns 0 + error on failure so the caller
+// can fall back to the async send path.
+func (t *TelegramBot) sendCapturingID(key chatKey, text string) (int, error) {
+	params := map[string]interface{}{
+		"chat_id": key.chatID,
+		"text":    sanitizeUTF8(text),
+	}
+	if key.threadID != 0 {
+		params["message_thread_id"] = key.threadID
+	}
+	resp, err := t.sendMessageSync("sendMessage", params)
+	if err != nil {
+		return 0, err
+	}
+	result, ok := resp["result"].(map[string]interface{})
+	if !ok {
+		return 0, fmt.Errorf("sendCapturingID: missing result")
+	}
+	idF, ok := result["message_id"].(float64)
+	if !ok {
+		return 0, fmt.Errorf("sendCapturingID: missing message_id")
+	}
+	return int(idF), nil
 }
 
 // runAgentWithStopButton runs agent.Run() with a stop button on the first status update,
