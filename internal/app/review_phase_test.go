@@ -48,14 +48,10 @@ func (c *recordingReviewClient) GetModel() string {
 func TestCLIReviewPhaseUsesPromptAndParsesJSONOnly(t *testing.T) {
 	client := &recordingReviewClient{
 		callbackText: `{"verdict":"pass","overall_score":92,"feedback":"ok","issue_tags":["missing_validation"],"sub_task_results":[{"sub_task_id":"s1","score":92,"feedback":"good","issue_tags":["missing_validation"]}]}`,
-		response: &CLIResponse{
-			Usage: struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
-			}{InputTokens: 13, OutputTokens: 7},
-			TotalCostUSD: 0.44,
-		},
+		response:     &CLIResponse{TotalCostUSD: 0.44},
 	}
+	client.response.Usage.InputTokens = 13
+	client.response.Usage.OutputTokens = 7
 
 	phase := NewCLIReviewPhase(client, "gpt-5.5")
 	review, err := phase.Review(context.Background(), appengine.ReviewRequest{

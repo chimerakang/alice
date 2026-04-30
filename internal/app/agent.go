@@ -867,8 +867,12 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	ps.stats.TotalCostUSD += deltaCost
 	ps.ctx.LastActivity = time.Now()
 
-	log.Printf("[agent] done: turns=%d tokens_in=%d tokens_out=%d cost=$%.4f (delta from $%.4f) session=%s",
-		resp.NumTurns, resp.Usage.InputTokens, resp.Usage.OutputTokens,
+	log.Printf("[agent] done: turns=%d tokens_in=%d cache_read=%d cache_write=%d tokens_out=%d cost=$%.4f (delta from $%.4f) session=%s",
+		resp.NumTurns,
+		resp.Usage.InputTokens,
+		resp.Usage.CacheReadInputTokens,
+		resp.Usage.CacheCreationInputTokens,
+		resp.Usage.OutputTokens,
 		deltaCost, resp.TotalCostUSD, resp.SessionID)
 
 	// Log decision for transparency (success case)

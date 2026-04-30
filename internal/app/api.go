@@ -102,10 +102,25 @@ type CLIResponse struct {
 	DurationMs      int     `json:"duration_ms"`
 	ThinkingContent string  `json:"thinking_content"` // accumulated thinking blocks
 	TextContent     string  `json:"text_content"`     // accumulated text blocks
-	Usage           struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+	// Usage mirrors Anthropic's message.usage. input_tokens carries only the
+	// uncached portion; cache_read_input_tokens (0.1x rate) and
+	// cache_creation_input_tokens (1.25x rate) account for prompt-cache
+	// activity. See issue #148. For Codex backends cache_read_input_tokens
+	// carries cached_input_tokens; cache_creation is unused.
+	Usage struct {
+		InputTokens              int `json:"input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	} `json:"usage"`
+}
+
+// TotalInputTokensWithCache returns the full Anthropic input volume:
+// uncached input + cache reads + cache creations. Use this when you want
+// to know how many tokens hit the model context, not just billable
+// uncached tokens. See issue #148.
+func (u CLIResponse) TotalInputTokensWithCache() int {
+	return u.Usage.InputTokens + u.Usage.CacheReadInputTokens + u.Usage.CacheCreationInputTokens
 }
 
 func NewClient(model string) *CLIClient {
@@ -203,7 +218,7 @@ func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID, mo
 
 	// Record performance metrics
 	latency := time.Since(startTime)
-	totalTokens := resp.Usage.InputTokens + resp.Usage.OutputTokens
+	totalTokens := resp.Usage.InputTokens + resp.Usage.CacheReadInputTokens + resp.Usage.CacheCreationInputTokens + resp.Usage.OutputTokens
 	errorType := ""
 	if resp.IsError {
 		errorType = "cli_error"
@@ -307,8 +322,10 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 			TotalCostUSD float64 `json:"total_cost_usd"`
 			DurationMs   int     `json:"duration_ms"`
 			Usage        struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
+				InputTokens              int `json:"input_tokens"`
+				OutputTokens             int `json:"output_tokens"`
+				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 			} `json:"usage"`
 		}
 
@@ -355,6 +372,8 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 			}
 			finalResp.Usage.InputTokens = event.Usage.InputTokens
 			finalResp.Usage.OutputTokens = event.Usage.OutputTokens
+			finalResp.Usage.CacheReadInputTokens = event.Usage.CacheReadInputTokens
+			finalResp.Usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
 		}
 	}
 
@@ -389,7 +408,7 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 
 	// Record performance metrics
 	latency := time.Since(startTime)
-	totalTokens := finalResp.Usage.InputTokens + finalResp.Usage.OutputTokens
+	totalTokens := finalResp.Usage.InputTokens + finalResp.Usage.CacheReadInputTokens + finalResp.Usage.CacheCreationInputTokens + finalResp.Usage.OutputTokens
 	errorType := ""
 	if finalResp.IsError {
 		errorType = "cli_stream_error"
@@ -499,8 +518,10 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOver
 			TotalCostUSD float64 `json:"total_cost_usd"`
 			DurationMs   int     `json:"duration_ms"`
 			Usage        struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
+				InputTokens              int `json:"input_tokens"`
+				OutputTokens             int `json:"output_tokens"`
+				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 			} `json:"usage"`
 		}
 
@@ -543,6 +564,8 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOver
 			}
 			finalResp.Usage.InputTokens = event.Usage.InputTokens
 			finalResp.Usage.OutputTokens = event.Usage.OutputTokens
+			finalResp.Usage.CacheReadInputTokens = event.Usage.CacheReadInputTokens
+			finalResp.Usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
 		}
 	}
 
@@ -575,7 +598,7 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOver
 
 	// Record performance metrics
 	latency := time.Since(startTime)
-	totalTokens := finalResp.Usage.InputTokens + finalResp.Usage.OutputTokens
+	totalTokens := finalResp.Usage.InputTokens + finalResp.Usage.CacheReadInputTokens + finalResp.Usage.CacheCreationInputTokens + finalResp.Usage.OutputTokens
 	errorType := ""
 	if finalResp.IsError {
 		errorType = "cli_plan_error"
@@ -677,6 +700,8 @@ func (a *APIClient) Call(ctx context.Context, message, projectDir, sessionID, mo
 
 	// Record performance metrics
 	latency := time.Since(startTime)
+	// APIClient path uses raw Anthropic SDK; cache fields aren't parsed here yet
+	// (separate work). Total reflects only uncached + output for now.
 	totalTokens := apiResp.Usage.InputTokens + apiResp.Usage.OutputTokens
 
 	// 計算成本（$3 input, $15 output per million tokens）
@@ -695,21 +720,17 @@ func (a *APIClient) Call(ctx context.Context, message, projectDir, sessionID, mo
 
 	RecordAPICall(latency, true, totalTokens, totalCost, chatID, projectDir, "", ExtractModelShortName(model))
 
-	return &CLIResponse{
+	cliResp := &CLIResponse{
 		Type:            "text",
 		Result:          textContent,
 		TotalCostUSD:    totalCost,
 		DurationMs:      int(latency.Milliseconds()),
 		ThinkingContent: "",
 		TextContent:     textContent,
-		Usage: struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-		}{
-			InputTokens:  apiResp.Usage.InputTokens,
-			OutputTokens: apiResp.Usage.OutputTokens,
-		},
-	}, nil
+	}
+	cliResp.Usage.InputTokens = apiResp.Usage.InputTokens
+	cliResp.Usage.OutputTokens = apiResp.Usage.OutputTokens
+	return cliResp, nil
 }
 
 // CallStream 使用 Anthropic API 的流式調用（APIClient 實現）

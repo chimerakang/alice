@@ -167,12 +167,13 @@ func (c *CodexClient) runCodexStream(
 	}
 
 	var (
-		threadID     string
-		textBlocks   []string
-		inputTokens  int
-		outputTokens int
-		numTurns     int
-		streamErrMsg string // captured from error / turn.failed events
+		threadID          string
+		textBlocks        []string
+		inputTokens       int
+		cachedInputTokens int
+		outputTokens      int
+		numTurns          int
+		streamErrMsg      string // captured from error / turn.failed events
 	)
 
 	scanner := bufio.NewScanner(stdout)
@@ -235,6 +236,7 @@ func (c *CodexClient) runCodexStream(
 			numTurns++
 			if ev.Usage != nil {
 				inputTokens += ev.Usage.InputTokens
+				cachedInputTokens += ev.Usage.CachedInputTokens
 				outputTokens += ev.Usage.OutputTokens
 			}
 		}
@@ -282,7 +284,7 @@ func (c *CodexClient) runCodexStream(
 		chatID = chatID*31 + int64(b)
 	}
 
-	totalTokens := inputTokens + outputTokens
+	totalTokens := inputTokens + cachedInputTokens + outputTokens
 	RecordAPICall(latency, !isError, totalTokens, cost, chatID, projectDir, errorType, ExtractModelShortName(model))
 
 	if fatalErr != nil {
@@ -302,6 +304,10 @@ func (c *CodexClient) runCodexStream(
 	}
 	resp.Usage.InputTokens = inputTokens
 	resp.Usage.OutputTokens = outputTokens
+	// Codex reports cached input as a single number (no creation/read split);
+	// surface it via CacheReadInputTokens so dashboard arithmetic for total
+	// input volume works the same as Claude. See issue #148.
+	resp.Usage.CacheReadInputTokens = cachedInputTokens
 
 	return resp, nil
 }

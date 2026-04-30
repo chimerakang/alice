@@ -24,15 +24,14 @@ func (c *retryCommandTestClient) Call(ctx context.Context, message, projectDir, 
 
 func (c *retryCommandTestClient) CallStream(ctx context.Context, message, projectDir, sessionID, modelOverride string, onToolUse func(toolName string, toolInput map[string]interface{}), onContent func(contentType, text string)) (*CLIResponse, error) {
 	c.streamCalls++
-	return &CLIResponse{
+	resp := &CLIResponse{
 		Result:      "retry evidence",
 		TextContent: "retry evidence",
 		SessionID:   "retry-session",
-		Usage: struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-		}{InputTokens: 10, OutputTokens: 5},
-	}, nil
+	}
+	resp.Usage.InputTokens = 10
+	resp.Usage.OutputTokens = 5
+	return resp, nil
 }
 
 func (c *retryCommandTestClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
@@ -41,14 +40,13 @@ func (c *retryCommandTestClient) CallPlan(ctx context.Context, message, projectD
 	if onContent != nil {
 		onContent("text", reviewJSON)
 	}
-	return &CLIResponse{
+	resp := &CLIResponse{
 		Result:      reviewJSON,
 		TextContent: reviewJSON,
-		Usage: struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-		}{InputTokens: 7, OutputTokens: 3},
-	}, nil
+	}
+	resp.Usage.InputTokens = 7
+	resp.Usage.OutputTokens = 3
+	return resp, nil
 }
 
 func (c *retryCommandTestClient) GetModel() string {

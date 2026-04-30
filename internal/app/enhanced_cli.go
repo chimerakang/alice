@@ -101,7 +101,7 @@ func (c *EnhancedCLIClient) CallWithFiles(ctx context.Context, message string, f
 
 	// 記錄性能指標
 	latency := time.Since(startTime)
-	totalTokens := resp.Usage.InputTokens + resp.Usage.OutputTokens
+	totalTokens := resp.Usage.InputTokens + resp.Usage.CacheReadInputTokens + resp.Usage.CacheCreationInputTokens + resp.Usage.OutputTokens
 	errorType := ""
 	if resp.IsError {
 		errorType = "cli_error"
@@ -213,8 +213,10 @@ func (c *EnhancedCLIClient) CallStreamWithFiles(ctx context.Context, message str
 			TotalCostUSD float64 `json:"total_cost_usd"`
 			DurationMs   int     `json:"duration_ms"`
 			Usage        struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
+				InputTokens              int `json:"input_tokens"`
+				OutputTokens             int `json:"output_tokens"`
+				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 			} `json:"usage"`
 		}
 
@@ -262,6 +264,8 @@ func (c *EnhancedCLIClient) CallStreamWithFiles(ctx context.Context, message str
 			}
 			finalResp.Usage.InputTokens = event.Usage.InputTokens
 			finalResp.Usage.OutputTokens = event.Usage.OutputTokens
+			finalResp.Usage.CacheReadInputTokens = event.Usage.CacheReadInputTokens
+			finalResp.Usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
 		}
 	}
 
