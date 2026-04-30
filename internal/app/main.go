@@ -125,8 +125,11 @@ type HermesConfig struct {
 	// no longer reads this value.
 	InterruptPolicy string `json:"interrupt_policy,omitempty"`
 
-	// Progress verbosity: "minimal" | "normal" | "verbose"
-	ProgressVerbosity string `json:"progress_verbosity"` // default "normal"
+	// ProgressVerbosity is retained as an unused field so existing config.json
+	// files load without "unknown field" errors. The reporter now emits a
+	// fixed, minimal sequence (plan summary + failure diagnostics + OnDone);
+	// operators rely on the dashboard for in-progress detail.
+	ProgressVerbosity string `json:"progress_verbosity,omitempty"`
 
 	// AutoRouteComplex enables Complexity Gate auto-routing: natural-language
 	// messages classified as complex start Hermes automatically without
@@ -222,10 +225,7 @@ func HermesDefaults(cfg HermesConfig) HermesConfig {
 	if cfg.MaxPlannerJSONRetries == 0 {
 		cfg.MaxPlannerJSONRetries = 3
 	}
-	if cfg.ProgressVerbosity == "" {
-		cfg.ProgressVerbosity = "normal"
-	}
-	// Budget defaults intentionally not filled in: 0 means unlimited and
+// Budget defaults intentionally not filled in: 0 means unlimited and
 	// must flow through unchanged. Operators set explicit caps in config.json.
 	if cfg.Summary.Verbosity == "" {
 		cfg.Summary.Verbosity = "minimal"

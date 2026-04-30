@@ -3655,8 +3655,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 
 	taskStore := hermes.TaskStateStore(t.taskSvc)
 
-	verbosity := hermes.ParseVerbosity(cfg.ProgressVerbosity)
-	reporter := hermes.NewTextProgressReporterWithNotify(verbosity, func(text string, notify bool) {
+	reporter := hermes.NewTextProgressReporterWithNotify(func(text string, notify bool) {
 		if notify {
 			t.send(key, text)
 			return

@@ -6,27 +6,6 @@ import (
 	"time"
 )
 
-// Verbosity controls how much progress information is sent to the user.
-type Verbosity int
-
-const (
-	VerbosityMinimal Verbosity = iota // plan summary + final result only
-	VerbosityNormal                   // + sub-task start/done events
-	VerbosityVerbose                  // + retry and validation details
-)
-
-// ParseVerbosity converts a config string to Verbosity.
-func ParseVerbosity(s string) Verbosity {
-	switch s {
-	case "verbose":
-		return VerbosityVerbose
-	case "minimal":
-		return VerbosityMinimal
-	default:
-		return VerbosityNormal
-	}
-}
-
 // ProgressReporter receives lifecycle events and delivers them to the user.
 // All methods may be called from a goroutine different from the one that created it.
 type ProgressReporter interface {
@@ -54,66 +33,54 @@ type ProgressReporter interface {
 
 // TextProgressReporter formats events as human-readable strings and forwards
 // them to a send function (e.g. TelegramBot.send).
+//
+// Lifecycle messaging is intentionally minimal: a plan summary up front, a
+// diagnostic only when a sub-task fails, and the OnDone final report. Per
+// sub-task start/success spam was removed — operators rely on OnDone (which
+// surfaces every sub-task's Result, artifacts, and token usage) and the
+// dashboard for in-progress detail.
 type TextProgressReporter struct {
-	verbosity Verbosity
-	sendFn    func(text string, notify bool)
+	sendFn func(text string, notify bool)
 }
 
 // NewTextProgressReporter creates a reporter that calls sendFn for each event.
-func NewTextProgressReporter(verbosity Verbosity, sendFn func(string)) *TextProgressReporter {
-	return NewTextProgressReporterWithNotify(verbosity, func(text string, _ bool) {
+func NewTextProgressReporter(sendFn func(string)) *TextProgressReporter {
+	return NewTextProgressReporterWithNotify(func(text string, _ bool) {
 		sendFn(text)
 	})
 }
 
 // NewTextProgressReporterWithNotify creates a reporter that labels whether each
 // event should produce a user-visible notification sound.
-func NewTextProgressReporterWithNotify(verbosity Verbosity, sendFn func(text string, notify bool)) *TextProgressReporter {
-	return &TextProgressReporter{verbosity: verbosity, sendFn: sendFn}
+func NewTextProgressReporterWithNotify(sendFn func(text string, notify bool)) *TextProgressReporter {
+	return &TextProgressReporter{sendFn: sendFn}
 }
 
 func (r *TextProgressReporter) OnPlanReady(tasks []SubTask) {
-	var lines []string
-	lines = append(lines, fmt.Sprintf("計畫完成，共 %d 個子任務：", len(tasks)))
-	for i, t := range tasks {
-		lines = append(lines, fmt.Sprintf("  %d. %s", i+1, t.Description))
-	}
-	r.sendFn(join(lines), false)
+	r.sendFn(fmt.Sprintf("📋 計畫完成，共 %d 個子任務", len(tasks)), false)
 }
 
 func (r *TextProgressReporter) OnSubTaskStart(idx, total int, task SubTask) {
-	if r.verbosity < VerbosityNormal {
-		return
-	}
-	r.sendFn(fmt.Sprintf("[%d/%d] 執行：%s", idx+1, total, task.Description), false)
+	// Silent. OnDone surfaces every sub-task's outcome at task end.
 }
 
 func (r *TextProgressReporter) OnSubTaskDone(idx, total int, task SubTask, success bool, result string) {
-	// Always notify when there is only one sub-task — otherwise the user sees
-	// the start message and then silence until OnDone, which looks like a hang.
-	if r.verbosity < VerbosityNormal && total > 1 {
+	// Silent on success. Surface failures immediately so the operator sees the
+	// diagnostic without waiting for OnDone.
+	if success {
 		return
 	}
-	icon := "✅"
-	if !success {
-		icon = "❌"
-	}
-	msg := fmt.Sprintf("%s [%d/%d] %s", icon, idx+1, total, task.Description)
-	// Always surface the result body when the sub-task failed — otherwise
-	// the user sees a bare ❌ line with no diagnostics. Successful results
-	// stay gated by Verbose since they are usually long four-section
-	// reports already shown via OnContent.
-	if result != "" && (!success || r.verbosity >= VerbosityVerbose) {
+	msg := fmt.Sprintf("❌ [%d/%d] %s", idx+1, total, task.Description)
+	if result != "" {
 		msg += "\n" + result
 	}
 	r.sendFn(msg, false)
 }
 
 func (r *TextProgressReporter) OnRetry(idx, attempt, maxAttempts int, validationErr string) {
-	if r.verbosity < VerbosityVerbose {
-		return
-	}
-	r.sendFn(fmt.Sprintf("⚠️ 子任務 %d 重試中 (%d/%d)：%s", idx+1, attempt, maxAttempts, validationErr), false)
+	// Silent. Retry detail is captured in sub-task Attempts and surfaced via
+	// the dashboard; operator-facing notifications only fire on terminal
+	// failure (OnSubTaskDone with success=false) or final OnDone.
 }
 
 func (r *TextProgressReporter) OnDone(state TaskState) {
