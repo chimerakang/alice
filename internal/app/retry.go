@@ -10,6 +10,7 @@ import (
 	"time"
 
 	appengine "claude-tg-agent/internal/app/engine"
+	"claude-tg-agent/internal/app/hermes"
 )
 
 const (
@@ -675,6 +676,22 @@ func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *S
 		return retryOutcome{Selection: selection, Result: result, Review: review, Duration: time.Since(start)}, fmt.Errorf("store retry review: %w", err)
 	}
 	BroadcastReviewEventWithSource(appengine.BuildReviewNotification(selection.Task.ID, review), "retry")
+
+	// Write the retry's improved result back into the hermes task plan so
+	// future continuations and BuildExecutorPrompt's "前序子任務結果" block
+	// see the latest version. Without this the canonical Plan[i].Result still
+	// holds the original failed output and M1's prior-subtask injection
+	// replays the failure into every subsequent sub-task. Gated on
+	// plan-execute tasks (where the hermes table is the source of truth) and
+	// on a score improvement to avoid overwriting with a worse retry.
+	newScore := retryScoreForSubTask(review, selection.SubTask.ID)
+	if selection.Task.Engine == "plan-execute" && t.taskSvc != nil && selection.SubTask.Idx >= 0 && newScore >= selection.SubTaskReview.Score {
+		if upErr := t.taskSvc.UpdateSubTask(selection.Task.ID, selection.SubTask.Idx, hermes.SubTaskDone, result.Text, 0); upErr != nil {
+			log.Printf("[retry] write-back to hermes plan failed task=%s idx=%d: %v", selection.Task.ID, selection.SubTask.Idx, upErr)
+		} else {
+			log.Printf("[retry] wrote retry result back to hermes plan task=%s idx=%d (score %d → %d)", selection.Task.ID, selection.SubTask.Idx, selection.SubTaskReview.Score, newScore)
+		}
+	}
 
 	return retryOutcome{
 		Selection: selection,

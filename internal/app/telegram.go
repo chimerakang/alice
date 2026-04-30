@@ -970,47 +970,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		return
 	}
 
-	if t.config.Hermes.Enabled && isHermesIssueRestartRequest(text) {
-		projectDir := t.getAgent(key).ProjectDir()
-		issueNum, _ := ParseIssueNumber(text)
-		t.send(key, fmt.Sprintf("🔄 偵測到重新處理 Issue #%d，將忽略 24 小時內完成任務並從頭開始…", issueNum))
-		go t.runTrackedJob("hermes.issue.restart", func() {
-			t.startHermesFreshFromIssue(key, issueNum, projectDir)
-		})
-		return
-	}
-
-	if t.config.Hermes.Enabled && isHermesIssueReferenceRequest(text) {
-		projectDir := t.getAgent(key).ProjectDir()
-		issueNum, _ := ParseIssueNumber(text)
-		t.send(key, fmt.Sprintf("🔍 偵測到指定 Issue #%d，將以該 Issue 為準啟動 Hermes…", issueNum))
-		go t.runTrackedJob("hermes.issue", func() {
-			t.startHermesFromIssue(key, issueNum, projectDir)
-		})
-		return
-	}
-
-	// Hermes mode: route to Brain-Executor coordinator instead of normal agent.
-	// Issue status/question mentions and bare continuation phrases still belong
-	// to the normal agent path even while Hermes mode is enabled; otherwise
-	// check-ins like "#184 要繼續處理嗎" or "繼續處理" silently revive Hermes tasks.
-	if t.isHermesEnabled(key) && !isHermesIssueStatusQuery(text) && !isHermesContinuationRequest(text) {
-		projectDir := t.getAgent(key).ProjectDir()
-		if issueNum, ok := ParseIssueNumber(text); ok && isHermesIssueRestartRequest(text) {
-			go t.runTrackedJob("hermes.issue.restart", func() {
-				t.startHermesFreshFromIssue(key, issueNum, projectDir)
-			})
-			return
-		}
-		if issueNum, ok := ParseIssueNumber(text); ok {
-			go t.runTrackedJob("hermes.issue", func() {
-				t.startHermesFromIssue(key, issueNum, projectDir)
-			})
-			return
-		}
-		go t.runTrackedJob("hermes.task", func() {
-			t.startHermesTask(key, text, projectDir)
-		})
+	if t.dispatchHermesNLIntent(key, text) {
 		return
 	}
 
@@ -2842,6 +2802,87 @@ func hermesTaskHasProgress(task hermes.TaskState) bool {
 		}
 	}
 	return false
+}
+
+// hermesNLIntent classifies a natural-language message into one of the known
+// Hermes triggering paths so handleMessage can dispatch in a single switch
+// instead of cascading four overlapping if-blocks. Each branch maps onto an
+// existing startHermes* entry point — the classifier centralises the
+// precedence rules so future tweaks (status guard, tier resolution, etc.)
+// have a single source of truth.
+type hermesNLIntent int
+
+const (
+	hermesNLNone           hermesNLIntent = iota // not a Hermes intent (or Hermes disabled)
+	hermesNLRestartIssue                         // restart phrase + issue ref
+	hermesNLStartIssue                           // action-verb + issue ref or bare /hermes-style trigger
+	hermesNLChatModeIssue                        // chat is in Hermes mode and message contains issue ref
+	hermesNLChatModeFresh                        // chat is in Hermes mode, no issue, treat text as goal
+)
+
+// classifyHermesNLIntent inspects a user message and returns the matching
+// Hermes intent plus the parsed issue number when relevant. Status queries
+// containing an issue ref (e.g. "處理 #225 完成了嗎") collapse to
+// hermesNLNone so they fall through to the regular agent path.
+func (t *TelegramBot) classifyHermesNLIntent(key chatKey, text string) (hermesNLIntent, int) {
+	if !t.config.Hermes.Enabled {
+		return hermesNLNone, 0
+	}
+	if isHermesIssueStatusQuery(text) {
+		return hermesNLNone, 0
+	}
+	if isHermesIssueRestartRequest(text) {
+		issueNum, _ := ParseIssueNumber(text)
+		return hermesNLRestartIssue, issueNum
+	}
+	if isHermesIssueReferenceRequest(text) {
+		issueNum, _ := ParseIssueNumber(text)
+		return hermesNLStartIssue, issueNum
+	}
+	// Hermes chat-mode active for this topic. Continuation phrases stay on
+	// the regular agent path so check-ins like "繼續處理" do not silently
+	// revive a finished Hermes task.
+	if t.isHermesEnabled(key) && !isHermesContinuationRequest(text) {
+		if issueNum, ok := ParseIssueNumber(text); ok {
+			return hermesNLChatModeIssue, issueNum
+		}
+		return hermesNLChatModeFresh, 0
+	}
+	return hermesNLNone, 0
+}
+
+// dispatchHermesNLIntent runs classifyHermesNLIntent and triggers the matching
+// Hermes start path. Returns true when an intent fired so the caller skips
+// downstream routing.
+func (t *TelegramBot) dispatchHermesNLIntent(key chatKey, text string) bool {
+	intent, issueNum := t.classifyHermesNLIntent(key, text)
+	if intent == hermesNLNone {
+		return false
+	}
+	projectDir := t.getAgent(key).ProjectDir()
+	switch intent {
+	case hermesNLRestartIssue:
+		t.send(key, fmt.Sprintf("🔄 偵測到重新處理 Issue #%d，將忽略 24 小時內完成任務並從頭開始…", issueNum))
+		go t.runTrackedJob("hermes.issue.restart", func() {
+			t.startHermesFreshFromIssue(key, issueNum, projectDir)
+		})
+	case hermesNLStartIssue:
+		t.send(key, fmt.Sprintf("🔍 偵測到指定 Issue #%d，將以該 Issue 為準啟動 Hermes…", issueNum))
+		go t.runTrackedJob("hermes.issue", func() {
+			t.startHermesFromIssue(key, issueNum, projectDir)
+		})
+	case hermesNLChatModeIssue:
+		go t.runTrackedJob("hermes.issue", func() {
+			t.startHermesFromIssue(key, issueNum, projectDir)
+		})
+	case hermesNLChatModeFresh:
+		go t.runTrackedJob("hermes.task", func() {
+			t.startHermesTask(key, text, projectDir)
+		})
+	default:
+		return false
+	}
+	return true
 }
 
 func isHermesContinuationRequest(text string) bool {
