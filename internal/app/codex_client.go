@@ -145,26 +145,7 @@ func (c *CodexClient) runCodexStream(
 	startTime := time.Now()
 	projectDir = codexWorkingDir(projectDir)
 
-	var args []string
-	if sessionID != "" {
-		args = []string{
-			"exec", "resume", sessionID,
-			"--json",
-			"--dangerously-bypass-approvals-and-sandbox",
-			"-m", model,
-			"-C", projectDir,
-			prompt,
-		}
-	} else {
-		args = []string{
-			"exec",
-			"--json",
-			"--dangerously-bypass-approvals-and-sandbox",
-			"-m", model,
-			"-C", projectDir,
-			prompt,
-		}
-	}
+	args := buildCodexExecArgs(sessionID, model, projectDir, prompt)
 
 	cmd, cancel := processCommand(ctx, ProcessOptions{
 		Dir:     projectDir,
@@ -281,6 +262,7 @@ func (c *CodexClient) runCodexStream(
 			} else {
 				isError = true
 				errorType = "codex_exit_error"
+				log.Printf("[codex] exec failed: session=%q stderr=%q", sessionID, strings.TrimSpace(stderrStr))
 				fatalErr = fmt.Errorf("codex exec error: %s", stderrStr)
 			}
 		} else {
@@ -322,6 +304,30 @@ func (c *CodexClient) runCodexStream(
 	resp.Usage.OutputTokens = outputTokens
 
 	return resp, nil
+}
+
+// buildCodexExecArgs assembles the argv for `codex exec` / `codex exec resume`.
+// `codex exec resume` (codex-cli >=0.125) rejects -C/--cd, so we omit it on the
+// resume path; the working directory is set via the process Dir instead.
+// Fresh `codex exec` keeps -C for log readability. See issue #145.
+func buildCodexExecArgs(sessionID, model, projectDir, prompt string) []string {
+	if sessionID != "" {
+		return []string{
+			"exec", "resume", sessionID,
+			"--json",
+			"--dangerously-bypass-approvals-and-sandbox",
+			"-m", model,
+			prompt,
+		}
+	}
+	return []string{
+		"exec",
+		"--json",
+		"--dangerously-bypass-approvals-and-sandbox",
+		"-m", model,
+		"-C", projectDir,
+		prompt,
+	}
 }
 
 func codexWorkingDir(projectDir string) string {
