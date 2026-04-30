@@ -1,6 +1,8 @@
 package app
 
 import (
+	"log"
+
 	appengine "claude-tg-agent/internal/app/engine"
 	"claude-tg-agent/internal/app/hermes"
 )
@@ -18,6 +20,18 @@ type hermesExecutorRunner struct {
 	executorModel      string // light tier, used by default
 	heavyExecutorModel string // heavy tier, used for Edit/Write/refactor work
 	current            hermes.SubTask
+	// walkingEnabled keeps the same Claude session alive across consecutive
+	// sub-tasks of one task that share a model. When true, ClearSessionForModel
+	// is suppressed so prompt cache + transcript continuity persist between
+	// sub-tasks. The PlanExecuteEngine drives prompt-format choices (full vs
+	// slim) and force-fresh decisions (model change, token watermark exceeded).
+	// See issue #149 + docs/arch/hermes-walking-agent.md.
+	walkingEnabled bool
+	// lastWalkingModel is the model used by the previous Run call within the
+	// current task. When the next sub-task picks a different model, the runner
+	// must clear that model's session even with walkingEnabled — model
+	// boundaries are hard cache-key separators.
+	lastWalkingModel string
 }
 
 func newHermesExecutorRunner(agent *Agent, executorModel, heavyExecutorModel string) *hermesExecutorRunner {
@@ -25,6 +39,17 @@ func newHermesExecutorRunner(agent *Agent, executorModel, heavyExecutorModel str
 		agent:              agent,
 		executorModel:      executorModel,
 		heavyExecutorModel: heavyExecutorModel,
+	}
+}
+
+// SetWalkingEnabled toggles per-task session reuse. PlanExecuteEngine sets this
+// at task start based on HermesConfig.WalkingAgentEnabled. Reset to false at
+// task end so subsequent direct (non-Hermes) work doesn't accidentally inherit
+// the flag.
+func (r *hermesExecutorRunner) SetWalkingEnabled(v bool) {
+	r.walkingEnabled = v
+	if !v {
+		r.lastWalkingModel = ""
 	}
 }
 
@@ -63,11 +88,27 @@ func (r *hermesExecutorRunner) Run(msg string, onUpdate func(string, bool)) (str
 		r.agent.SetSuppressMemoryBridge(false)
 	}()
 
-	// Reset CLI session before each sub-task. The Hermes engine rebuilds full
-	// context (goal + accumulated + current subtask) into the prompt each
-	// call, so cross-subtask CLI session continuity is redundant and is the
-	// main driver of "Prompt is too long" as the transcript grows.
-	if model != "" {
+	// Session-clear policy depends on walking mode (#149):
+	//
+	// Legacy (walkingEnabled=false):
+	//   Reset CLI session before each sub-task. The engine rebuilds full
+	//   context (goal + accumulated + current subtask) into the prompt each
+	//   call, so cross-subtask session continuity would balloon the transcript
+	//   ("Prompt is too long" mode, gladsheim #108).
+	//
+	// Walking (walkingEnabled=true):
+	//   Keep the session alive across same-model sub-tasks so prompt cache and
+	//   conversational continuity persist; the engine emits a slim round-2+
+	//   prompt that does NOT re-inject rules/goal/accumulated. Only force a
+	//   fresh session when the model boundary is crossed (light <-> heavy),
+	//   since cache key includes model fingerprint.
+	if r.walkingEnabled {
+		if model != "" && r.lastWalkingModel != "" && r.lastWalkingModel != model {
+			log.Printf("[hermes.walking] model changed %q -> %q, clearing prior session", r.lastWalkingModel, model)
+			r.agent.ClearSessionForModel(r.lastWalkingModel)
+		}
+		r.lastWalkingModel = model
+	} else if model != "" {
 		r.agent.ClearSessionForModel(model)
 	} else {
 		r.agent.ClearSession()

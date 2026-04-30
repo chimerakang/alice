@@ -49,3 +49,10 @@ func IsHeavySubTask(t hermes.SubTask) bool {
 type SubTaskBindable interface {
 	BindSubTask(hermes.SubTask)
 }
+
+// WalkingToggleable is implemented by runners that support walking-agent mode
+// (session reuse across sub-tasks). PlanExecuteEngine flips this on at task
+// start when cfg.WalkingAgentEnabled and back off at task end. Issue #149.
+type WalkingToggleable interface {
+	SetWalkingEnabled(enabled bool)
+}

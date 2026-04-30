@@ -64,6 +64,29 @@ type PlanExecuteConfig struct {
 	ContinueCh      chan struct{}
 	ContinueTimeout time.Duration
 
+	// WalkingAgentEnabled keeps the same Claude session across consecutive
+	// Executor sub-tasks of one task (when they share a model). When true:
+	//   - hermesExecutorRunner skips ClearSessionForModel between sub-tasks
+	//   - executeSubTask emits a slim prompt for round 2+ instead of the full
+	//     rules+goal+accumulated+subtask block
+	//   - WalkingAgentMaxContextTokens guards against context-window overflow
+	// See issue #149 + docs/arch/hermes-walking-agent.md.
+	WalkingAgentEnabled bool
+
+	// WalkingAgentMaxContextTokens is the threshold (cumulative input tokens
+	// observed for the walking session) above which the engine forces a fresh
+	// session to avoid hitting Claude's 200K context window. 0 = 120000.
+	WalkingAgentMaxContextTokens int
+
+	// ExecutorModel and HeavyExecutorModel mirror the runner's model selection
+	// so the engine can predict which model the next sub-task will run on
+	// without consulting the runner. Used by walking-agent mode to decide
+	// whether the next sub-task can reuse the prior session (same model) or
+	// must start fresh (model boundary). Optional: when both are empty, all
+	// walking continuations downgrade to cold prompts. Issue #149.
+	ExecutorModel      string
+	HeavyExecutorModel string
+
 	// OnSubTaskFailurePause is invoked when a sub-task ends with !success and
 	// gives the operator a chance to retry, skip, abort, or retry-with-hint
 	// before the engine advances. Return FailurePauseChoice{Decision: FailureSkip}
@@ -109,6 +132,11 @@ type PlanExecuteEngine struct {
 	taskID      string
 	cancelFn    context.CancelFunc
 	interrupted bool
+
+	// Walking-agent state (issue #149). All scoped to one task; reset on task
+	// start. Only used when cfg.WalkingAgentEnabled.
+	walkingExecutorModel string // model used by previous executor sub-task this task
+	walkingTokensSeen    int    // cumulative input tokens (uncached + cache_read + cache_write) since last fresh session
 }
 
 func NewPlanExecuteEngine(
@@ -230,7 +258,18 @@ func (e *PlanExecuteEngine) Run(ctx context.Context, goal string, cc *ChatContex
 }
 
 func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *ChatContext) {
+	// Walking-agent state lives across all sub-tasks of one task. Reset on
+	// task entry and on task exit so subsequent direct (non-Hermes) work
+	// doesn't accidentally inherit the flag. See issue #149.
+	if e.cfg.WalkingAgentEnabled {
+		e.walkingExecutorModel = ""
+		e.walkingTokensSeen = 0
+		e.direct.SetWalkingEnabled(true)
+	}
 	defer func() {
+		if e.cfg.WalkingAgentEnabled {
+			e.direct.SetWalkingEnabled(false)
+		}
 		if r := recover(); r != nil {
 			log.Printf("[plan_execute] task %s panic: %v", taskID, r)
 			_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
@@ -717,7 +756,42 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 			e.reporter.OnRetry(idx, attempts, totalAttempts, reviewFeedback)
 		}
 
-		prompt := buildSubTaskGoal(e.cfg.ExecutorRules, goal, state.Accumulated, idx, len(tasks), subTask, reviewFeedback)
+		// Walking-agent: decide whether this sub-task can reuse the prior
+		// session (slim prompt) or must start fresh (cold prompt). See issue
+		// #149 + docs/arch/hermes-walking-agent.md.
+		walkingActive := false
+		if e.cfg.WalkingAgentEnabled {
+			predictedModel := e.predictExecutorModel(subTask)
+			switch {
+			case e.walkingExecutorModel == "":
+				// First sub-task this task — must seed the session via a cold prompt.
+			case predictedModel == "":
+				// Engine wasn't given enough info to predict. Downgrade safely.
+			case predictedModel != e.walkingExecutorModel:
+				// Model boundary; runner will clear the prior session inside Run.
+				log.Printf("[hermes.walking] model change predicted prev=%s next=%s — fresh prompt", e.walkingExecutorModel, predictedModel)
+				e.walkingExecutorModel = ""
+				e.walkingTokensSeen = 0
+			case strings.TrimSpace(reviewFeedback) != "":
+				// Strict-mode retry — the reviewer's feedback needs to land on a
+				// fresh seat for the model to take it seriously, and we want the
+				// re-attempt to see goal/accumulated explicitly.
+			case e.walkingTokensSeen >= e.walkingMaxContextTokens():
+				log.Printf("[hermes.walking] watermark exceeded tokens_seen=%d limit=%d — forcing fresh session", e.walkingTokensSeen, e.walkingMaxContextTokens())
+				e.walkingExecutorModel = ""
+				e.walkingTokensSeen = 0
+			case attempts > 0:
+				// Inner retry of the strict loop already handled by reviewFeedback case.
+				// Outer retry attempts likewise want a fresh seat.
+			default:
+				walkingActive = true
+			}
+		}
+
+		prompt := buildSubTaskGoalVariant(e.cfg.ExecutorRules, goal, state.Accumulated, idx, len(tasks), subTask, reviewFeedback, walkingActive)
+		if walkingActive {
+			log.Printf("[hermes.walking] reusing session model=%s sub_task=%d/%d tokens_so_far=%d", e.walkingExecutorModel, idx+1, len(tasks), e.walkingTokensSeen)
+		}
 		// On the very first attempt of this executeSubTask call, fold in any
 		// operator hint the failure-pause flow handed us. The hint is only
 		// honoured for the outer retry's first attempt — strict review's
@@ -727,6 +801,19 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 		}
 		e.direct.BindSubTask(subTask)
 		result, execErr := e.direct.Run(ctx, prompt, cc, subTaskSink{})
+
+		// Walking-agent state update: track the model that actually ran (in
+		// case the runner picked something different from our prediction) and
+		// the tokens it consumed so we can enforce the context-window watermark.
+		if e.cfg.WalkingAgentEnabled && execErr == nil && result.Model != "" {
+			e.walkingExecutorModel = result.Model
+			e.walkingTokensSeen += result.InputTokens + result.OutputTokens
+		} else if execErr != nil && e.cfg.WalkingAgentEnabled {
+			// On error, drop walking state — the next sub-task should start
+			// fresh rather than inherit a possibly-broken session.
+			e.walkingExecutorModel = ""
+			e.walkingTokensSeen = 0
+		}
 		if execErr != nil {
 			if kind := hermes.ClassifyFailure(execErr.Error()); kind == hermes.FailureEnv {
 				log.Printf("[plan_execute] env-class failure idx=%d task=%s: %v", idx, taskID, execErr)
@@ -838,7 +925,59 @@ func (e *PlanExecuteEngine) buildReviewRequest(state hermes.TaskState, mode Revi
 	return reviewReq
 }
 
+// defaultWalkingMaxContextTokens is the watermark above which the walking
+// session is force-cleared. 120K leaves comfortable headroom inside Claude
+// Sonnet 4.5's 200K context window. Operators can override via
+// HermesConfig.WalkingAgentMaxContextTokens. Issue #149.
+const defaultWalkingMaxContextTokens = 120_000
+
+// predictExecutorModel mirrors hermesExecutorRunner.pickModel so the engine
+// can decide ahead of Run() whether the next sub-task will share a model
+// (and therefore session) with the previous one. When both ExecutorModel and
+// HeavyExecutorModel are empty (walking mode unwired), returns "" — the caller
+// must treat this as "cannot predict, downgrade to cold prompt".
+func (e *PlanExecuteEngine) predictExecutorModel(st hermes.SubTask) string {
+	if e.cfg.ExecutorModel == "" {
+		return ""
+	}
+	if e.cfg.HeavyExecutorModel != "" && e.cfg.HeavyExecutorModel != e.cfg.ExecutorModel && IsHeavySubTask(st) {
+		return e.cfg.HeavyExecutorModel
+	}
+	return e.cfg.ExecutorModel
+}
+
+func (e *PlanExecuteEngine) walkingMaxContextTokens() int {
+	if e.cfg.WalkingAgentMaxContextTokens > 0 {
+		return e.cfg.WalkingAgentMaxContextTokens
+	}
+	return defaultWalkingMaxContextTokens
+}
+
+// buildSubTaskGoal assembles the executor prompt for one sub-task. The full
+// (cold) form rebuilds the entire context block; the slim form is used in
+// walking-agent mode for round 2+ when the session transcript already carries
+// rules/goal/accumulated and only the new sub-task description is needed.
+//
+// See issue #149 + docs/arch/hermes-walking-agent.md for the slim-prompt
+// rationale and the gladsheim #108 regression that the cold form was put in
+// to prevent.
 func buildSubTaskGoal(executorRules, goal, accumulated string, idx, total int, subTask hermes.SubTask, retryFeedback string) string {
+	return buildSubTaskGoalVariant(executorRules, goal, accumulated, idx, total, subTask, retryFeedback, false)
+}
+
+func buildSubTaskGoalVariant(executorRules, goal, accumulated string, idx, total int, subTask hermes.SubTask, retryFeedback string, walkingContinuation bool) string {
+	if walkingContinuation {
+		// Slim form: same Claude session is already primed with rules + goal +
+		// prior assistant outputs. Only re-inject reviewer feedback (it's the
+		// retry-specific instruction the model wouldn't otherwise see).
+		var b strings.Builder
+		if strings.TrimSpace(retryFeedback) != "" {
+			fmt.Fprintf(&b, "Reviewer feedback to address before retrying:\n%s\n\n", strings.TrimSpace(retryFeedback))
+		}
+		fmt.Fprintf(&b, "Now do sub-task (%d/%d):\n%s", idx+1, total, subTask.Description)
+		return b.String()
+	}
+
 	var b strings.Builder
 	if rules := strings.TrimSpace(executorRules); rules != "" {
 		b.WriteString(rules)

@@ -62,3 +62,4 @@ secrets.yaml
 .dockerignore
 check_openai_usage.go
 .venv-spike/
+spike_walking_agent_go

@@ -130,57 +130,57 @@ ClaudeSDKClient 預設 1h cache（2× rate）；CLI 預設 5m（1.25× rate）�
 
 ## Go 端整合
 
-Alice 是 Go bot，Anthropic 沒釋出 Go 版的 Claude Agent SDK。整合 walking agent 有兩條路：
+Alice 是 Go bot，Anthropic 沒釋出 Go 版的 Claude Agent SDK。整合 walking agent 有三條路：
 
-### Path 1: Python helper subprocess
+### Path 1a: Python helper subprocess
 
-Alice 起一個長壽 Python 服務（`scripts/walking_agent_helper.py`），透過 stdin/stdout JSON 收 prompt 與 dispatch session。Python 端用 `ClaudeSDKClient` 抓 session 與 cache 行為。
+Alice 起一個長壽 Python 服務（`scripts/walking_agent_helper.py`），透過 stdin/stdout JSON 收 prompt 與 dispatch session。Python 端用 `ClaudeSDKClient` 抓 session 與 cache 行為。**仍用 Max 訂閱認證**（Python SDK 在底下 spawn Claude Code CLI）。
+
+**優點**：沿用 Anthropic 官方 Python SDK 的 session 管理、tool dispatch、retry。
+**缺點**：多一個服務、跨 process 協定。
+
+### Path 1b: 改現有 Go CLI 子程序行為（**推薦**）
+
+Alice 既有 Go 程式已經透過 [agent.go](../../internal/app/agent.go) spawn `claude` 子程序、傳 `--resume <id>` 維持 session。**唯一需要的改動是停止 [hermes_executor_runner.go:71](../../internal/app/hermes_executor_runner.go#L71) 的 \`ClearSessionForModel\` 呼叫**，並讓 sub-task prompt 在 round 2+ 改用 slim 形式。仍用 Max 訂閱認證。
 
 **優點**：
-- 沿用 Anthropic 官方 SDK 的 session 管理、tool dispatch、retry
-- Python 端可同時用其他 SDK 工具（hooks、subagents）
-- 邏輯改動侷限在 Python 端，Go 端只需協定設計
+- 沒有新依賴、沒有新 process、不用 API credits
+- 改動量最小（4-5 個檔案）
+- 風險最低（既有 session resume 邏輯久經測試）
+- Python spike 的 47.9% / 24.9% 收益本質就是「session reuse + slim prompt」這兩件事，跟 SDK 種類無關
 
 **缺點**：
-- 多一個服務（process 管理、健康檢查、重啟邏輯）
-- Go ↔ Python protocol 需自行設計與維護
-- 部署複雜度上升（需 Python venv 或 container）
+- Cache TTL 透過 \`FORCE_PROMPT_CACHING_5M=1\` 環境變數隱式控制（不如 Path 2 顯式 \`cache_control\` block 直觀）
+- 對 1h cache 行為不可單獨控制
+- 仍依賴 Claude Code CLI 的 session 檔案格式
 
 ### Path 2: 直接 Go 打 Anthropic Messages API
 
-用 `github.com/anthropics/anthropic-sdk-go` 從 Go 端直接打 Messages API，自管 conversation history、`cache_control` block、tool use loop。
+用 `github.com/anthropics/anthropic-sdk-go` 從 Go 端直接打 Messages API。**需要付費 API credits**（Max 訂閱無法直接打 Messages API）。
 
-**優點**：
-- 純 Go，無外部 process
-- 完整控制 cache TTL（`cache_control: {"ttl": "5m"}` 顯式指定）
-- 與 Alice 既有 Go 程式整合自然
-
-**缺點**：
-- Tool use loop 要自己寫（read tool result → next turn → check stop_reason）
-- Session 管理（conversation 歷史儲存、reload）要自己寫
-- Hooks / subagents / file checkpointing 等 SDK 加值功能拿不到
+**優點**：完整控制 cache TTL、`cache_control` block 顯式、無 CLI 依賴。
+**缺點**：要付 API 額度、tool use loop 要自己實作、無 Anthropic SDK 加值（hooks、subagents）。
 
 ### 決策表
 
-| 維度 | Path 1 (Python) | Path 2 (Go) |
-|---|---|---|
-| 部署複雜度 | 中 | **低** |
-| Cache TTL 控制 | env var (隱式) | **明確 cache_control** |
-| Tool use 邏輯 | **SDK 處理** | 自己寫 |
-| 與 Alice Go 程式整合 | 需 IPC | **原生** |
-| 維護成本 | 中 | 中 |
-| 失敗模式調試 | 中（跨 process）| **低（單 process）** |
-| Anthropic SDK 加值 | **可用** | 不可用 |
+| 維度 | Path 1a (Python) | Path 1b (CLI 改造) | Path 2 (Go API) |
+|---|---|---|---|
+| 認證方式 | Max 訂閱 | **Max 訂閱** | 需 API credits |
+| 部署複雜度 | 中 | **最低** | 低 |
+| Cache TTL 控制 | env var | env var | **明確 cache_control** |
+| Tool use 邏輯 | SDK 處理 | **既有** | 自己寫 |
+| 改動範圍 | 中 | **最小** | 大 |
+| 失敗模式調試 | 跨 process | **單 process** | 單 process |
 
 ### 建議
 
-**Path 2 (Go 直打 API)** 對 Alice 的場景更合適：
-- Alice 已是 Go 程式，新增 Python 服務增加運維負擔
-- Cache TTL 是這個改造的核心，明確控制比依賴 env var 風險低
-- Tool use loop 不複雜（Bash / Read / Edit / Write，現有 Go 邏輯可移植）
-- 失敗模式單 process 較易追
+**採用 Path 1b**：
 
-但這是**重大決策**，建議在開始實作前另開一個小 spike：用 `anthropics/anthropic-sdk-go` 寫個簡化版 walking agent（不接 Hermes），跑同一組 5 sub-task 對比 Python spike 的數字。若 Go 版能複現 47.9% cost + 24.9% latency 的結果，正式採用 Path 2；若有意外（例如 Go SDK 不支援某 tool 類型），fall back Path 1。
+1. Alice config.json 的 \`anthropic_key\` 是 Max 訂閱用的，**不能直接打 Messages API**（實測 spike 得到 HTTP 400 "credit balance is too low"）
+2. Python spike 證實的 47.9% cost / 24.9% latency 來自「session reuse + slim prompt」，跟「走哪個 SDK」無關。Path 1b 用最少改動拿到同樣紅利
+3. Path 2 適合未來如果有獨立 API 帳的場景；目前不必為它儲值
+
+範圍外但可參考：[scripts/spike_walking_agent_go/main.go](../../scripts/spike_walking_agent_go/main.go) 留作 Path 2 reference implementation，未來若需要可直接接上。
 
 ## 風險與緩解
 

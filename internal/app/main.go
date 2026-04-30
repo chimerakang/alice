@@ -104,6 +104,21 @@ type HermesConfig struct {
 	// large prompts; lower it when running haiku. See issue #147.
 	ReviewTimeoutSeconds int `json:"review_timeout_seconds"`
 
+	// WalkingAgentEnabled keeps the same Claude session alive across consecutive
+	// Executor sub-tasks of one Hermes task (when they share a model), instead of
+	// the legacy "clear session per sub-task" pattern. Saves cache_creation
+	// surcharge (1.25x rate) and cold-start latency. Round 2+ sub-tasks send
+	// only the new sub-task description; the session transcript carries goal +
+	// rules + prior sub-task outcomes. Falls back to a fresh session when the
+	// model changes (heavy <-> light executor) or accumulated context exceeds
+	// WalkingAgentMaxContextTokens. See issue #149 + docs/arch/hermes-walking-agent.md.
+	WalkingAgentEnabled bool `json:"walking_agent_enabled"`
+
+	// WalkingAgentMaxContextTokens is the watermark above which the walking
+	// session is force-cleared to avoid hitting the 200K context window. 0 =
+	// engine default 120000. See issue #149.
+	WalkingAgentMaxContextTokens int `json:"walking_agent_max_context_tokens"`
+
 	// Model overrides (defaults to ModelRoutingConfig values when empty)
 	PlannerModel  string `json:"planner_model"`  // e.g. "claude-opus-4-7"
 	ExecutorModel string `json:"executor_model"` // e.g. "claude-haiku-4-5-20251001"
@@ -571,6 +586,21 @@ func Main() {
 		config.ModelPricing.Haiku.Input, config.ModelPricing.Haiku.Output,
 		config.ModelPricing.Sonnet.Input, config.ModelPricing.Sonnet.Output,
 		config.ModelPricing.Opus.Input, config.ModelPricing.Opus.Output)
+
+	// Walking-agent (issue #149) forces 5m prompt-cache TTL on every claude
+	// CLI invocation when enabled. Otherwise keep Anthropic's default
+	// (currently 1h on most builds — 2x cache_write rate, fine for long
+	// interactive sessions but expensive for short sub-task workflows).
+	if config.Hermes.WalkingAgentEnabled {
+		SetForcePromptCaching5m(true)
+		log.Printf("   Hermes walking-agent: enabled (FORCE_PROMPT_CACHING_5M=1, max_context=%d)",
+			func() int {
+				if config.Hermes.WalkingAgentMaxContextTokens > 0 {
+					return config.Hermes.WalkingAgentMaxContextTokens
+				}
+				return 120000
+			}())
+	}
 
 	// Initialize Git integration
 	InitGitIntegration()

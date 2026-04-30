@@ -52,6 +52,14 @@ func (e *DirectEngine) BindSubTask(subTask hermes.SubTask) {
 	}
 }
 
+// SetWalkingEnabled forwards walking-mode toggle to the underlying runner if
+// it implements WalkingToggleable. Issue #149.
+func (e *DirectEngine) SetWalkingEnabled(enabled bool) {
+	if w, ok := e.runner.(WalkingToggleable); ok {
+		w.SetWalkingEnabled(enabled)
+	}
+}
+
 func (e *DirectEngine) Run(ctx context.Context, goal string, cc *ChatContext, prog ProgressSink) (Result, error) {
 	start := time.Now()
 	if err := ctx.Err(); err != nil {

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -70,6 +71,20 @@ type CLIClient struct {
 	MaxTurns int // max conversation turns per CLI invocation (default 50)
 }
 
+// forcePromptCaching5m, when true, makes cleanEnvForCLI inject
+// FORCE_PROMPT_CACHING_5M=1 into every claude-spawn env. Claude Code v2.1.108+
+// honours this and forces 5m cache TTL (1.25x rate) instead of its default 1h
+// (2x rate), which is the right default for short-lived Hermes workflows. See
+// issue #149 + docs/arch/hermes-walking-agent.md.
+var forcePromptCaching5m atomic.Bool
+
+// SetForcePromptCaching5m toggles process-wide injection of
+// FORCE_PROMPT_CACHING_5M=1 into the claude CLI env. Wired by the Hermes
+// walking-agent path; safe to call multiple times.
+func SetForcePromptCaching5m(v bool) {
+	forcePromptCaching5m.Store(v)
+}
+
 // cleanEnvForCLI 返回不含 Claude Code 嵌套檢測環境變數的環境變數列表。
 // Claude Code 會設定 CLAUDECODE=1 等變數來防止嵌套啟動，必須清除。
 func cleanEnvForCLI() []string {
@@ -87,6 +102,9 @@ func cleanEnvForCLI() []string {
 		}
 	}
 	env = append(env, "ALICE_SKIP_HOOKS=1")
+	if forcePromptCaching5m.Load() {
+		env = append(env, "FORCE_PROMPT_CACHING_5M=1")
+	}
 	return env
 }
 
