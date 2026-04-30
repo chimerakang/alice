@@ -105,6 +105,11 @@ class RunReport:
     turns: list[TurnMetrics] = field(default_factory=list)
 
     def total_cost(self) -> float:
+        # In walking mode, ResultMessage.total_cost_usd is session-cumulative,
+        # so the last turn's value is the total. In baseline mode each process
+        # is fresh so per-call values are per-call costs and we sum.
+        if self.mode == "walking":
+            return self.turns[-1].cost_usd if self.turns else 0.0
         return sum(t.cost_usd for t in self.turns)
 
     def total_cost_normalized_5m(self) -> float:
