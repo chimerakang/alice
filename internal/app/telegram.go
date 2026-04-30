@@ -127,9 +127,24 @@ type TelegramBot struct {
 	hermesCoords map[chatKey]*hermesCoord
 	hermesMu     sync.RWMutex
 
+	// In-flight /retry registry. Stop() iterates these on shutdown so users
+	// don't see /retry calls vanish silently when the process is killed
+	// mid-flight (was a recurring "did /retry break?" symptom).
+	retryInflight map[string]*retryInflightEntry
+	retryMu       sync.Mutex
+
 	// Unified task graph — single TaskService instance shared across /retry,
 	// Hermes coordinator, and dashboard read paths for a consistent view.
 	taskSvc *task.Service
+}
+
+// retryInflightEntry tracks one running /retry attempt so Stop() can notify
+// the chat and cancel the underlying context cleanly.
+type retryInflightEntry struct {
+	key        chatKey
+	displayIdx int
+	cancel     context.CancelFunc
+	startedAt  time.Time
 }
 
 type telegramProgressSink struct {
@@ -328,7 +343,8 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 		screenshotManager: NewScreenshotManager(),
 
 		// Hermes coordinators
-		hermesCoords: make(map[chatKey]*hermesCoord),
+		hermesCoords:  make(map[chatKey]*hermesCoord),
+		retryInflight: make(map[string]*retryInflightEntry),
 
 		// Unified task graph — initialized here so all read paths share one store.
 		taskSvc: task.New(buildHermesTaskStore()),
@@ -379,11 +395,65 @@ func (t *TelegramBot) Stop() {
 	if t == nil {
 		return
 	}
+	// Notify in-flight /retry callers before tearing down the queue, while
+	// the API client and rate limiter are still alive. Use sendCapturingID
+	// (synchronous) so messages actually reach Telegram before the process
+	// exits — the async queue would lose them when queueCancel fires.
+	t.notifyRetryInterruptedAndCancel()
+
 	if t.pollCancel != nil {
 		t.pollCancel()
 	}
 	if t.queueCancel != nil {
 		t.queueCancel()
+	}
+}
+
+// registerRetryInflight records a running /retry attempt so Stop() can notify
+// the chat and cancel the run context cleanly on shutdown.
+func (t *TelegramBot) registerRetryInflight(id string, key chatKey, displayIdx int, cancel context.CancelFunc) {
+	t.retryMu.Lock()
+	if t.retryInflight == nil {
+		t.retryInflight = map[string]*retryInflightEntry{}
+	}
+	t.retryInflight[id] = &retryInflightEntry{
+		key:        key,
+		displayIdx: displayIdx,
+		cancel:     cancel,
+		startedAt:  time.Now(),
+	}
+	t.retryMu.Unlock()
+}
+
+// unregisterRetryInflight clears a /retry attempt's entry once it completes
+// normally. Called via defer from the retry goroutine.
+func (t *TelegramBot) unregisterRetryInflight(id string) {
+	t.retryMu.Lock()
+	delete(t.retryInflight, id)
+	t.retryMu.Unlock()
+}
+
+// notifyRetryInterruptedAndCancel posts a final message to every chat with a
+// /retry running and cancels the run context. Best-effort: if the API call
+// fails we still cancel so the goroutine unblocks.
+func (t *TelegramBot) notifyRetryInterruptedAndCancel() {
+	t.retryMu.Lock()
+	entries := make([]*retryInflightEntry, 0, len(t.retryInflight))
+	for _, e := range t.retryInflight {
+		entries = append(entries, e)
+	}
+	t.retryInflight = map[string]*retryInflightEntry{}
+	t.retryMu.Unlock()
+
+	for _, e := range entries {
+		elapsed := time.Since(e.startedAt).Round(time.Second)
+		msg := fmt.Sprintf("⚠️ Bot 重啟，sub-task #%d retry 中斷（已執行 %s）。請在 bot 回來後重打 /retry。", e.displayIdx, elapsed)
+		if _, err := t.sendCapturingID(e.key, msg); err != nil {
+			log.Printf("[retry] shutdown notify failed chat=%d thread=%d: %v", e.key.chatID, e.key.threadID, err)
+		}
+		if e.cancel != nil {
+			e.cancel()
+		}
 	}
 }
 

@@ -570,8 +570,10 @@ func (t *TelegramBot) handleRetryCommand(key chatKey, parts []string) {
 				t.send(key, fmt.Sprintf("ℹ️ sub-task #%d 目前評分 %d/100，仍依人工指定執行 retry。", selection.DisplaySubTaskIdx, selection.SubTaskReview.Score))
 			}
 			runCtx, cancelRun := context.WithTimeout(context.Background(), t.retryAttemptTimeout())
+			t.registerRetryInflight(commandID, key, selection.DisplaySubTaskIdx, cancelRun)
 			outcome, runErr := t.runSubTaskRetry(runCtx, key, store, selection)
 			cancelRun()
+			t.unregisterRetryInflight(commandID)
 			if runErr != nil {
 				jobErr = runErr
 				t.send(key, formatRetryFailure(outcome, runErr))
@@ -629,6 +631,16 @@ func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *S
 		agent.currentModelOverride = retryModel
 		agent.ClearSessionForModel(retryModel)
 	}
+	// Skip the general-memory + recent-message bridge for the duration of
+	// this retry. composeRetryPrompt already carries the prior failed result
+	// and the reviewer's feedback; bridge cards re-inject prior runs and add
+	// 6 KB+ of redundant context that pushes codex toward "Prompt is too
+	// long" and stretches each retry to 5-15 minutes.
+	agent.SetSuppressMemoryBridge(true)
+	defer agent.SetSuppressMemoryBridge(false)
+
+	stopHeartbeat := t.startRetryHeartbeat(ctx, key, start, selection.DisplaySubTaskIdx)
+	defer stopHeartbeat()
 	result, err := t.runRetryDirectWithWatchdog(ctx, agent, prompt, progress)
 	agent.currentModelOverride = prevOverride
 	if err != nil {
@@ -701,6 +713,35 @@ func (t *TelegramBot) runRetryDirectWithWatchdog(ctx context.Context, agent *Age
 			return appengine.Result{}, fmt.Errorf("retry execution timed out or was canceled: %w", ctx.Err())
 		}
 	}
+}
+
+// retryHeartbeatInterval controls how often "still running" pings go out
+// during a long retry. Operators kept retrying because the initial
+// "🔄 Retrying..." line was the only signal and codex calls routinely take
+// 5-15 minutes; the heartbeat costs one Telegram message per minute and
+// removes the "is it stuck?" guesswork.
+const retryHeartbeatInterval = 60 * time.Second
+
+// startRetryHeartbeat fires a periodic "still running" message until ctx is
+// cancelled. Returns a stop function the caller defers.
+func (t *TelegramBot) startRetryHeartbeat(ctx context.Context, key chatKey, started time.Time, displayIdx int) func() {
+	stop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(retryHeartbeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				elapsed := time.Since(started).Round(time.Second)
+				t.sendSilent(key, fmt.Sprintf("⏳ Sub-task #%d retry 仍在執行（已耗時 %s）", displayIdx, elapsed))
+			}
+		}
+	}()
+	return func() { close(stop) }
 }
 
 func storeRetryFailureResult(store *SQLiteStorage, selection retrySelection, result appengine.Result, runErr error) error {
