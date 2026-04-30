@@ -802,12 +802,32 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 		e.direct.BindSubTask(subTask)
 		result, execErr := e.direct.Run(ctx, prompt, cc, subTaskSink{})
 
-		// Walking-agent state update: track the model that actually ran (in
-		// case the runner picked something different from our prediction) and
-		// the tokens it consumed so we can enforce the context-window watermark.
+		// Walking-agent state update: track the model that actually ran and
+		// the *transcript size* the model is now sitting on so we can enforce
+		// the context-window watermark.
+		//
+		// Transcript size is the new (cache_read + cache_creation) on this
+		// call: cache_read covers the prefix that was already cached (= the
+		// transcript at the start of this turn), cache_creation covers what
+		// was just added to cache (= this turn's new content). Their sum is
+		// approximately what the next call's prompt cache will contain. Use
+		// max() so the watermark only ever reflects the high-water mark of
+		// the conversation, never decreases.
+		//
+		// Falling back to (input + output) when cache fields aren't reported
+		// is a poor heuristic — Codex's input_tokens already includes the
+		// cached portion, so cumulative add over-counts and trips the
+		// watermark prematurely (issue #149 follow-up). Cache fields fix this.
 		if e.cfg.WalkingAgentEnabled && execErr == nil && result.Model != "" {
 			e.walkingExecutorModel = result.Model
-			e.walkingTokensSeen += result.InputTokens + result.OutputTokens
+			transcriptSize := result.CacheReadInputTokens + result.CacheCreationInputTokens
+			if transcriptSize == 0 {
+				// Runner didn't report cache fields — legacy heuristic.
+				transcriptSize = e.walkingTokensSeen + result.InputTokens + result.OutputTokens
+			}
+			if transcriptSize > e.walkingTokensSeen {
+				e.walkingTokensSeen = transcriptSize
+			}
 		} else if execErr != nil && e.cfg.WalkingAgentEnabled {
 			// On error, drop walking state — the next sub-task should start
 			// fresh rather than inherit a possibly-broken session.

@@ -425,11 +425,13 @@ type Agent struct {
 	// Read via LastCallMetrics() so PlanExecuteEngine can attribute Executor
 	// tokens to the actual model used (otherwise per-model breakdown only
 	// captures the Planner and labels Executor work as "Unknown").
-	lastCallMu      sync.Mutex
-	lastCallModel   string
-	lastCallInputT  int
-	lastCallOutputT int
-	lastCallCost    float64 // per-call USD cost (from ps.recordCallCost) for #148 1E
+	lastCallMu          sync.Mutex
+	lastCallModel       string
+	lastCallInputT      int
+	lastCallOutputT     int
+	lastCallCost        float64 // per-call USD cost (from ps.recordCallCost) for #148 1E
+	lastCallCacheRead   int     // cache_read_input_tokens of last call (#149 watermark)
+	lastCallCacheWrite  int     // cache_creation_input_tokens of last call (#149 watermark)
 
 	// suppressMemoryBridge skips the general-memory + recent-message bridge
 	// injected on session/model switches. Hermes Executor calls already carry
@@ -937,6 +939,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	addToRecentMessages(ps, userMessage, resp.Result)
 
 	a.recordLastCallMetrics(a.lastUsedModel, resp.Usage.InputTokens, resp.Usage.OutputTokens, deltaCost)
+	a.recordLastCallCacheMetrics(resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 
 	return resp.Result, nil
 }
@@ -953,6 +956,30 @@ func (a *Agent) recordLastCallMetrics(model string, inTokens, outTokens int, cos
 	a.lastCallInputT = inTokens
 	a.lastCallOutputT = outTokens
 	a.lastCallCost = cost
+	// Cache fields cleared when a record is taken; recordLastCallCacheMetrics
+	// fills them on the same call. Order at call-sites: cost first, cache
+	// second (so we don't see a stale cache_read mismatched with new model).
+	a.lastCallCacheRead = 0
+	a.lastCallCacheWrite = 0
+}
+
+// recordLastCallCacheMetrics records cache_read + cache_write for the most
+// recent CLI call. Hermes walking-agent's watermark uses this to estimate
+// transcript size — see issue #149.
+func (a *Agent) recordLastCallCacheMetrics(cacheRead, cacheWrite int) {
+	a.lastCallMu.Lock()
+	defer a.lastCallMu.Unlock()
+	a.lastCallCacheRead = cacheRead
+	a.lastCallCacheWrite = cacheWrite
+}
+
+// LastCacheMetrics returns cache_read + cache_write tokens from the most
+// recent CLI call. Implements engine.DirectRunnerCacheMetrics so the engine
+// can compute transcript size for the walking-agent watermark.
+func (a *Agent) LastCacheMetrics() (cacheRead, cacheWrite int) {
+	a.lastCallMu.Lock()
+	defer a.lastCallMu.Unlock()
+	return a.lastCallCacheRead, a.lastCallCacheWrite
 }
 
 // LastCallMetrics returns the model, token, and cost totals from the most
@@ -1112,7 +1139,8 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 			}
 			return a.runDirect(ctx, msg, update, startTime)
 		},
-		metrics: a.LastCallMetrics,
+		metrics:      a.LastCallMetrics,
+		cacheMetrics: a.LastCacheMetrics,
 	})
 	store := hermes.NewMemoryTaskStore()
 	engine := appengine.NewPlanExecuteEngine(appengine.PlanExecuteConfig{
@@ -1163,8 +1191,9 @@ func modelStatusName(model string) string {
 // to attribute Executor tokens to the actual model — without this wrapper
 // the per-model breakdown would lose every Executor call.
 type metricsForwardingRunner struct {
-	run     func(string, func(string, bool)) (string, error)
-	metrics func() (string, int, int, float64)
+	run          func(string, func(string, bool)) (string, error)
+	metrics      func() (string, int, int, float64)
+	cacheMetrics func() (int, int)
 }
 
 func (r *metricsForwardingRunner) Run(msg string, onUpdate func(string, bool)) (string, error) {
@@ -1176,6 +1205,13 @@ func (r *metricsForwardingRunner) LastCallMetrics() (string, int, int, float64) 
 		return "", 0, 0, 0
 	}
 	return r.metrics()
+}
+
+func (r *metricsForwardingRunner) LastCacheMetrics() (int, int) {
+	if r.cacheMetrics == nil {
+		return 0, 0
+	}
+	return r.cacheMetrics()
 }
 
 // runDirect is the standard single-phase execution (fallback when plan phase fails)
@@ -1257,6 +1293,7 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 	addToRecentMessages(ps, userMessage, resp.Result)
 
 	a.recordLastCallMetrics(selectedModel, resp.Usage.InputTokens, resp.Usage.OutputTokens, deltaCost)
+	a.recordLastCallCacheMetrics(resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 
 	return resp.Result, nil
 }

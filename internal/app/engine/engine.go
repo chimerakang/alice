@@ -29,13 +29,15 @@ type Artifact struct {
 
 // Result is the normalized output returned by an execution engine.
 type Result struct {
-	Text         string
-	Artifacts    []Artifact
-	Review       *ReviewResult
-	InputTokens  int
-	OutputTokens int
-	Cost         float64
-	Duration     time.Duration
+	Text                     string
+	Artifacts                []Artifact
+	Review                   *ReviewResult
+	InputTokens              int
+	OutputTokens             int
+	Cost                     float64
+	Duration                 time.Duration
+	CacheReadInputTokens     int // session-cached prefix read on this call (#149)
+	CacheCreationInputTokens int // new content written to cache on this call (#149)
 	// Model is the actual model that produced Text (e.g. "claude-sonnet-4-5",
 	// "gpt-5.5"). Empty when the runner can't report it. PlanExecuteEngine
 	// uses this to attribute Executor tokens to the right model in the
@@ -51,4 +53,14 @@ type Result struct {
 // cumulative — Hermes summary sums it directly.
 type DirectRunnerMetrics interface {
 	LastCallMetrics() (model string, inTokens, outTokens int, cost float64)
+}
+
+// DirectRunnerCacheMetrics extends DirectRunnerMetrics with cache-token
+// breakdown. Implemented by Agent.LastCacheMetrics so the engine can compute
+// transcript size from cache_read + cache_write directly (#149 watermark
+// fix). Optional — runners that don't implement it leave the cache fields
+// at zero and walkingTokensSeen falls back to the legacy InputTokens-based
+// estimate.
+type DirectRunnerCacheMetrics interface {
+	LastCacheMetrics() (cacheRead, cacheWrite int)
 }

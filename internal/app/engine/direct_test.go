@@ -23,10 +23,12 @@ func (r fakeDirectRunner) Run(userMessage string, onUpdate func(string, bool)) (
 }
 
 type metricsRunner struct {
-	model    string
-	inTokens int
-	outToken int
-	cost     float64
+	model      string
+	inTokens   int
+	outToken   int
+	cost       float64
+	cacheRead  int
+	cacheWrite int
 }
 
 func (m metricsRunner) Run(string, func(string, bool)) (string, error) {
@@ -37,8 +39,19 @@ func (m metricsRunner) LastCallMetrics() (string, int, int, float64) {
 	return m.model, m.inTokens, m.outToken, m.cost
 }
 
+func (m metricsRunner) LastCacheMetrics() (int, int) {
+	return m.cacheRead, m.cacheWrite
+}
+
 func TestDirectEngine_PopulatesModelAndTokensFromMetricsProvider(t *testing.T) {
-	runner := metricsRunner{model: "claude-haiku-4-5", inTokens: 1234, outToken: 567, cost: 0.0123}
+	runner := metricsRunner{
+		model:      "claude-haiku-4-5",
+		inTokens:   1234,
+		outToken:   567,
+		cost:       0.0123,
+		cacheRead:  50000,
+		cacheWrite: 1500,
+	}
 	engine := NewDirectEngine(runner)
 	res, err := engine.Run(context.Background(), "do thing", nil, nil)
 	if err != nil {
@@ -46,6 +59,9 @@ func TestDirectEngine_PopulatesModelAndTokensFromMetricsProvider(t *testing.T) {
 	}
 	if res.Model != "claude-haiku-4-5" || res.InputTokens != 1234 || res.OutputTokens != 567 || res.Cost != 0.0123 {
 		t.Fatalf("expected metrics propagated, got %+v", res)
+	}
+	if res.CacheReadInputTokens != 50000 || res.CacheCreationInputTokens != 1500 {
+		t.Fatalf("expected cache metrics propagated, got cache_read=%d cache_write=%d", res.CacheReadInputTokens, res.CacheCreationInputTokens)
 	}
 }
 

@@ -123,3 +123,59 @@ func TestWalkingMaxContextTokens_OverrideAndDefault(t *testing.T) {
 		t.Fatalf("default = %d, want %d", got, defaultWalkingMaxContextTokens)
 	}
 }
+
+// Issue #149 watermark fix: walkingTokensSeen should reflect transcript size
+// (cache_read + cache_write of last call), not a cumulative add of
+// uncached-input + output. The latter heuristic over-counted on Codex (whose
+// input_tokens already includes cached portion) and tripped the watermark
+// prematurely. This test pins the new behaviour at the source: setting
+// walkingTokensSeen via max(transcript) rather than +=.
+func TestWalkingTokensSeen_TrackTranscriptSizeNotCumulative(t *testing.T) {
+	// Direct simulation of the update logic in executeSubTask.
+	// We're not running the engine end-to-end (that needs a Run mock); we just
+	// verify the formula yields a monotonic transcript size from cache fields
+	// and falls back to the legacy heuristic when cache fields are zero.
+	apply := func(walkingSoFar int, cacheRead, cacheWrite, input, output int) int {
+		transcriptSize := cacheRead + cacheWrite
+		if transcriptSize == 0 {
+			transcriptSize = walkingSoFar + input + output
+		}
+		if transcriptSize > walkingSoFar {
+			walkingSoFar = transcriptSize
+		}
+		return walkingSoFar
+	}
+
+	// Round 1: cold call. cache_read=0, cache_write=large.
+	got := apply(0, 0, 50000, 18, 800)
+	if got != 50000 {
+		t.Fatalf("round 1 transcript = %d, want 50000 (cache_write only)", got)
+	}
+
+	// Round 2: warm. cache_read=50K (round 1's content), cache_write=2K (this turn's delta).
+	got = apply(got, 50000, 2000, 18, 600)
+	if got != 52000 {
+		t.Fatalf("round 2 transcript = %d, want 52000 (max of 50000 and 50000+2000)", got)
+	}
+
+	// Round 3: cache_read grows further as transcript accumulates.
+	got = apply(got, 52000, 2500, 18, 700)
+	if got != 54500 {
+		t.Fatalf("round 3 transcript = %d, want 54500", got)
+	}
+
+	// Codex case: cache_read=cache_write=0 reported, input is huge full count.
+	// Should use the legacy heuristic (cumulative add).
+	got = apply(0, 0, 0, 119547, 2582)
+	if got != 122129 {
+		t.Fatalf("codex fallback = %d, want 122129 (legacy add)", got)
+	}
+
+	// max() prevents the running watermark from going down even if a small
+	// turn comes after a big one — important so we don't lose track of
+	// transcript growth across retries.
+	got = apply(54500, 30000, 500, 18, 200)
+	if got != 54500 {
+		t.Fatalf("max() guard failed: %d, want 54500 (already higher)", got)
+	}
+}

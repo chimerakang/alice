@@ -121,3 +121,12 @@ func (r *hermesExecutorRunner) Run(msg string, onUpdate func(string, bool)) (str
 func (r *hermesExecutorRunner) LastCallMetrics() (string, int, int, float64) {
 	return r.agent.LastCallMetrics()
 }
+
+// LastCacheMetrics forwards cache-token figures so the walking-agent
+// watermark can size the conversation transcript correctly. Without this
+// the engine falls back to InputTokens-only accounting, which under-counts
+// for Claude (uncached residual) and over-counts for Codex (full input).
+// Issue #149.
+func (r *hermesExecutorRunner) LastCacheMetrics() (int, int) {
+	return r.agent.LastCacheMetrics()
+}
