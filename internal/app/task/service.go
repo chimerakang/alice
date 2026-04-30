@@ -191,8 +191,8 @@ func (svc *Service) AddTokenUsage(taskID string, delta int) error {
 }
 
 // AddModelUsage implements hermes.TaskStateStore.
-func (svc *Service) AddModelUsage(taskID, model string, inputTokens, outputTokens int) error {
-	return svc.store.AddModelUsage(taskID, model, inputTokens, outputTokens)
+func (svc *Service) AddModelUsage(taskID, model string, inputTokens, outputTokens int, costUSD float64) error {
+	return svc.store.AddModelUsage(taskID, model, inputTokens, outputTokens, costUSD)
 }
 
 // ListTasksForChat implements hermes.TaskStateStore.

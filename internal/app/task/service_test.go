@@ -147,7 +147,7 @@ func (s *stubStore) MarkStatus(id string, status hermes.TaskStatus) error {
 }
 func (s *stubStore) ResetBudgetStartedAt(taskID string, t time.Time) error { return nil }
 func (s *stubStore) AddTokenUsage(taskID string, delta int) error { return nil }
-func (s *stubStore) AddModelUsage(taskID, model string, in, out int) error {
+func (s *stubStore) AddModelUsage(taskID, model string, in, out int, costUSD float64) error {
 	return nil
 }
 func (s *stubStore) ListTasksForChat(chatID int64, limit int) ([]hermes.TaskState, error) {

@@ -8,8 +8,12 @@ import (
 )
 
 // makePlanFn adapts the app Client planner call to Hermes' planner interface.
+// CostUSD comes from the CLI's total_cost_usd; under Claude Max subscription
+// the CLI may report 0, in which case we fall back to a token×rate estimate
+// using EstimateClaudeCost so per-call cost still flows into ModelUsage.
+// See #148 1D + 1E.
 func makePlanFn(client Client, model string) hermes.CallPlanFunc {
-	return func(ctx context.Context, message, projectDir string) (text, sessionID string, inTokens, outTokens int, err error) {
+	return func(ctx context.Context, message, projectDir string) (hermes.CallPlanResult, error) {
 		var collected strings.Builder
 		resp, callErr := client.CallPlan(ctx, message, projectDir, model, func(contentType, t string) {
 			if contentType == "text" {
@@ -17,12 +21,28 @@ func makePlanFn(client Client, model string) hermes.CallPlanFunc {
 			}
 		})
 		if callErr != nil {
-			return "", "", 0, 0, callErr
+			return hermes.CallPlanResult{}, callErr
 		}
-		t := collected.String()
-		if t == "" {
-			t = resp.TextContent
+		text := collected.String()
+		if text == "" {
+			text = resp.TextContent
 		}
-		return t, resp.SessionID, resp.Usage.InputTokens, resp.Usage.OutputTokens, nil
+		cost := resp.TotalCostUSD
+		if cost <= 0 {
+			cost = EstimateClaudeCost(
+				model,
+				resp.Usage.InputTokens,
+				resp.Usage.CacheReadInputTokens,
+				resp.Usage.CacheCreationInputTokens,
+				resp.Usage.OutputTokens,
+			)
+		}
+		return hermes.CallPlanResult{
+			Text:         text,
+			SessionID:    resp.SessionID,
+			InputTokens:  resp.Usage.InputTokens,
+			OutputTokens: resp.Usage.OutputTokens,
+			CostUSD:      cost,
+		}, nil
 	}
 }

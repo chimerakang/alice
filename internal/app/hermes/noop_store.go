@@ -30,7 +30,7 @@ func (n *NoopTaskStore) UpdatePlannerSession(taskID string, sessionID string) er
 func (n *NoopTaskStore) MarkInterrupted(taskID string, messageID int64) error            { return nil }
 func (n *NoopTaskStore) MarkStatus(taskID string, status TaskStatus) error               { return nil }
 func (n *NoopTaskStore) AddTokenUsage(taskID string, delta int) error                    { return nil }
-func (n *NoopTaskStore) AddModelUsage(taskID, model string, inputTokens, outputTokens int) error {
+func (n *NoopTaskStore) AddModelUsage(taskID, model string, inputTokens, outputTokens int, costUSD float64) error {
 	return nil
 }
 func (n *NoopTaskStore) ListTasksForChat(chatID int64, limit int) ([]TaskState, error) {

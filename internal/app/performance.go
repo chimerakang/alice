@@ -46,6 +46,31 @@ func InitModelPricing(config *ModelPricingConfig) {
 	}
 }
 
+// EstimateClaudeCost computes a USD cost estimate for a single Claude CLI call
+// from its usage token breakdown. Used as a fallback when the CLI returns
+// total_cost_usd=0 (typical under Max subscription); also used for Hermes
+// summary when no authoritative cost is available.
+//
+// Honours Anthropic prompt-cache pricing:
+//   - uncached input        × 1.00x base rate
+//   - cache_read_input      × 0.10x base rate
+//   - cache_creation_input  × 1.25x base rate
+//   - output                ×       output rate
+//
+// Returns 0 when the model cannot be matched against the pricing table; the
+// caller should treat that as "unknown" rather than "free". See issue #148.
+func EstimateClaudeCost(model string, inputTokens, cacheReadTokens, cacheCreationTokens, outputTokens int) float64 {
+	short := ExtractModelShortName(model)
+	rate, ok := ModelPricing[short]
+	if !ok {
+		return 0
+	}
+	weightedInput := float64(inputTokens) +
+		float64(cacheReadTokens)*0.1 +
+		float64(cacheCreationTokens)*1.25
+	return (weightedInput*rate.InputPerMTok + float64(outputTokens)*rate.OutputPerMTok) / 1_000_000
+}
+
 // ExtractModelShortName 從完整模型 ID 提取簡短名稱
 // 例如:
 //

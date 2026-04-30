@@ -96,19 +96,37 @@ func (s *TaskSummary) generateDetailed() string {
 	buf.WriteString(fmt.Sprintf("  合計：%s\n", formatDuration(s.WallclockSeconds)))
 	buf.WriteString("\n")
 
-	// Cost estimate section (if enabled)
-	if s.IncludeCostEst && len(s.ModelCostRates) > 0 {
-		buf.WriteString("💰 成本估算（按公開定價）\n")
-		totalCost := 0.0
+	// Cost section. Prefer per-call costs accumulated into ModelUsage.CostUSD
+	// (authoritative — comes from CLI total_cost_usd or, under Max sub, from
+	// EstimateClaudeCost using cache-aware pricing). Only fall back to a
+	// token×rate estimate when no model usage rows have a real cost yet —
+	// that happens for older tasks completed before #148 1E shipped, or for
+	// runs where every CLI call returned $0 with unknown pricing. See #148.
+	if s.IncludeCostEst {
+		realCost := 0.0
+		anyRealCost := false
 		for _, usage := range s.TaskState.ModelUsages {
-			if rate, ok := s.ModelCostRates[usage.Model]; ok {
-				inputCost := float64(usage.InputTokens) / 1e6 * rate.InputPerMToken
-				outputCost := float64(usage.OutputTokens) / 1e6 * rate.OutputPerMToken
-				totalCost += inputCost + outputCost
+			if usage.CostUSD > 0 {
+				realCost += usage.CostUSD
+				anyRealCost = true
 			}
 		}
-		buf.WriteString(fmt.Sprintf("  約 $%.2f USD（若走 API）\n", totalCost))
-		buf.WriteString("  訂閱模式實際 marginal cost ≈ 0\n")
+		if anyRealCost {
+			buf.WriteString("💰 實際成本\n")
+			buf.WriteString(fmt.Sprintf("  合計：$%.4f USD（含 cache_read 0.1x、cache_creation 1.25x 折/加）\n", realCost))
+		} else if len(s.ModelCostRates) > 0 {
+			buf.WriteString("💰 成本估算（按公開定價，無 cache 折扣）\n")
+			totalCost := 0.0
+			for _, usage := range s.TaskState.ModelUsages {
+				if rate, ok := s.ModelCostRates[usage.Model]; ok {
+					inputCost := float64(usage.InputTokens) / 1e6 * rate.InputPerMToken
+					outputCost := float64(usage.OutputTokens) / 1e6 * rate.OutputPerMToken
+					totalCost += inputCost + outputCost
+				}
+			}
+			buf.WriteString(fmt.Sprintf("  約 $%.4f USD（若走 API）\n", totalCost))
+			buf.WriteString("  訂閱模式實際 marginal cost ≈ 0\n")
+		}
 	}
 
 	return strings.TrimSuffix(buf.String(), "\n")

@@ -44,9 +44,11 @@ type Result struct {
 }
 
 // DirectRunnerMetrics is implemented by DirectRunners that can report the
-// model and token usage of their most recent Run() call. DirectEngine
-// type-asserts to this interface and populates Result.Model + tokens when
-// available — falling back to zero values for runners that don't implement it.
+// model, token, and cost figures of their most recent Run() call. DirectEngine
+// type-asserts to this interface and populates Result.Model + tokens + Cost
+// when available — falling back to zero values for runners that don't
+// implement it. Cost is the per-call USD figure (#148 1B/1D), not a session
+// cumulative — Hermes summary sums it directly.
 type DirectRunnerMetrics interface {
-	LastCallMetrics() (model string, inTokens, outTokens int)
+	LastCallMetrics() (model string, inTokens, outTokens int, cost float64)
 }

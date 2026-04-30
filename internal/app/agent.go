@@ -344,7 +344,50 @@ func (dl *DecisionLogger) SearchDecisions(projectPath string, taskType string, s
 type projectState struct {
 	ctx              *ChatContext
 	stats            TokenStats
-	lastTotalCostUSD float64 // CLI's cumulative cost from last call (for delta calculation)
+	lastTotalCostUSD float64 // CLI's cumulative cost from last call within lastCostSession
+	lastCostSession  string  // session id that lastTotalCostUSD belongs to (#148)
+}
+
+// recordCallCost computes the per-call USD cost honouring CLI session
+// boundaries (TotalCostUSD is session-cumulative, so a different session id
+// resets the baseline) and falling back to a token×rate estimate when the
+// CLI reported $0 (typical under Claude Max subscription) or when the
+// session-relative delta would be negative. Updates lastTotalCostUSD /
+// lastCostSession before returning. See issue #148 (1B + 1D).
+func (ps *projectState) recordCallCost(resp *CLIResponse, model string) float64 {
+	if ps == nil || resp == nil {
+		return 0
+	}
+	var deltaCost float64
+	sameSession := resp.SessionID != "" && resp.SessionID == ps.lastCostSession
+	if sameSession {
+		deltaCost = resp.TotalCostUSD - ps.lastTotalCostUSD
+	} else {
+		// New (or empty) session: cumulative starts fresh, so the current
+		// TotalCostUSD is itself the per-call cost — not a delta against the
+		// previous session's total.
+		deltaCost = resp.TotalCostUSD
+	}
+	if deltaCost <= 0 {
+		// Either Max-sub returned $0, or the session boundary check missed
+		// something and we got a negative delta. In both cases fall back to a
+		// token×rate estimate so the dashboard doesn't see $0 / negative cost.
+		estimate := EstimateClaudeCost(
+			model,
+			resp.Usage.InputTokens,
+			resp.Usage.CacheReadInputTokens,
+			resp.Usage.CacheCreationInputTokens,
+			resp.Usage.OutputTokens,
+		)
+		if deltaCost < 0 {
+			log.Printf("[agent] cost delta negative (total=%.4f last=%.4f same_session=%v); using estimate=%.4f",
+				resp.TotalCostUSD, ps.lastTotalCostUSD, sameSession, estimate)
+		}
+		deltaCost = estimate
+	}
+	ps.lastTotalCostUSD = resp.TotalCostUSD
+	ps.lastCostSession = resp.SessionID
+	return deltaCost
 }
 
 type Agent struct {
@@ -376,6 +419,7 @@ type Agent struct {
 	lastCallModel   string
 	lastCallInputT  int
 	lastCallOutputT int
+	lastCallCost    float64 // per-call USD cost (from ps.recordCallCost) for #148 1E
 
 	// suppressMemoryBridge skips the general-memory + recent-message bridge
 	// injected on session/model switches. Hermes Executor calls already carry
@@ -840,8 +884,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 			if resp.SessionID != "" {
 				ps.ctx.SetSession(selectedBackend, resp.SessionID)
 			}
-			deltaCost = resp.TotalCostUSD - ps.lastTotalCostUSD
-			ps.lastTotalCostUSD = resp.TotalCostUSD
+			deltaCost = ps.recordCallCost(resp, a.lastUsedModel)
 
 			ps.stats.APICallCount++
 			ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
@@ -856,9 +899,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	// 保存 session ID 以便下次 --resume
 	ps.ctx.SetSession(selectedBackend, resp.SessionID)
 
-	// Calculate cost delta (CLI's TotalCostUSD is session-cumulative)
-	deltaCost := resp.TotalCostUSD - ps.lastTotalCostUSD
-	ps.lastTotalCostUSD = resp.TotalCostUSD
+	deltaCost := ps.recordCallCost(resp, a.lastUsedModel)
 
 	// 更新統計
 	ps.stats.APICallCount++
@@ -881,28 +922,33 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	// Save exchange to recentMessages for context bridge on future model switches
 	addToRecentMessages(ps, userMessage, resp.Result)
 
-	a.recordLastCallMetrics(a.lastUsedModel, resp.Usage.InputTokens, resp.Usage.OutputTokens)
+	a.recordLastCallMetrics(a.lastUsedModel, resp.Usage.InputTokens, resp.Usage.OutputTokens, deltaCost)
 
 	return resp.Result, nil
 }
 
-// recordLastCallMetrics stores the model and token totals from the most
-// recent CLI call so DirectEngine can pull them via LastCallMetrics().
-func (a *Agent) recordLastCallMetrics(model string, inTokens, outTokens int) {
+// recordLastCallMetrics stores the model, token, and cost totals from the
+// most recent CLI call so DirectEngine can pull them via LastCallMetrics().
+// cost is the per-call USD value computed by ps.recordCallCost (#148 1B/1D),
+// which honours session boundaries and falls back to a token×rate estimate
+// when the CLI returned $0 under Max subscription.
+func (a *Agent) recordLastCallMetrics(model string, inTokens, outTokens int, cost float64) {
 	a.lastCallMu.Lock()
 	defer a.lastCallMu.Unlock()
 	a.lastCallModel = model
 	a.lastCallInputT = inTokens
 	a.lastCallOutputT = outTokens
+	a.lastCallCost = cost
 }
 
-// LastCallMetrics returns the model and token totals from the most recent
-// Agent CLI call. Returns zero values when no call has been made yet.
-// Used by engine.DirectEngine via the MetricsProvider type assertion.
-func (a *Agent) LastCallMetrics() (model string, inTokens, outTokens int) {
+// LastCallMetrics returns the model, token, and cost totals from the most
+// recent Agent CLI call. Returns zero values when no call has been made yet.
+// Used by engine.DirectEngine via the DirectRunnerMetrics type assertion to
+// attribute Hermes Executor usage to the right model in #148 summaries.
+func (a *Agent) LastCallMetrics() (model string, inTokens, outTokens int, cost float64) {
 	a.lastCallMu.Lock()
 	defer a.lastCallMu.Unlock()
-	return a.lastCallModel, a.lastCallInputT, a.lastCallOutputT
+	return a.lastCallModel, a.lastCallInputT, a.lastCallOutputT, a.lastCallCost
 }
 
 func (a *Agent) callStreamWithResumeBridge(
@@ -999,7 +1045,7 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 		cancel()
 	}()
 
-	planFn := func(ctx context.Context, _ string, projectDir string) (string, string, int, int, error) {
+	planFn := func(ctx context.Context, _ string, projectDir string) (hermes.CallPlanResult, error) {
 		if onUpdate != nil {
 			onUpdate(fmt.Sprintf("🧠 Phase 1: Planning with %s...", modelStatusName(a.planModel)), false)
 		}
@@ -1014,7 +1060,7 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 			}
 		})
 		if err != nil {
-			return "", "", 0, 0, err
+			return hermes.CallPlanResult{}, err
 		}
 		planText := planResp.Result
 		if planText == "" {
@@ -1026,7 +1072,23 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 			Description: desc,
 			Status:      hermes.SubTaskPending,
 		}})
-		return "```json\n" + string(raw) + "\n```", planResp.SessionID, planResp.Usage.InputTokens, planResp.Usage.OutputTokens, nil
+		cost := planResp.TotalCostUSD
+		if cost <= 0 {
+			cost = EstimateClaudeCost(
+				a.planModel,
+				planResp.Usage.InputTokens,
+				planResp.Usage.CacheReadInputTokens,
+				planResp.Usage.CacheCreationInputTokens,
+				planResp.Usage.OutputTokens,
+			)
+		}
+		return hermes.CallPlanResult{
+			Text:         "```json\n" + string(raw) + "\n```",
+			SessionID:    planResp.SessionID,
+			InputTokens:  planResp.Usage.InputTokens,
+			OutputTokens: planResp.Usage.OutputTokens,
+			CostUSD:      cost,
+		}, nil
 	}
 
 	direct := appengine.NewDirectEngine(&metricsForwardingRunner{
@@ -1088,16 +1150,16 @@ func modelStatusName(model string) string {
 // the per-model breakdown would lose every Executor call.
 type metricsForwardingRunner struct {
 	run     func(string, func(string, bool)) (string, error)
-	metrics func() (string, int, int)
+	metrics func() (string, int, int, float64)
 }
 
 func (r *metricsForwardingRunner) Run(msg string, onUpdate func(string, bool)) (string, error) {
 	return r.run(msg, onUpdate)
 }
 
-func (r *metricsForwardingRunner) LastCallMetrics() (string, int, int) {
+func (r *metricsForwardingRunner) LastCallMetrics() (string, int, int, float64) {
 	if r.metrics == nil {
-		return "", 0, 0
+		return "", 0, 0, 0
 	}
 	return r.metrics()
 }
@@ -1154,8 +1216,7 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 			if resp.SessionID != "" {
 				ps.ctx.SetSession(selectedBackend, resp.SessionID)
 			}
-			deltaCost = resp.TotalCostUSD - ps.lastTotalCostUSD
-			ps.lastTotalCostUSD = resp.TotalCostUSD
+			deltaCost = ps.recordCallCost(resp, selectedModel)
 			ps.stats.APICallCount++
 			ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
 			ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
@@ -1167,8 +1228,7 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 	}
 
 	ps.ctx.SetSession(selectedBackend, resp.SessionID)
-	deltaCost := resp.TotalCostUSD - ps.lastTotalCostUSD
-	ps.lastTotalCostUSD = resp.TotalCostUSD
+	deltaCost := ps.recordCallCost(resp, selectedModel)
 	ps.stats.APICallCount++
 	ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
 	ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
@@ -1178,7 +1238,7 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil, "opus_plan_fallback", 0, deltaCost)
 	addToRecentMessages(ps, userMessage, resp.Result)
 
-	a.recordLastCallMetrics(selectedModel, resp.Usage.InputTokens, resp.Usage.OutputTokens)
+	a.recordLastCallMetrics(selectedModel, resp.Usage.InputTokens, resp.Usage.OutputTokens, deltaCost)
 
 	return resp.Result, nil
 }

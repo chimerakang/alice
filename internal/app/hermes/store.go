@@ -58,9 +58,11 @@ type TaskStateStore interface {
 	// AddTokenUsage adds delta tokens to both the task budget and the current sub-task.
 	AddTokenUsage(taskID string, delta int) error
 
-	// AddModelUsage accumulates per-model token usage for the #102 summary report.
-	// Creates a new ModelUsage entry if the model has not been seen on this task.
-	AddModelUsage(taskID, model string, inputTokens, outputTokens int) error
+	// AddModelUsage accumulates per-model token + cost usage for the #102
+	// summary report. Creates a new ModelUsage entry if the model has not been
+	// seen on this task. costUSD is the per-call USD value reported by the CLI
+	// (or estimated for Max-sub) — see #148 1E.
+	AddModelUsage(taskID, model string, inputTokens, outputTokens int, costUSD float64) error
 
 	// ListTasksForChat returns recent tasks for a chat (newest first).
 	ListTasksForChat(chatID int64, limit int) ([]TaskState, error)
@@ -557,7 +559,7 @@ func (s *SQLiteTaskStore) AddTokenUsage(taskID string, delta int) error {
 	})
 }
 
-func (s *SQLiteTaskStore) AddModelUsage(taskID, model string, inputTokens, outputTokens int) error {
+func (s *SQLiteTaskStore) AddModelUsage(taskID, model string, inputTokens, outputTokens int, costUSD float64) error {
 	return s.execWithRetry(func() error {
 		var modelUsagesJSON string
 		if err := s.db.QueryRow(`SELECT model_usages FROM hermes_task_states WHERE id = ?`, taskID).
@@ -576,6 +578,7 @@ func (s *SQLiteTaskStore) AddModelUsage(taskID, model string, inputTokens, outpu
 			if usages[i].Model == model {
 				usages[i].InputTokens += inputTokens
 				usages[i].OutputTokens += outputTokens
+				usages[i].CostUSD += costUSD
 				usages[i].CallCount++
 				found = true
 				break
@@ -586,6 +589,7 @@ func (s *SQLiteTaskStore) AddModelUsage(taskID, model string, inputTokens, outpu
 				Model:        model,
 				InputTokens:  inputTokens,
 				OutputTokens: outputTokens,
+				CostUSD:      costUSD,
 				CallCount:    1,
 			})
 		}

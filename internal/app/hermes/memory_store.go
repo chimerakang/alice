@@ -154,9 +154,9 @@ func (s *MemoryTaskStore) AddTokenUsage(taskID string, delta int) error {
 	})
 }
 
-func (s *MemoryTaskStore) AddModelUsage(taskID, model string, inputTokens, outputTokens int) error {
+func (s *MemoryTaskStore) AddModelUsage(taskID, model string, inputTokens, outputTokens int, costUSD float64) error {
 	return s.update(taskID, func(task *TaskState) {
-		task.AddUsage(model, inputTokens, outputTokens)
+		task.AddUsage(model, inputTokens, outputTokens, costUSD)
 	})
 }
 

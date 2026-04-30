@@ -76,7 +76,7 @@ func (r *hermesExecutorRunner) Run(msg string, onUpdate func(string, bool)) (str
 }
 
 // LastCallMetrics forwards Agent metrics so DirectEngine can attribute
-// Executor tokens to the actual model that ran each sub-task.
-func (r *hermesExecutorRunner) LastCallMetrics() (string, int, int) {
+// Executor tokens + cost to the actual model that ran each sub-task.
+func (r *hermesExecutorRunner) LastCallMetrics() (string, int, int, float64) {
 	return r.agent.LastCallMetrics()
 }

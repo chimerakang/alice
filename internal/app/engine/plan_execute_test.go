@@ -130,11 +130,16 @@ func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 	reviewPhase := &recordingReviewPhase{}
 	reviewStore := &recordingReviewStore{}
 	reviewNotifier := &recordingReviewNotifier{}
-	planFn := func(ctx context.Context, message, projectDir string) (string, string, int, int, error) {
-		return "```json\n" +
-			`[{"id":"s1","description":"read context","tool_hints":["Read"]},` +
-			`{"id":"s2","description":"edit code","tool_hints":["Edit"]}]` +
-			"\n```", "planner-session", 11, 7, nil
+	planFn := func(ctx context.Context, message, projectDir string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s1","description":"read context","tool_hints":["Read"]},` +
+				`{"id":"s2","description":"edit code","tool_hints":["Edit"]}]` +
+				"\n```",
+			SessionID:    "planner-session",
+			InputTokens:  11,
+			OutputTokens: 7,
+		}, nil
 	}
 
 	engine := NewPlanExecuteEngine(PlanExecuteConfig{
@@ -178,8 +183,22 @@ func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 	if !reflect.DeepEqual(reporter.events, wantEvents) {
 		t.Fatalf("events:\n got %#v\nwant %#v", reporter.events, wantEvents)
 	}
-	if len(state.ModelUsages) != 1 || state.ModelUsages[0].Model != "planner-model" || state.ModelUsages[0].InputTokens != 11 || state.ModelUsages[0].OutputTokens != 7 {
-		t.Fatalf("model usage = %#v", state.ModelUsages)
+	// #148 1E: ModelUsages now also records reviewer's tokens + cost. Assert
+	// the planner row by lookup; reviewer row presence is asserted separately.
+	var plannerUsage, reviewerUsage *hermes.ModelUsage
+	for i := range state.ModelUsages {
+		switch state.ModelUsages[i].Model {
+		case "planner-model":
+			plannerUsage = &state.ModelUsages[i]
+		case "gpt-5.5":
+			reviewerUsage = &state.ModelUsages[i]
+		}
+	}
+	if plannerUsage == nil || plannerUsage.InputTokens != 11 || plannerUsage.OutputTokens != 7 {
+		t.Fatalf("planner usage = %#v (full=%#v)", plannerUsage, state.ModelUsages)
+	}
+	if reviewerUsage == nil || reviewerUsage.CostUSD != 0.42 {
+		t.Fatalf("reviewer usage missing or wrong cost: %#v (full=%#v)", reviewerUsage, state.ModelUsages)
 	}
 	if reviewPhase.calls != 1 {
 		t.Fatalf("review calls = %d, want 1", reviewPhase.calls)
@@ -203,10 +222,12 @@ func TestPlanExecuteEngineSkipsReviewForSingleSubTask(t *testing.T) {
 	runner := &planExecuteRunner{}
 	reviewPhase := &recordingReviewPhase{}
 	reviewStore := &recordingReviewStore{}
-	planFn := func(ctx context.Context, message, projectDir string) (string, string, int, int, error) {
-		return "```json\n" +
-			`[{"id":"s1","description":"execute directly"}]` +
-			"\n```", "", 0, 0, nil
+	planFn := func(ctx context.Context, message, projectDir string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s1","description":"execute directly"}]` +
+				"\n```",
+		}, nil
 	}
 
 	engine := NewPlanExecuteEngine(PlanExecuteConfig{
@@ -240,10 +261,12 @@ func TestPlanExecuteEngineSkipsReviewForSingleSubTask(t *testing.T) {
 func TestPlanExecuteEngineDoesNotRetryFailedSubTask(t *testing.T) {
 	store := hermes.NewMemoryTaskStore()
 	runner := &failingOnceRunner{}
-	planFn := func(ctx context.Context, message, projectDir string) (string, string, int, int, error) {
-		return "```json\n" +
-			`[{"id":"s1","description":"first"}]` +
-			"\n```", "", 0, 0, nil
+	planFn := func(ctx context.Context, message, projectDir string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s1","description":"first"}]` +
+				"\n```",
+		}, nil
 	}
 
 	engine := NewPlanExecuteEngine(PlanExecuteConfig{
@@ -283,16 +306,20 @@ func TestPlanExecuteEngineUsesValidatingDuringTaskReviewRetry(t *testing.T) {
 		},
 	}
 	planCalls := 0
-	planFn := func(ctx context.Context, message, projectDir string) (string, string, int, int, error) {
+	planFn := func(ctx context.Context, message, projectDir string) (hermes.CallPlanResult, error) {
 		planCalls++
 		if planCalls == 1 {
-			return "```json\n" +
-				`[{"id":"s1","description":"first"},{"id":"s2","description":"second"}]` +
-				"\n```", "", 0, 0, nil
+			return hermes.CallPlanResult{
+				Text: "```json\n" +
+					`[{"id":"s1","description":"first"},{"id":"s2","description":"second"}]` +
+					"\n```",
+			}, nil
 		}
-		return "```json\n" +
-			`[{"id":"s1","description":"replanned first"},{"id":"s2","description":"replanned second"}]` +
-			"\n```", "", 0, 0, nil
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s1","description":"replanned first"},{"id":"s2","description":"replanned second"}]` +
+				"\n```",
+		}, nil
 	}
 
 	engine := NewPlanExecuteEngine(PlanExecuteConfig{
@@ -356,10 +383,12 @@ func TestPlanExecuteEngineRetriesBlockedSubTaskAndContinues(t *testing.T) {
 		},
 	}
 	reviewStore := &recordingReviewStore{}
-	planFn := func(ctx context.Context, message, projectDir string) (string, string, int, int, error) {
-		return "```json\n" +
-			`[{"id":"s1","description":"first"},{"id":"s2","description":"second"}]` +
-			"\n```", "", 0, 0, nil
+	planFn := func(ctx context.Context, message, projectDir string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s1","description":"first"},{"id":"s2","description":"second"}]` +
+				"\n```",
+		}, nil
 	}
 
 	engine := NewPlanExecuteEngine(PlanExecuteConfig{
@@ -425,10 +454,12 @@ func TestPlanExecuteEngineMarksPartialAfterStrictRetryExhaustion(t *testing.T) {
 			},
 		},
 	}
-	planFn := func(ctx context.Context, message, projectDir string) (string, string, int, int, error) {
-		return "```json\n" +
-			`[{"id":"s1","description":"first"},{"id":"s2","description":"second"}]` +
-			"\n```", "", 0, 0, nil
+	planFn := func(ctx context.Context, message, projectDir string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s1","description":"first"},{"id":"s2","description":"second"}]` +
+				"\n```",
+		}, nil
 	}
 
 	engine := NewPlanExecuteEngine(PlanExecuteConfig{

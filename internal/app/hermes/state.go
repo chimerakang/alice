@@ -104,13 +104,18 @@ func ValidateTaskStatusTransition(taskID string, from, to TaskStatus) error {
 	return fmt.Errorf("invalid task status transition for %s: %s -> %s", taskID, from, to)
 }
 
-// AddUsage records token usage for a given model, accumulating into ModelUsages slice.
-func (t *TaskState) AddUsage(model string, inputTokens, outputTokens int) {
+// AddUsage records token + cost usage for a given model, accumulating into
+// ModelUsages slice. CostUSD is the per-call USD cost reported by the CLI
+// (or estimated if Max-sub returned 0); 0 means "unknown for this call",
+// not "free", and the summary should treat the model's CostUSD as authoritative
+// only when CallCount > 0 *and* CostUSD > 0.
+func (t *TaskState) AddUsage(model string, inputTokens, outputTokens int, costUSD float64) {
 	// Find existing entry for this model.
 	for i := range t.ModelUsages {
 		if t.ModelUsages[i].Model == model {
 			t.ModelUsages[i].InputTokens += inputTokens
 			t.ModelUsages[i].OutputTokens += outputTokens
+			t.ModelUsages[i].CostUSD += costUSD
 			t.ModelUsages[i].CallCount++
 			return
 		}
@@ -120,6 +125,7 @@ func (t *TaskState) AddUsage(model string, inputTokens, outputTokens int) {
 		Model:        model,
 		InputTokens:  inputTokens,
 		OutputTokens: outputTokens,
+		CostUSD:      costUSD,
 		CallCount:    1,
 	})
 }
@@ -142,12 +148,18 @@ type Artifact struct {
 	SubTaskID string `json:"sub_task_id"`
 }
 
-// ModelUsage tracks token consumption per model.
+// ModelUsage tracks token + cost consumption per model.
+//
+// CostUSD is summed from per-call costs reported by the CLI (Anthropic
+// total_cost_usd / Codex local price calc) or, when those are 0,
+// EstimateClaudeCost-derived fallbacks. Treat 0 as "unknown for the calls
+// recorded so far" and prefer the live token×rate estimate path. See #148 1E.
 type ModelUsage struct {
-	Model        string `json:"model"` // e.g., "claude-opus-4-7" or "claude-haiku-4-5-20251001"
-	InputTokens  int    `json:"input_tokens"`
-	OutputTokens int    `json:"output_tokens"`
-	CallCount    int    `json:"call_count"`
+	Model        string  `json:"model"` // e.g., "claude-opus-4-7" or "claude-haiku-4-5-20251001"
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"`
+	CallCount    int     `json:"call_count"`
 }
 
 // TotalTokens returns the sum of input and output tokens.

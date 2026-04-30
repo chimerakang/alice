@@ -83,9 +83,20 @@ Output ONLY the JSON block. No explanation, no preamble.`
 // jsonBlockRe extracts the first ```json ... ``` block from Planner output.
 var jsonBlockRe = regexp.MustCompile("(?s)```(?:json)?\\s*\\n?(\\[.*?\\])\\s*```")
 
+// CallPlanResult is the value returned by a CallPlanFunc invocation.
+// CostUSD is the per-call USD cost reported by the CLI (or estimated for
+// Max-sub by upstream); 0 means the caller couldn't price this call.
+// See #148 1E.
+type CallPlanResult struct {
+	Text         string
+	SessionID    string
+	InputTokens  int
+	OutputTokens int
+	CostUSD      float64
+}
+
 // CallPlanFunc is the calling convention the Planner uses to invoke the CLI.
-// Returns: text output, session ID (for --resume), input tokens, output tokens, error.
-type CallPlanFunc func(ctx context.Context, message, projectDir string) (text, sessionID string, inTokens, outTokens int, err error)
+type CallPlanFunc func(ctx context.Context, message, projectDir string) (CallPlanResult, error)
 
 // PlannerSession manages the long-lived Planner CLI session.
 type PlannerSession struct {
@@ -111,12 +122,12 @@ func (p *PlannerSession) SessionID() string { return p.sessionID }
 func (p *PlannerSession) SetSessionID(sessionID string) { p.sessionID = sessionID }
 
 // Plan sends the goal to the Planner and returns parsed SubTasks plus the
-// accumulated input / output token counts across all attempts (the caller
-// needs the split so per-model ModelUsage can be recorded).
+// accumulated input / output token counts and USD cost across all attempts
+// (the caller needs the split so per-model ModelUsage can be recorded).
 // Retries up to maxRetries times on JSON parse failure, re-injecting the error
 // as feedback each time.
 // Enforces Complexity Gate: single-operation goals return 1 sub-task.
-func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]SubTask, int, int, error) {
+func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]SubTask, int, int, float64, error) {
 	systemSection := plannerSystemPrompt
 	if p.extraRules != "" {
 		systemSection = p.extraRules + "\n\n" + plannerSystemPrompt
@@ -124,26 +135,28 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 	prompt := systemSection + "\n\nGoal: " + goal
 	var lastText string
 	var totalIn, totalOut int
+	var totalCost float64
 
 	for attempt := 1; attempt <= p.maxRetries; attempt++ {
-		text, sid, inT, outT, err := p.callFn(ctx, prompt, projectDir)
+		res, err := p.callFn(ctx, prompt, projectDir)
 		if err != nil {
-			return nil, totalIn, totalOut, fmt.Errorf("planner attempt %d: %w", attempt, err)
+			return nil, totalIn, totalOut, totalCost, fmt.Errorf("planner attempt %d: %w", attempt, err)
 		}
-		if sid != "" {
-			p.sessionID = sid
+		if res.SessionID != "" {
+			p.sessionID = res.SessionID
 		}
-		lastText = text
-		totalIn += inT
-		totalOut += outT
+		lastText = res.Text
+		totalIn += res.InputTokens
+		totalOut += res.OutputTokens
+		totalCost += res.CostUSD
 
-		tasks, parseErr := parsePlannerJSON(text)
+		tasks, parseErr := parsePlannerJSON(res.Text)
 		if parseErr == nil && len(tasks) > 0 {
 			// Enforce Complexity Gate: if Planner returned 1 task with "Execute directly" pattern,
 			// allow it without further validation. Otherwise validate granularity.
 			if len(tasks) == 1 && isDirectExecutionTask(tasks[0]) {
 				// Complexity Gate: direct execution mode (simple goal)
-				return tasks, totalIn, totalOut, nil
+				return tasks, totalIn, totalOut, totalCost, nil
 			}
 			// Multi-task plan: validate granularity
 			if err := validateGranularityForPlan(tasks); err != nil {
@@ -155,9 +168,9 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 					)
 					continue
 				}
-				return nil, totalIn, totalOut, fmt.Errorf("granularity validation failed after retries: %w", err)
+				return nil, totalIn, totalOut, totalCost, fmt.Errorf("granularity validation failed after retries: %w", err)
 			}
-			return tasks, totalIn, totalOut, nil
+			return tasks, totalIn, totalOut, totalCost, nil
 		}
 
 		// Empty plan is syntactically valid JSON but means "Planner found
@@ -175,7 +188,7 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 					"If there is real work remaining, list those sub-tasks now (each with id/description/tool_hints). Do not output an empty array again."
 				continue
 			}
-			return nil, totalIn, totalOut, &ErrPlannerEmptyPlan{Goal: goal}
+			return nil, totalIn, totalOut, totalCost, &ErrPlannerEmptyPlan{Goal: goal}
 		}
 
 		if attempt < p.maxRetries {
@@ -191,12 +204,12 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 					"  - `description` (string)\n"+
 					"  - `tool_hints` (array of strings, e.g. [\"Read\", \"Bash\"])\n"+
 					"Output ONLY the corrected JSON array in a ```json``` block. No prose.",
-				attempt, parseErrMsg, text,
+				attempt, parseErrMsg, res.Text,
 			)
 		}
 	}
 
-	return nil, totalIn, totalOut, &ErrPlannerJSONFailed{RawOutput: lastText}
+	return nil, totalIn, totalOut, totalCost, &ErrPlannerJSONFailed{RawOutput: lastText}
 }
 
 // isDirectExecutionTask checks if the single sub-task is marked as "execute directly"
@@ -216,16 +229,16 @@ func validateGranularityForPlan(tasks []SubTask) error {
 }
 
 // Compress asks the Planner to condense the accumulated execution log and
-// returns the compressed text with input / output token counts separated.
-func (p *PlannerSession) Compress(ctx context.Context, req CompressRequest, projectDir string) (string, int, int, error) {
-	text, sid, inT, outT, err := p.callFn(ctx, CompressPrompt(req), projectDir)
+// returns the compressed text with input / output token counts and USD cost.
+func (p *PlannerSession) Compress(ctx context.Context, req CompressRequest, projectDir string) (string, int, int, float64, error) {
+	res, err := p.callFn(ctx, CompressPrompt(req), projectDir)
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("compress: %w", err)
+		return "", 0, 0, 0, fmt.Errorf("compress: %w", err)
 	}
-	if sid != "" {
-		p.sessionID = sid
+	if res.SessionID != "" {
+		p.sessionID = res.SessionID
 	}
-	return strings.TrimSpace(text), inT, outT, nil
+	return strings.TrimSpace(res.Text), res.InputTokens, res.OutputTokens, res.CostUSD, nil
 }
 
 // ── JSON parsing ──────────────────────────────────────────────────────────────

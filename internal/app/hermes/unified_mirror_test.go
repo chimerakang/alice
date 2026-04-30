@@ -26,7 +26,7 @@ func TestSQLiteTaskStoreMirrorsPlanToUnifiedTables(t *testing.T) {
 	if err := store.AppendArtifact(task.ID, Artifact{SubTaskID: "s1", Path: "foo.go", Hash: "abc"}); err != nil {
 		t.Fatalf("AppendArtifact: %v", err)
 	}
-	if err := store.AddModelUsage(task.ID, "claude-sonnet", 10, 7); err != nil {
+	if err := store.AddModelUsage(task.ID, "claude-sonnet", 10, 7, 0.0042); err != nil {
 		t.Fatalf("AddModelUsage: %v", err)
 	}
 	if err := store.MarkStatus(task.ID, TaskStatusDone); err != nil {

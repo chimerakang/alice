@@ -26,24 +26,25 @@ type metricsRunner struct {
 	model    string
 	inTokens int
 	outToken int
+	cost     float64
 }
 
 func (m metricsRunner) Run(string, func(string, bool)) (string, error) {
 	return "ok", nil
 }
 
-func (m metricsRunner) LastCallMetrics() (string, int, int) {
-	return m.model, m.inTokens, m.outToken
+func (m metricsRunner) LastCallMetrics() (string, int, int, float64) {
+	return m.model, m.inTokens, m.outToken, m.cost
 }
 
 func TestDirectEngine_PopulatesModelAndTokensFromMetricsProvider(t *testing.T) {
-	runner := metricsRunner{model: "claude-haiku-4-5", inTokens: 1234, outToken: 567}
+	runner := metricsRunner{model: "claude-haiku-4-5", inTokens: 1234, outToken: 567, cost: 0.0123}
 	engine := NewDirectEngine(runner)
 	res, err := engine.Run(context.Background(), "do thing", nil, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if res.Model != "claude-haiku-4-5" || res.InputTokens != 1234 || res.OutputTokens != 567 {
+	if res.Model != "claude-haiku-4-5" || res.InputTokens != 1234 || res.OutputTokens != 567 || res.Cost != 0.0123 {
 		t.Fatalf("expected metrics propagated, got %+v", res)
 	}
 }

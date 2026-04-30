@@ -275,14 +275,14 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 			_ = e.store.UpdateAccumulated(taskID, "")
 		}
 
-		tasks, planIn, planOut, plannerSkipped, err := e.plan(ctx, currentGoal)
+		tasks, planIn, planOut, planCost, plannerSkipped, err := e.plan(ctx, currentGoal)
 		if err != nil {
 			e.handlePlanningError(ctx, taskID, err)
 			return
 		}
 		if !plannerSkipped {
 			_ = e.store.AddTokenUsage(taskID, planIn+planOut)
-			_ = e.store.AddModelUsage(taskID, e.cfg.PlannerModel, planIn, planOut)
+			_ = e.store.AddModelUsage(taskID, e.cfg.PlannerModel, planIn, planOut, planCost)
 			if sid := e.planner.SessionID(); sid != "" {
 				_ = e.store.UpdatePlannerSession(taskID, sid)
 			}
@@ -463,16 +463,16 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 	}
 }
 
-func (e *PlanExecuteEngine) plan(ctx context.Context, goal string) ([]hermes.SubTask, int, int, bool, error) {
+func (e *PlanExecuteEngine) plan(ctx context.Context, goal string) ([]hermes.SubTask, int, int, float64, bool, error) {
 	if hermes.ClassifyGoal(goal) == hermes.GoalSimple {
 		return []hermes.SubTask{{
 			ID:          "s1",
 			Description: "Execute the goal directly: " + goal,
 			Status:      hermes.SubTaskPending,
-		}}, 0, 0, true, nil
+		}}, 0, 0, 0, true, nil
 	}
-	tasks, inT, outT, err := e.planner.Plan(ctx, goal, e.cfg.ProjectDir)
-	return tasks, inT, outT, false, err
+	tasks, inT, outT, costUSD, err := e.planner.Plan(ctx, goal, e.cfg.ProjectDir)
+	return tasks, inT, outT, costUSD, false, err
 }
 
 func (e *PlanExecuteEngine) handlePlanningError(ctx context.Context, taskID string, err error) {
@@ -650,6 +650,17 @@ func (e *PlanExecuteEngine) runReview(ctx context.Context, state hermes.TaskStat
 		result.BlockCount = blockMetrics[0]
 		result.AutoFixedCount = blockMetrics[1]
 	}
+	// Record reviewer's own token + cost usage so the per-model breakdown and
+	// total cost include the review pass — previously this was uncounted, so
+	// dashboards under-reported by exactly the reviewer's share. See #148 1E.
+	if reviewerTokens := result.InputTokens + result.OutputTokens; result.ReviewerModel != "" && reviewerTokens > 0 {
+		if err := e.store.AddModelUsage(state.ID, result.ReviewerModel, result.InputTokens, result.OutputTokens, result.CostUSD); err != nil {
+			log.Printf("[plan_execute] AddModelUsage(reviewer) model=%s: %v", result.ReviewerModel, err)
+		}
+		if err := e.store.AddTokenUsage(state.ID, reviewerTokens); err != nil {
+			log.Printf("[plan_execute] AddTokenUsage(reviewer): %v", err)
+		}
+	}
 	if e.cfg.ReviewStore != nil {
 		if err := e.cfg.ReviewStore.StoreReview(ctx, state.ID, result); err != nil {
 			log.Printf("[plan_execute] store review: %v", err)
@@ -724,7 +735,7 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 				log.Printf("[plan_execute] UpdateSubTask(failed) idx=%d: %v", idx, err)
 			}
 			if result.Model != "" && (result.InputTokens > 0 || result.OutputTokens > 0) {
-				if err := e.store.AddModelUsage(taskID, result.Model, result.InputTokens, result.OutputTokens); err != nil {
+				if err := e.store.AddModelUsage(taskID, result.Model, result.InputTokens, result.OutputTokens, result.Cost); err != nil {
 					log.Printf("[plan_execute] AddModelUsage(executor) idx=%d model=%s: %v", idx, result.Model, err)
 				}
 				if err := e.store.AddTokenUsage(taskID, result.InputTokens+result.OutputTokens); err != nil {
@@ -737,7 +748,7 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 		text := strings.TrimSpace(result.Text)
 		tokensUsed := result.InputTokens + result.OutputTokens
 		if result.Model != "" && tokensUsed > 0 {
-			if err := e.store.AddModelUsage(taskID, result.Model, result.InputTokens, result.OutputTokens); err != nil {
+			if err := e.store.AddModelUsage(taskID, result.Model, result.InputTokens, result.OutputTokens, result.Cost); err != nil {
 				log.Printf("[plan_execute] AddModelUsage(executor) idx=%d model=%s: %v", idx, result.Model, err)
 			}
 			if err := e.store.AddTokenUsage(taskID, tokensUsed); err != nil {
