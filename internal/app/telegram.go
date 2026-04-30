@@ -1493,6 +1493,32 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		msg.WriteString(usageMsg)
 		msg.WriteString("\n")
 
+		// Cache breakdown so the /usage number aligns with Anthropic platform
+		// billing (uncached tokens alone is only the residual). See issue #148.
+		totalIncl := stats.TotalInputTokensInclCache()
+		if totalIncl > stats.TotalInputTokens {
+			cacheReadPct := 0.0
+			if totalIncl > 0 {
+				cacheReadPct = float64(stats.TotalCacheReadTokens) * 100 / float64(totalIncl)
+			}
+			msg.WriteString(fmt.Sprintf("📦 Cache breakdown (this chat):\n"))
+			msg.WriteString(fmt.Sprintf("   uncached: %d  cache_read: %d  cache_write: %d\n",
+				stats.TotalInputTokens, stats.TotalCacheReadTokens, stats.TotalCacheCreationTokens))
+			msg.WriteString(fmt.Sprintf("   total input (incl. cache): %d  hit_rate: %.1f%%\n",
+				totalIncl, cacheReadPct))
+		}
+
+		// Walking-agent surface: tells operator whether opt-in flag is on so
+		// /usage is interpretable (#149). Walking-on means cache_write should
+		// be << uncached if reuse is working.
+		if t.config != nil && t.config.Hermes.WalkingAgentEnabled {
+			limit := t.config.Hermes.WalkingAgentMaxContextTokens
+			if limit <= 0 {
+				limit = 120000
+			}
+			msg.WriteString(fmt.Sprintf("🚶 Hermes walking-agent: ON (max_context=%d, force_cache_5m=on)\n", limit))
+		}
+
 		// 按模型分類顯示（從資料庫查詢最近 7 天）
 		if globalStorage != nil {
 			// 支持按項目篩選：/usage 或 /usage <project_path>

@@ -268,10 +268,39 @@ func (wi *WebInterface) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"telegram":  "active",
 			"jobs":      globalJobTracker.Summary(),
 			"storage":   runtimeStorageHealth(),
+			"hermes":    runtimeHermesStatus(wi.bot),
 		}
 
 		json.NewEncoder(w).Encode(status)
 	})(w, r)
+}
+
+// runtimeHermesStatus surfaces Hermes feature toggles + walking-agent state
+// so dashboards / external probes can confirm whether walking is active and
+// at what watermark. Returns minimal info when bot or config is nil; never
+// includes credentials. Issue #149.
+func runtimeHermesStatus(bot *TelegramBot) map[string]interface{} {
+	out := map[string]interface{}{
+		"enabled": false,
+	}
+	if bot == nil || bot.config == nil {
+		return out
+	}
+	out["enabled"] = bot.config.Hermes.Enabled
+	out["strict_mode_enabled"] = bot.config.Hermes.StrictModeEnabled
+	out["auto_route_complex"] = bot.config.Hermes.AutoRouteComplex
+	out["walking_agent_enabled"] = bot.config.Hermes.WalkingAgentEnabled
+	maxCtx := bot.config.Hermes.WalkingAgentMaxContextTokens
+	if maxCtx <= 0 {
+		maxCtx = 120000
+	}
+	out["walking_agent_max_context_tokens"] = maxCtx
+	if bot.config.Hermes.ReviewTimeoutSeconds > 0 {
+		out["review_timeout_seconds"] = bot.config.Hermes.ReviewTimeoutSeconds
+	} else {
+		out["review_timeout_seconds"] = 120
+	}
+	return out
 }
 
 func runtimeStorageHealth() map[string]interface{} {

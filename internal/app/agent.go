@@ -19,11 +19,21 @@ import (
 
 // TokenStats tracks cumulative token usage for an agent session.
 type TokenStats struct {
-	TotalInputTokens  int64   // 累計 input tokens
-	TotalOutputTokens int64   // 累計 output tokens
-	TotalCostUSD      float64 // 累計費用（Max 訂閱下為 0）
-	APICallCount      int     // CLI 呼叫次數
-	Model             string  // NEW: 使用的模型（haiku, sonnet, opus）
+	TotalInputTokens         int64   // uncached input tokens
+	TotalCacheReadTokens     int64   // cache_read input tokens (0.1x rate)
+	TotalCacheCreationTokens int64   // cache_creation input tokens (1.25x rate at 5m, 2.0x at 1h)
+	TotalOutputTokens        int64   // 累計 output tokens
+	TotalCostUSD             float64 // 累計費用（Max 訂閱下為 0）
+	APICallCount             int     // CLI 呼叫次數
+	Model                    string  // NEW: 使用的模型（haiku, sonnet, opus）
+}
+
+// TotalInputTokensInclCache returns the API-side input volume Anthropic
+// actually saw, summing uncached + cache_read + cache_creation. This is the
+// number that matches Anthropic platform billing — TotalInputTokens alone is
+// only the uncached residual. See issue #148.
+func (s TokenStats) TotalInputTokensInclCache() int64 {
+	return s.TotalInputTokens + s.TotalCacheReadTokens + s.TotalCacheCreationTokens
 }
 
 // CostSavingsReport 成本節省報告（用於 Dashboard 展示）
@@ -888,6 +898,8 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 
 			ps.stats.APICallCount++
 			ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
+			ps.stats.TotalCacheReadTokens += int64(resp.Usage.CacheReadInputTokens)
+			ps.stats.TotalCacheCreationTokens += int64(resp.Usage.CacheCreationInputTokens)
 			ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
 			ps.stats.TotalCostUSD += deltaCost
 			ps.ctx.LastActivity = time.Now()
@@ -904,6 +916,8 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	// 更新統計
 	ps.stats.APICallCount++
 	ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
+	ps.stats.TotalCacheReadTokens += int64(resp.Usage.CacheReadInputTokens)
+	ps.stats.TotalCacheCreationTokens += int64(resp.Usage.CacheCreationInputTokens)
 	ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
 	ps.stats.TotalCostUSD += deltaCost
 	ps.ctx.LastActivity = time.Now()
@@ -1219,6 +1233,8 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 			deltaCost = ps.recordCallCost(resp, selectedModel)
 			ps.stats.APICallCount++
 			ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
+			ps.stats.TotalCacheReadTokens += int64(resp.Usage.CacheReadInputTokens)
+			ps.stats.TotalCacheCreationTokens += int64(resp.Usage.CacheCreationInputTokens)
 			ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
 			ps.stats.TotalCostUSD += deltaCost
 			ps.ctx.LastActivity = time.Now()
@@ -1231,6 +1247,8 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 	deltaCost := ps.recordCallCost(resp, selectedModel)
 	ps.stats.APICallCount++
 	ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
+	ps.stats.TotalCacheReadTokens += int64(resp.Usage.CacheReadInputTokens)
+	ps.stats.TotalCacheCreationTokens += int64(resp.Usage.CacheCreationInputTokens)
 	ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
 	ps.stats.TotalCostUSD += deltaCost
 	ps.ctx.LastActivity = time.Now()
