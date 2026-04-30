@@ -365,8 +365,7 @@ func TestTokenBudget_Unlimited(t *testing.T) {
 // ── AppendResult (accumulated) ─────────────────────────────────────────────────
 
 func TestAppendResult_Basic(t *testing.T) {
-	cfg := AccumulatedConfig{}
-	updated, needsCompression := AppendResult("", "step 1 done", 1, cfg)
+	updated, needsCompression := AppendResult("", "step 1 done", 1)
 	if updated != "step 1 done" {
 		t.Errorf("got %q", updated)
 	}
@@ -375,29 +374,12 @@ func TestAppendResult_Basic(t *testing.T) {
 	}
 }
 
-func TestAppendResult_TruncatesCheapPath(t *testing.T) {
-	cfg := AccumulatedConfig{CheapMaxBytes: 20}
-	long := "this is a fairly long first step result"
-	updated, _ := AppendResult("", long, 1, cfg)
-	if len(updated) > 20 {
-		t.Errorf("expected truncation to 20 bytes, got %d", len(updated))
-	}
-}
-
 func TestAppendResult_NeedsCompressionByCount(t *testing.T) {
-	cfg := AccumulatedConfig{ExpensiveTriggerN: 3}
-	_, needs := AppendResult("some text", "result", 3, cfg)
+	// Use the in-package constant directly so the assertion stays true if
+	// expensivePathTriggerCount is later retuned.
+	_, needs := AppendResult("some text", "result", expensivePathTriggerCount)
 	if !needs {
 		t.Error("expected needsCompression=true when completedCount >= trigger")
-	}
-}
-
-func TestAppendResult_NeedsCompressionBySize(t *testing.T) {
-	cfg := AccumulatedConfig{ExpensiveTriggerKB: 1} // 1 KB trigger
-	big := string(make([]byte, 1100))               // 1100 bytes
-	_, needs := AppendResult(big, "more", 1, cfg)
-	if !needs {
-		t.Error("expected needsCompression=true when accumulated > trigger")
 	}
 }
 

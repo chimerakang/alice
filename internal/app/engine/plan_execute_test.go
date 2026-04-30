@@ -143,7 +143,6 @@ func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 		ChatID:                42,
 		MaxPlannerJSONRetries: 1,
 		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
-		AccumulatedCfg:        hermes.AccumulatedConfig{},
 		ReviewPhase:           reviewPhase,
 		ReviewStore:           reviewStore,
 		OnReview:              reviewNotifier.Notify,
@@ -216,7 +215,6 @@ func TestPlanExecuteEngineSkipsReviewForSingleSubTask(t *testing.T) {
 		ChatID:                42,
 		MaxPlannerJSONRetries: 1,
 		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
-		AccumulatedCfg:        hermes.AccumulatedConfig{},
 		ReviewPhase:           reviewPhase,
 		ReviewStore:           reviewStore,
 	}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
@@ -254,7 +252,6 @@ func TestPlanExecuteEngineDoesNotRetryFailedSubTask(t *testing.T) {
 		ChatID:                42,
 		MaxPlannerJSONRetries: 1,
 		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
-		AccumulatedCfg:        hermes.AccumulatedConfig{},
 	}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
 
 	taskID, err := engine.Start(context.Background(), "goal", NewChatContext(42, 0, "/repo"))
@@ -304,7 +301,6 @@ func TestPlanExecuteEngineUsesValidatingDuringTaskReviewRetry(t *testing.T) {
 		ChatID:                42,
 		MaxPlannerJSONRetries: 1,
 		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
-		AccumulatedCfg:        hermes.AccumulatedConfig{},
 		ReviewPhase:           reviewPhase,
 		ReviewMode:            ReviewModePerTask,
 		TaskRetry:             TaskRetryConfig{Enabled: true, ScoreThreshold: 70, MaxTaskRetries: 1},
@@ -372,7 +368,6 @@ func TestPlanExecuteEngineRetriesBlockedSubTaskAndContinues(t *testing.T) {
 		ChatID:                42,
 		MaxPlannerJSONRetries: 1,
 		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
-		AccumulatedCfg:        hermes.AccumulatedConfig{},
 		ReviewPhase:           reviewPhase,
 		ReviewStore:           reviewStore,
 		ReviewMode:            ReviewModePerSubTask,
@@ -442,7 +437,6 @@ func TestPlanExecuteEngineMarksPartialAfterStrictRetryExhaustion(t *testing.T) {
 		ChatID:                42,
 		MaxPlannerJSONRetries: 1,
 		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
-		AccumulatedCfg:        hermes.AccumulatedConfig{},
 		ReviewPhase:           reviewPhase,
 		ReviewMode:            ReviewModePerSubTask,
 		StrictMode:            StrictModeConfig{Enabled: true, MaxRetriesPerSub: 1},

@@ -1031,7 +1031,6 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 		ThreadID:              a.threadID,
 		MaxPlannerJSONRetries: 1,
 		Budget:                hermes.TokenBudget{},
-		AccumulatedCfg:        hermes.AccumulatedConfig{},
 	}, planFn, direct, store, &hermes.NoopProgressReporter{})
 
 	result, err := engine.Run(ctx, userMessage, a.chatContext, nil)

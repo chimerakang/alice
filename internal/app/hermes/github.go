@@ -60,19 +60,28 @@ type ghIssueListJSON struct {
 // checklistRe matches Markdown task list items: `- [ ] text` or `- [x] text`
 var checklistRe = regexp.MustCompile(`(?m)^- \[( |x|X)\] (.+)$`)
 
-// ghDefaultTimeout caps every `gh` invocation so a hung CLI (network stall,
+// gh timeouts cap every `gh` invocation so a hung CLI (network stall,
 // API rate-limit, malformed argument) cannot block the caller forever. The
-// previous behaviour inherited the parent ctx with no deadline, which caused
-// hermes plan_execute goroutines to wedge indefinitely between sub-tasks
-// when SyncChecklist/PostComment hung, leaving tasks stuck in `executing`.
-const ghDefaultTimeout = 30 * time.Second
+// timeout scales with the operation: list/search calls fan out across many
+// issues and need more headroom; single-issue reads and mutations finish
+// fast. (H) Replaced the previous flat 30 s ghDefaultTimeout — large repos
+// hit the cap on `gh issue list` while every other op only needed a few
+// seconds.
+const (
+	ghTimeoutShort  = 10 * time.Second // single-issue reads / mutations
+	ghTimeoutNormal = 30 * time.Second // default for unclassified ops
+	ghTimeoutLong   = 90 * time.Second // list/search across issues
+)
 
 const ghOutputLimit = 256 * 1024
 
-func ghProcessOptions(projectDir string) ProcessOptions {
+func ghProcessOptions(projectDir string, timeout time.Duration) ProcessOptions {
+	if timeout <= 0 {
+		timeout = ghTimeoutNormal
+	}
 	return ProcessOptions{
 		Dir:         projectDir,
-		Timeout:     ghDefaultTimeout,
+		Timeout:     timeout,
 		OutputLimit: ghOutputLimit,
 	}
 }
@@ -80,12 +89,13 @@ func ghProcessOptions(projectDir string) ProcessOptions {
 // ghOutput runs a gh subcommand rooted at projectDir so `gh` resolves the
 // correct repository from that directory's git remote. An empty projectDir
 // falls back to the bot's cwd (compatible with older single-project setups).
-func ghOutput(ctx context.Context, projectDir string, args ...string) ([]byte, error) {
-	return runProcessOutput(ctx, ghProcessOptions(projectDir), "gh", args...)
+// timeout=0 picks ghTimeoutNormal.
+func ghOutput(ctx context.Context, projectDir string, timeout time.Duration, args ...string) ([]byte, error) {
+	return runProcessOutput(ctx, ghProcessOptions(projectDir, timeout), "gh", args...)
 }
 
-func ghCombinedOutput(ctx context.Context, projectDir string, args ...string) ([]byte, error) {
-	return runProcessCombinedOutput(ctx, ghProcessOptions(projectDir), "gh", args...)
+func ghCombinedOutput(ctx context.Context, projectDir string, timeout time.Duration, args ...string) ([]byte, error) {
+	return runProcessCombinedOutput(ctx, ghProcessOptions(projectDir, timeout), "gh", args...)
 }
 
 // ListIssues fetches open issues and returns them sorted by computed priority:
@@ -94,7 +104,7 @@ func ListIssues(ctx context.Context, projectDir string, limit int) ([]IssueListI
 	if limit <= 0 {
 		limit = 15
 	}
-	out, err := ghOutput(ctx, projectDir, "issue", "list",
+	out, err := ghOutput(ctx, projectDir, ghTimeoutLong, "issue", "list",
 		"--state", "open",
 		"--limit", fmt.Sprintf("%d", limit),
 		"--json", "number,title,labels,milestone,updatedAt",
@@ -200,7 +210,7 @@ func FormatIssueList(items []IssueListItem) string {
 // and returns parsed data. projectDir must match the chat's configured repo
 // so gh resolves the correct remote; empty string falls back to cwd.
 func FetchIssue(ctx context.Context, projectDir string, number int) (*IssueContext, error) {
-	out, err := ghOutput(ctx, projectDir, "issue", "view",
+	out, err := ghOutput(ctx, projectDir, ghTimeoutShort, "issue", "view",
 		fmt.Sprintf("%d", number),
 		"--json", "title,body,labels",
 	)
@@ -307,7 +317,7 @@ func min16(n int) int {
 
 // PostComment posts a comment to the given Issue via `gh issue comment`.
 func PostComment(ctx context.Context, projectDir string, number int, body string) error {
-	if out, err := ghCombinedOutput(ctx, projectDir, "issue", "comment",
+	if out, err := ghCombinedOutput(ctx, projectDir, ghTimeoutShort, "issue", "comment",
 		fmt.Sprintf("%d", number),
 		"--body", body,
 	); err != nil {
@@ -319,7 +329,7 @@ func PostComment(ctx context.Context, projectDir string, number int, body string
 // SyncChecklist fetches the current Issue body and checks off completed sub-tasks.
 func SyncChecklist(ctx context.Context, projectDir string, number int, subtasks []SubTask) error {
 	// Fetch current body
-	out, err := ghOutput(ctx, projectDir, "issue", "view",
+	out, err := ghOutput(ctx, projectDir, ghTimeoutShort, "issue", "view",
 		fmt.Sprintf("%d", number),
 		"--json", "body",
 	)
@@ -349,7 +359,7 @@ func SyncChecklist(ctx context.Context, projectDir string, number int, subtasks 
 		return nil // nothing changed
 	}
 
-	if out, err := ghCombinedOutput(ctx, projectDir, "issue", "edit",
+	if out, err := ghCombinedOutput(ctx, projectDir, ghTimeoutShort, "issue", "edit",
 		fmt.Sprintf("%d", number),
 		"--body", updatedBody,
 	); err != nil {
@@ -360,7 +370,7 @@ func SyncChecklist(ctx context.Context, projectDir string, number int, subtasks 
 
 // ApplyLabel adds a label to the Issue (creates if needed via gh's built-in behaviour).
 func ApplyLabel(ctx context.Context, projectDir string, number int, label string) error {
-	if out, err := ghCombinedOutput(ctx, projectDir, "issue", "edit",
+	if out, err := ghCombinedOutput(ctx, projectDir, ghTimeoutShort, "issue", "edit",
 		fmt.Sprintf("%d", number),
 		"--add-label", label,
 	); err != nil {
@@ -371,7 +381,7 @@ func ApplyLabel(ctx context.Context, projectDir string, number int, label string
 
 // CloseIssue closes the Issue.
 func CloseIssue(ctx context.Context, projectDir string, number int) error {
-	if out, err := ghCombinedOutput(ctx, projectDir, "issue", "close",
+	if out, err := ghCombinedOutput(ctx, projectDir, ghTimeoutShort, "issue", "close",
 		fmt.Sprintf("%d", number),
 	); err != nil {
 		return fmt.Errorf("gh issue close #%d: %w (output: %s)", number, err, out)
@@ -403,7 +413,7 @@ func HasLabel(issue *IssueContext, label string) bool {
 func WritePlanToIssue(ctx context.Context, projectDir string, number int, originalBody string, tasks []SubTask) error {
 	_ = originalBody // intentionally ignored; see doc comment
 
-	out, err := ghOutput(ctx, projectDir, "issue", "view",
+	out, err := ghOutput(ctx, projectDir, ghTimeoutShort, "issue", "view",
 		fmt.Sprintf("%d", number),
 		"--json", "body",
 	)
@@ -431,7 +441,7 @@ func WritePlanToIssue(ctx context.Context, projectDir string, number int, origin
 		sb.WriteString("\n")
 	}
 
-	if cmdOut, err := ghCombinedOutput(ctx, projectDir, "issue", "edit",
+	if cmdOut, err := ghCombinedOutput(ctx, projectDir, ghTimeoutShort, "issue", "edit",
 		fmt.Sprintf("%d", number),
 		"--body", sb.String(),
 	); err != nil {

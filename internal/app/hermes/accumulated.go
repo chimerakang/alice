@@ -35,33 +35,12 @@ const (
 	perSubtaskConclusionMaxBytes = 600
 )
 
-// AccumulatedConfig allows overriding the default thresholds via config.
-type AccumulatedConfig struct {
-	CheapMaxBytes      int `json:"cheap_max_bytes"`       // default 2048
-	ExpensiveTriggerKB int `json:"expensive_trigger_kb"`  // default 8
-	ExpensiveTriggerN  int `json:"expensive_trigger_n"`   // default 10
-}
-
-func (c AccumulatedConfig) cheapMax() int {
-	if c.CheapMaxBytes > 0 {
-		return c.CheapMaxBytes
-	}
-	return cheapPathMaxBytes
-}
-
-func (c AccumulatedConfig) expensiveTriggerBytes() int {
-	if c.ExpensiveTriggerKB > 0 {
-		return c.ExpensiveTriggerKB * 1024
-	}
-	return expensivePathTriggerBytes
-}
-
-func (c AccumulatedConfig) expensiveTriggerN() int {
-	if c.ExpensiveTriggerN > 0 {
-		return c.ExpensiveTriggerN
-	}
-	return expensivePathTriggerCount
-}
+// (G) The AccumulatedConfig struct used to allow JSON overrides of the cheap
+// truncation cap and expensive-compression triggers. The override knobs were
+// never wired through config.json or surfaced to operators — every caller
+// passed an empty struct, so the runtime always fell back to the constants
+// above. The struct is removed; the constants are the single source of
+// truth.
 
 // conclusionPattern matches the executor's structured "**結論**：…" line.
 // Both Chinese full-width and ASCII colons are tolerated.
@@ -229,7 +208,7 @@ func truncateRunesAccumulated(s string, max int) string {
 // full four-section report stays in state.Plan[i].Result so the dashboard and
 // final OnDone summary still have it. The aggregate is FIFO-truncated to
 // cheapMax bytes to bound the rolling buffer.
-func AppendResult(accumulated, subtaskResult string, completedCount int, cfg AccumulatedConfig) (updated string, needsCompression bool) {
+func AppendResult(accumulated, subtaskResult string, completedCount int) (updated string, needsCompression bool) {
 	conclusion := extractConclusion(subtaskResult)
 	if conclusion == "" {
 		return accumulated, false
@@ -242,16 +221,16 @@ func AppendResult(accumulated, subtaskResult string, completedCount int, cfg Acc
 	updated += conclusion
 
 	// FIFO truncation: keep the tail (most recent content)
-	if len(updated) > cfg.cheapMax() {
-		updated = updated[len(updated)-cfg.cheapMax():]
+	if len(updated) > cheapPathMaxBytes {
+		updated = updated[len(updated)-cheapPathMaxBytes:]
 		// Trim to the next newline boundary to avoid cutting mid-line
 		if idx := strings.Index(updated, "\n"); idx >= 0 {
 			updated = updated[idx+1:]
 		}
 	}
 
-	needsCompression = len(updated) > cfg.expensiveTriggerBytes() ||
-		completedCount >= cfg.expensiveTriggerN()
+	needsCompression = len(updated) > expensivePathTriggerBytes ||
+		completedCount >= expensivePathTriggerCount
 
 	return updated, needsCompression
 }

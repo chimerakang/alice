@@ -37,7 +37,13 @@ type TaskState struct {
 	ID                string       `json:"id"`                            // UUID
 	ChatID            int64        `json:"chat_id"`                       // Telegram chat
 	ThreadID          int          `json:"thread_id,omitempty"`           // Telegram forum topic/thread
-	PlannerSessionID  string       `json:"planner_session_id"`            // Claude Code --resume ID
+	// PlannerSessionID is captured from each CLI response for telemetry / dashboard
+	// observation only. The Planner CallPlan path is intentionally session-less
+	// on both Claude (api.go CLIClient.CallPlan) and Codex (codex_client.go
+	// CodexClient.CallPlan) — neither passes --resume. Storing this value
+	// across runs does not enable resume; it just lets the dashboard correlate
+	// a TaskState row with a CLI session log.
+	PlannerSessionID  string       `json:"planner_session_id"`
 	ExecutorSessionID string       `json:"executor_session_id,omitempty"` // executor thread resume ID (transient, not persisted to DB)
 	ProjectDir        string       `json:"project_dir,omitempty"`
 	Goal              string       `json:"goal"`

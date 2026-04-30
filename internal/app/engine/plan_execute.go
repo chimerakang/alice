@@ -31,7 +31,6 @@ type PlanExecuteConfig struct {
 
 	MaxPlannerJSONRetries int
 	Budget                hermes.TokenBudget
-	AccumulatedCfg        hermes.AccumulatedConfig
 	PlannerRules          string
 	ExecutorRules         string
 	PlannerSessionID      string
@@ -351,7 +350,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 				e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
 
 				state, _ = e.store.GetTask(taskID)
-				updated, _ := hermes.AppendResult(state.Accumulated, finalText, completed, e.cfg.AccumulatedCfg)
+				updated, _ := hermes.AppendResult(state.Accumulated, finalText, completed)
 				_ = e.store.UpdateAccumulated(taskID, updated)
 			} else if finalStatus == hermes.SubTaskSkipped {
 				tasks[idx].Status = hermes.SubTaskSkipped
@@ -360,7 +359,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 				e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
 
 				state, _ = e.store.GetTask(taskID)
-				updated, _ := hermes.AppendResult(state.Accumulated, finalText, completed, e.cfg.AccumulatedCfg)
+				updated, _ := hermes.AppendResult(state.Accumulated, finalText, completed)
 				_ = e.store.UpdateAccumulated(taskID, updated)
 			} else if !success {
 				// Failure pause: ask the operator whether to retry, skip, or

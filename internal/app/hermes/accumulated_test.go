@@ -45,7 +45,7 @@ func TestExtractConclusion(t *testing.T) {
 
 func TestAppendResultKeepsOnlyConclusionAndEvidence(t *testing.T) {
 	long := "**結論**：完成 X\n\n**證據**：\n- foo.go:1 baseline\n- " + repeatStr("a", 4000) + "\n\n**未驗證**：無\n\n**下一步**：無"
-	updated, _ := AppendResult("", long, 1, AccumulatedConfig{})
+	updated, _ := AppendResult("", long, 1)
 	if got := []rune(updated); len(got) > perSubtaskConclusionMaxBytes+10 {
 		t.Fatalf("accumulated unexpectedly long: len=%d head=%q", len(got), string(got[:60]))
 	}

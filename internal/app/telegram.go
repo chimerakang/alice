@@ -3942,7 +3942,6 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		PlannerModel:          plannerModel,
 		MaxPlannerJSONRetries: cfg.MaxPlannerJSONRetries,
 		Budget:                budget,
-		AccumulatedCfg:        hermes.AccumulatedConfig{},
 		PlannerRules:          pb.ForRole(hermes.RolePlanner),
 		ExecutorRules:         pb.ForRole(hermes.RoleExecutor),
 		PlannerSessionID:      plannerSessionID,
