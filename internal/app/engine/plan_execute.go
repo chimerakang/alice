@@ -647,6 +647,9 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 		e.direct.BindSubTask(subTask)
 		result, execErr := e.direct.Run(ctx, prompt, cc, subTaskSink{})
 		if execErr != nil {
+			if kind := hermes.ClassifyFailure(execErr.Error()); kind == hermes.FailureEnv {
+				log.Printf("[plan_execute] env-class failure idx=%d task=%s: %v", idx, taskID, execErr)
+			}
 			if err := e.store.UpdateSubTask(taskID, idx, hermes.SubTaskFailed, execErr.Error(), 0); err != nil {
 				log.Printf("[plan_execute] UpdateSubTask(failed) idx=%d: %v", idx, err)
 			}

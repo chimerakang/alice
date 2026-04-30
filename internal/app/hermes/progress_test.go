@@ -40,8 +40,8 @@ func TestTextProgressReporterMinimalEmitsPlanFailureAndDone(t *testing.T) {
 	if events[0].notify {
 		t.Fatalf("plan event should be silent: %#v", events[0])
 	}
-	if events[1].notify {
-		t.Fatalf("failure event should be silent: %#v", events[1])
+	if !events[1].notify {
+		t.Fatalf("failure event should notify: %#v", events[1])
 	}
 	if !events[2].notify {
 		t.Fatalf("done event should notify: %#v", events[2])

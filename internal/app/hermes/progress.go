@@ -111,15 +111,20 @@ func (r *TextProgressReporter) OnSubTaskStart(idx, total int, task SubTask) {
 
 func (r *TextProgressReporter) OnSubTaskDone(idx, total int, task SubTask, success bool, result string) {
 	if !success {
-		// Surface failures as a new message so the diagnostic is sticky and
-		// not overwritten by the next sub-task's start edit.
-		msg := fmt.Sprintf("❌ [%d/%d] %s", idx+1, total, task.Description)
+		// Surface failures as a new sticky, *notifying* message — operators
+		// must see these immediately, not be left guessing why the rest of
+		// the plan fell over. Categorise env vs content so the reader can
+		// decide whether the fix is "shrink scope / retry" or "look at the
+		// diagnostic".
+		kind := ClassifyFailure(result)
+		header := fmt.Sprintf("❌ [%d/%d] %s — %s", idx+1, total, task.Description, kind.Label())
+		msg := header
 		if result != "" {
 			msg += "\n" + result
 		}
-		r.sendFn(msg, false)
+		r.sendFn(msg, true)
 		if r.progressMsgID != 0 {
-			r.editProgress(fmt.Sprintf("%s\n❌ [%d/%d] 失敗", r.planSummary, idx+1, total))
+			r.editProgress(fmt.Sprintf("%s\n❌ [%d/%d] %s", r.planSummary, idx+1, total, kind.Label()))
 		}
 		return
 	}

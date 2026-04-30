@@ -88,6 +88,71 @@ func extractConclusion(subtaskResult string) string {
 	return ""
 }
 
+// FailureKind labels a sub-task failure so the reporter can show whether the
+// error was an environment problem (prompt too long, network timeout, etc)
+// versus a content failure inside the executor's actual work. Operators react
+// differently: env failures usually mean "shrink scope or wait", content
+// failures mean "look at the diagnostic".
+type FailureKind int
+
+const (
+	FailureUnknown FailureKind = iota
+	FailureEnv
+	FailureContent
+)
+
+func (k FailureKind) Label() string {
+	switch k {
+	case FailureEnv:
+		return "環境錯誤"
+	case FailureContent:
+		return "執行錯誤"
+	default:
+		return "失敗"
+	}
+}
+
+// envFailurePatterns matches error messages that come from the CLI/network
+// layer rather than the executor's own work. These typically resolve by
+// shrinking prompt scope or retrying later, not by editing code.
+var envFailurePatterns = []string{
+	"prompt is too long",
+	"context length",
+	"request entity too large",
+	"context_length_exceeded",
+	"deadline exceeded",
+	"context deadline",
+	"i/o timeout",
+	"connection refused",
+	"connection reset",
+	"connection timed out",
+	"no such host",
+	"tls handshake",
+	"eof",
+	"signal: killed",
+	"rate limit",
+	"too many requests",
+	"503 service unavailable",
+	"504 gateway timeout",
+	"upstream connect error",
+}
+
+// ClassifyFailure returns the failure category for a sub-task error string.
+// Returns FailureUnknown for empty input so callers can short-circuit.
+func ClassifyFailure(errText string) FailureKind {
+	trimmed := strings.TrimSpace(errText)
+	if trimmed == "" {
+		return FailureUnknown
+	}
+	lower := strings.ToLower(trimmed)
+	for _, p := range envFailurePatterns {
+		if strings.Contains(lower, p) {
+			return FailureEnv
+		}
+	}
+	return FailureContent
+}
+
 func truncateRunesAccumulated(s string, max int) string {
 	rs := []rune(s)
 	if len(rs) <= max {
