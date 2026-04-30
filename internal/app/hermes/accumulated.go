@@ -1,6 +1,7 @@
 package hermes
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -250,6 +251,50 @@ func BuildExecutorPrompt(state TaskState, coreRules string) string {
 		sb.WriteString("累積進度：\n")
 		sb.WriteString(state.Accumulated)
 		sb.WriteString("\n\n")
+	}
+
+	// Inject prior sub-task outcomes so the executor can see what was actually
+	// done in earlier rounds — accumulated only carries the conclusion line of
+	// each, which is too thin when picking up a task across days/sessions or
+	// after a long plan. Skip pending sub-tasks (those are noise here) and cap
+	// each entry to keep the prompt bounded.
+	if state.CurrentIdx > 0 && len(state.Plan) > 0 {
+		var priorLines []string
+		limit := state.CurrentIdx
+		if limit > len(state.Plan) {
+			limit = len(state.Plan)
+		}
+		for i := 0; i < limit; i++ {
+			st := state.Plan[i]
+			if st.Status == SubTaskPending || st.Status == SubTaskInProgress {
+				continue
+			}
+			icon := "✓"
+			switch st.Status {
+			case SubTaskFailed:
+				icon = "✗"
+			case SubTaskSkipped:
+				icon = "⏭"
+			}
+			desc := strings.TrimSpace(st.Description)
+			if desc == "" {
+				desc = "(無描述)"
+			}
+			result := strings.TrimSpace(st.Result)
+			if result == "" {
+				result = "(無回報)"
+			}
+			line := fmt.Sprintf("  %s [%d] %s\n     → %s",
+				icon, i+1,
+				truncateRunesAccumulated(desc, 160),
+				truncateRunesAccumulated(result, 240))
+			priorLines = append(priorLines, line)
+		}
+		if len(priorLines) > 0 {
+			sb.WriteString("前序子任務結果：\n")
+			sb.WriteString(strings.Join(priorLines, "\n"))
+			sb.WriteString("\n\n")
+		}
 	}
 
 	if len(state.Artifacts) > 0 {

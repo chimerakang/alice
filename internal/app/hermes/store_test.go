@@ -424,6 +424,50 @@ func TestBuildExecutorPrompt_Basic(t *testing.T) {
 	}
 }
 
+func TestBuildExecutorPrompt_PriorSubTasksInjected(t *testing.T) {
+	state := makeTask("t-prior", 1)
+	state.Status = TaskStatusExecuting
+	state.Plan = []SubTask{
+		{ID: "s1", Description: "盤點現況", Status: SubTaskDone, Result: "**結論**：找到三個檔案"},
+		{ID: "s2", Description: "修補 lint", Status: SubTaskFailed, Result: "buf lint 仍失敗"},
+		{ID: "s3", Description: "撰寫摘要", Status: SubTaskPending},
+	}
+	state.CurrentIdx = 2
+
+	prompt := BuildExecutorPrompt(state, "")
+	if !contains(prompt, "前序子任務結果") {
+		t.Error("expected prior sub-task block when CurrentIdx > 0")
+	}
+	if !contains(prompt, "盤點現況") || !contains(prompt, "找到三個檔案") {
+		t.Error("expected prior done sub-task description + result to be injected")
+	}
+	if !contains(prompt, "修補 lint") || !contains(prompt, "buf lint 仍失敗") {
+		t.Error("expected prior failed sub-task to be injected")
+	}
+	// Pending sub-task descriptions must not leak into the prior block (they
+	// are noise — current sub-task already shows its own description).
+	if contains(prompt, "前序子任務結果") {
+		// Locate the "前序子任務結果" segment and make sure 撰寫摘要 (the pending
+		// one we are about to do) doesn't appear *inside* it. The current
+		// sub-task block at the bottom is still allowed to mention it.
+		priorIdx := indexOf(prompt, "前序子任務結果")
+		currentIdx := indexOf(prompt, "當前子任務")
+		segment := prompt[priorIdx:currentIdx]
+		if contains(segment, "撰寫摘要") {
+			t.Error("pending sub-task should not be listed in the prior-subtasks block")
+		}
+	}
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestBuildExecutorPrompt_NilSubTask(t *testing.T) {
 	state := makeTask("t", 1)
 	state.Plan = nil

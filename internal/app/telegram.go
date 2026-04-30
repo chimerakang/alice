@@ -2327,7 +2327,22 @@ func (t *TelegramBot) startHermesFreshTask(key chatKey, goal, projectDir string)
 }
 
 func (t *TelegramBot) startHermesContinuationTask(key chatKey, task hermes.TaskState, projectDir, mode string) {
-	goal := buildHermesContinuationGoal(task, mode)
+	// Re-fetch the issue body when the continuation is anchored on a GitHub
+	// issue. Across days/sessions the issue may have been edited (priorities
+	// re-ordered, requirements clarified, checklist items checked off by other
+	// people); without a refresh the planner replans against a stale view of
+	// the goal and feels like it has forgotten the original request.
+	var freshIssueBody string
+	if task.GithubIssueNumber > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if issue, err := hermesFetchIssue(ctx, hermesContinuationProjectDir(task, projectDir), task.GithubIssueNumber); err == nil && issue != nil {
+			freshIssueBody = strings.TrimSpace(issue.Body)
+		} else if err != nil {
+			log.Printf("[hermes] continuation issue refresh failed task=%s issue=#%d: %v", task.ID, task.GithubIssueNumber, err)
+		}
+	}
+	goal := buildHermesContinuationGoalWithIssue(task, mode, freshIssueBody)
 	t.startHermesTaskWithIssueTier(key, goal, hermesContinuationProjectDir(task, projectDir), task.GithubIssueNumber, HermesBudgetConfig{}, t.config.Hermes.GithubIntegration, t.hermesTierFor(key))
 }
 
@@ -2960,6 +2975,14 @@ func isHermesIssueStatusQuery(text string) bool {
 }
 
 func buildHermesContinuationGoal(task hermes.TaskState, mode string) string {
+	return buildHermesContinuationGoalWithIssue(task, mode, "")
+}
+
+// buildHermesContinuationGoalWithIssue is the M2 form: when freshIssueBody is
+// non-empty it is injected as a "Latest issue body" block so the planner
+// re-plans against the current GitHub state, not the snapshot the task was
+// created from. Body is clamped to keep the prompt bounded.
+func buildHermesContinuationGoalWithIssue(task hermes.TaskState, mode, freshIssueBody string) string {
 	originalGoal := strings.TrimSpace(extractHermesActionableGoal(task.Goal))
 	if originalGoal == "" {
 		originalGoal = strings.TrimSpace(task.Goal)
@@ -2978,6 +3001,10 @@ func buildHermesContinuationGoal(task hermes.TaskState, mode string) string {
 	}
 	sb.WriteString("\n\nOriginal goal:\n")
 	sb.WriteString(originalGoal)
+	if freshIssueBody = strings.TrimSpace(freshIssueBody); freshIssueBody != "" {
+		sb.WriteString("\n\nLatest issue body (re-fetched, may differ from original):\n")
+		sb.WriteString(clampHermesContext(freshIssueBody, hermesContextMaxChars))
+	}
 	sb.WriteString("\n\nCurrent progress:\n")
 	sb.WriteString(buildHermesProgressSummary(task))
 	sb.WriteString("\n\nInstructions:\n")
@@ -2985,6 +3012,7 @@ func buildHermesContinuationGoal(task hermes.TaskState, mode string) string {
 	sb.WriteString("- Do not repeat completed work unless the progress summary says it is invalid or incomplete.\n")
 	sb.WriteString("- Re-plan only the remaining, failed, interrupted, or unverified work.\n")
 	sb.WriteString("- Preserve useful context from accumulated progress and reviewer feedback.\n")
+	sb.WriteString("- If the latest issue body diverges from the original goal, prefer the issue body.\n")
 	sb.WriteString("- Return a concrete plan for the remaining work, then execute it.\n")
 	return sb.String()
 }
