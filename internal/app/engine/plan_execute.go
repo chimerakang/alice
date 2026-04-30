@@ -65,8 +65,29 @@ type PlanExecuteConfig struct {
 	ContinueCh      chan struct{}
 	ContinueTimeout time.Duration
 
+	// OnSubTaskFailurePause is invoked when a sub-task ends with !success and
+	// gives the operator a chance to retry, skip, or abort the whole task
+	// before the engine advances. Return FailureSkip to keep the legacy
+	// silent-advance behaviour. Nil callback also means silent advance.
+	OnSubTaskFailurePause func(ctx context.Context, idx, total int, subTask hermes.SubTask, errText string, kind hermes.FailureKind) FailureDecision
+
 	OnDone func(ctx context.Context, state hermes.TaskState)
 }
+
+// FailureDecision is the operator's choice when a sub-task fails and the
+// pause hook fires.
+type FailureDecision int
+
+const (
+	// FailureSkip marks the sub-task failed and advances to the next one.
+	// This is the legacy behaviour and the default when no callback is wired.
+	FailureSkip FailureDecision = iota
+	// FailureRetry re-runs the same sub-task. Attempts counter is preserved
+	// so the executor still sees this is not its first try.
+	FailureRetry
+	// FailureAbort stops the entire task with TaskStatusFailed.
+	FailureAbort
+)
 
 // PlanExecuteEngine plans a goal and executes each sub-task through DirectEngine.
 type PlanExecuteEngine struct {
@@ -281,7 +302,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 		autoFixedCount := 0
 		reviewMode := e.reviewMode()
 		strictCfg := e.strictMode()
-		for idx := range tasks {
+		for idx := 0; idx < len(tasks); idx++ {
 			state, err := e.store.GetTask(taskID)
 			if err != nil {
 				e.reporter.OnError(err)
@@ -326,10 +347,32 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 				updated, _ := hermes.AppendResult(state.Accumulated, finalText, completed, e.cfg.AccumulatedCfg)
 				_ = e.store.UpdateAccumulated(taskID, updated)
 			} else if !success {
-				tasks[idx].Status = hermes.SubTaskFailed
-				tasks[idx].Result = finalText
-				e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
-				e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
+				// Failure pause: ask the operator whether to retry, skip, or
+				// abort. Without a callback wired, fall through to the legacy
+				// silent-skip behaviour.
+				decision := FailureSkip
+				if cb := e.cfg.OnSubTaskFailurePause; cb != nil {
+					kind := hermes.ClassifyFailure(finalText)
+					decision = cb(ctx, idx, len(tasks), subTask, finalText, kind)
+				}
+				switch decision {
+				case FailureRetry:
+					log.Printf("[plan_execute] failure pause: retry idx=%d task=%s", idx, taskID)
+					idx-- // re-run same idx; for-loop will idx++
+					continue
+				case FailureAbort:
+					log.Printf("[plan_execute] failure pause: abort task=%s at idx=%d", taskID, idx)
+					tasks[idx].Status = hermes.SubTaskFailed
+					tasks[idx].Result = finalText
+					e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
+					_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+					return
+				default: // FailureSkip
+					tasks[idx].Status = hermes.SubTaskFailed
+					tasks[idx].Result = finalText
+					e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
+					e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
+				}
 			}
 			if err := e.store.AdvanceTask(taskID, idx+1, hermes.TaskStatusExecuting); err != nil {
 				log.Printf("[plan_execute] AdvanceTask idx=%d: %v", idx, err)

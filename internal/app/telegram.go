@@ -198,6 +198,22 @@ type hermesCoord struct {
 	executorSessionTier string        // tier that produced executorSessionID
 	continueCh          chan struct{} // non-nil when coordinator is paused on a budget warning
 	oneShot             bool          // true when launched via /hermes #N or /ghermes #N; disable on done
+
+	// failureDecisionCh is non-nil when the engine is paused on a sub-task
+	// failure waiting for the operator's retry/skip/abort decision. Buffered
+	// so the callback handler never blocks; the engine consumes one value
+	// per pause.
+	failureDecisionCh chan appengine.FailureDecision
+	failureCtx        *failurePauseCtx // metadata about the paused sub-task for UI rendering
+}
+
+// failurePauseCtx carries the data attached to the current failure pause so
+// the callback handler can validate the click and the engine can log it.
+type failurePauseCtx struct {
+	taskID  string
+	idx     int
+	total   int
+	subDesc string
 }
 
 type interruptibleCoordinator interface {
@@ -3783,6 +3799,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	}
 
 	continueCh := make(chan struct{}, 1)
+	failureDecisionCh := make(chan appengine.FailureDecision, 1)
 	agent := t.getAgent(key)
 	if oneShot {
 		// Issue-launched tasks start with a fresh executor CLI session so the
@@ -3816,11 +3833,12 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		OnTaskRetry:           onTaskRetry,
 		TaskRetry:             appengine.TaskRetryConfig(cfg.TaskRetry),
 		ContinueCh:            continueCh,
+		OnSubTaskFailurePause: t.makeHermesFailureDecisionCallback(key, failureDecisionCh),
 		OnDone:                onDone,
 	}, planFn, direct, taskStore, reporter)
 
 	t.hermesMu.Lock()
-	t.hermesCoords[key] = &hermesCoord{coord: coord, enabled: true, continueCh: continueCh, oneShot: oneShot}
+	t.hermesCoords[key] = &hermesCoord{coord: coord, enabled: true, continueCh: continueCh, failureDecisionCh: failureDecisionCh, oneShot: oneShot}
 	t.hermesMu.Unlock()
 
 	taskID, err := coord.Start(ctx, goal, agent.chatContext)
@@ -5470,7 +5488,157 @@ func parseHermesCallbackData(data string) (mode string, taskID string, ok bool) 
 	}
 }
 
+// hermesFailureDecisionTimeout is how long the engine waits for an operator
+// click before falling back to skip. Keep generous; the operator may need to
+// open another window to read the diagnostic.
+const hermesFailureDecisionTimeout = 10 * time.Minute
+
+// makeHermesFailureDecisionCallback returns the OnSubTaskFailurePause hook
+// passed to PlanExecuteConfig. It posts an inline-button message describing
+// the failure and blocks until the operator clicks one of the buttons or the
+// timeout expires.
+func (t *TelegramBot) makeHermesFailureDecisionCallback(key chatKey, ch chan appengine.FailureDecision) func(ctx context.Context, idx, total int, sub hermes.SubTask, errText string, kind hermes.FailureKind) appengine.FailureDecision {
+	return func(ctx context.Context, idx, total int, sub hermes.SubTask, errText string, kind hermes.FailureKind) appengine.FailureDecision {
+		// Drain stale signals from a prior pause before announcing this one.
+		select {
+		case <-ch:
+		default:
+		}
+
+		t.hermesMu.Lock()
+		hc, ok := t.hermesCoords[key]
+		if ok {
+			hc.failureCtx = &failurePauseCtx{
+				taskID:  hc.coord.TaskID(),
+				idx:     idx,
+				total:   total,
+				subDesc: sub.Description,
+			}
+		}
+		t.hermesMu.Unlock()
+
+		taskID := ""
+		if ok {
+			taskID = hc.coord.TaskID()
+		}
+
+		header := fmt.Sprintf("⏸ 子任務 %d/%d 失敗（%s）— 請選擇下一步", idx+1, total, kind.Label())
+		body := strings.TrimSpace(sub.Description)
+		if body != "" {
+			header += "\n• " + body
+		}
+		if errText != "" {
+			snippet := errText
+			if rs := []rune(snippet); len(rs) > 600 {
+				snippet = string(rs[:600]) + "…"
+			}
+			header += "\n\n" + snippet
+		}
+		header += "\n\n按鈕無回應 10 分鐘將自動跳過。"
+
+		btns := [][]map[string]interface{}{
+			{
+				{"text": "🔁 重試", "callback_data": fmt.Sprintf("hermes:fail:retry:%s:%d", taskID, idx)},
+				{"text": "⏭ 跳過", "callback_data": fmt.Sprintf("hermes:fail:skip:%s:%d", taskID, idx)},
+			},
+			{
+				{"text": "🛑 中止任務", "callback_data": fmt.Sprintf("hermes:fail:abort:%s:%d", taskID, idx)},
+			},
+		}
+		t.sendMenuMessage(key, header, btns)
+
+		select {
+		case d := <-ch:
+			t.hermesMu.Lock()
+			if hc != nil {
+				hc.failureCtx = nil
+			}
+			t.hermesMu.Unlock()
+			return d
+		case <-time.After(hermesFailureDecisionTimeout):
+			log.Printf("[hermes] failure pause timeout (key chat=%d thread=%d task=%s idx=%d) — defaulting to skip",
+				key.chatID, key.threadID, taskID, idx)
+			t.send(key, fmt.Sprintf("⏰ 失敗暫停超時（%v），自動跳過子任務 %d/%d。", hermesFailureDecisionTimeout, idx+1, total))
+			t.hermesMu.Lock()
+			if hc != nil {
+				hc.failureCtx = nil
+			}
+			t.hermesMu.Unlock()
+			return appengine.FailureSkip
+		case <-ctx.Done():
+			t.hermesMu.Lock()
+			if hc != nil {
+				hc.failureCtx = nil
+			}
+			t.hermesMu.Unlock()
+			return appengine.FailureSkip
+		}
+	}
+}
+
+// handleHermesFailureDecisionCallback processes a click on one of the
+// retry/skip/abort buttons posted during a failure pause. data shape:
+// "hermes:fail:<retry|skip|abort>:<taskID>:<idx>". Returns true when the
+// callback was for a failure-decision button so the caller can short-circuit.
+func (t *TelegramBot) handleHermesFailureDecisionCallback(key chatKey, queryID, data string) bool {
+	if !strings.HasPrefix(data, "hermes:fail:") {
+		return false
+	}
+	rest := strings.TrimPrefix(data, "hermes:fail:")
+	parts := strings.SplitN(rest, ":", 3)
+	if len(parts) < 3 {
+		t.answerCallbackQuery(queryID, "❌ 無效的失敗按鈕")
+		return true
+	}
+	action, taskID, idxStr := parts[0], parts[1], parts[2]
+
+	t.hermesMu.Lock()
+	hc, ok := t.hermesCoords[key]
+	t.hermesMu.Unlock()
+	if !ok || hc == nil || hc.failureDecisionCh == nil {
+		t.answerCallbackQuery(queryID, "❌ 任務不在等待狀態")
+		return true
+	}
+	if hc.failureCtx == nil || hc.failureCtx.taskID != taskID {
+		t.answerCallbackQuery(queryID, "❌ 此暫停已失效")
+		return true
+	}
+	if idxStr != fmt.Sprintf("%d", hc.failureCtx.idx) {
+		t.answerCallbackQuery(queryID, "❌ 此暫停已失效")
+		return true
+	}
+
+	var decision appengine.FailureDecision
+	var ack string
+	switch action {
+	case "retry":
+		decision = appengine.FailureRetry
+		ack = "🔁 重試中"
+	case "skip":
+		decision = appengine.FailureSkip
+		ack = "⏭ 跳過"
+	case "abort":
+		decision = appengine.FailureAbort
+		ack = "🛑 已中止"
+	default:
+		t.answerCallbackQuery(queryID, "❌ 未知操作")
+		return true
+	}
+
+	select {
+	case hc.failureDecisionCh <- decision:
+		t.answerCallbackQuery(queryID, ack)
+	default:
+		// Channel full means a decision was already sent; ignore this click.
+		t.answerCallbackQuery(queryID, "（已收到上一次選擇）")
+	}
+	return true
+}
+
 func (t *TelegramBot) handleHermesCallback(key chatKey, queryID, data string) {
+	if t.handleHermesFailureDecisionCallback(key, queryID, data) {
+		return
+	}
 	mode, taskID, ok := parseHermesCallbackData(data)
 	if !ok {
 		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_unknown_operation", nil))
