@@ -51,8 +51,16 @@ func (r *hermesExecutorRunner) Run(msg string, onUpdate func(string, bool)) (str
 	if model != "" {
 		r.agent.currentModelOverride = model
 	}
+	// Suppress the general-memory + recent-message bridge for the duration of
+	// this Hermes Executor call. The Hermes prompt already carries goal +
+	// accumulated + current sub-task; the bridge cards re-inject prior runs'
+	// Hermes prompts as "Persisted general work memory", causing prompt bloat
+	// to grow exponentially across sub-tasks until codex hits its prompt
+	// length limit.
+	r.agent.SetSuppressMemoryBridge(true)
 	defer func() {
 		r.agent.currentModelOverride = prevOverride
+		r.agent.SetSuppressMemoryBridge(false)
 	}()
 
 	// Reset CLI session before each sub-task. The Hermes engine rebuilds full

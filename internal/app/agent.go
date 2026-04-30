@@ -376,6 +376,24 @@ type Agent struct {
 	lastCallModel   string
 	lastCallInputT  int
 	lastCallOutputT int
+
+	// suppressMemoryBridge skips the general-memory + recent-message bridge
+	// injected on session/model switches. Hermes Executor calls already carry
+	// their full context (goal + accumulated + current sub-task) inside the
+	// prompt, and the bridge cards re-inject prior runs' Hermes prompts back
+	// into the new prompt — recursive bloat that pushes codex over its
+	// "Prompt is too long" limit by mid-task. The Hermes runner toggles this
+	// around each Run call.
+	suppressMemoryBridge bool
+}
+
+// SetSuppressMemoryBridge controls whether the next Run call skips the general
+// memory + recent-message bridge injected on model/session switches. Used by
+// the Hermes Executor runner to avoid re-injecting prior Hermes prompts as
+// "Persisted general work memory" — that path causes prompt bloat to
+// accumulate exponentially across sub-tasks.
+func (a *Agent) SetSuppressMemoryBridge(v bool) {
+	a.suppressMemoryBridge = v
 }
 
 func NewAgent(client Client, projectDir string, chatID int64, threadID int) *Agent {
@@ -703,11 +721,19 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 
 	// If model changed, bridge recent messages. Native sessions are kept per
 	// backend; same-backend model changes still start a fresh session.
+	// Hermes execution suppresses the bridge: the Hermes Executor prompt
+	// already carries goal + accumulated + current sub-task, and bridge cards
+	// re-inject prior Hermes prompts as "Persisted general work memory",
+	// causing prompt bloat to grow exponentially across sub-tasks.
 	if selectedModel != a.lastUsedModel && a.lastUsedModel != "" {
-		bridge := a.resolveAgentMemoryBridge(ctx, ps, userMessage, "direct_model_switch")
-		if bridge != "" {
-			userMessage = bridge + userMessage
-			log.Printf("[agent] context bridge injected (%d recent messages)", len(ps.ctx.RecentMsgs))
+		if !a.suppressMemoryBridge {
+			bridge := a.resolveAgentMemoryBridge(ctx, ps, userMessage, "direct_model_switch")
+			if bridge != "" {
+				userMessage = bridge + userMessage
+				log.Printf("[agent] context bridge injected (%d recent messages)", len(ps.ctx.RecentMsgs))
+			}
+		} else {
+			log.Printf("[agent] context bridge skipped (Hermes Executor)")
 		}
 		if selectedBackend == previousBackend {
 			ps.ctx.ClearSession(selectedBackend)
@@ -894,7 +920,7 @@ func (a *Agent) callStreamWithResumeBridge(
 	}
 
 	bridge := ""
-	if ps != nil && ps.ctx != nil {
+	if ps != nil && ps.ctx != nil && !a.suppressMemoryBridge {
 		bridge = a.resolveAgentMemoryBridge(ctx, ps, message, "direct_resume_fallback")
 	}
 	if bridge == "" {
