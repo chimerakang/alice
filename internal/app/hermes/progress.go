@@ -48,7 +48,18 @@ type TextProgressReporter struct {
 
 	progressMsgID int
 	planSummary   string // header reused across edits
+
+	// Edit throttling. Telegram per-chat rate limits aggressively when bursts
+	// of edits hit the same message; without these guards a 7-sub-task plan
+	// can drive ~14 edits in a minute on the same chat and trigger 429s.
+	lastEditText string
+	lastEditAt   time.Time
 }
+
+// editCooldown is the minimum gap between two edits to the same progress
+// message. Picked just above Telegram's per-chat 1 msg/s soft limit so a fast
+// run does not stack edits faster than the API tolerates.
+const editCooldown = 1500 * time.Millisecond
 
 // NewTextProgressReporter creates a reporter that calls sendFn for each event.
 func NewTextProgressReporter(sendFn func(string)) *TextProgressReporter {
@@ -81,11 +92,26 @@ func (r *TextProgressReporter) editProgress(text string) {
 	if r.editFn == nil || r.progressMsgID == 0 {
 		return
 	}
+	// Dedup: Telegram returns 400 "message is not modified" for identical
+	// content but we still pay an API call and a rate-limit slot.
+	if text == r.lastEditText {
+		return
+	}
+	// Cooldown: skip edits that arrive faster than editCooldown so bursts of
+	// sub-task transitions cannot starve the per-chat rate budget. The user
+	// loses the dropped intermediate frame; the next edit overwrites with the
+	// most recent state anyway.
+	if !r.lastEditAt.IsZero() && time.Since(r.lastEditAt) < editCooldown {
+		return
+	}
 	if err := r.editFn(r.progressMsgID, text); err != nil {
 		// Edit failed (e.g. message deleted or unchanged). Disable further
 		// edit attempts so we do not spam the API with retries.
 		r.progressMsgID = 0
+		return
 	}
+	r.lastEditText = text
+	r.lastEditAt = time.Now()
 }
 
 func (r *TextProgressReporter) OnPlanReady(tasks []SubTask) {
@@ -101,12 +127,9 @@ func (r *TextProgressReporter) OnPlanReady(tasks []SubTask) {
 }
 
 func (r *TextProgressReporter) OnSubTaskStart(idx, total int, task SubTask) {
-	if r.progressMsgID == 0 {
-		// Fallback mode: stay silent so we don't flood without edit-in-place.
-		return
-	}
-	desc := truncateRunes(task.Description, 140)
-	r.editProgress(fmt.Sprintf("%s\n▶ [%d/%d] %s", r.planSummary, idx+1, total, desc))
+	// Intentionally silent. OnSubTaskDone is what edits the progress message;
+	// emitting an extra "▶ [N/M]" edit on every start doubles the API call
+	// rate and triggers Telegram per-chat 429s on long plans.
 }
 
 func (r *TextProgressReporter) OnSubTaskDone(idx, total int, task SubTask, success bool, result string) {

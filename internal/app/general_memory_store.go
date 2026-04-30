@@ -16,10 +16,16 @@ func (s *SQLiteStorage) ListGeneralMemoryCards(ctx context.Context, req MemoryRe
 	}
 
 	issueNumber := normalizedMemoryIssueNumber(req)
+	// Exclude both labels Hermes might write under: legacy "hermes" never made
+	// it into the unified table (see hermes/store.go:upsertUnifiedTask which
+	// hard-codes "plan-execute"), so the original "engine <> 'hermes'" filter
+	// silently let every prior Hermes Executor prompt come back as a
+	// "Persisted general work memory" card and recurse into the next prompt.
+	// We keep both labels in the exclude list so any future relabel is safe.
 	clauses := []string{
 		"t.chat_id = ?",
 		"t.status = 'done'",
-		"t.engine <> 'hermes'",
+		"t.engine NOT IN ('hermes', 'plan-execute')",
 	}
 	args := []any{req.ChatID}
 	if strings.TrimSpace(req.ProjectDir) != "" {

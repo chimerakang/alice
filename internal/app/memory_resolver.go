@@ -226,12 +226,36 @@ func memorySectionSummary(sections []MemorySection) string {
 	return strings.Join(parts, ",")
 }
 
+// recursiveCardMarkers identifies cards whose stored Goal or Result contains
+// content from prior Hermes Executor invocations. Even after the engine-label
+// filter (see general_memory_store.go), legacy data may still hold these; if
+// re-injected as "Persisted general work memory" the next prompt nests Hermes
+// rules inside Hermes rules, growing geometrically. Drop the card defensively.
+var recursiveCardMarkers = []string{
+	"# Hermes Executor Rules",
+	"Hermes Executor Rules (Codex)",
+	"[Hermes continuation]",
+	"=== Hermes Executor 上下文 ===",
+}
+
+func cardHasRecursiveHermesContent(card GeneralMemoryCard) bool {
+	for _, marker := range recursiveCardMarkers {
+		if strings.Contains(card.Goal, marker) || strings.Contains(card.Result, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func buildGeneralMemoryContextSection(cards []GeneralMemoryCard) string {
 	if len(cards) == 0 {
 		return ""
 	}
 	sections := make([]string, 0, len(cards))
 	for _, card := range cards {
+		if cardHasRecursiveHermesContent(card) {
+			continue
+		}
 		goal := strings.TrimSpace(stripLanguageDirective(card.Goal))
 		result := strings.TrimSpace(card.Result)
 		if goal == "" && result == "" {
