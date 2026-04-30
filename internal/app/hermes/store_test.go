@@ -43,7 +43,6 @@ func makeTask(id string, chatID int64) TaskState {
 			{ID: "s2", Description: "write tests", Status: SubTaskPending},
 		},
 		Status:          TaskStatusPlanning,
-		InterruptPolicy: InterruptQueue,
 		TokenBudget: TokenBudget{
 			MaxTotalTokens: 100_000,
 			StartedAt:      time.Now(),
@@ -742,7 +741,7 @@ func TestMarkStatus_SequentialTransitions_NoDeadlock(t *testing.T) {
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	transitions := []TaskStatus{TaskStatusExecuting, TaskStatusValidating, TaskStatusDone}
+	transitions := []TaskStatus{TaskStatusExecuting, TaskStatusExecuting, TaskStatusDone}
 	for _, next := range transitions {
 		done := make(chan error, 1)
 		go func(s TaskStatus) {

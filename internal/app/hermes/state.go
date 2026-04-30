@@ -11,7 +11,6 @@ type TaskStatus string
 const (
 	TaskStatusPlanning    TaskStatus = "planning"
 	TaskStatusExecuting   TaskStatus = "executing"
-	TaskStatusValidating  TaskStatus = "validating"
 	TaskStatusDone        TaskStatus = "done"
 	TaskStatusFailed      TaskStatus = "failed"
 	TaskStatusInterrupted TaskStatus = "interrupted"
@@ -28,39 +27,31 @@ const (
 	SubTaskFailed     SubTaskStatus = "failed"
 )
 
-// InterruptPolicy controls how incoming user messages are handled during task execution.
-type InterruptPolicy string
-
-const (
-	// InterruptQueue holds new messages until the current sub-task completes.
-	InterruptQueue InterruptPolicy = "queue"
-	// InterruptAbort cancels the current sub-task and records the interrupting message.
-	InterruptAbort InterruptPolicy = "interrupt"
-	// InterruptInject treats the new message as feedback and appends it to Accumulated.
-	InterruptInject InterruptPolicy = "inject"
-)
-
 // TaskState is the top-level record for a Hermes planning session.
+//
+// Interrupt handling is fixed: any message that arrives while a task is active
+// is appended to Accumulated as user feedback (the former "inject" policy).
+// The "queue" and "abort" alternatives were removed — they were never exposed
+// in the UI and the runtime had to guess between them.
 type TaskState struct {
-	ID                string          `json:"id"`                            // UUID
-	ChatID            int64           `json:"chat_id"`                       // Telegram chat
-	ThreadID          int             `json:"thread_id,omitempty"`           // Telegram forum topic/thread
-	PlannerSessionID  string          `json:"planner_session_id"`            // Claude Code --resume ID
-	ExecutorSessionID string          `json:"executor_session_id,omitempty"` // executor thread resume ID (transient, not persisted to DB)
-	ProjectDir        string          `json:"project_dir,omitempty"`
-	Goal              string          `json:"goal"`
-	Plan              []SubTask       `json:"plan"`
-	CurrentIdx        int             `json:"current_idx"`
-	Accumulated       string          `json:"accumulated"` // rolling executor summary
-	Artifacts         []Artifact      `json:"artifacts"`
-	Status            TaskStatus      `json:"status"`
-	InterruptedBy     *int64          `json:"interrupted_by,omitempty"` // Telegram message ID
-	TokenBudget       TokenBudget     `json:"token_budget"`
-	InterruptPolicy   InterruptPolicy `json:"interrupt_policy"`
-	GithubIssueNumber int             `json:"github_issue_number,omitempty"` // 0 = no issue linked
-	ModelUsages       []ModelUsage    `json:"model_usages"`                  // per-model token tracking
-	CreatedAt         time.Time       `json:"created_at"`
-	UpdatedAt         time.Time       `json:"updated_at"`
+	ID                string       `json:"id"`                            // UUID
+	ChatID            int64        `json:"chat_id"`                       // Telegram chat
+	ThreadID          int          `json:"thread_id,omitempty"`           // Telegram forum topic/thread
+	PlannerSessionID  string       `json:"planner_session_id"`            // Claude Code --resume ID
+	ExecutorSessionID string       `json:"executor_session_id,omitempty"` // executor thread resume ID (transient, not persisted to DB)
+	ProjectDir        string       `json:"project_dir,omitempty"`
+	Goal              string       `json:"goal"`
+	Plan              []SubTask    `json:"plan"`
+	CurrentIdx        int          `json:"current_idx"`
+	Accumulated       string       `json:"accumulated"` // rolling executor summary
+	Artifacts         []Artifact   `json:"artifacts"`
+	Status            TaskStatus   `json:"status"`
+	InterruptedBy     *int64       `json:"interrupted_by,omitempty"` // Telegram message ID
+	TokenBudget       TokenBudget  `json:"token_budget"`
+	GithubIssueNumber int          `json:"github_issue_number,omitempty"` // 0 = no issue linked
+	ModelUsages       []ModelUsage `json:"model_usages"`                  // per-model token tracking
+	CreatedAt         time.Time    `json:"created_at"`
+	UpdatedAt         time.Time    `json:"updated_at"`
 }
 
 // CurrentSubTask returns the active SubTask, or nil if the plan is exhausted.
@@ -92,8 +83,6 @@ func ValidTaskStatusTransition(from, to TaskStatus) bool {
 	case TaskStatusPlanning:
 		return to == TaskStatusExecuting || to == TaskStatusDone || to == TaskStatusFailed || to == TaskStatusInterrupted
 	case TaskStatusExecuting:
-		return to == TaskStatusValidating || to == TaskStatusDone || to == TaskStatusFailed || to == TaskStatusInterrupted
-	case TaskStatusValidating:
 		return to == TaskStatusExecuting || to == TaskStatusDone || to == TaskStatusFailed || to == TaskStatusInterrupted
 	case TaskStatusDone, TaskStatusFailed, TaskStatusInterrupted:
 		return false

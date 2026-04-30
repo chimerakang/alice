@@ -56,20 +56,6 @@ var actionVerbs = []string{
 	"fix", "implement", "build", "create", "ship",
 }
 
-// statusQueryPatterns mark a message as a state inquiry rather than a request
-// to act. When any of these appear alongside an action verb + issue ref the
-// upgrade to complex is suppressed so messages like "請問 #225 處理完畢了嗎"
-// stay on the regular routing path instead of spinning up Hermes.
-var statusQueryPatterns = []string{
-	"如何", "怎麼", "怎樣", "什麼時候",
-	"好了嗎", "完畢", "完成了", "完成沒",
-	"過了", "進度", "結果", "狀態",
-	"哪些", "那些", "子項目", "還有",
-	"請問", "查詢", "查看", "檢視", "看一下", "看下",
-	"是否", "有無", "為何", "為什麼",
-	"?", "？",
-}
-
 var complexKeywords = []string{
 	// Chinese heavyweight work verbs: new construction, refactoring, integration
 	"重構", "重新設計", "重寫", "整合", "整體", "所有檔案",
@@ -154,14 +140,11 @@ func ClassifyComplexity(prompt string) ClassificationResult {
 
 	// Action verb paired with an issue reference is a strong "do decomposable
 	// work" signal ("請處理 #239", "fix #61") — promote to complex so Hermes
-	// takes the task. Suppress the upgrade when the message reads like a
-	// status query ("處理完畢了嗎", "如何處理 #225") so check-ins do not spin
-	// up a full Planner-Executor cycle.
+	// takes the task. Status-query suppression ("處理完畢了嗎") is enforced at
+	// the routing site (telegram.go) where conversational context is known;
+	// keep the classifier as a pure complexity heuristic.
 	if issueRefPattern.MatchString(cleaned) {
 		if kw := firstMatch(lower, actionVerbs); kw != "" {
-			if status := firstMatch(lower, statusQueryPatterns); status != "" {
-				return ClassificationResult{Complexity: ComplexityModerate, MatchedRule: "status-query:" + status}
-			}
 			return ClassificationResult{Complexity: ComplexityComplex, MatchedRule: "action-verb+issue-ref:" + kw}
 		}
 	}

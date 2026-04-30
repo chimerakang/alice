@@ -119,8 +119,11 @@ type HermesConfig struct {
 	MaxRetriesPerSubtask  int `json:"max_retries_per_subtask"`  // default 3
 	MaxPlannerJSONRetries int `json:"max_planner_json_retries"` // default 3
 
-	// Interrupt behaviour: "queue" | "interrupt" | "inject"
-	InterruptPolicy string `json:"interrupt_policy"` // default "queue"
+	// InterruptPolicy is retained as an unused field so existing config.json
+	// files load without "unknown field" errors. Behaviour is fixed at "inject"
+	// (incoming messages append to Accumulated as user feedback); the runtime
+	// no longer reads this value.
+	InterruptPolicy string `json:"interrupt_policy,omitempty"`
 
 	// Progress verbosity: "minimal" | "normal" | "verbose"
 	ProgressVerbosity string `json:"progress_verbosity"` // default "normal"
@@ -218,9 +221,6 @@ func HermesDefaults(cfg HermesConfig) HermesConfig {
 	}
 	if cfg.MaxPlannerJSONRetries == 0 {
 		cfg.MaxPlannerJSONRetries = 3
-	}
-	if cfg.InterruptPolicy == "" {
-		cfg.InterruptPolicy = "queue"
 	}
 	if cfg.ProgressVerbosity == "" {
 		cfg.ProgressVerbosity = "normal"

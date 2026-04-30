@@ -30,7 +30,6 @@ type PlanExecuteConfig struct {
 	ThreadID     int
 
 	MaxPlannerJSONRetries int
-	InterruptPolicy       hermes.InterruptPolicy
 	Budget                hermes.TokenBudget
 	AccumulatedCfg        hermes.AccumulatedConfig
 	PlannerRules          string
@@ -145,7 +144,6 @@ func (e *PlanExecuteEngine) Start(ctx context.Context, goal string, cc *ChatCont
 		ProjectDir:        e.cfg.ProjectDir,
 		Goal:              goal,
 		Status:            hermes.TaskStatusPlanning,
-		InterruptPolicy:   e.cfg.InterruptPolicy,
 		TokenBudget:       budget,
 		PlannerSessionID:  e.cfg.PlannerSessionID,
 		GithubIssueNumber: e.cfg.GithubIssueNumber,
@@ -349,8 +347,9 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 		}
 
 		// Keep the task active while the final review decides whether this
-		// attempt is actually complete or must be re-planned.
-		_ = e.store.MarkStatus(taskID, hermes.TaskStatusValidating)
+		// attempt is actually complete or must be re-planned. The task stays
+		// in TaskStatusExecuting through the validate-and-retry loop — no
+		// separate validating status to surface to the user.
 		finalState, _ := e.store.GetTask(taskID)
 
 		// Run review with notify=false: the engine itself decides whether

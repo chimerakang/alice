@@ -46,12 +46,12 @@ func TestClassifyComplexity(t *testing.T) {
 		{"research + issue", "研究一下 #61 的現況", ComplexityModerate},
 		{"check + issue", "檢查 #239 是什麼狀況", ComplexityModerate},
 
-		// Status queries containing both action verb + issue ref must NOT trigger Hermes
-		{"status: 完畢了嗎", "請問 #225 的子項目處理完畢了嗎", ComplexityModerate},
-		{"status: 哪些", "請檢視 #225 還有哪些子項目要處理", ComplexityModerate},
-		{"status: 處理過了", "但是剛剛明明 #246 都處理過了", ComplexityModerate},
-		{"status: 為何", "為何 #250 處理還沒完成", ComplexityModerate},
-		{"status: question mark", "處理 #239 完成了嗎？", ComplexityModerate},
+		// Status-query suppression now lives at the routing layer (see
+		// isHermesIssueStatusQuery in telegram.go); the classifier itself just
+		// reports the structural complexity. "處理 #225 完成了嗎" still contains
+		// an action verb + issue ref, so it scores complex here — telegram
+		// suppresses the auto-route via isHermesIssueStatusQuery.
+		{"action+issue: status query reads as complex", "處理 #239 完成了嗎？", ComplexityComplex},
 
 		// 修 / 做 / do alone no longer false-fires on common substrings
 		{"not action: 修改", "請修改文字 #61", ComplexityModerate},

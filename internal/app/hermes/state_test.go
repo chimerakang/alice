@@ -9,9 +9,8 @@ func TestValidTaskStatusTransition(t *testing.T) {
 		want bool
 	}{
 		{TaskStatusPlanning, TaskStatusExecuting, true},
-		{TaskStatusExecuting, TaskStatusValidating, true},
-		{TaskStatusValidating, TaskStatusExecuting, true},
-		{TaskStatusValidating, TaskStatusDone, true},
+		{TaskStatusExecuting, TaskStatusExecuting, true},
+		{TaskStatusExecuting, TaskStatusDone, true},
 		{TaskStatusExecuting, TaskStatusFailed, true},
 		{TaskStatusDone, TaskStatusExecuting, false},
 		{TaskStatusFailed, TaskStatusExecuting, false},

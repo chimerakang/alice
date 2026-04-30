@@ -142,7 +142,6 @@ func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 		ProjectDir:            "/repo",
 		ChatID:                42,
 		MaxPlannerJSONRetries: 1,
-		InterruptPolicy:       hermes.InterruptQueue,
 		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
 		AccumulatedCfg:        hermes.AccumulatedConfig{},
 		ReviewPhase:           reviewPhase,
@@ -216,7 +215,6 @@ func TestPlanExecuteEngineSkipsReviewForSingleSubTask(t *testing.T) {
 		ProjectDir:            "/repo",
 		ChatID:                42,
 		MaxPlannerJSONRetries: 1,
-		InterruptPolicy:       hermes.InterruptQueue,
 		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
 		AccumulatedCfg:        hermes.AccumulatedConfig{},
 		ReviewPhase:           reviewPhase,
@@ -255,7 +253,6 @@ func TestPlanExecuteEngineDoesNotRetryFailedSubTask(t *testing.T) {
 		ProjectDir:            "/repo",
 		ChatID:                42,
 		MaxPlannerJSONRetries: 1,
-		InterruptPolicy:       hermes.InterruptQueue,
 		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
 		AccumulatedCfg:        hermes.AccumulatedConfig{},
 	}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
@@ -306,7 +303,6 @@ func TestPlanExecuteEngineUsesValidatingDuringTaskReviewRetry(t *testing.T) {
 		ProjectDir:            "/repo",
 		ChatID:                42,
 		MaxPlannerJSONRetries: 1,
-		InterruptPolicy:       hermes.InterruptQueue,
 		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
 		AccumulatedCfg:        hermes.AccumulatedConfig{},
 		ReviewPhase:           reviewPhase,
@@ -329,9 +325,7 @@ func TestPlanExecuteEngineUsesValidatingDuringTaskReviewRetry(t *testing.T) {
 	}
 	wantStatuses := []hermes.TaskStatus{
 		hermes.TaskStatusExecuting,
-		hermes.TaskStatusValidating,
 		hermes.TaskStatusExecuting,
-		hermes.TaskStatusValidating,
 		hermes.TaskStatusDone,
 	}
 	if !reflect.DeepEqual(store.statuses, wantStatuses) {
@@ -377,7 +371,6 @@ func TestPlanExecuteEngineRetriesBlockedSubTaskAndContinues(t *testing.T) {
 		ProjectDir:            "/repo",
 		ChatID:                42,
 		MaxPlannerJSONRetries: 1,
-		InterruptPolicy:       hermes.InterruptQueue,
 		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
 		AccumulatedCfg:        hermes.AccumulatedConfig{},
 		ReviewPhase:           reviewPhase,
@@ -448,7 +441,6 @@ func TestPlanExecuteEngineMarksPartialAfterStrictRetryExhaustion(t *testing.T) {
 		ProjectDir:            "/repo",
 		ChatID:                42,
 		MaxPlannerJSONRetries: 1,
-		InterruptPolicy:       hermes.InterruptQueue,
 		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
 		AccumulatedCfg:        hermes.AccumulatedConfig{},
 		ReviewPhase:           reviewPhase,

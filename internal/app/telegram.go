@@ -932,7 +932,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	// classified as complex start Hermes automatically. Continuation messages
 	// (pronouns, short follow-ups) stay on the regular routing path so we do
 	// not hijack conversational context.
-	if t.config.Hermes.Enabled && t.config.Hermes.AutoRouteComplex && !isContinuationMessage(text) {
+	if t.config.Hermes.Enabled && t.config.Hermes.AutoRouteComplex && !isContinuationMessage(text) && !isHermesIssueStatusQuery(text) {
 		cl := ClassifyComplexity(text)
 		if cl.Complexity == ComplexityComplex {
 			projectDir := t.getAgent(key).ProjectDir()
@@ -2710,7 +2710,7 @@ func hermesGoalTokens(goal string) map[string]struct{} {
 
 func hermesContinuationRank(task hermes.TaskState) int {
 	switch task.Status {
-	case hermes.TaskStatusPlanning, hermes.TaskStatusExecuting, hermes.TaskStatusValidating:
+	case hermes.TaskStatusPlanning, hermes.TaskStatusExecuting:
 		return 0
 	case hermes.TaskStatusInterrupted:
 		return 1
@@ -2931,6 +2931,23 @@ func isHermesIssueRestartRequest(text string) bool {
 		strings.HasPrefix(lower, "redo")
 }
 
+// hermesStatusQueryPatterns mark a message containing an issue ref as a state
+// inquiry rather than a request to act ("處理完畢了嗎", "如何處理 #225"). This
+// guard is owned by the routing layer rather than the classifier so the
+// classifier stays a pure complexity heuristic.
+var hermesStatusQueryPatterns = []string{
+	"如何", "怎麼", "怎樣", "什麼時候",
+	"好了嗎", "完畢", "完成了", "完成沒",
+	"過了", "進度", "結果", "狀態",
+	"哪些", "那些", "子項目", "還有",
+	"請問", "查詢", "查看", "檢視", "看一下", "看下",
+	"是否", "有無", "為何", "為什麼",
+	"?", "？",
+	"嗎", "么", "要繼續處理嗎", "需要處理嗎", "還需要處理",
+	"還要處理", "要處理嗎", "需要繼續", "可以繼續",
+	"should we", "do we need",
+}
+
 func isHermesIssueStatusQuery(text string) bool {
 	if _, ok := ParseIssueNumber(text); !ok {
 		return false
@@ -2939,19 +2956,7 @@ func isHermesIssueStatusQuery(text string) bool {
 	if lower == "" {
 		return false
 	}
-	if firstMatch(lower, statusQueryPatterns) != "" {
-		return true
-	}
-	for _, phrase := range []string{
-		"嗎", "么", "要繼續處理嗎", "需要處理嗎", "還需要處理",
-		"還要處理", "要處理嗎", "需要繼續", "可以繼續",
-		"should we", "do we need",
-	} {
-		if strings.Contains(lower, phrase) {
-			return true
-		}
-	}
-	return false
+	return firstMatch(lower, hermesStatusQueryPatterns) != ""
 }
 
 func buildHermesContinuationGoal(task hermes.TaskState, mode string) string {
@@ -3764,7 +3769,6 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 		ProjectDir:            projectDir,
 		PlannerModel:          plannerModel,
 		MaxPlannerJSONRetries: cfg.MaxPlannerJSONRetries,
-		InterruptPolicy:       hermes.InterruptPolicy(cfg.InterruptPolicy),
 		Budget:                budget,
 		AccumulatedCfg:        hermes.AccumulatedConfig{},
 		PlannerRules:          pb.ForRole(hermes.RolePlanner),

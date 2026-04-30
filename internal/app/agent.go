@@ -1004,7 +1004,6 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 		ChatID:                a.chatID,
 		ThreadID:              a.threadID,
 		MaxPlannerJSONRetries: 1,
-		InterruptPolicy:       hermes.InterruptQueue,
 		Budget:                hermes.TokenBudget{},
 		AccumulatedCfg:        hermes.AccumulatedConfig{},
 	}, planFn, direct, store, &hermes.NoopProgressReporter{})

@@ -69,6 +69,17 @@ type TaskStateStore interface {
 // ErrNoTask is returned when no matching task exists.
 var ErrNoTask = fmt.Errorf("hermes: no task found")
 
+// normalizeStatus maps legacy DB statuses to current ones. The "validating"
+// status was retired in favor of staying in TaskStatusExecuting through the
+// validate-and-retry sub-loop; existing rows persisted before the retirement
+// are coerced on read so the runtime never observes a removed status.
+func normalizeStatus(s string) TaskStatus {
+	if s == "validating" {
+		return TaskStatusExecuting
+	}
+	return TaskStatus(s)
+}
+
 // SQLiteTaskStore implements TaskStateStore backed by SQLite.
 type SQLiteTaskStore struct {
 	db                  *sql.DB
@@ -257,7 +268,7 @@ func (s *SQLiteTaskStore) CreateTask(task TaskState) (TaskState, error) {
 			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			task.ID, task.ChatID, task.ThreadID, task.PlannerSessionID, task.ProjectDir, task.Goal,
 			task.CurrentIdx, task.Accumulated, string(task.Status),
-			task.InterruptedBy, string(task.InterruptPolicy),
+			task.InterruptedBy, "inject",
 			string(budgetJSON), string(planJSON),
 			task.GithubIssueNumber, string(modelUsagesJSON),
 			task.CreatedAt.Format(time.RFC3339),
@@ -315,9 +326,12 @@ func (s *SQLiteTaskStore) StorePlan(taskID string, plan []SubTask) error {
 	})
 }
 
-func (s *SQLiteTaskStore) UpdateSubTask(taskID string, idx int, status SubTaskStatus, result string, tokensUsed int) error {
+// mutateSubTask is the single entry point that load-modifies-saves a sub-task
+// and runs the unified-table mirror + broadcast. Both UpdateSubTask and
+// MarkSubTaskStarted route through this helper; the only difference is whether
+// current_idx is also written.
+func (s *SQLiteTaskStore) mutateSubTask(taskID string, idx int, setCurrentIdx bool, mutate func(*SubTask)) error {
 	return s.execWithRetry(func() error {
-		// Load current plan, patch, write back
 		var planJSON string
 		if err := s.db.QueryRow(`SELECT plan_json FROM hermes_task_states WHERE id = ?`, taskID).
 			Scan(&planJSON); err != nil {
@@ -330,19 +344,24 @@ func (s *SQLiteTaskStore) UpdateSubTask(taskID string, idx int, status SubTaskSt
 		if idx < 0 || idx >= len(plan) {
 			return fmt.Errorf("sub-task index %d out of range", idx)
 		}
-		plan[idx].Status = status
-		plan[idx].Result = result
-		plan[idx].TokensUsed += tokensUsed
-		plan[idx].Attempts++
+		mutate(&plan[idx])
 
 		updated, err := json.Marshal(plan)
 		if err != nil {
 			return err
 		}
-		_, err = s.db.Exec(
-			`UPDATE hermes_task_states SET plan_json = ?, updated_at = ? WHERE id = ?`,
-			string(updated), time.Now().Format(time.RFC3339), taskID,
-		)
+		now := time.Now().Format(time.RFC3339)
+		if setCurrentIdx {
+			_, err = s.db.Exec(
+				`UPDATE hermes_task_states SET current_idx = ?, plan_json = ?, updated_at = ? WHERE id = ?`,
+				idx, string(updated), now, taskID,
+			)
+		} else {
+			_, err = s.db.Exec(
+				`UPDATE hermes_task_states SET plan_json = ?, updated_at = ? WHERE id = ?`,
+				string(updated), now, taskID,
+			)
+		}
 		if err != nil {
 			return err
 		}
@@ -354,38 +373,18 @@ func (s *SQLiteTaskStore) UpdateSubTask(taskID string, idx int, status SubTaskSt
 	})
 }
 
-func (s *SQLiteTaskStore) MarkSubTaskStarted(taskID string, idx int) error {
-	return s.execWithRetry(func() error {
-		var planJSON string
-		if err := s.db.QueryRow(`SELECT plan_json FROM hermes_task_states WHERE id = ?`, taskID).
-			Scan(&planJSON); err != nil {
-			return err
-		}
-		var plan []SubTask
-		if err := json.Unmarshal([]byte(planJSON), &plan); err != nil {
-			return err
-		}
-		if idx < 0 || idx >= len(plan) {
-			return fmt.Errorf("sub-task index %d out of range", idx)
-		}
-		plan[idx].Status = SubTaskInProgress
+func (s *SQLiteTaskStore) UpdateSubTask(taskID string, idx int, status SubTaskStatus, result string, tokensUsed int) error {
+	return s.mutateSubTask(taskID, idx, false, func(st *SubTask) {
+		st.Status = status
+		st.Result = result
+		st.TokensUsed += tokensUsed
+		st.Attempts++
+	})
+}
 
-		updated, err := json.Marshal(plan)
-		if err != nil {
-			return err
-		}
-		_, err = s.db.Exec(
-			`UPDATE hermes_task_states SET current_idx = ?, plan_json = ?, updated_at = ? WHERE id = ?`,
-			idx, string(updated), time.Now().Format(time.RFC3339), taskID,
-		)
-		if err != nil {
-			return err
-		}
-		if err := s.upsertUnifiedSubTask(taskID, idx, plan[idx]); err != nil {
-			return err
-		}
-		s.broadcastUnifiedTask(taskID)
-		return nil
+func (s *SQLiteTaskStore) MarkSubTaskStarted(taskID string, idx int) error {
+	return s.mutateSubTask(taskID, idx, true, func(st *SubTask) {
+		st.Status = SubTaskInProgress
 	})
 }
 
@@ -656,6 +655,7 @@ type rowScanner interface {
 func (s *SQLiteTaskStore) scanTask(row rowScanner) (TaskState, error) {
 	var task TaskState
 	var statusStr, policyStr, budgetJSON, planJSON, modelUsagesJSON string
+	_ = policyStr // legacy interrupt_policy column; field removed, value ignored
 	var interruptedBy sql.NullInt64
 	var createdStr, updatedStr string
 
@@ -674,8 +674,7 @@ func (s *SQLiteTaskStore) scanTask(row rowScanner) (TaskState, error) {
 		return task, err
 	}
 
-	task.Status = TaskStatus(statusStr)
-	task.InterruptPolicy = InterruptPolicy(policyStr)
+	task.Status = normalizeStatus(statusStr)
 	if interruptedBy.Valid {
 		task.InterruptedBy = &interruptedBy.Int64
 	}
@@ -711,6 +710,7 @@ func (s *SQLiteTaskStore) scanTaskRowNoArtifacts(rows *sql.Rows) (TaskState, err
 func (s *SQLiteTaskStore) scanRowsInto(rows *sql.Rows) (TaskState, error) {
 	var task TaskState
 	var statusStr, policyStr, budgetJSON, planJSON, modelUsagesJSON string
+	_ = policyStr // legacy interrupt_policy column; field removed, value ignored
 	var interruptedBy sql.NullInt64
 	var createdStr, updatedStr string
 
@@ -726,8 +726,7 @@ func (s *SQLiteTaskStore) scanRowsInto(rows *sql.Rows) (TaskState, error) {
 		return task, err
 	}
 
-	task.Status = TaskStatus(statusStr)
-	task.InterruptPolicy = InterruptPolicy(policyStr)
+	task.Status = normalizeStatus(statusStr)
 	if interruptedBy.Valid {
 		task.InterruptedBy = &interruptedBy.Int64
 	}

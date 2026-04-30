@@ -41,7 +41,6 @@ func makeIntegrationTask(id string, chatID int64) hermes.TaskState {
 		Goal:            "integration test goal",
 		Plan:            []hermes.SubTask{{ID: "s1", Description: "step 1", Status: hermes.SubTaskPending}},
 		Status:          hermes.TaskStatusPlanning,
-		InterruptPolicy: hermes.InterruptQueue,
 		TokenBudget:     hermes.TokenBudget{MaxTotalTokens: 50_000, StartedAt: time.Now()},
 	}
 }
@@ -60,7 +59,6 @@ func TestIsTerminal(t *testing.T) {
 	nonTerminal := []hermes.TaskStatus{
 		hermes.TaskStatusPlanning,
 		hermes.TaskStatusExecuting,
-		hermes.TaskStatusValidating,
 	}
 	for _, s := range nonTerminal {
 		if task.IsTerminal(s) {
@@ -90,7 +88,6 @@ func TestAllowedTransitions_planning(t *testing.T) {
 func TestAllowedTransitions_executing(t *testing.T) {
 	got := task.AllowedTransitions(hermes.TaskStatusExecuting)
 	want := map[hermes.TaskStatus]bool{
-		hermes.TaskStatusValidating:  true,
 		hermes.TaskStatusDone:        true,
 		hermes.TaskStatusFailed:      true,
 		hermes.TaskStatusInterrupted: true,
@@ -101,24 +98,6 @@ func TestAllowedTransitions_executing(t *testing.T) {
 	for _, s := range got {
 		if !want[s] {
 			t.Errorf("executing: unexpected allowed transition to %q", s)
-		}
-	}
-}
-
-func TestAllowedTransitions_validating(t *testing.T) {
-	got := task.AllowedTransitions(hermes.TaskStatusValidating)
-	want := map[hermes.TaskStatus]bool{
-		hermes.TaskStatusExecuting:   true,
-		hermes.TaskStatusDone:        true,
-		hermes.TaskStatusFailed:      true,
-		hermes.TaskStatusInterrupted: true,
-	}
-	if len(got) != len(want) {
-		t.Fatalf("validating: got %v, want keys of %v", got, want)
-	}
-	for _, s := range got {
-		if !want[s] {
-			t.Errorf("validating: unexpected allowed transition to %q", s)
 		}
 	}
 }
@@ -230,9 +209,9 @@ func TestService_Integration_Transition_Invalid_Rejected(t *testing.T) {
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	// planning → validating is not a valid transition
-	if err := svc.Transition("t-int-2", hermes.TaskStatusPlanning, hermes.TaskStatusValidating); err == nil {
-		t.Error("expected error for planning→validating, got nil")
+	// done → executing is not a valid transition (terminal states are immutable)
+	if err := svc.Transition("t-int-2", hermes.TaskStatusDone, hermes.TaskStatusExecuting); err == nil {
+		t.Error("expected error for done→executing, got nil")
 	}
 
 	got, err := svc.GetTask("t-int-2")
@@ -256,8 +235,6 @@ func TestService_Integration_FullLifecycle(t *testing.T) {
 		to   hermes.TaskStatus
 	}{
 		{hermes.TaskStatusPlanning, hermes.TaskStatusExecuting},
-		{hermes.TaskStatusExecuting, hermes.TaskStatusValidating},
-		{hermes.TaskStatusValidating, hermes.TaskStatusExecuting},
 		{hermes.TaskStatusExecuting, hermes.TaskStatusDone},
 	}
 	for _, s := range steps {

@@ -217,7 +217,6 @@ func AllowedTransitions(from hermes.TaskStatus) []hermes.TaskStatus {
 	candidates := []hermes.TaskStatus{
 		hermes.TaskStatusPlanning,
 		hermes.TaskStatusExecuting,
-		hermes.TaskStatusValidating,
 		hermes.TaskStatusDone,
 		hermes.TaskStatusFailed,
 		hermes.TaskStatusInterrupted,
