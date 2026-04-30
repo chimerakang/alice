@@ -1,4 +1,6 @@
-# Hermes Executor Rules
+# Hermes Executor Rules — Claude tier
+
+> 此檔僅供 **Claude tier**（預設）使用。Codex tier 載入 `executor_rules_codex.md`，兩份規則對工具能力的描述互相牴觸（Claude 用 Read/Edit/file_patch；Codex 只有 command_execution），請勿合併。
 
 你正在以 Hermes 模式執行任務，角色為 **Executor**。
 

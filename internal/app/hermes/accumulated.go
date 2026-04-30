@@ -8,14 +8,17 @@ import (
 
 const (
 	// cheapPathMaxBytes is the FIFO truncation limit for the cheap path.
-	// Tightened from 2 KB to 1.5 KB so accumulated stays small enough that
-	// the executor prompt does not bloat into "Prompt is too long" mid-task.
-	cheapPathMaxBytes = 1536 // 1.5 KB
+	// Loosened from 1.5 KB to 3 KB after M1 added the prior-subtask Result
+	// block to BuildExecutorPrompt: the prompt no longer relies on
+	// accumulated as the only context source, so a slightly fatter rolling
+	// summary buys back the "decision points" the conclusion-only extract
+	// was throwing away without re-introducing the geometric bloat P0 fixed.
+	cheapPathMaxBytes = 3 * 1024
 
 	// expensivePathTriggerBytes triggers a compression call when accumulated
-	// exceeds this. Tightened from 8 KB to 3 KB — by the time accumulated
-	// reaches 8 KB the compounded prompt is already too large.
-	expensivePathTriggerBytes = 3 * 1024
+	// exceeds this. Kept at 6 KB (2× cheap cap) so compression fires before
+	// the rolling buffer grows into "Prompt is too long" territory.
+	expensivePathTriggerBytes = 6 * 1024
 
 	// expensivePathTriggerCount triggers compression after this many completed
 	// sub-tasks. Tightened from 10 → 5 so long plans collapse early rather
@@ -23,11 +26,13 @@ const (
 	expensivePathTriggerCount = 5
 
 	// perSubtaskConclusionMaxBytes caps each sub-task's contribution to
-	// accumulated to its conclusion line plus light context. Aggressively
-	// drops the executor's "證據 / 未驗證 / 下一步" sections — those live in
-	// state.Plan[i].Result and the dashboard, but do not need to be replayed
-	// into every following sub-task's prompt.
-	perSubtaskConclusionMaxBytes = 320
+	// accumulated. extractConclusion keeps the "**結論**：…" line plus the
+	// first 1-2 evidence bullets — enough to reconstruct what was decided
+	// and why, without replaying the executor's "未驗證 / 下一步" sections
+	// (those live in state.Plan[i].Result and surface via the prior-subtask
+	// block in BuildExecutorPrompt). Per-subtask budget raised to 600 runes
+	// to fit conclusion + evidence in roughly one paragraph.
+	perSubtaskConclusionMaxBytes = 600
 )
 
 // AccumulatedConfig allows overriding the default thresholds via config.
@@ -58,35 +63,92 @@ func (c AccumulatedConfig) expensiveTriggerN() int {
 	return expensivePathTriggerCount
 }
 
-// conclusionPattern matches the executor's structured "**結論**：…" block. The
-// executor rules require a four-section report (結論/證據/未驗證/下一步); for
-// downstream sub-tasks we only need the conclusion — evidence/gaps/next-steps
-// belong in state.Plan[i].Result and the dashboard, not in every following
-// prompt. Both Chinese full-width and ASCII colons are tolerated.
+// conclusionPattern matches the executor's structured "**結論**：…" line.
+// Both Chinese full-width and ASCII colons are tolerated.
 var conclusionPattern = regexp.MustCompile(`\*\*結論\*\*[：:]\s*([^\n]+)`)
 
-// extractConclusion returns a compact summary of a sub-task result suitable for
-// re-injection into the next sub-task's prompt. Prefers the "**結論**：…" line
-// when present; otherwise falls back to the first non-empty line. Always
-// truncated to perSubtaskConclusionMaxBytes runes to keep the rolling
-// accumulated bounded regardless of executor verbosity.
+// evidenceSectionPattern captures the body of the structured "**證據**" block
+// up to the next bold heading or the end of the message. Used by
+// extractConclusion to lift the first 1-2 evidence bullets so accumulated
+// preserves the key decision context, not just the conclusion line.
+var evidenceSectionPattern = regexp.MustCompile(`(?s)\*\*證據\*\*[：:]\s*\n?(.*?)(?:\n\*\*[^*]+\*\*|$)`)
+
+// extractConclusion returns a compact summary of a sub-task result for
+// re-injection into the next sub-task's prompt. Output shape:
+//
+//	結論：<one-line conclusion>
+//	證據：<first evidence bullet>; <second evidence bullet>
+//
+// Conclusion-only extraction (the previous behaviour) lost the "why" so
+// downstream sub-tasks could not tell *which file at which line* the prior
+// step had touched. M4 lifts the first 1-2 evidence bullets to give the next
+// sub-task enough breadcrumbs to chain on. Falls back to the first non-empty
+// line when the structured markers are missing.
 func extractConclusion(subtaskResult string) string {
 	trimmed := strings.TrimSpace(subtaskResult)
 	if trimmed == "" {
 		return ""
 	}
+
+	conclusion := ""
 	if m := conclusionPattern.FindStringSubmatch(trimmed); len(m) >= 2 {
-		conclusion := strings.TrimSpace(m[1])
-		return "結論：" + truncateRunesAccumulated(conclusion, perSubtaskConclusionMaxBytes)
+		conclusion = strings.TrimSpace(m[1])
 	}
-	// Fallback: first non-empty line, capped.
-	for _, line := range strings.Split(trimmed, "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			return truncateRunesAccumulated(line, perSubtaskConclusionMaxBytes)
+
+	evidence := ""
+	if m := evidenceSectionPattern.FindStringSubmatch(trimmed); len(m) >= 2 {
+		evidence = pickFirstEvidenceBullets(m[1], 2)
+	}
+
+	if conclusion == "" && evidence == "" {
+		// No structured markers; first non-empty line as a last resort.
+		for _, line := range strings.Split(trimmed, "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				return truncateRunesAccumulated(line, perSubtaskConclusionMaxBytes)
+			}
+		}
+		return ""
+	}
+
+	var sb strings.Builder
+	if conclusion != "" {
+		sb.WriteString("結論：")
+		sb.WriteString(conclusion)
+	}
+	if evidence != "" {
+		if sb.Len() > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString("證據：")
+		sb.WriteString(evidence)
+	}
+	return truncateRunesAccumulated(sb.String(), perSubtaskConclusionMaxBytes)
+}
+
+// pickFirstEvidenceBullets extracts up to n leading "- " bullet items from an
+// evidence section body, joined by "; ". Stops at the first non-bullet line
+// so we don't drag stray narration into accumulated.
+func pickFirstEvidenceBullets(body string, n int) string {
+	var picked []string
+	for _, raw := range strings.Split(body, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "*") {
+			break
+		}
+		bullet := strings.TrimSpace(strings.TrimLeft(line, "-* "))
+		if bullet == "" {
+			continue
+		}
+		picked = append(picked, bullet)
+		if len(picked) >= n {
+			break
 		}
 	}
-	return ""
+	return strings.Join(picked, "; ")
 }
 
 // FailureKind labels a sub-task failure so the reporter can show whether the

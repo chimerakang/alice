@@ -107,12 +107,18 @@ func loadRulesForRole(dir string, role string, tier string) (string, error) {
 	return "", fmt.Errorf("no prompt rules found for role %q in %s", role, dir)
 }
 
+// promptRuleCandidates resolves the prompt-rule files for a given role and
+// tier. The two tiers describe different runtime tool surfaces and are not
+// interchangeable — Codex assumes shell-only command_execution, Claude
+// assumes file_patch / Read / Edit / Glob / etc. The rules contradict each
+// other on tool_hints, so we dispatch directly by tier with no fallback
+// chain (a stale fallback could load Claude rules into a Codex executor and
+// produce JSON tool_hints the Codex runner cannot honour).
 func promptRuleCandidates(role string, tier string) []string {
-	base := role + "_rules.md"
 	if strings.EqualFold(strings.TrimSpace(tier), "codex") {
-		return []string{role + "_rules_codex.md", base}
+		return []string{role + "_rules_codex.md"}
 	}
-	return []string{base}
+	return []string{role + "_rules.md"}
 }
 
 func readMD(path string) (string, error) {

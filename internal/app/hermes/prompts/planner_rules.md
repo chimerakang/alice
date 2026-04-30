@@ -1,4 +1,6 @@
-# Hermes Planner Rules
+# Hermes Planner Rules — Claude tier
+
+> 此檔僅供 **Claude tier**（預設）使用。Codex tier 載入 `planner_rules_codex.md`，兩份規則對 `tool_hints` 的要求互相牴觸，請勿合併。
 
 你正在以 Hermes 模式執行任務，角色為 **Planner**。
 

@@ -108,22 +108,32 @@ func TestLoadPromptBuilderForTier_CodexPrefersVariant(t *testing.T) {
 	}
 }
 
-func TestLoadPromptBuilderForTier_CodexFallsBackToDefault(t *testing.T) {
+func TestLoadPromptBuilderForTier_CodexDoesNotFallBackToClaudeFiles(t *testing.T) {
+	// The two tiers describe different runtime tool surfaces (Claude has
+	// Read/Edit/file_patch; Codex has only command_execution) and the
+	// rules for tool_hints contradict each other. Codex tier must NOT
+	// silently load the Claude-tier files — that would feed Codex
+	// invalid tool hints. When the codex-specific file is missing, the
+	// loader falls through to the embedded defaults instead.
 	dir := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(dir, "planner_rules.md"), []byte("default planner"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "planner_rules.md"), []byte("claude tier planner"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "executor_rules.md"), []byte("default executor"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "executor_rules.md"), []byte("claude tier executor"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
 	pb := LoadPromptBuilderForTier(dir, "codex")
-	if got := pb.ForRole(RolePlanner); got != "default planner" {
-		t.Errorf("planner rules = %q, want default fallback", got)
+	if got := pb.ForRole(RolePlanner); got == "claude tier planner" {
+		t.Errorf("planner rules leaked Claude-tier content into Codex: %q", got)
 	}
-	if got := pb.ForRole(RoleExecutor); got != "default executor" {
-		t.Errorf("executor rules = %q, want default fallback", got)
+	if got := pb.ForRole(RoleExecutor); got == "claude tier executor" {
+		t.Errorf("executor rules leaked Claude-tier content into Codex: %q", got)
+	}
+	// Embedded defaults should be in effect.
+	if got := pb.ForRole(RolePlanner); got == "" {
+		t.Error("planner rules empty; embedded default not loaded")
 	}
 }
 

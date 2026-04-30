@@ -66,10 +66,11 @@ type PlanExecuteConfig struct {
 	ContinueTimeout time.Duration
 
 	// OnSubTaskFailurePause is invoked when a sub-task ends with !success and
-	// gives the operator a chance to retry, skip, or abort the whole task
-	// before the engine advances. Return FailureSkip to keep the legacy
-	// silent-advance behaviour. Nil callback also means silent advance.
-	OnSubTaskFailurePause func(ctx context.Context, idx, total int, subTask hermes.SubTask, errText string, kind hermes.FailureKind) FailureDecision
+	// gives the operator a chance to retry, skip, abort, or retry-with-hint
+	// before the engine advances. Return FailurePauseChoice{Decision: FailureSkip}
+	// to keep the legacy silent-advance behaviour; nil callback also means
+	// silent skip.
+	OnSubTaskFailurePause func(ctx context.Context, idx, total int, subTask hermes.SubTask, errText string, kind hermes.FailureKind) FailurePauseChoice
 
 	OnDone func(ctx context.Context, state hermes.TaskState)
 }
@@ -88,6 +89,14 @@ const (
 	// FailureAbort stops the entire task with TaskStatusFailed.
 	FailureAbort
 )
+
+// FailurePauseChoice is the operator's response to a failure pause. Hint is
+// non-empty only when the operator picked the "✏️ 修正方向" path; the engine
+// prepends it to the next executor prompt as a Markdown "OperatorHint" block.
+type FailurePauseChoice struct {
+	Decision FailureDecision
+	Hint     string
+}
 
 // PlanExecuteEngine plans a goal and executes each sub-task through DirectEngine.
 type PlanExecuteEngine struct {
@@ -298,6 +307,11 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 		e.onPlanReady(ctx, state, tasks)
 
 		completed := 0
+		// pendingOperatorHint carries the "✏️ 修正方向" text the operator
+		// supplied at the previous failure pause; it is consumed by the next
+		// executeSubTask call and cleared so it never spills into a second
+		// sub-task.
+		var pendingOperatorHint string
 		blockCount := 0
 		autoFixedCount := 0
 		reviewMode := e.reviewMode()
@@ -320,7 +334,9 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 			}
 
 			subTask := tasks[idx]
-			finalStatus, finalText, finalTokens, success, subMetrics := e.executeSubTask(ctx, taskID, goal, state, tasks, idx, subTask, cc, reviewMode, strictCfg)
+			operatorHint := pendingOperatorHint
+			pendingOperatorHint = ""
+			finalStatus, finalText, finalTokens, success, subMetrics := e.executeSubTask(ctx, taskID, goal, state, tasks, idx, subTask, cc, reviewMode, strictCfg, operatorHint)
 			if subMetrics.blockedOnce {
 				blockCount++
 			}
@@ -350,14 +366,19 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 				// Failure pause: ask the operator whether to retry, skip, or
 				// abort. Without a callback wired, fall through to the legacy
 				// silent-skip behaviour.
-				decision := FailureSkip
+				choice := FailurePauseChoice{Decision: FailureSkip}
 				if cb := e.cfg.OnSubTaskFailurePause; cb != nil {
 					kind := hermes.ClassifyFailure(finalText)
-					decision = cb(ctx, idx, len(tasks), subTask, finalText, kind)
+					choice = cb(ctx, idx, len(tasks), subTask, finalText, kind)
 				}
-				switch decision {
+				switch choice.Decision {
 				case FailureRetry:
-					log.Printf("[plan_execute] failure pause: retry idx=%d task=%s", idx, taskID)
+					if hint := strings.TrimSpace(choice.Hint); hint != "" {
+						log.Printf("[plan_execute] failure pause: retry-with-hint idx=%d task=%s hint=%.60q", idx, taskID, hint)
+						pendingOperatorHint = hint
+					} else {
+						log.Printf("[plan_execute] failure pause: retry idx=%d task=%s", idx, taskID)
+					}
 					idx-- // re-run same idx; for-loop will idx++
 					continue
 				case FailureAbort:
@@ -671,7 +692,7 @@ type subTaskExecMetrics struct {
 	autoFixed   bool
 }
 
-func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal string, state hermes.TaskState, tasks []hermes.SubTask, idx int, subTask hermes.SubTask, cc *ChatContext, reviewMode ReviewMode, strictCfg StrictModeConfig) (hermes.SubTaskStatus, string, int, bool, subTaskExecMetrics) {
+func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal string, state hermes.TaskState, tasks []hermes.SubTask, idx int, subTask hermes.SubTask, cc *ChatContext, reviewMode ReviewMode, strictCfg StrictModeConfig, operatorHint string) (hermes.SubTaskStatus, string, int, bool, subTaskExecMetrics) {
 	attempts := 0
 	reviewFeedback := ""
 	totalAttempts := strictCfg.MaxRetriesPerSub + 1
@@ -687,6 +708,13 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 		}
 
 		prompt := buildSubTaskGoal(e.cfg.ExecutorRules, goal, state.Accumulated, idx, len(tasks), subTask, reviewFeedback)
+		// On the very first attempt of this executeSubTask call, fold in any
+		// operator hint the failure-pause flow handed us. The hint is only
+		// honoured for the outer retry's first attempt — strict review's
+		// inner retry loop has its own reviewFeedback path.
+		if attempts == 0 && strings.TrimSpace(operatorHint) != "" {
+			prompt = "[Operator hint — apply before continuing]\n" + strings.TrimSpace(operatorHint) + "\n\n" + prompt
+		}
 		e.direct.BindSubTask(subTask)
 		result, execErr := e.direct.Run(ctx, prompt, cc, subTaskSink{})
 		if execErr != nil {

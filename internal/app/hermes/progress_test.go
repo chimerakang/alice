@@ -2,9 +2,43 @@ package hermes
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestPaginateForTelegram(t *testing.T) {
+	// Single short message: one page, no footer.
+	pages := paginateForTelegram([]string{"hello", "world"}, 100)
+	if len(pages) != 1 {
+		t.Fatalf("got %d pages, want 1", len(pages))
+	}
+	if !strings.Contains(pages[0], "（") == false { // expect no pagination footer
+		// already correct; placeholder for clarity
+	}
+	if strings.Contains(pages[0], "/2") {
+		t.Errorf("single page should not carry a page footer: %q", pages[0])
+	}
+
+	// Long content forces multi-page; each page must stay under cap and
+	// carry a (n/m) footer.
+	bigLine := strings.Repeat("a", 30)
+	var lines []string
+	for i := 0; i < 20; i++ {
+		lines = append(lines, bigLine)
+	}
+	pages = paginateForTelegram(lines, 100)
+	if len(pages) < 2 {
+		t.Fatalf("expected pagination, got %d pages", len(pages))
+	}
+	for i, p := range pages {
+		footer := fmt.Sprintf("（%d/%d）", i+1, len(pages))
+		if !strings.Contains(p, footer) {
+			t.Errorf("page %d missing footer %q: %q", i, footer, p)
+		}
+	}
+}
 
 func TestTextProgressReporterMinimalEmitsPlanFailureAndDone(t *testing.T) {
 	type event struct {

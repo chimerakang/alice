@@ -218,8 +218,15 @@ type hermesCoord struct {
 	// failure waiting for the operator's retry/skip/abort decision. Buffered
 	// so the callback handler never blocks; the engine consumes one value
 	// per pause.
-	failureDecisionCh chan appengine.FailureDecision
+	failureDecisionCh chan appengine.FailurePauseChoice
 	failureCtx        *failurePauseCtx // metadata about the paused sub-task for UI rendering
+
+	// awaitingFailureHint is set when the operator clicked "✏️ 修正方向" and
+	// the bot is waiting for a free-form text reply that will be packaged
+	// as the FailurePauseChoice.Hint. handleMessage intercepts the next
+	// non-command text and forwards it through failureDecisionCh.
+	awaitingFailureHint    bool
+	awaitingHintCancelTime time.Time
 }
 
 // failurePauseCtx carries the data attached to the current failure pause so
@@ -960,6 +967,13 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	// user to confirm, intercept messages that start with "繼續" (or "continue")
 	// and signal the channel instead of routing as a new task.
 	if t.trySignalBudgetContinue(key, text) {
+		return
+	}
+
+	// Failure-pause hint capture: when the operator just clicked
+	// "✏️ 修正方向" the next text message is the hint for the retry, not a
+	// new conversation turn. Forward it through the pause channel.
+	if t.trySignalHermesFailureHint(key, text) {
 		return
 	}
 
@@ -3910,7 +3924,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	}
 
 	continueCh := make(chan struct{}, 1)
-	failureDecisionCh := make(chan appengine.FailureDecision, 1)
+	failureDecisionCh := make(chan appengine.FailurePauseChoice, 1)
 	agent := t.getAgent(key)
 	if oneShot {
 		// Issue-launched tasks start with a fresh executor CLI session so the
@@ -5608,8 +5622,8 @@ const hermesFailureDecisionTimeout = 10 * time.Minute
 // passed to PlanExecuteConfig. It posts an inline-button message describing
 // the failure and blocks until the operator clicks one of the buttons or the
 // timeout expires.
-func (t *TelegramBot) makeHermesFailureDecisionCallback(key chatKey, ch chan appengine.FailureDecision) func(ctx context.Context, idx, total int, sub hermes.SubTask, errText string, kind hermes.FailureKind) appengine.FailureDecision {
-	return func(ctx context.Context, idx, total int, sub hermes.SubTask, errText string, kind hermes.FailureKind) appengine.FailureDecision {
+func (t *TelegramBot) makeHermesFailureDecisionCallback(key chatKey, ch chan appengine.FailurePauseChoice) func(ctx context.Context, idx, total int, sub hermes.SubTask, errText string, kind hermes.FailureKind) appengine.FailurePauseChoice {
+	return func(ctx context.Context, idx, total int, sub hermes.SubTask, errText string, kind hermes.FailureKind) appengine.FailurePauseChoice {
 		// Drain stale signals from a prior pause before announcing this one.
 		select {
 		case <-ch:
@@ -5625,6 +5639,7 @@ func (t *TelegramBot) makeHermesFailureDecisionCallback(key chatKey, ch chan app
 				total:   total,
 				subDesc: sub.Description,
 			}
+			hc.awaitingFailureHint = false
 		}
 		t.hermesMu.Unlock()
 
@@ -5650,39 +5665,37 @@ func (t *TelegramBot) makeHermesFailureDecisionCallback(key chatKey, ch chan app
 		btns := [][]map[string]interface{}{
 			{
 				{"text": "🔁 重試", "callback_data": fmt.Sprintf("hermes:fail:retry:%s:%d", taskID, idx)},
-				{"text": "⏭ 跳過", "callback_data": fmt.Sprintf("hermes:fail:skip:%s:%d", taskID, idx)},
+				{"text": "✏️ 修正方向", "callback_data": fmt.Sprintf("hermes:fail:adjust:%s:%d", taskID, idx)},
 			},
 			{
+				{"text": "⏭ 跳過", "callback_data": fmt.Sprintf("hermes:fail:skip:%s:%d", taskID, idx)},
 				{"text": "🛑 中止任務", "callback_data": fmt.Sprintf("hermes:fail:abort:%s:%d", taskID, idx)},
 			},
 		}
 		t.sendMenuMessage(key, header, btns)
 
-		select {
-		case d := <-ch:
+		clear := func() {
 			t.hermesMu.Lock()
 			if hc != nil {
 				hc.failureCtx = nil
+				hc.awaitingFailureHint = false
 			}
 			t.hermesMu.Unlock()
-			return d
+		}
+
+		select {
+		case choice := <-ch:
+			clear()
+			return choice
 		case <-time.After(hermesFailureDecisionTimeout):
 			log.Printf("[hermes] failure pause timeout (key chat=%d thread=%d task=%s idx=%d) — defaulting to skip",
 				key.chatID, key.threadID, taskID, idx)
 			t.send(key, fmt.Sprintf("⏰ 失敗暫停超時（%v），自動跳過子任務 %d/%d。", hermesFailureDecisionTimeout, idx+1, total))
-			t.hermesMu.Lock()
-			if hc != nil {
-				hc.failureCtx = nil
-			}
-			t.hermesMu.Unlock()
-			return appengine.FailureSkip
+			clear()
+			return appengine.FailurePauseChoice{Decision: appengine.FailureSkip}
 		case <-ctx.Done():
-			t.hermesMu.Lock()
-			if hc != nil {
-				hc.failureCtx = nil
-			}
-			t.hermesMu.Unlock()
-			return appengine.FailureSkip
+			clear()
+			return appengine.FailurePauseChoice{Decision: appengine.FailureSkip}
 		}
 	}
 }
@@ -5719,6 +5732,19 @@ func (t *TelegramBot) handleHermesFailureDecisionCallback(key chatKey, queryID, 
 		return true
 	}
 
+	// "adjust" parks the pause in awaiting-hint mode and waits for the next
+	// text message in this chat. The choice is not sent to the channel yet;
+	// trySignalHermesFailureHint forwards it once the operator replies.
+	if action == "adjust" {
+		t.hermesMu.Lock()
+		hc.awaitingFailureHint = true
+		hc.awaitingHintCancelTime = time.Now().Add(hermesFailureDecisionTimeout)
+		t.hermesMu.Unlock()
+		t.answerCallbackQuery(queryID, "✏️ 請輸入修正方向")
+		t.send(key, fmt.Sprintf("✏️ 請在這個 topic 輸入「修正方向」一句話（10 分鐘內）。\n收到後會以此為提示重新執行子任務 #%d。", hc.failureCtx.idx+1))
+		return true
+	}
+
 	var decision appengine.FailureDecision
 	var ack string
 	switch action {
@@ -5737,13 +5763,50 @@ func (t *TelegramBot) handleHermesFailureDecisionCallback(key chatKey, queryID, 
 	}
 
 	select {
-	case hc.failureDecisionCh <- decision:
+	case hc.failureDecisionCh <- appengine.FailurePauseChoice{Decision: decision}:
 		t.answerCallbackQuery(queryID, ack)
 	default:
 		// Channel full means a decision was already sent; ignore this click.
 		t.answerCallbackQuery(queryID, "（已收到上一次選擇）")
 	}
 	return true
+}
+
+// trySignalHermesFailureHint inspects an incoming text message and, when the
+// active Hermes coord is awaiting an operator hint after a "✏️ 修正方向"
+// click, forwards it as FailurePauseChoice{Retry, hint}. Returns true when
+// the message was consumed so handleMessage skips downstream routing.
+func (t *TelegramBot) trySignalHermesFailureHint(key chatKey, text string) bool {
+	t.hermesMu.RLock()
+	hc, ok := t.hermesCoords[key]
+	t.hermesMu.RUnlock()
+	if !ok || hc == nil || !hc.awaitingFailureHint || hc.failureDecisionCh == nil {
+		return false
+	}
+	hint := strings.TrimSpace(text)
+	if hint == "" {
+		return false
+	}
+
+	t.hermesMu.Lock()
+	hc.awaitingFailureHint = false
+	t.hermesMu.Unlock()
+
+	select {
+	case hc.failureDecisionCh <- appengine.FailurePauseChoice{Decision: appengine.FailureRetry, Hint: hint}:
+		t.send(key, fmt.Sprintf("✅ 已收到修正方向，將以下提示重新執行子任務：\n%s", truncateRunesText(hint, 280)))
+	default:
+		// Channel full → another decision raced ahead. Treat as no-op.
+	}
+	return true
+}
+
+func truncateRunesText(s string, max int) string {
+	rs := []rune(s)
+	if len(rs) <= max {
+		return s
+	}
+	return string(rs[:max]) + "…"
 }
 
 func (t *TelegramBot) handleHermesCallback(key chatKey, queryID, data string) {

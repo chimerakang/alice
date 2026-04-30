@@ -230,7 +230,54 @@ func (r *TextProgressReporter) OnDone(state TaskState) {
 		lines = append(lines, "", summary.GenerateSummary())
 	}
 
-	r.sendFn(join(lines), true)
+	// Telegram caps each text message at 4096 UTF-8 chars. Long plans
+	// (15-step issue checklists) easily blow past that and Telegram returns
+	// 400 "message is too long", silently dropping the entire OnDone
+	// summary. paginate splits on logical line breaks under telegramMessageMaxRunes.
+	for i, page := range paginateForTelegram(lines, telegramMessageMaxRunes) {
+		// Notify only on the first page so the user gets one ping, not three.
+		r.sendFn(page, i == 0)
+	}
+}
+
+// telegramMessageMaxRunes leaves headroom under Telegram's 4096-char limit so
+// emoji-heavy summaries (each emoji counts as 2-4 bytes) stay well within
+// bounds even after sanitiseUTF8 rewrites.
+const telegramMessageMaxRunes = 3500
+
+// paginateForTelegram splits a slice of summary lines into chunks that each
+// fit under maxRunes. Returns at least one page (possibly empty when input
+// is empty). Adds a "(n/m)" footer to each page when more than one page is
+// produced so the operator can see they have a multi-part summary.
+func paginateForTelegram(lines []string, maxRunes int) []string {
+	if len(lines) == 0 {
+		return []string{""}
+	}
+
+	var pages []string
+	var current []string
+	currentRunes := 0
+	for _, line := range lines {
+		lineRunes := len([]rune(line)) + 1 // +1 for the join newline
+		if currentRunes+lineRunes > maxRunes && len(current) > 0 {
+			pages = append(pages, join(current))
+			current = current[:0]
+			currentRunes = 0
+		}
+		current = append(current, line)
+		currentRunes += lineRunes
+	}
+	if len(current) > 0 {
+		pages = append(pages, join(current))
+	}
+
+	if len(pages) <= 1 {
+		return pages
+	}
+	for i := range pages {
+		pages[i] = fmt.Sprintf("%s\n\n（%d/%d）", pages[i], i+1, len(pages))
+	}
+	return pages
 }
 
 func hasAnyResult(plan []SubTask) bool {
