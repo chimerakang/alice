@@ -143,7 +143,99 @@ d. 跨日報表：每日 cache token 總量 / cost 估算 / walking-agent on/off
 
 **前置條件**：Phase 2.1（Planner --resume）已落地。Phase 2.5（partial-retry）跟 walking-agent 完全正交。
 
-### 2.6 預設啟用 Walking Agent（Hermes Phase 2 rollout）
+### 2.6 跨 Run 狀態繼承（最高優先；最大紅利）
+
+**症狀**：Issue #305（asgard 加 2 個欄位 + migration + 1 個 e2e 測試）跑了 3-4 次 Hermes，累積 ~6M tokens。每次跑的 Planner / Executor 都不知道上次的進度，整個 issue 從「讀檔案理解結構」開始重做：
+
+| Run | 時長 | sub-task | 用量 | 實際做了什麼 |
+|---|---|---|---|---|
+| 1 | 29 min | 8/10 | (撞 Max 配額) | 加欄位 + proto + migration（核心工作）|
+| 2 | 7 min | 4/4 | 3.4M | 補 e2e 測試（**要先讀 3 個檔案再寫**）|
+| 3 | 5 min | 4/4 | 2.7M | 驗證 e2e 測試存在 + 跑測試（**已經測過了**）|
+| 4 | 進行中 | 4 | ? | 又一次驗證 |
+
+Run 2 / 3 / 4 的多數 sub-task 都是「Read X to understand Y」「Run go test to verify Z」——上次跑完的東西這次再讀一次、再跑一次。
+
+**根因**：Hermes 啟動時 Planner 只看到 issue body + repo 路徑，沒有：
+- 上次 Run 留下的工作記錄（Run 1 完成了什麼）
+- 當前 git diff（要做的事是否已 commit）
+- 當前 build / test 狀態（測試是否已綠）
+- Issue body 勾選表狀態（哪幾項已勾）
+
+於是每次都規劃完整 4-10 個 sub-task「從零驗證」。
+
+**設計選項**：
+
+**選項 A：Pre-flight check（Haiku 快查）**
+- Hermes 啟動前先跑一個輕量 Haiku 呼叫
+- 餵 issue body + git diff + git log -10 + build/test 狀態
+- 讓 Haiku 評估「issue 完成度 0-100%」
+- 完成度 > 80%：直接結束，回報「issue 似乎已完成，請人工確認」
+- 完成度 < 80%：把 Haiku 的「已完成項 / 待做項」分析塞進 Planner 的 goal context，讓 Planner 規劃時跳過已完成部分
+
+預期效果：你的案例裡 Run 2/3/4 都會被 Pre-flight 直接 skip，省 8M+ tokens。
+
+**選項 B：Issue 勾選表自動回讀**
+- Issue body 含 `- [x]` / `- [ ]` 列表時，Planner 規則明確指示「勾選的不重做」
+- 規劃時排除已勾選項目
+- 完成新項後**自動回 issue 勾選**（Github Integration 已有部分能力）
+
+預期效果：對於有勾選表的 issue（asgard 大量採用此格式），規劃精度大幅提升。
+
+**選項 C：Repo state snapshot**
+- Hermes 啟動時自動跑：
+  - `git status --porcelain`（未 commit 的改動）
+  - `git diff --stat HEAD~5`（最近 5 個 commit 的變動範圍）
+  - `git log --oneline -10`（recent commits — 看是否包含本 issue 修法）
+  - `go build ./... 2>&1 | tail -5` / `make test 2>&1 | tail` 狀態（如有）
+- 把這些塞進 Planner 的 goal pre-amble
+- Planner 規劃時參考實際 repo 狀態，避免規劃「已經做過」的步驟
+
+**建議**：A + B + C 同時做，協同。最便宜且立刻見效是 **B（issue 勾選表）**——只要動 Planner 的 prompt 加幾句話。然後是 **A（pre-flight Haiku）** 因為 Haiku 一次呼叫成本 < $0.01，能擋掉整個誤觸發 run。**C 最徹底但最大改動**。
+
+**預期收益**：Issue #305 案例如果 Run 2/3/4 都被 Pre-flight 攔下，省 ~8M tokens（占當天 Claude 用量的相當比例）。對「user 重複 /retry / 追接 hermes」這個用戶常見模式，這條路徑收益最大。
+
+**風險**：
+- A 可能 false positive 把真正需要做的工作也 skip 掉 → 需要保留 `--force` 旁路
+- B 依賴 issue body 格式工整 → 對沒勾選表的 issue 沒幫助
+- C 要做 git/build 探測，本身有開銷（雖然遠小於整個 Hermes run）
+
+### 2.7 Sub-task granularity threshold（高優先；簡單）
+
+**症狀**：同 #305 案例，Planner 對「補一個 e2e 測試」這種人類眼中**單一動作**的工作，產出 4 個 sub-task：
+1. Read 測試檔看 pattern
+2. Read source 看 function signature
+3. Write 測試
+4. Run 測試
+
+每個 sub-task 自己一個 Executor + Reviewer 全套（Reviewer 跨 backend），4 個 sub-task = 4× Reviewer cold start + 4× Executor cold/walking start。
+
+**設計**：在 PlannerSession 加一個顯式規則：「**對於『新增 1 個檔案 / 補 1 個測試 / 改 1 個 function』這類單一動作，回 1 個 sub-task** with description 含『先讀必要 context、寫、跑驗證』」。Planner_rules.md 加一條：
+
+```
+SINGLE-ACTION RULE:
+If the user goal is "add 1 test", "fix 1 function", "rename 1 symbol",
+"add 1 field" — return ONE sub-task with description that bundles all
+the natural steps (read → modify → verify). Do not split read/write/
+verify into separate sub-tasks; the Executor's tool chain handles
+that internally within one call.
+
+Anti-pattern (over-decomposition):
+  s1: Read foo.go to understand
+  s2: Add field X to foo.go
+  s3: Run go build to verify
+This wastes Reviewer cold-start × 3.
+
+Correct (bundled):
+  s1: Add field X to foo.go (read context first, then edit, then
+       run go build to verify; finalize when build green)
+```
+
+**預期效果**：Run 2 / Run 3 的 4 sub-task 應該被壓成 1 個。Reviewer 開銷從 4× 降到 1×。
+
+**風險**：低，純 Planner prompt 調整。可以 A/B 測（先在 .md 加註，看實際 Plan 是否變少）。
+
+### 2.8 預設啟用 Walking Agent（Hermes Phase 2 rollout）
 
 按 [hermes-walking-agent.md](hermes-walking-agent.md) 的 rollout 章節：
 
@@ -159,20 +251,32 @@ d. 跨日報表：每日 cache token 總量 / cost 估算 / walking-agent on/off
 ```
 walking-agent (Phase 1)
     │
-    ├─► 2.1 Planner --resume   (low risk, low impact path; do early)
+    ├─► 2.1 Planner --resume      ✅ implemented
     │
     ├─► 2.2 Reviewer in-session study
     │       ├── if score不退步 ─► implement (medium impact)
     │       └── if 退步 ─► keep current (no-op)
     │
-    ├─► 2.3 FSM 簡化           (no cost impact, debt cleanup; do anytime)
+    ├─► 2.3 FSM 簡化              (no cost impact, debt cleanup; do anytime)
     │
-    ├─► 2.4 Cache hit monitoring (foundational; should precede 2.5 default-on)
+    ├─► 2.4 Cache hit monitoring  (foundational; should precede 2.8 default-on)
     │
-    └─► 2.5 Default-on rollout  (gated on 2.4 + 1-2 week soak)
+    ├─► 2.5 Partial re-plan retry (#149 6c2ad92 partial done; full design pending)
+    │
+    ├─► 2.6 跨 Run 狀態繼承        (HIGHEST PRIORITY — biggest realised waste)
+    │       ├─► 2.6.A Pre-flight Haiku check
+    │       ├─► 2.6.B Issue 勾選表回讀
+    │       └─► 2.6.C Repo state snapshot
+    │
+    ├─► 2.7 Sub-task granularity  (Planner prompt tweak; cheap)
+    │
+    └─► 2.8 Default-on rollout    (gated on 2.4 + 1-2 week soak)
 ```
 
-依賴關係：2.4 應該在 2.5 之前做，不然 default-on 之後出問題沒儀表板看。2.1 / 2.2 / 2.3 互相獨立，可平行排程。
+依賴關係：
+- **2.4 應該在 2.8 之前做**——不然 default-on 之後出問題沒儀表板看
+- **2.6 / 2.7 互相獨立**，且都跟 walking-agent / 2.1 / 2.2 正交，可平行排程
+- 2.6 / 2.7 的收益**比 walking-agent 本身可能還大**，因為它們處理的是「issue 重複跑」這個結構性浪費，而非單次 run 內部的優化
 
 ## 決策點（Phase 1 真實數據驅動）
 
