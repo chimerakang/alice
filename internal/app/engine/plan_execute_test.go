@@ -411,7 +411,12 @@ func TestPlanExecuteEngineUsesValidatingDuringTaskReviewRetry(t *testing.T) {
 		TaskRetry:             TaskRetryConfig{Enabled: true, ScoreThreshold: 70, MaxTaskRetries: 1},
 	}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
 
-	taskID, err := engine.Start(context.Background(), "complex retry goal", NewChatContext(42, 0, "/repo"))
+	// Goal must contain an implementation verb so hermes.ClassifyGoal returns
+	// GoalNeedsPlanner — otherwise the Complexity Gate synthesises a single
+	// sub-task and skips the planner + review entirely. We're specifically
+	// exercising the per-task review-and-retry loop, which only fires when
+	// the plan has >= ReviewMinSubTasks (2) sub-tasks.
+	taskID, err := engine.Start(context.Background(), "implement complex retry goal", NewChatContext(42, 0, "/repo"))
 	if err != nil {
 		t.Fatalf("Start: %v", err)
 	}
@@ -432,8 +437,15 @@ func TestPlanExecuteEngineUsesValidatingDuringTaskReviewRetry(t *testing.T) {
 	if !reflect.DeepEqual(store.statuses, wantStatuses) {
 		t.Fatalf("statuses:\n got %#v\nwant %#v", store.statuses, wantStatuses)
 	}
-	if reviewPhase.calls != 1 || planCalls != 1 || len(runner.prompts) != 3 {
-		t.Fatalf("calls: review=%d plan=%d runner=%d", reviewPhase.calls, planCalls, len(runner.prompts))
+	// With NeedsPlanner-classified goal both attempts call the planner and
+	// run all sub-tasks, then review. Pre-fix this test exercised a bogus
+	// path where the Complexity Gate skipped the planner on attempt 0 and
+	// the runReview-skipped-review-was-treated-as-fail bug triggered the
+	// re-plan; that path is gone (see task_retry.go: empty Verdict no longer
+	// triggers retry).
+	if reviewPhase.calls != 2 || planCalls != 2 || len(runner.prompts) != 4 {
+		t.Fatalf("calls: review=%d plan=%d runner=%d (want review=2 plan=2 runner=4)",
+			reviewPhase.calls, planCalls, len(runner.prompts))
 	}
 }
 
