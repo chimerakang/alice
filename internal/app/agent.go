@@ -425,13 +425,13 @@ type Agent struct {
 	// Read via LastCallMetrics() so PlanExecuteEngine can attribute Executor
 	// tokens to the actual model used (otherwise per-model breakdown only
 	// captures the Planner and labels Executor work as "Unknown").
-	lastCallMu          sync.Mutex
-	lastCallModel       string
-	lastCallInputT      int
-	lastCallOutputT     int
-	lastCallCost        float64 // per-call USD cost (from ps.recordCallCost) for #148 1E
-	lastCallCacheRead   int     // cache_read_input_tokens of last call (#149 watermark)
-	lastCallCacheWrite  int     // cache_creation_input_tokens of last call (#149 watermark)
+	lastCallMu         sync.Mutex
+	lastCallModel      string
+	lastCallInputT     int
+	lastCallOutputT    int
+	lastCallCost       float64 // per-call USD cost (from ps.recordCallCost) for #148 1E
+	lastCallCacheRead  int     // cache_read_input_tokens of last call (#149 watermark)
+	lastCallCacheWrite int     // cache_creation_input_tokens of last call (#149 watermark)
 
 	// suppressMemoryBridge skips the general-memory + recent-message bridge
 	// injected on session/model switches. Hermes Executor calls already carry
@@ -1086,12 +1086,12 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 		cancel()
 	}()
 
-	planFn := func(ctx context.Context, _ string, projectDir string) (hermes.CallPlanResult, error) {
+	planFn := func(ctx context.Context, _ string, projectDir, sessionID string) (hermes.CallPlanResult, error) {
 		if onUpdate != nil {
 			onUpdate(fmt.Sprintf("🧠 Phase 1: Planning with %s...", modelStatusName(a.planModel)), false)
 		}
 		log.Printf("[agent] plan/execute via PlanExecuteEngine: calling plan model=%s, project=%s", a.planModel, projectDir)
-		planResp, err := a.client.CallPlan(ctx, opusPlanPrompt(userMessage), projectDir, a.planModel, func(contentType, text string) {
+		planResp, err := a.client.CallPlan(ctx, opusPlanPrompt(userMessage), projectDir, sessionID, a.planModel, func(contentType, text string) {
 			if onUpdate != nil && contentType == "text" && text != "" {
 				preview := text
 				if len(preview) > 100 {
@@ -1126,7 +1126,7 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 		return hermes.CallPlanResult{
 			Text:         "```json\n" + string(raw) + "\n```",
 			SessionID:    planResp.SessionID,
-			InputTokens:  planResp.Usage.InputTokens,
+			InputTokens:  planResp.TotalInputTokensWithCache(),
 			OutputTokens: planResp.Usage.OutputTokens,
 			CostUSD:      cost,
 		}, nil

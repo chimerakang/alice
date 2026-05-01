@@ -32,6 +32,13 @@ type hermesExecutorRunner struct {
 	// must clear that model's session even with walkingEnabled — model
 	// boundaries are hard cache-key separators.
 	lastWalkingModel string
+	// forceFreshNext clears the target model session on the next Run even when
+	// walking is enabled and the model has not changed. Used for first sub-task,
+	// watermark resets, and retry paths that intentionally send a cold prompt.
+	forceFreshNext bool
+	// walkingModelsSeen records model sessions opened during the current walking
+	// task so SetWalkingEnabled(false) can enforce the task boundary.
+	walkingModelsSeen map[string]bool
 }
 
 func newHermesExecutorRunner(agent *Agent, executorModel, heavyExecutorModel string) *hermesExecutorRunner {
@@ -47,10 +54,25 @@ func newHermesExecutorRunner(agent *Agent, executorModel, heavyExecutorModel str
 // task end so subsequent direct (non-Hermes) work doesn't accidentally inherit
 // the flag.
 func (r *hermesExecutorRunner) SetWalkingEnabled(v bool) {
+	if !v && r.walkingEnabled {
+		for model := range r.walkingModelsSeen {
+			if model != "" {
+				r.agent.ClearSessionForModel(model)
+			}
+		}
+	}
 	r.walkingEnabled = v
 	if !v {
 		r.lastWalkingModel = ""
+		r.forceFreshNext = false
+		r.walkingModelsSeen = nil
+	} else if r.walkingModelsSeen == nil {
+		r.walkingModelsSeen = make(map[string]bool)
 	}
+}
+
+func (r *hermesExecutorRunner) ForceFreshSession() {
+	r.forceFreshNext = true
 }
 
 // BindSubTask records the sub-task that the next Run call will execute.
@@ -94,7 +116,7 @@ func (r *hermesExecutorRunner) Run(msg string, onUpdate func(string, bool)) (str
 	//   Reset CLI session before each sub-task. The engine rebuilds full
 	//   context (goal + accumulated + current subtask) into the prompt each
 	//   call, so cross-subtask session continuity would balloon the transcript
-	//   ("Prompt is too long" mode, gladsheim #108).
+	//   ("Prompt is too long" mode tracked by #149).
 	//
 	// Walking (walkingEnabled=true):
 	//   Keep the session alive across same-model sub-tasks so prompt cache and
@@ -107,7 +129,23 @@ func (r *hermesExecutorRunner) Run(msg string, onUpdate func(string, bool)) (str
 			log.Printf("[hermes.walking] model changed %q -> %q, clearing prior session", r.lastWalkingModel, model)
 			r.agent.ClearSessionForModel(r.lastWalkingModel)
 		}
+		if r.forceFreshNext {
+			if model != "" {
+				log.Printf("[hermes.walking] forcing fresh session model=%q", model)
+				r.agent.ClearSessionForModel(model)
+			} else {
+				log.Printf("[hermes.walking] forcing fresh session")
+				r.agent.ClearSession()
+			}
+			r.forceFreshNext = false
+		}
 		r.lastWalkingModel = model
+		if model != "" {
+			if r.walkingModelsSeen == nil {
+				r.walkingModelsSeen = make(map[string]bool)
+			}
+			r.walkingModelsSeen[model] = true
+		}
 	} else if model != "" {
 		r.agent.ClearSessionForModel(model)
 	} else {

@@ -384,15 +384,19 @@ func (c *CodexClient) CallStream(
 	return resp, err
 }
 
-// CallPlan implements Client — single-turn planning, no session resume, no tool callbacks.
+// CallPlan implements Client — planning guard, optional session resume, no tool callbacks.
 // Codex has no --max-turns flag, so we prepend a strong "no tool execution" guard to the prompt.
 // The runCodexStream call passes a no-op onToolUse so any tool events that slip through are silently dropped.
-func (c *CodexClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+func (c *CodexClient) CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
 	model := c.Model
 	if modelOverride != "" {
 		model = modelOverride
 	}
 	guarded := codexPlanGuard + message
 	noopTool := func(string, map[string]interface{}) {}
-	return c.runCodexStream(ctx, guarded, projectDir, "", model, noopTool, onContent)
+	resp, err := c.runCodexStream(ctx, guarded, projectDir, sessionID, model, noopTool, onContent)
+	if err != nil && sessionID != "" && strings.Contains(err.Error(), "codex exec error") {
+		return resp, fmt.Errorf("%w: %s: %v", ErrSessionUnavailable, sessionID, err)
+	}
+	return resp, err
 }

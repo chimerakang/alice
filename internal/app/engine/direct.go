@@ -60,6 +60,15 @@ func (e *DirectEngine) SetWalkingEnabled(enabled bool) {
 	}
 }
 
+// ForceFreshSession asks the runner to clear the target model session before
+// the next Run call. This is used by walking-agent mode when the engine needs a
+// cold prompt without disabling walking for the rest of the task.
+func (e *DirectEngine) ForceFreshSession() {
+	if w, ok := e.runner.(WalkingSessionResettable); ok {
+		w.ForceFreshSession()
+	}
+}
+
 func (e *DirectEngine) Run(ctx context.Context, goal string, cc *ChatContext, prog ProgressSink) (Result, error) {
 	start := time.Now()
 	if err := ctx.Err(); err != nil {

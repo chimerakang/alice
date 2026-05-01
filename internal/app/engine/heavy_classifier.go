@@ -56,3 +56,10 @@ type SubTaskBindable interface {
 type WalkingToggleable interface {
 	SetWalkingEnabled(enabled bool)
 }
+
+// WalkingSessionResettable is implemented by walking runners that can force the
+// next Run call to start from a fresh model session while keeping walking mode
+// enabled for subsequent sub-tasks.
+type WalkingSessionResettable interface {
+	ForceFreshSession()
+}

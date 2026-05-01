@@ -60,8 +60,9 @@ func formatCLIStreamError(resp *CLIResponse, maxTurns int) string {
 type Client interface {
 	Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error)
 	CallStream(ctx context.Context, message, projectDir, sessionID, modelOverride string, onToolUse func(toolName string, toolInput map[string]interface{}), onContent func(contentType, text string)) (*CLIResponse, error)
-	// CallPlan invokes CLI with --max-turns 1 for planning phase (no tool execution).
-	CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error)
+	// CallPlan invokes CLI with planning safeguards. If sessionID is non-empty,
+	// implementations that support native resume should continue that session.
+	CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error)
 	GetModel() string
 }
 
@@ -450,10 +451,10 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 	return finalResp, nil
 }
 
-// CallPlan invokes Claude Code CLI with --max-turns 1 for planning-only phase.
-// No session resume — always starts a fresh session for the plan.
+// CallPlan invokes Claude Code CLI with --max-turns 3 for planning-only phase.
+// If sessionID is non-empty, resumes that native Planner session.
 // No tool execution callbacks — planning phase should only think, not act.
-func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
 	startTime := time.Now()
 
 	model := c.Model
@@ -475,6 +476,10 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOver
 		// model's required JSON output. Planner_rules still forbids
 		// tool use; this is just a safety margin.
 		"--max-turns", "3",
+	}
+
+	if sessionID != "" {
+		args = append(args, "--resume", sessionID)
 	}
 
 	args = append(args, message)
@@ -769,10 +774,11 @@ func (a *APIClient) CallStream(ctx context.Context, message, projectDir, session
 	return resp, nil
 }
 
-// CallPlan 使用 Anthropic API 的計劃調用（APIClient 實現）
-// 直接調用 Call，不使用 session resume
-func (a *APIClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
-	resp, err := a.Call(ctx, message, projectDir, "", modelOverride)
+// CallPlan 使用 Anthropic API 的計劃調用（APIClient 實現）。
+// APIClient does not persist native sessions; sessionID is accepted for Client
+// interface compatibility and metrics attribution.
+func (a *APIClient) CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+	resp, err := a.Call(ctx, message, projectDir, sessionID, modelOverride)
 	if err != nil {
 		return nil, err
 	}

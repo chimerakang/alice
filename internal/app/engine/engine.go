@@ -45,6 +45,17 @@ type Result struct {
 	Model string
 }
 
+// InputTokenVolume returns the full input volume seen by the model for this
+// call: uncached input + cached prefix reads + newly-created cache tokens.
+func (r Result) InputTokenVolume() int {
+	return r.InputTokens + r.CacheReadInputTokens + r.CacheCreationInputTokens
+}
+
+// TokenVolume returns the total context volume for budget/reporting purposes.
+func (r Result) TokenVolume() int {
+	return r.InputTokenVolume() + r.OutputTokens
+}
+
 // DirectRunnerMetrics is implemented by DirectRunners that can report the
 // model, token, and cost figures of their most recent Run() call. DirectEngine
 // type-asserts to this interface and populates Result.Model + tokens + Cost

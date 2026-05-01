@@ -41,7 +41,7 @@ func (c *resumeBridgeClient) CallStream(ctx context.Context, message, projectDir
 	return resp, nil
 }
 
-func (c *resumeBridgeClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+func (c *resumeBridgeClient) CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
 	return nil, errors.New("not implemented")
 }
 

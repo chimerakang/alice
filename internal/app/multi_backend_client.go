@@ -9,10 +9,10 @@ import (
 // MultiBackendClient routes calls to different backend clients based on model name.
 // It implements the Client interface and dispatches to claude/codex/api backends.
 type MultiBackendClient struct {
-	claude         *CLIClient    // Claude CLI backend
-	codex          *CodexClient  // Codex/OpenAI backend
-	api            *APIClient    // Anthropic API backend
-	defaultBackend Client        // Fallback backend when model doesn't match any prefix
+	claude         *CLIClient   // Claude CLI backend
+	codex          *CodexClient // Codex/OpenAI backend
+	api            *APIClient   // Anthropic API backend
+	defaultBackend Client       // Fallback backend when model doesn't match any prefix
 }
 
 // NewMultiBackendClient creates a dispatcher with all available backends.
@@ -97,17 +97,17 @@ func (m *MultiBackendClient) CallStream(
 // If modelOverride is empty, uses defaultBackend.
 func (m *MultiBackendClient) CallPlan(
 	ctx context.Context,
-	message, projectDir, modelOverride string,
+	message, projectDir, sessionID, modelOverride string,
 	onContent func(contentType, text string),
 ) (*CLIResponse, error) {
 	if modelOverride == "" {
-		return m.defaultBackend.CallPlan(ctx, message, projectDir, "", onContent)
+		return m.defaultBackend.CallPlan(ctx, message, projectDir, sessionID, "", onContent)
 	}
 	backend, err := m.routeFor(modelOverride)
 	if err != nil {
 		return nil, err
 	}
-	return backend.CallPlan(ctx, message, projectDir, modelOverride, onContent)
+	return backend.CallPlan(ctx, message, projectDir, sessionID, modelOverride, onContent)
 }
 
 // GetModel returns the model of the default backend.

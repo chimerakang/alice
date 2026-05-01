@@ -34,7 +34,7 @@ func (c *retryCommandTestClient) CallStream(ctx context.Context, message, projec
 	return resp, nil
 }
 
-func (c *retryCommandTestClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+func (c *retryCommandTestClient) CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
 	c.planCalls++
 	reviewJSON := `{"verdict":"pass","overall_score":84,"feedback":"retry fixed validation","issue_tags":[],"sub_task_results":[{"score":84,"feedback":"ok","issue_tags":[]}]}`
 	if onContent != nil {
@@ -63,7 +63,7 @@ func (c *blockingRetryClient) CallStream(ctx context.Context, message, projectDi
 	return nil, ctx.Err()
 }
 
-func (c *blockingRetryClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+func (c *blockingRetryClient) CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
 	return nil, ctx.Err()
 }
 

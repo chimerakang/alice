@@ -18,7 +18,7 @@ func (m *mockClient) CallStream(ctx context.Context, message, projectDir, sessio
 	return &CLIResponse{Result: "ok", TextContent: "ok", SessionID: sessionID}, nil
 }
 
-func (m *mockClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+func (m *mockClient) CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
 	if onContent != nil {
 		onContent("text", "ok")
 	}

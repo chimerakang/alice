@@ -29,7 +29,7 @@ func (p *CLIReviewPhase) Review(ctx context.Context, req appengine.ReviewRequest
 	}
 
 	var collected bytes.Buffer
-	resp, err := p.client.CallPlan(ctx, appengine.BuildReviewPrompt(req), req.ProjectDir, p.model, func(contentType, text string) {
+	resp, err := p.client.CallPlan(ctx, appengine.BuildReviewPrompt(req), req.ProjectDir, "", p.model, func(contentType, text string) {
 		if contentType == "text" {
 			collected.WriteString(text)
 		}
@@ -51,9 +51,18 @@ func (p *CLIReviewPhase) Review(ctx context.Context, req appengine.ReviewRequest
 		return appengine.ReviewResult{}, err
 	}
 	review.ReviewerModel = p.model
-	review.InputTokens = resp.Usage.InputTokens
+	review.InputTokens = resp.TotalInputTokensWithCache()
 	review.OutputTokens = resp.Usage.OutputTokens
 	review.CostUSD = resp.TotalCostUSD
+	if review.CostUSD <= 0 {
+		review.CostUSD = EstimateClaudeCost(
+			p.model,
+			resp.Usage.InputTokens,
+			resp.Usage.CacheReadInputTokens,
+			resp.Usage.CacheCreationInputTokens,
+			resp.Usage.OutputTokens,
+		)
+	}
 	if review.ReviewerModel == "" {
 		review.ReviewerModel = p.client.GetModel()
 	}

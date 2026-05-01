@@ -32,7 +32,7 @@ func (c *modelRecordingClient) CallStream(ctx context.Context, message, projectD
 	return resp, nil
 }
 
-func (c *modelRecordingClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+func (c *modelRecordingClient) CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
 	return nil, nil
 }
 

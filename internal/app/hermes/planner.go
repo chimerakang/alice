@@ -96,7 +96,8 @@ type CallPlanResult struct {
 }
 
 // CallPlanFunc is the calling convention the Planner uses to invoke the CLI.
-type CallPlanFunc func(ctx context.Context, message, projectDir string) (CallPlanResult, error)
+// sessionID is the previous Planner native session to resume, when available.
+type CallPlanFunc func(ctx context.Context, message, projectDir, sessionID string) (CallPlanResult, error)
 
 // PlannerSession manages the long-lived Planner CLI session.
 type PlannerSession struct {
@@ -138,7 +139,7 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 	var totalCost float64
 
 	for attempt := 1; attempt <= p.maxRetries; attempt++ {
-		res, err := p.callFn(ctx, prompt, projectDir)
+		res, err := p.callFn(ctx, prompt, projectDir, p.sessionID)
 		if err != nil {
 			return nil, totalIn, totalOut, totalCost, fmt.Errorf("planner attempt %d: %w", attempt, err)
 		}
@@ -231,7 +232,7 @@ func validateGranularityForPlan(tasks []SubTask) error {
 // Compress asks the Planner to condense the accumulated execution log and
 // returns the compressed text with input / output token counts and USD cost.
 func (p *PlannerSession) Compress(ctx context.Context, req CompressRequest, projectDir string) (string, int, int, float64, error) {
-	res, err := p.callFn(ctx, CompressPrompt(req), projectDir)
+	res, err := p.callFn(ctx, CompressPrompt(req), projectDir, p.sessionID)
 	if err != nil {
 		return "", 0, 0, 0, fmt.Errorf("compress: %w", err)
 	}

@@ -30,7 +30,7 @@ Standalone Python script `scripts/spike_walking_agent/spike.py` 跑 5 個 read-o
 
 ### 為何現有 session 清除是 load-bearing
 
-[hermes_executor_runner.go:66-74](../../internal/app/hermes_executor_runner.go#L66-L74) 故意每個 sub-task 清 session。commit `0da6c05`（2026-04-30）為解 gladsheim #108 sub-task 9 的 "Prompt is too long" 而引入：codex 的 transcript 替每個 sub-task 重播完整歷史，加上 prompt body 重灌 accumulated → O(N²) 爆炸。
+[hermes_executor_runner.go:66-74](../../internal/app/hermes_executor_runner.go#L66-L74) 故意每個 sub-task 清 session。這是 issue #149 重新整理的新版本架構修正重點：codex 的 transcript 若替每個 sub-task 重播完整歷史，加上 prompt body 重灌 accumulated，會形成 O(N²) 爆炸並觸發 "Prompt is too long"。
 
 直接打開 session reuse 而不改 prompt template 會 regress 此 bug。本設計同時處理兩件事。
 
@@ -186,7 +186,7 @@ Alice 既有 Go 程式已經透過 [agent.go](../../internal/app/agent.go) spawn
 
 | 風險 | 緩解 |
 |---|---|
-| **Context window 爆炸**（gladsheim #108 回歸）| 累計 input tokens > 120K 強制重啟 session |
+| **Context window 爆炸**（#149 prompt-bloat 回歸）| 累計 input tokens > 120K 強制重啟 session |
 | **品質下降**（沒有 accumulated 顯式提示，模型可能漏掉前序 sub-task 結論）| Round 2+ prompt 結尾加「Refer to your work in previous sub-tasks if relevant」一行；長 task 強制 force-clear 時順便重灌 accumulated |
 | **Cost 反而上升**（cache TTL 配置錯誤、或某些 task 走 1h cache）| 上線後監控 `cache_write_1h` 欄位（#148 1A 已捕獲），有非 0 即告警 |
 | **Operator UX 退步**（單一 session 內 turn 之間沒有「sub-task 邊界」明顯訊號）| Reporter 仍按 sub-task 發 OnSubTaskStart / Done 事件；Telegram 訊息結構不變 |
@@ -228,7 +228,7 @@ Phase 1 跑滿 1 週後評估：
 - ✅ Walking 模式平均每 task wallclock ↓ ≥ 20%
 - ✅ Context window 強制重啟事件 ≤ 5%（避免變相退化為 baseline）
 - ✅ 無新增 review_score 顯著下降（品質沒退步）
-- ✅ 無新增 "Prompt too long" 錯誤（gladsheim 回歸守住）
+- ✅ 無新增 "Prompt too long" 錯誤（#149 prompt-bloat 回歸守住）
 
 ## 範圍外
 

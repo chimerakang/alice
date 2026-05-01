@@ -20,15 +20,17 @@ reviewer 的 N 倍乘數是 Hermes v2 真正能再省的地方。
 
 ## Phase 2 子項目
 
-### 2.1 Planner session reuse（`--resume` across re-plans）
+### 2.1 Planner session reuse（`--resume` across re-plans）✅ implemented
 
-**問題**：[hermes/planner.go:217](../../internal/app/hermes/planner.go#L217) `PlannerSession.Plan` 在 `task_retry` 觸發時被重新呼叫；雖然 PlannerSession 內部把 `sessionID` 存了起來，但實際上 Alice 的 CallPlan path（[api.go:421-441](../../internal/app/api.go#L421-L441) `CLIClient.CallPlan`）**從不傳 `--resume`**——每次都是 fresh `claude -p`。
+**原問題**：[hermes/planner.go](../../internal/app/hermes/planner.go) `PlannerSession.Plan` 在 `task_retry` 觸發時被重新呼叫；雖然 PlannerSession 內部把 `sessionID` 存了起來，但 Alice 的 CallPlan path **沒有傳 `--resume`**，所以每次都是 fresh `claude -p`。
+
+**已落地**：`CallPlan` 介面現在接受 `sessionID`，`PlannerSession.Plan` / `Compress` 會把目前 Planner session 往下傳，Claude CLI path 會加 `--resume <id>`，Codex path 也會用 `codex exec resume <id>` 嘗試接續。`task_retry` 與 Planner JSON retry 會保留同一 Planner session。
 
 **設計**：
 
-a. CallPlan 的 args 改成支援 sessionID（接受 `--resume <id>`，跟 CallStream 對稱）
-b. `hermes_plan_bridge.go` `makePlanFn` 傳遞 `state.PlannerSessionID`
-c. PlannerSession.Plan 在 retry/JSON 修復迴圈中用同一 session（已在 PlannerSession 內存了 sid，只差傳出來）
+a. ✅ CallPlan 的 args 改成支援 sessionID（接受 `--resume <id>`，跟 CallStream 對稱）
+b. ✅ `hermes_plan_bridge.go` `makePlanFn` 傳遞 `state.PlannerSessionID`
+c. ✅ PlannerSession.Plan 在 retry/JSON 修復迴圈中用同一 session
 d. `task_retry` 跨 attempt 時是否仍 resume？兩種選擇：
    - **保留**：節省 planner_rules 的重複付費，model 看到「上次的 plan + reviewer feedback + 改進指示」自然延伸思考
    - **不保留**：每個 attempt 新 session 確保 model 不被前一次失敗的思考束縛
@@ -36,11 +38,11 @@ d. `task_retry` 跨 attempt 時是否仍 resume？兩種選擇：
 
 **預期收益**：對 task_retry 場景省 ~80% Planner 重複付費（rare path）。對主流程影響小，因為 plan 通常一次成功。
 
-**風險**：
-- CallPlan 的 `--resume` 還沒測過（Direct path 已驗證）。需要做小型驗證 spike。
-- Planner 的 `--max-turns 3` 政策是否在 resume 路徑生效需確認。
+**風險 / 觀察點**：
+- Planner 的 `--max-turns 3` 政策在 resume 路徑仍由 CLI args 帶入；需要用 production log 觀察是否有 `error_max_turns` 回歸。
+- Codex planner resume 若 session 不可用會回 `ErrSessionUnavailable`，目前未做 bridge fallback；需要觀察實際發生率。
 
-**前置條件**：Phase 1 walking-agent 在生產跑 1+ 週，無 regression。
+**前置條件**：Phase 1 walking-agent session 邊界與 token accounting 已修正；2.1 可先行落地。
 
 ### 2.2 Reviewer 共用 session 可行性研究
 

@@ -26,7 +26,7 @@ func (c *stickyOverrideRecordingClient) CallStream(ctx context.Context, message,
 	return resp, nil
 }
 
-func (c *stickyOverrideRecordingClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+func (c *stickyOverrideRecordingClient) CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
 	return nil, nil
 }
 

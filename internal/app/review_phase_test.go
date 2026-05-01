@@ -25,7 +25,7 @@ func (c *recordingReviewClient) CallStream(ctx context.Context, message, project
 	return nil, nil
 }
 
-func (c *recordingReviewClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+func (c *recordingReviewClient) CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
 	c.prompt = message
 	c.projectDir = projectDir
 	c.modelOverride = modelOverride

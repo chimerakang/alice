@@ -13,9 +13,9 @@ import (
 // using EstimateClaudeCost so per-call cost still flows into ModelUsage.
 // See #148 1D + 1E.
 func makePlanFn(client Client, model string) hermes.CallPlanFunc {
-	return func(ctx context.Context, message, projectDir string) (hermes.CallPlanResult, error) {
+	return func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
 		var collected strings.Builder
-		resp, callErr := client.CallPlan(ctx, message, projectDir, model, func(contentType, t string) {
+		resp, callErr := client.CallPlan(ctx, message, projectDir, sessionID, model, func(contentType, t string) {
 			if contentType == "text" {
 				collected.WriteString(t)
 			}
@@ -40,7 +40,7 @@ func makePlanFn(client Client, model string) hermes.CallPlanFunc {
 		return hermes.CallPlanResult{
 			Text:         text,
 			SessionID:    resp.SessionID,
-			InputTokens:  resp.Usage.InputTokens,
+			InputTokens:  resp.TotalInputTokensWithCache(),
 			OutputTokens: resp.Usage.OutputTokens,
 			CostUSD:      cost,
 		}, nil

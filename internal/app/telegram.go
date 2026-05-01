@@ -2853,11 +2853,11 @@ func hermesTaskHasProgress(task hermes.TaskState) bool {
 type hermesNLIntent int
 
 const (
-	hermesNLNone           hermesNLIntent = iota // not a Hermes intent (or Hermes disabled)
-	hermesNLRestartIssue                         // restart phrase + issue ref
-	hermesNLStartIssue                           // action-verb + issue ref or bare /hermes-style trigger
-	hermesNLChatModeIssue                        // chat is in Hermes mode and message contains issue ref
-	hermesNLChatModeFresh                        // chat is in Hermes mode, no issue, treat text as goal
+	hermesNLNone          hermesNLIntent = iota // not a Hermes intent (or Hermes disabled)
+	hermesNLRestartIssue                        // restart phrase + issue ref
+	hermesNLStartIssue                          // action-verb + issue ref or bare /hermes-style trigger
+	hermesNLChatModeIssue                       // chat is in Hermes mode and message contains issue ref
+	hermesNLChatModeFresh                       // chat is in Hermes mode, no issue, treat text as goal
 )
 
 // classifyHermesNLIntent inspects a user message and returns the matching
@@ -3911,8 +3911,10 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	oneShot := issueNumber > 0
 	onDone := func(doneCtx context.Context, state hermes.TaskState) {
 		t.recordPlannerSession(key, tier, state.PlannerSessionID)
-		if sess := t.getChatContext(key, projectDir).Session(appengine.BackendKindForModel(executorModel)); sess != "" {
-			t.recordExecutorSession(key, tier, sess)
+		if !cfg.WalkingAgentEnabled {
+			if sess := t.getChatContext(key, projectDir).Session(appengine.BackendKindForModel(executorModel)); sess != "" {
+				t.recordExecutorSession(key, tier, sess)
+			}
 		}
 		if oneShot {
 			t.hermesMu.Lock()
@@ -3952,7 +3954,15 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	continueCh := make(chan struct{}, 1)
 	failureDecisionCh := make(chan appengine.FailurePauseChoice, 1)
 	agent := t.getAgent(key)
-	if oneShot {
+	if cfg.WalkingAgentEnabled {
+		// Walking-agent sessions are per Hermes task. Start from a clean
+		// executor/heavy-executor boundary so previous task transcripts do not
+		// inflate token use or leak context into the new task.
+		agent.ClearSessionForModel(executorModel)
+		if heavyExecutorModel != "" && heavyExecutorModel != executorModel {
+			agent.ClearSessionForModel(heavyExecutorModel)
+		}
+	} else if oneShot {
 		// Issue-launched tasks start with a fresh executor CLI session so the
 		// previous task's transcript does not bloat the prompt and trigger
 		// "Prompt is too long" on later subtasks.

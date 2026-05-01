@@ -34,9 +34,9 @@ const (
 // The "queue" and "abort" alternatives were removed — they were never exposed
 // in the UI and the runtime had to guess between them.
 type TaskState struct {
-	ID                string       `json:"id"`                            // UUID
-	ChatID            int64        `json:"chat_id"`                       // Telegram chat
-	ThreadID          int          `json:"thread_id,omitempty"`           // Telegram forum topic/thread
+	ID       string `json:"id"`                  // UUID
+	ChatID   int64  `json:"chat_id"`             // Telegram chat
+	ThreadID int    `json:"thread_id,omitempty"` // Telegram forum topic/thread
 	// PlannerSessionID is captured from each CLI response for telemetry / dashboard
 	// observation only. The Planner CallPlan path is intentionally session-less
 	// on both Claude (api.go CLIClient.CallPlan) and Codex (codex_client.go
@@ -155,8 +155,8 @@ type Artifact struct {
 // EstimateClaudeCost-derived fallbacks. Treat 0 as "unknown for the calls
 // recorded so far" and prefer the live token×rate estimate path. See #148 1E.
 type ModelUsage struct {
-	Model        string  `json:"model"` // e.g., "claude-opus-4-7" or "claude-haiku-4-5-20251001"
-	InputTokens  int     `json:"input_tokens"`
+	Model        string  `json:"model"`        // e.g., "claude-opus-4-7" or "claude-haiku-4-5-20251001"
+	InputTokens  int     `json:"input_tokens"` // full input volume: uncached + cache_read + cache_creation when reported
 	OutputTokens int     `json:"output_tokens"`
 	CostUSD      float64 `json:"cost_usd"`
 	CallCount    int     `json:"call_count"`

@@ -19,6 +19,27 @@ func (r *planExecuteRunner) Run(userMessage string, onUpdate func(string, bool))
 	return "result for " + userMessage[strings.LastIndex(userMessage, "\n")+1:], nil
 }
 
+type tokenMetricsRunner struct {
+	model      string
+	input      int
+	output     int
+	cacheRead  int
+	cacheWrite int
+	cost       float64
+}
+
+func (r *tokenMetricsRunner) Run(userMessage string, onUpdate func(string, bool)) (string, error) {
+	return "ok", nil
+}
+
+func (r *tokenMetricsRunner) LastCallMetrics() (string, int, int, float64) {
+	return r.model, r.input, r.output, r.cost
+}
+
+func (r *tokenMetricsRunner) LastCacheMetrics() (int, int) {
+	return r.cacheRead, r.cacheWrite
+}
+
 type planExecuteReporter struct {
 	events []string
 }
@@ -130,7 +151,7 @@ func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 	reviewPhase := &recordingReviewPhase{}
 	reviewStore := &recordingReviewStore{}
 	reviewNotifier := &recordingReviewNotifier{}
-	planFn := func(ctx context.Context, message, projectDir string) (hermes.CallPlanResult, error) {
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
 		return hermes.CallPlanResult{
 			Text: "```json\n" +
 				`[{"id":"s1","description":"read context","tool_hints":["Read"]},` +
@@ -222,7 +243,7 @@ func TestPlanExecuteEngineSkipsReviewForSingleSubTask(t *testing.T) {
 	runner := &planExecuteRunner{}
 	reviewPhase := &recordingReviewPhase{}
 	reviewStore := &recordingReviewStore{}
-	planFn := func(ctx context.Context, message, projectDir string) (hermes.CallPlanResult, error) {
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
 		return hermes.CallPlanResult{
 			Text: "```json\n" +
 				`[{"id":"s1","description":"execute directly"}]` +
@@ -258,10 +279,67 @@ func TestPlanExecuteEngineSkipsReviewForSingleSubTask(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteEngineTokenUsageIncludesCacheTokens(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	runner := &tokenMetricsRunner{
+		model:      "claude-sonnet-4-5",
+		input:      10,
+		output:     3,
+		cacheRead:  100,
+		cacheWrite: 20,
+		cost:       0.01,
+	}
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{
+			Text:         "```json\n" + `[{"id":"s1","description":"execute once","tool_hints":["Read"]}]` + "\n```",
+			InputTokens:  5,
+			OutputTokens: 2,
+		}, nil
+	}
+
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		PlannerModel:          "planner-model",
+		ProjectDir:            "/repo",
+		ChatID:                42,
+		MaxPlannerJSONRetries: 1,
+		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
+		DisableReview:         true,
+	}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
+
+	taskID, err := engine.Start(context.Background(), "implement token accounting feature", NewChatContext(42, 0, "/repo"))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitForPlanExecute(t, engine)
+
+	state, err := store.GetTask(taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	const wantExecutorTokens = 10 + 100 + 20 + 3
+	const wantTotalTokens = 5 + 2 + wantExecutorTokens
+	if state.TokenBudget.UsedTokens != wantTotalTokens {
+		t.Fatalf("used tokens = %d, want %d", state.TokenBudget.UsedTokens, wantTotalTokens)
+	}
+	if len(state.Plan) != 1 || state.Plan[0].TokensUsed != wantExecutorTokens {
+		t.Fatalf("sub-task tokens = %#v, want %d", state.Plan, wantExecutorTokens)
+	}
+	var executorUsage *hermes.ModelUsage
+	for i := range state.ModelUsages {
+		if state.ModelUsages[i].Model == "claude-sonnet-4-5" {
+			executorUsage = &state.ModelUsages[i]
+			break
+		}
+	}
+	if executorUsage == nil || executorUsage.InputTokens != 10+100+20 || executorUsage.OutputTokens != 3 {
+		t.Fatalf("executor usage = %#v (all=%#v)", executorUsage, state.ModelUsages)
+	}
+}
+
 func TestPlanExecuteEngineDoesNotRetryFailedSubTask(t *testing.T) {
 	store := hermes.NewMemoryTaskStore()
 	runner := &failingOnceRunner{}
-	planFn := func(ctx context.Context, message, projectDir string) (hermes.CallPlanResult, error) {
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
 		return hermes.CallPlanResult{
 			Text: "```json\n" +
 				`[{"id":"s1","description":"first"}]` +
@@ -306,7 +384,7 @@ func TestPlanExecuteEngineUsesValidatingDuringTaskReviewRetry(t *testing.T) {
 		},
 	}
 	planCalls := 0
-	planFn := func(ctx context.Context, message, projectDir string) (hermes.CallPlanResult, error) {
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
 		planCalls++
 		if planCalls == 1 {
 			return hermes.CallPlanResult{
@@ -383,7 +461,7 @@ func TestPlanExecuteEngineRetriesBlockedSubTaskAndContinues(t *testing.T) {
 		},
 	}
 	reviewStore := &recordingReviewStore{}
-	planFn := func(ctx context.Context, message, projectDir string) (hermes.CallPlanResult, error) {
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
 		return hermes.CallPlanResult{
 			Text: "```json\n" +
 				`[{"id":"s1","description":"first"},{"id":"s2","description":"second"}]` +
@@ -454,7 +532,7 @@ func TestPlanExecuteEngineMarksPartialAfterStrictRetryExhaustion(t *testing.T) {
 			},
 		},
 	}
-	planFn := func(ctx context.Context, message, projectDir string) (hermes.CallPlanResult, error) {
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
 		return hermes.CallPlanResult{
 			Text: "```json\n" +
 				`[{"id":"s1","description":"first"},{"id":"s2","description":"second"}]` +

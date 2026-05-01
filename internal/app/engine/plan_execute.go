@@ -760,29 +760,36 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 		// session (slim prompt) or must start fresh (cold prompt). See issue
 		// #149 + docs/arch/hermes-walking-agent.md.
 		walkingActive := false
+		walkingForceFresh := false
 		if e.cfg.WalkingAgentEnabled {
 			predictedModel := e.predictExecutorModel(subTask)
 			switch {
 			case e.walkingExecutorModel == "":
 				// First sub-task this task — must seed the session via a cold prompt.
+				walkingForceFresh = true
 			case predictedModel == "":
 				// Engine wasn't given enough info to predict. Downgrade safely.
+				walkingForceFresh = true
 			case predictedModel != e.walkingExecutorModel:
 				// Model boundary; runner will clear the prior session inside Run.
 				log.Printf("[hermes.walking] model change predicted prev=%s next=%s — fresh prompt", e.walkingExecutorModel, predictedModel)
 				e.walkingExecutorModel = ""
 				e.walkingTokensSeen = 0
+				walkingForceFresh = true
 			case strings.TrimSpace(reviewFeedback) != "":
 				// Strict-mode retry — the reviewer's feedback needs to land on a
 				// fresh seat for the model to take it seriously, and we want the
 				// re-attempt to see goal/accumulated explicitly.
+				walkingForceFresh = true
 			case e.walkingTokensSeen >= e.walkingMaxContextTokens():
 				log.Printf("[hermes.walking] watermark exceeded tokens_seen=%d limit=%d — forcing fresh session", e.walkingTokensSeen, e.walkingMaxContextTokens())
 				e.walkingExecutorModel = ""
 				e.walkingTokensSeen = 0
+				walkingForceFresh = true
 			case attempts > 0:
 				// Inner retry of the strict loop already handled by reviewFeedback case.
 				// Outer retry attempts likewise want a fresh seat.
+				walkingForceFresh = true
 			default:
 				walkingActive = true
 			}
@@ -791,6 +798,9 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 		prompt := buildSubTaskGoalVariant(e.cfg.ExecutorRules, goal, state.Accumulated, idx, len(tasks), subTask, reviewFeedback, walkingActive)
 		if walkingActive {
 			log.Printf("[hermes.walking] reusing session model=%s sub_task=%d/%d tokens_so_far=%d", e.walkingExecutorModel, idx+1, len(tasks), e.walkingTokensSeen)
+		}
+		if walkingForceFresh {
+			e.direct.ForceFreshSession()
 		}
 		// On the very first attempt of this executeSubTask call, fold in any
 		// operator hint the failure-pause flow handed us. The hint is only
@@ -841,21 +851,23 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 			if err := e.store.UpdateSubTask(taskID, idx, hermes.SubTaskFailed, execErr.Error(), 0); err != nil {
 				log.Printf("[plan_execute] UpdateSubTask(failed) idx=%d: %v", idx, err)
 			}
-			if result.Model != "" && (result.InputTokens > 0 || result.OutputTokens > 0) {
-				if err := e.store.AddModelUsage(taskID, result.Model, result.InputTokens, result.OutputTokens, result.Cost); err != nil {
+			tokensUsed := result.TokenVolume()
+			inputVolume := result.InputTokenVolume()
+			if result.Model != "" && tokensUsed > 0 {
+				if err := e.store.AddModelUsage(taskID, result.Model, inputVolume, result.OutputTokens, result.Cost); err != nil {
 					log.Printf("[plan_execute] AddModelUsage(executor) idx=%d model=%s: %v", idx, result.Model, err)
 				}
-				if err := e.store.AddTokenUsage(taskID, result.InputTokens+result.OutputTokens); err != nil {
+				if err := e.store.AddTokenUsage(taskID, tokensUsed); err != nil {
 					log.Printf("[plan_execute] AddTokenUsage(executor) idx=%d: %v", idx, err)
 				}
 			}
-			return hermes.SubTaskFailed, execErr.Error(), result.InputTokens + result.OutputTokens, false, metrics
+			return hermes.SubTaskFailed, execErr.Error(), tokensUsed, false, metrics
 		}
 
 		text := strings.TrimSpace(result.Text)
-		tokensUsed := result.InputTokens + result.OutputTokens
+		tokensUsed := result.TokenVolume()
 		if result.Model != "" && tokensUsed > 0 {
-			if err := e.store.AddModelUsage(taskID, result.Model, result.InputTokens, result.OutputTokens, result.Cost); err != nil {
+			if err := e.store.AddModelUsage(taskID, result.Model, result.InputTokenVolume(), result.OutputTokens, result.Cost); err != nil {
 				log.Printf("[plan_execute] AddModelUsage(executor) idx=%d model=%s: %v", idx, result.Model, err)
 			}
 			if err := e.store.AddTokenUsage(taskID, tokensUsed); err != nil {
@@ -979,8 +991,8 @@ func (e *PlanExecuteEngine) walkingMaxContextTokens() int {
 // rules/goal/accumulated and only the new sub-task description is needed.
 //
 // See issue #149 + docs/arch/hermes-walking-agent.md for the slim-prompt
-// rationale and the gladsheim #108 regression that the cold form was put in
-// to prevent.
+// rationale and the prompt-bloat regression that the cold form was put in to
+// prevent.
 func buildSubTaskGoal(executorRules, goal, accumulated string, idx, total int, subTask hermes.SubTask, retryFeedback string) string {
 	return buildSubTaskGoalVariant(executorRules, goal, accumulated, idx, total, subTask, retryFeedback, false)
 }
