@@ -103,7 +103,47 @@ d. 跨日報表：每日 cache token 總量 / cost 估算 / walking-agent on/off
 
 **風險**：低，純加值。
 
-### 2.5 預設啟用 Walking Agent（Hermes Phase 2 rollout）
+### 2.5 Partial re-plan retry（保留已完成 sub-task）
+
+**現況**：[plan_execute.go:312-314](../../internal/app/engine/plan_execute.go#L312-L314) `task_retry` 觸發 re-plan 時，`UpdateAccumulated(taskID, "")` 直接清空 accumulated，整個 plan 從 sub-task 1 重做。即便前面 5 個 sub-task 都 review 滿分，re-plan 也會把它們全部重來。
+
+**症狀**：用戶 `/retry` 或追接 Hermes 訊息時，看到「重審不通過 → 自動 re-plan」訊息後，所有已完成的 sub-task 重跑一遍，浪費 token + wallclock。
+
+**已修但仍部分**：commit `6c2ad92` 修了「review 被略過時誤判 fail」這個入口（empty verdict 不再觸發 retry）。但即便 review 真的回 fail，re-plan 還是會砍掉重練。
+
+**設計選項**：
+
+**選項 A：僅 re-plan 失敗範圍**
+- review 結果包含 per-sub-task score / verdict（已有 `SubTaskResults`）
+- engine 標記低分 sub-task 為 SubTaskFailed，高分 sub-task 保留為 SubTaskDone
+- re-plan 只針對「failing 範圍 + 從 review feedback 推斷的補充項」生成新 sub-task
+- accumulated 保留高分 sub-task 的 result
+- **優點**：保留有用工作、token 大幅省下
+- **缺點**：需要區分「sub-task 本身 fail」vs「整個 task design 不對」。前者該保留前序、後者該重做。
+
+**選項 B：操作者選擇**
+- task_retry 觸發時 pause + 詢問操作者「保留前序 / 全部重做」
+- 跟 OnSubTaskFailurePause 同模式
+- **優點**：最安全，操作者掌握決策
+- **缺點**：增加 UX 步驟，干擾自動化流程
+
+**選項 C：Plan diff retry**
+- re-plan 後，對比新舊 plan
+- 共用 sub-task（description 相同或語意接近）保留 result
+- 新 sub-task 從 SubTaskPending 開始
+- **優點**：自動化、不需用戶介入
+- **缺點**：判斷「sub-task 等價」很難（同 description 可能在不同 plan context 下要做不同事）
+
+**建議**：選項 A，但需要設計 review feedback → 哪些 sub-task 算 fail 的對應規則。比如：
+- review.IssueTags 提到的 sub-task ID（或編號）→ fail
+- SubTaskResults[i].Score < threshold → fail
+- 其他保留為 done
+
+預期收益：對 task_retry 場景省 50-80%（看 fail 範圍），且**user 投訴最大的「白白浪費 token」直接消失**。
+
+**前置條件**：Phase 2.1（Planner --resume）已落地。Phase 2.5（partial-retry）跟 walking-agent 完全正交。
+
+### 2.6 預設啟用 Walking Agent（Hermes Phase 2 rollout）
 
 按 [hermes-walking-agent.md](hermes-walking-agent.md) 的 rollout 章節：
 
