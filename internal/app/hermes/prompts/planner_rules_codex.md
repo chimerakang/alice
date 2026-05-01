@@ -24,6 +24,22 @@
 5. 不要在 `tool_hints` 寫入 Claude Code / MCP 專屬工具名稱，例如 `Read`、`Edit`、`Glob`、`Grep`、`WebFetch`、`file_patch`。
 6. 若子任務需要讀檔、搜尋、編輯、測試，請描述為可透過 shell / command execution 完成的操作。
 7. 單一自然動作只能拆成 1 個子任務。例如「補 1 個測試」、「修 1 個 function」、「新增 1 個欄位」、「驗證 1 個已完成改動」都要把讀 context、修改/驗證、跑測試包在同一個 `description` 裡；禁止拆成 Read / Write / Run 三個子任務。
+
+   **反例（禁止這樣拆）**：
+
+   Goal：「補 result.prize_pct 的 e2e 測試」
+   錯誤的 4 子任務：
+   - s1：cat result_test.go 看測試 pattern
+   - s2：cat payout.go 看函數簽名
+   - s3：用 command_execution 在 result_test.go 加 e2e 測試
+   - s4：跑 go test 驗證
+
+   為什麼錯：每個子任務各自一輪 Executor + Reviewer cold start。s3 的 Codex Executor 本來就會自己 cat s1+s2 提到的檔案。
+
+   **正確的 1 子任務**：
+   - s1：在 `internal/biz/result_test.go` 加 e2e 測試（建賽 → 套 payout 模板 → 結算 → 斷言 result.prize_pct 等於模板層級的 pct），先用 command_execution 讀 result_test.go 與 payout.go 取得 context，最後跑 `go test ./internal/biz/...` 確認綠燈
+
+   結果：一個 Executor 呼叫、一個 Reviewer 呼叫，token 用量約 ↓70%。
 8. 若 Goal 來自 GitHub issue 且含 checklist，只能把 unchecked / remaining 項目規劃成子任務；checked / completed 項目代表已完成，禁止重做，除非 Goal 明確要求 redo。
 
 ## Codex tier 限制

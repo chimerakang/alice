@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -464,20 +465,21 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 		model = modelOverride
 	}
 
+	mcpConfigPath, cleanupMCPConfig, err := writePlannerEmitPlanMCPConfig()
+	if err != nil {
+		return nil, fmt.Errorf("planner emit_plan mcp config: %w", err)
+	}
+	defer cleanupMCPConfig()
+
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--model", model,
 		"--dangerously-skip-permissions",
-		// 1 was too strict: when the project's CLAUDE.md / tool wiring
-		// nudges the model to use a tool before answering, the planner
-		// exhausted the budget on a single tool call and never produced
-		// JSON — claude CLI returned error_max_turns with empty stderr.
-		// 3 leaves room for at most one tool-use round before the
-		// model's required JSON output. Planner_rules still forbids
-		// tool use; this is just a safety margin.
-		"--max-turns", "3",
+		"--strict-mcp-config",
+		"--mcp-config", mcpConfigPath,
+		"--tools", "",
 	}
 
 	if sessionID != "" {
@@ -516,6 +518,9 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 	var finalResp *CLIResponse
 	var thinkingBlocks []string
 	var textBlocks []string
+	var emitPlanJSON string
+	var sawEmitPlan bool
+	var latestSessionID string
 
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -532,6 +537,8 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 			Message *struct {
 				Content []struct {
 					Type     string `json:"type"`
+					Name     string `json:"name"`
+					Input    map[string]interface{} `json:"input"`
 					Text     string `json:"text"`
 					Thinking string `json:"thinking"`
 				} `json:"content"`
@@ -553,6 +560,9 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 		if err := json.Unmarshal(line, &event); err != nil {
 			continue
 		}
+		if event.SessionID != "" {
+			latestSessionID = event.SessionID
+		}
 
 		switch event.Type {
 		case "assistant":
@@ -573,6 +583,13 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 								onContent("text", c.Text)
 							}
 						}
+					case "tool_use":
+						if isPlannerEmitPlanTool(c.Name) {
+							if payload, ok := marshalPlannerEmitPlanPayload(c.Input); ok {
+								emitPlanJSON = payload
+								sawEmitPlan = true
+							}
+						}
 					}
 				}
 			}
@@ -591,12 +608,22 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 			finalResp.Usage.OutputTokens = event.Usage.OutputTokens
 			finalResp.Usage.CacheReadInputTokens = event.Usage.CacheReadInputTokens
 			finalResp.Usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
+			if finalResp.SessionID == "" && latestSessionID != "" {
+				finalResp.SessionID = latestSessionID
+			}
 		}
 	}
 
 	if finalResp != nil {
 		finalResp.ThinkingContent = strings.Join(thinkingBlocks, "\n\n---\n\n")
-		finalResp.TextContent = strings.Join(textBlocks, "\n\n")
+		if sawEmitPlan && emitPlanJSON != "" {
+			finalResp.TextContent = emitPlanJSON
+			if finalResp.Result == "" {
+				finalResp.Result = "emit_plan"
+			}
+		} else {
+			finalResp.TextContent = strings.Join(textBlocks, "\n\n")
+		}
 	}
 
 	waitErr := cmd.Wait()
@@ -650,6 +677,202 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 
 	return finalResp, nil
 }
+
+const plannerEmitPlanServerName = "planner_emit_plan"
+const plannerEmitPlanToolName = "emit_plan"
+
+func isPlannerEmitPlanTool(name string) bool {
+	name = strings.TrimSpace(name)
+	return name == plannerEmitPlanToolName || strings.HasSuffix(name, "__"+plannerEmitPlanToolName)
+}
+
+func marshalPlannerEmitPlanPayload(input map[string]interface{}) (string, bool) {
+	if len(input) == 0 {
+		return "", false
+	}
+	payload, ok := input["sub_tasks"]
+	if !ok {
+		payload, ok = input["subTasks"]
+	}
+	if !ok {
+		payload, ok = input["plan"]
+	}
+	if !ok {
+		return "", false
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", false
+	}
+	return string(raw), true
+}
+
+func writePlannerEmitPlanMCPConfig() (string, func(), error) {
+	dir, err := os.MkdirTemp("", "alice-planner-emit-plan-*")
+	if err != nil {
+		return "", nil, err
+	}
+
+	scriptPath := filepath.Join(dir, "emit_plan_mcp.py")
+	if err := os.WriteFile(scriptPath, []byte(plannerEmitPlanMCPScript), 0755); err != nil {
+		os.RemoveAll(dir)
+		return "", nil, err
+	}
+
+	configPath := filepath.Join(dir, "mcp.json")
+	config := map[string]any{
+		"mcpServers": map[string]any{
+			plannerEmitPlanServerName: map[string]any{
+				"command": "python3",
+				"args":    []string{"-u", scriptPath},
+			},
+		},
+	}
+	configBytes, err := json.Marshal(config)
+	if err != nil {
+		os.RemoveAll(dir)
+		return "", nil, err
+	}
+	if err := os.WriteFile(configPath, configBytes, 0644); err != nil {
+		os.RemoveAll(dir)
+		return "", nil, err
+	}
+
+	cleanup := func() {
+		_ = os.RemoveAll(dir)
+	}
+	return configPath, cleanup, nil
+}
+
+const plannerEmitPlanMCPScript = `#!/usr/bin/env python3
+import json
+import sys
+
+TOOL_NAME = "emit_plan"
+TOOL_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "sub_tasks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {
+                    "id": {"type": "string"},
+                    "description": {"type": "string"},
+                    "tool_hints": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["id", "description", "tool_hints"],
+            },
+        }
+    },
+    "required": ["sub_tasks"],
+}
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+def tool_response(arguments):
+    sub_tasks = arguments.get("sub_tasks")
+    if sub_tasks is None:
+        sub_tasks = arguments.get("subTasks")
+    if sub_tasks is None:
+        sub_tasks = arguments.get("plan")
+    if sub_tasks is None:
+        return {
+            "content": [{
+                "type": "text",
+                "text": "emit_plan tool received no sub_tasks array",
+            }],
+            "isError": True,
+        }
+    return {
+        "content": [{
+            "type": "text",
+            "text": json.dumps(sub_tasks, ensure_ascii=False),
+        }],
+        "structuredContent": {
+            "sub_tasks": sub_tasks,
+        },
+        "isError": False,
+    }
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        msg = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+
+    method = msg.get("method")
+    req_id = msg.get("id")
+    params = msg.get("params") or {}
+
+    if method == "initialize":
+        send({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "protocolVersion": params.get("protocolVersion", "2025-03-26"),
+                "capabilities": {
+                    "tools": {
+                        "listChanged": False,
+                    }
+                },
+                "serverInfo": {
+                    "name": "alice-planner-emit-plan",
+                    "version": "1.0.0",
+                },
+            },
+        })
+    elif method == "tools/list":
+        send({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "tools": [{
+                    "name": TOOL_NAME,
+                    "description": "Emit the final Hermes sub-task array and stop planning.",
+                    "inputSchema": TOOL_SCHEMA,
+                }],
+            },
+        })
+    elif method == "tools/call":
+        if params.get("name") != TOOL_NAME:
+            send({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {
+                    "code": -32602,
+                    "message": "Unknown tool",
+                },
+            })
+            continue
+        send({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": tool_response(params.get("arguments") or {}),
+        })
+    elif method == "notifications/initialized":
+        continue
+    else:
+        if req_id is not None:
+            send({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {
+                    "code": -32601,
+                    "message": "Method not found",
+                },
+            })
+`
 
 // Call 使用 Anthropic API 直接調用（APIClient 實現）
 func (a *APIClient) Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error) {

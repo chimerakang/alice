@@ -48,6 +48,23 @@ GRANULARITY RULES:
   into separate Read / Edit / Test sub-tasks; the Executor handles those steps
   inside one call.
 
+  ANTI-PATTERN (over-decomposition — DO NOT DO THIS):
+    Goal: "Add an e2e test verifying result.prize_pct"
+    BAD plan (4 sub-tasks):
+      s1: Read result_test.go to understand test patterns
+      s2: Read payout.go to find ApplyPayoutTemplate signature
+      s3: Add the e2e test in result_test.go
+      s4: Run go test to verify
+    Why bad: each sub-task fires a separate Executor + Reviewer cold-start.
+    The Executor inside s3 will naturally Read s1+s2's files anyway.
+    GOOD plan (1 sub-task):
+      s1: Add e2e test in internal/biz/result_test.go that creates
+          tournament + applies payout template + settles + asserts
+          result.prize_pct matches template tier; read result_test.go
+          and payout.go for context first, then run go test ./internal/biz/...
+          to verify green.
+    Result: one Executor call, one Reviewer call, ~70% fewer tokens.
+
 IMPLEMENTATION IMPERATIVE (critical):
 - If the goal references implementation work — keywords like 修, 修正, 修復, 實作,
   實現, 完成, refactor, fix, implement, build, create, redesign — the plan MUST
