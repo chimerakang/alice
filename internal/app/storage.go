@@ -238,9 +238,13 @@ func (s *SQLiteStorage) initTables() error {
 		api_call_latency_ms INTEGER,
 		api_call_success BOOLEAN,
 		tool_execution_time_ms INTEGER,
-		tool_execution_type TEXT,
-		tokens_used INTEGER,
-		estimated_cost REAL,
+			tool_execution_type TEXT,
+			tokens_used INTEGER,
+			input_tokens INTEGER DEFAULT 0,
+			cache_read_tokens INTEGER DEFAULT 0,
+			cache_write_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
+			estimated_cost REAL,
 		memory_usage BIGINT,
 		error_type TEXT,
 		chat_id INTEGER,
@@ -454,6 +458,17 @@ func (s *SQLiteStorage) initTables() error {
 	_, err = s.db.Exec(`ALTER TABLE performance_metrics ADD COLUMN project_path TEXT DEFAULT ''`)
 	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
 		log.Printf("Migration warning (performance_metrics.project_path): %v", err)
+	}
+	for _, stmt := range []string{
+		`ALTER TABLE performance_metrics ADD COLUMN input_tokens INTEGER DEFAULT 0`,
+		`ALTER TABLE performance_metrics ADD COLUMN cache_read_tokens INTEGER DEFAULT 0`,
+		`ALTER TABLE performance_metrics ADD COLUMN cache_write_tokens INTEGER DEFAULT 0`,
+		`ALTER TABLE performance_metrics ADD COLUMN output_tokens INTEGER DEFAULT 0`,
+	} {
+		_, err = s.db.Exec(stmt)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			log.Printf("Migration warning (performance_metrics cache columns): %v", err)
+		}
 	}
 
 	// Migration: add project_path column to tool_executions
@@ -784,14 +799,16 @@ func (s *SQLiteStorage) DeleteDecisionLogsBySessionID(sessionID string) error {
 // InsertPerformanceMetric 插入效能指標
 func (s *SQLiteStorage) InsertPerformanceMetric(metric PerformanceMetrics) error {
 	_, err := s.db.Exec(`
-		INSERT INTO performance_metrics
-		(timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
-		 tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
-		 chat_id, project_path, agent_type, model)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			INSERT INTO performance_metrics
+			(timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
+			 tool_execution_type, tokens_used, input_tokens, cache_read_tokens,
+			 cache_write_tokens, output_tokens, estimated_cost, memory_usage, error_type,
+			 chat_id, project_path, agent_type, model)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		metric.Timestamp, metric.APICallLatency.Milliseconds(), metric.APICallSuccess,
 		metric.ToolExecutionTime.Milliseconds(), metric.ToolExecutionType,
-		metric.TokensUsed, metric.EstimatedCost, metric.MemoryUsage,
+		metric.TokensUsed, metric.InputTokens, metric.CacheReadTokens,
+		metric.CacheWriteTokens, metric.OutputTokens, metric.EstimatedCost, metric.MemoryUsage,
 		metric.ErrorType, metric.ChatID, metric.ProjectPath, metric.AgentType, metric.Model)
 
 	return err
@@ -800,9 +817,10 @@ func (s *SQLiteStorage) InsertPerformanceMetric(metric PerformanceMetrics) error
 // GetPerformanceMetrics 獲取效能指標（分頁）
 func (s *SQLiteStorage) GetPerformanceMetrics(limit int, offset int) ([]PerformanceMetrics, error) {
 	rows, err := s.db.Query(`
-		SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
-			   tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
-			   chat_id, COALESCE(project_path, '') as project_path, agent_type, COALESCE(model, '') as model
+			SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
+				   tool_execution_type, tokens_used, COALESCE(input_tokens, 0), COALESCE(cache_read_tokens, 0),
+				   COALESCE(cache_write_tokens, 0), COALESCE(output_tokens, 0), estimated_cost, memory_usage, error_type,
+				   chat_id, COALESCE(project_path, '') as project_path, agent_type, COALESCE(model, '') as model
 		FROM performance_metrics
 		ORDER BY timestamp DESC
 		LIMIT ? OFFSET ?`, limit, offset)
@@ -819,9 +837,10 @@ func (s *SQLiteStorage) GetPerformanceMetricsByTimeRange(start, end time.Time, l
 	startStr := formatTimeForSQLite(start)
 	endStr := formatTimeForSQLite(end)
 	rows, err := s.db.Query(`
-		SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
-			   tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
-			   chat_id, COALESCE(project_path, '') as project_path, agent_type, COALESCE(model, '') as model
+			SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
+				   tool_execution_type, tokens_used, COALESCE(input_tokens, 0), COALESCE(cache_read_tokens, 0),
+				   COALESCE(cache_write_tokens, 0), COALESCE(output_tokens, 0), estimated_cost, memory_usage, error_type,
+				   chat_id, COALESCE(project_path, '') as project_path, agent_type, COALESCE(model, '') as model
 		FROM performance_metrics
 		WHERE timestamp BETWEEN ? AND ?
 		ORDER BY timestamp DESC
@@ -837,9 +856,10 @@ func (s *SQLiteStorage) GetPerformanceMetricsByTimeRange(start, end time.Time, l
 // GetPerformanceMetricsByProject 按項目路徑獲取效能指標
 func (s *SQLiteStorage) GetPerformanceMetricsByProject(projectPath string, limit int, offset int) ([]PerformanceMetrics, error) {
 	rows, err := s.db.Query(`
-		SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
-			   tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
-			   chat_id, COALESCE(project_path, '') as project_path, agent_type, COALESCE(model, '') as model
+			SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
+				   tool_execution_type, tokens_used, COALESCE(input_tokens, 0), COALESCE(cache_read_tokens, 0),
+				   COALESCE(cache_write_tokens, 0), COALESCE(output_tokens, 0), estimated_cost, memory_usage, error_type,
+				   chat_id, COALESCE(project_path, '') as project_path, agent_type, COALESCE(model, '') as model
 		FROM performance_metrics
 		WHERE project_path = ?
 		ORDER BY timestamp DESC
@@ -1268,7 +1288,8 @@ func (s *SQLiteStorage) scanPerformanceMetrics(rows *sql.Rows) ([]PerformanceMet
 
 		err := rows.Scan(&metric.Timestamp, &apiLatencyMs, &metric.APICallSuccess,
 			&toolExecutionMs, &metric.ToolExecutionType, &metric.TokensUsed,
-			&metric.EstimatedCost, &metric.MemoryUsage, &metric.ErrorType,
+			&metric.InputTokens, &metric.CacheReadTokens, &metric.CacheWriteTokens,
+			&metric.OutputTokens, &metric.EstimatedCost, &metric.MemoryUsage, &metric.ErrorType,
 			&metric.ChatID, &metric.ProjectPath, &metric.AgentType, &metric.Model)
 		if err != nil {
 			return nil, err

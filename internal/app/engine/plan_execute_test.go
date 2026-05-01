@@ -221,6 +221,14 @@ func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 	if reviewerUsage == nil || reviewerUsage.CostUSD != 0.42 {
 		t.Fatalf("reviewer usage missing or wrong cost: %#v (full=%#v)", reviewerUsage, state.ModelUsages)
 	}
+	plannerPhase := findPhaseUsage(state.PhaseUsages, "planner", "planner-model")
+	if plannerPhase == nil || plannerPhase.InputTokens != 11 || plannerPhase.OutputTokens != 7 {
+		t.Fatalf("planner phase usage = %#v (full=%#v)", plannerPhase, state.PhaseUsages)
+	}
+	reviewerPhase := findPhaseUsage(state.PhaseUsages, "reviewer", "gpt-5.5")
+	if reviewerPhase == nil || reviewerPhase.InputTokens != 12 || reviewerPhase.OutputTokens != 8 || reviewerPhase.CostUSD != 0.42 {
+		t.Fatalf("reviewer phase usage = %#v (full=%#v)", reviewerPhase, state.PhaseUsages)
+	}
 	if reviewPhase.calls != 1 {
 		t.Fatalf("review calls = %d, want 1", reviewPhase.calls)
 	}
@@ -334,6 +342,19 @@ func TestPlanExecuteEngineTokenUsageIncludesCacheTokens(t *testing.T) {
 	if executorUsage == nil || executorUsage.InputTokens != 10+100+20 || executorUsage.OutputTokens != 3 {
 		t.Fatalf("executor usage = %#v (all=%#v)", executorUsage, state.ModelUsages)
 	}
+	executorPhase := findPhaseUsage(state.PhaseUsages, "executor", "claude-sonnet-4-5")
+	if executorPhase == nil || executorPhase.InputTokens != 10+100+20 || executorPhase.OutputTokens != 3 || executorPhase.CostUSD != 0.01 {
+		t.Fatalf("executor phase usage = %#v (all=%#v)", executorPhase, state.PhaseUsages)
+	}
+}
+
+func findPhaseUsage(usages []hermes.PhaseUsage, phase, model string) *hermes.PhaseUsage {
+	for i := range usages {
+		if usages[i].Phase == phase && usages[i].Model == model {
+			return &usages[i]
+		}
+	}
+	return nil
 }
 
 func TestPlanExecuteEngineDoesNotRetryFailedSubTask(t *testing.T) {
@@ -446,6 +467,84 @@ func TestPlanExecuteEngineUsesValidatingDuringTaskReviewRetry(t *testing.T) {
 	if reviewPhase.calls != 2 || planCalls != 2 || len(runner.prompts) != 4 {
 		t.Fatalf("calls: review=%d plan=%d runner=%d (want review=2 plan=2 runner=4)",
 			reviewPhase.calls, planCalls, len(runner.prompts))
+	}
+}
+
+func TestPlanExecuteEngineTaskRetryPreservesHighScoreSubTasks(t *testing.T) {
+	baseStore := hermes.NewMemoryTaskStore()
+	store := &statusRecordingStore{TaskStateStore: baseStore}
+	runner := &planExecuteRunner{}
+	reviewPhase := &scriptedReviewPhase{
+		results: []ReviewResult{
+			{
+				Verdict:      VerdictFail,
+				OverallScore: 45,
+				Feedback:     "second sub-task missed validation",
+				SubTaskResults: []ReviewSubTaskResult{
+					{SubTaskID: "s1", Score: 92, Feedback: "good"},
+					{SubTaskID: "s2", Score: 35, Feedback: "missing validation"},
+				},
+			},
+			{Verdict: VerdictPass, OverallScore: 95, Feedback: "ok"},
+		},
+	}
+	planCalls := 0
+	var replanPrompt string
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		planCalls++
+		if planCalls == 1 {
+			return hermes.CallPlanResult{
+				Text: "```json\n" +
+					`[{"id":"s1","description":"first"},{"id":"s2","description":"second"}]` +
+					"\n```",
+			}, nil
+		}
+		replanPrompt = message
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s2","description":"fix validation for second"}]` +
+				"\n```",
+		}, nil
+	}
+
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		PlannerModel:          "planner-model",
+		ProjectDir:            "/repo",
+		ChatID:                42,
+		MaxPlannerJSONRetries: 1,
+		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
+		ReviewPhase:           reviewPhase,
+		ReviewMode:            ReviewModePerTask,
+		TaskRetry:             TaskRetryConfig{Enabled: true, ScoreThreshold: 70, MaxTaskRetries: 1},
+	}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
+
+	taskID, err := engine.Start(context.Background(), "implement complex retry goal", NewChatContext(42, 0, "/repo"))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitForPlanExecute(t, engine)
+
+	state, err := baseStore.GetTask(taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if state.Status != hermes.TaskStatusDone {
+		t.Fatalf("status = %s, want done", state.Status)
+	}
+	if planCalls != 2 || reviewPhase.calls != 2 || len(runner.prompts) != 3 {
+		t.Fatalf("calls: plan=%d review=%d runner=%d (want 2/2/3)", planCalls, reviewPhase.calls, len(runner.prompts))
+	}
+	if len(state.Plan) != 2 {
+		t.Fatalf("plan length = %d, want preserved+replanned = 2: %#v", len(state.Plan), state.Plan)
+	}
+	if state.Plan[0].ID != "s1" || state.Plan[0].Status != hermes.SubTaskDone {
+		t.Fatalf("first sub-task not preserved: %#v", state.Plan)
+	}
+	if state.Plan[1].Description != "fix validation for second" || state.Plan[1].Status != hermes.SubTaskDone {
+		t.Fatalf("second sub-task should be replanned replacement: %#v", state.Plan)
+	}
+	if !strings.Contains(replanPrompt, "PARTIAL RETRY PRESERVED WORK") || !strings.Contains(replanPrompt, "MUST NOT be repeated") {
+		t.Fatalf("replan prompt missing preserved-work guard:\n%s", replanPrompt)
 	}
 }
 

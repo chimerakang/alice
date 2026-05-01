@@ -160,6 +160,12 @@ func (s *MemoryTaskStore) AddModelUsage(taskID, model string, inputTokens, outpu
 	})
 }
 
+func (s *MemoryTaskStore) AddPhaseUsage(taskID, phase, model string, inputTokens, outputTokens int, costUSD float64) error {
+	return s.update(taskID, func(task *TaskState) {
+		task.AddPhaseUsage(phase, model, inputTokens, outputTokens, costUSD)
+	})
+}
+
 func (s *MemoryTaskStore) ListTasksForChat(chatID int64, limit int) ([]TaskState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

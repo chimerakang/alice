@@ -408,6 +408,9 @@ func (r *UnifiedMemoryResolver) resolveHermesTaskSection(ctx context.Context, re
 		return MemorySection{}, ctx.Err()
 	default:
 	}
+	if !shouldIncludeHermesTaskMemory(req) {
+		return MemorySection{}, nil
+	}
 
 	tasks, err := r.loadHermesMemoryTasks(req)
 	if err != nil {
@@ -432,6 +435,10 @@ func (r *UnifiedMemoryResolver) resolveHermesTaskSection(ctx context.Context, re
 		Priority: priority,
 		Text:     buildHermesTaskContextSection(tasks),
 	}, nil
+}
+
+func shouldIncludeHermesTaskMemory(req MemoryRequest) bool {
+	return normalizedMemoryIssueNumber(req) > 0
 }
 
 func (r *UnifiedMemoryResolver) resolveGeneralMemorySection(ctx context.Context, req MemoryRequest) (MemorySection, error) {

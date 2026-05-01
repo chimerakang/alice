@@ -20,8 +20,8 @@ export interface ReviewFeedItem {
   advisory_retry: boolean;
   retry_note: string;
   failing_subtasks: number;
-  block_count: number;
-  auto_fixed_count: number;
+  block_count?: number;
+  auto_fixed_count?: number;
 }
 
 export interface ReviewSummaryStats {

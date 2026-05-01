@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
-import type { PerformanceAnalytics, PerformanceMetric } from "@/types/alice";
+import type { CacheBreakdown, CacheBreakdownRow, PerformanceAnalytics, PerformanceMetric } from "@/types/alice";
 import DateRangeFilter from "@/components/DateRangeFilter";
 import type { DateRange } from "@/components/DateRangeFilter";
 import { BarChart3, Clock, CheckCircle, AlertTriangle, Cpu, DollarSign, TrendingUp } from "lucide-react";
@@ -22,6 +22,9 @@ interface TrendsData {
   timestamp: string;
   response_time: number;
   tokens: number;
+  cache_hit_rate: number;
+  cache_read: number;
+  cache_write: number;
   cost: number;
   memory_mb: number;
   success_rate: number;
@@ -53,6 +56,7 @@ function formatResponseTime(ms: number | undefined): string {
 export default function Performance() {
   const [analytics, setAnalytics] = useState<PerformanceAnalytics | null>(null);
   const [metrics, setMetrics] = useState<PerformanceMetric[]>([]);
+  const [cacheBreakdown, setCacheBreakdown] = useState<CacheBreakdown | null>(null);
   const [recommendations, setRecommendations] = useState<{ text: string; priority: string }[]>([]);
   const [toolDistribution, setToolDistribution] = useState<ToolDistribution[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,13 +69,18 @@ export default function Performance() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [analyticsData, metricsData, recsData, toolDistData] = await Promise.allSettled([
+        const [analyticsData, metricsData, trendsData, recsData, toolDistData] = await Promise.allSettled([
           api.getPerformanceAnalytics({
             startTime: dateRange.startTime,
             endTime: dateRange.endTime,
           }),
           api.getPerformanceMetrics({
             limit: 200,
+            startTime: dateRange.startTime,
+            endTime: dateRange.endTime,
+          }),
+          api.getPerformanceTrends({
+            hours: 24,
             startTime: dateRange.startTime,
             endTime: dateRange.endTime,
           }),
@@ -85,6 +94,9 @@ export default function Performance() {
         if (analyticsData.status === "fulfilled") setAnalytics(analyticsData.value);
         if (metricsData.status === "fulfilled") {
           setMetrics(metricsData.value.metrics || []);
+        }
+        if (trendsData.status === "fulfilled") {
+          setCacheBreakdown(trendsData.value.trends?.cache_breakdown || null);
         }
         if (recsData.status === "fulfilled") {
           const recommendations = (recsData.value.recommendations || []) as { text: string; priority: string }[];
@@ -116,12 +128,55 @@ export default function Performance() {
       }),
       response_time: Math.round(m.api_latency_ms ?? 0),
       tokens: m.tokens_used ?? 0,
+      cache_hit_rate: (m.tokens_used ?? 0) > 0 ? Number((((m.cache_read_tokens ?? 0) / (m.tokens_used ?? 1)) * 100).toFixed(1)) : 0,
+      cache_read: m.cache_read_tokens ?? 0,
+      cache_write: m.cache_write_tokens ?? 0,
       cost: Number((m.estimated_cost ?? 0).toFixed(4)),
       memory_mb: Math.round((m.memory_usage ?? 0) / 1024 / 1024),
       success_rate: m.api_success ? 100 : 0,
     }));
 
   // Tool distribution is now loaded from API endpoint via state
+  const providerCacheRows = cacheBreakdown?.by_provider || [];
+  const modelCacheRows = (cacheBreakdown?.by_model || []).slice(0, 8);
+
+  const formatNumber = (value: number | undefined) => (value ?? 0).toLocaleString();
+  const formatPercent = (value: number | undefined) => `${(value ?? 0).toFixed(1)}%`;
+  const formatCost = (value: number | undefined) => `$${(value ?? 0).toFixed(2)}`;
+
+  const cacheTable = (rows: CacheBreakdownRow[], label: string) => (
+    <div>
+      <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-3">{label}</h4>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-800 text-left text-xs text-gray-500">
+              <th className="py-2 pr-4 font-medium">Group</th>
+              <th className="py-2 pr-4 font-medium text-right">Calls</th>
+              <th className="py-2 pr-4 font-medium text-right">Input Hit</th>
+              <th className="py-2 pr-4 font-medium text-right">Total Hit</th>
+              <th className="py-2 pr-4 font-medium text-right">Cache Read</th>
+              <th className="py-2 pr-4 font-medium text-right">Tokens</th>
+              <th className="py-2 font-medium text-right">Cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={`${label}:${row.group}`} className="border-b border-gray-900/80">
+                <td className="py-2 pr-4 text-gray-300 max-w-[220px] truncate" title={row.group}>{row.group}</td>
+                <td className="py-2 pr-4 text-right font-mono text-gray-400">{formatNumber(row.calls)}</td>
+                <td className="py-2 pr-4 text-right font-mono text-emerald-300">{formatPercent(row.cache_read_input_percent)}</td>
+                <td className="py-2 pr-4 text-right font-mono text-amber-300">{formatPercent(row.cache_read_total_percent)}</td>
+                <td className="py-2 pr-4 text-right font-mono text-gray-400">{formatNumber(row.cache_read_tokens)}</td>
+                <td className="py-2 pr-4 text-right font-mono text-gray-400">{formatNumber(row.tokens)}</td>
+                <td className="py-2 text-right font-mono text-gray-400">{formatCost(row.cost)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 
   if (loading) {
     return (
@@ -312,6 +367,49 @@ export default function Performance() {
           </ResponsiveContainer>
         </div>
 
+        {/* Cache Hit Rate */}
+        <div className="card p-6">
+          <h3 className="text-sm font-semibold text-gray-300 mb-4 flex items-center gap-2">
+            <TrendingUp className="w-4 h-4" />
+            Cache Hit Rate
+          </h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={trendsData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <XAxis
+                dataKey="timestamp"
+                stroke="#9CA3AF"
+                fontSize={12}
+                tick={{ fill: '#9CA3AF' }}
+              />
+              <YAxis
+                stroke="#9CA3AF"
+                fontSize={12}
+                tick={{ fill: '#9CA3AF' }}
+                tickFormatter={(value) => `${value}%`}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: '#1F2937',
+                  border: '1px solid #374151',
+                  borderRadius: '8px',
+                  color: '#F9FAFB'
+                }}
+                labelStyle={{ color: '#D1D5DB' }}
+                formatter={(value, name) => name === "cache_hit_rate" ? [`${value}%`, "Cache hit"] : [value, name]}
+              />
+              <Line
+                type="monotone"
+                dataKey="cache_hit_rate"
+                stroke="#F59E0B"
+                strokeWidth={2}
+                dot={{ fill: '#F59E0B', strokeWidth: 2, r: 4 }}
+                activeDot={{ r: 6, stroke: '#F59E0B', strokeWidth: 2 }}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+
         {/* Memory Usage */}
         <div className="card p-6">
           <h3 className="text-sm font-semibold text-gray-300 mb-4 flex items-center gap-2">
@@ -355,6 +453,18 @@ export default function Performance() {
           </ResponsiveContainer>
         </div>
       </div>
+
+      {/* Cache Breakdown */}
+      {cacheBreakdown && (
+        <div className="card p-6 space-y-6">
+          <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
+            <TrendingUp className="w-4 h-4" />
+            Cache Breakdown
+          </h3>
+          {cacheTable(providerCacheRows, "Provider")}
+          {cacheTable(modelCacheRows, "Model")}
+        </div>
+      )}
 
       {/* Tool Execution Distribution */}
       <div className="card p-6">

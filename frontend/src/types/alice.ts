@@ -354,6 +354,10 @@ export interface PerformanceMetric {
   tool_execution_time: number;
   tool_execution_type: string;
   tokens_used: number;
+  input_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  output_tokens?: number;
   estimated_cost: number;
   memory_usage: number;
   error_type: string;
@@ -366,6 +370,40 @@ export interface PerformanceAnalytics {
   error_rate: number;
   throughput: number;
   timestamp: string;
+}
+
+export interface CacheBreakdownRow {
+  group: string;
+  calls: number;
+  tokens: number;
+  input_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  output_tokens: number;
+  cost: number;
+  cache_read_input_percent: number;
+  cache_read_total_percent: number;
+}
+
+export interface CacheBreakdown {
+  by_provider?: CacheBreakdownRow[];
+  by_model?: CacheBreakdownRow[];
+  by_project?: CacheBreakdownRow[];
+}
+
+export interface PerformanceTrendsResponse {
+  enabled: boolean;
+  timestamp: string;
+  trends?: {
+    cache_breakdown?: CacheBreakdown;
+    cache_hit_rate?: number;
+    cache_read_tokens?: number;
+    cache_write_tokens?: number;
+    total_tokens?: number;
+    total_cost?: number;
+    data_points?: number;
+    [key: string]: unknown;
+  };
 }
 
 // ========== Memory ==========

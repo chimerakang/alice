@@ -64,6 +64,11 @@ type TaskStateStore interface {
 	// (or estimated for Max-sub) — see #148 1E.
 	AddModelUsage(taskID, model string, inputTokens, outputTokens int, costUSD float64) error
 
+	// AddPhaseUsage accumulates per-phase token + cost usage for Hermes
+	// observability dashboards and postmortems. Phases include planner,
+	// executor, reviewer, retry, and preflight.
+	AddPhaseUsage(taskID, phase, model string, inputTokens, outputTokens int, costUSD float64) error
+
 	// ListTasksForChat returns recent tasks for a chat (newest first).
 	ListTasksForChat(chatID int64, limit int) ([]TaskState, error)
 }
@@ -123,6 +128,7 @@ func (s *SQLiteTaskStore) migrate() error {
 			plan_json             TEXT NOT NULL DEFAULT '[]',
 			github_issue_number   INTEGER NOT NULL DEFAULT 0,
 			model_usages          TEXT NOT NULL DEFAULT '[]',
+			phase_usages          TEXT NOT NULL DEFAULT '[]',
 			created_at            TEXT NOT NULL,
 			updated_at            TEXT NOT NULL
 		)`,
@@ -132,6 +138,7 @@ func (s *SQLiteTaskStore) migrate() error {
 		`ALTER TABLE hermes_task_states ADD COLUMN project_dir TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE hermes_task_states ADD COLUMN github_issue_number INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE hermes_task_states ADD COLUMN model_usages TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE hermes_task_states ADD COLUMN phase_usages TEXT NOT NULL DEFAULT '[]'`,
 		`CREATE INDEX IF NOT EXISTS idx_hermes_tasks_chat_status
 			ON hermes_task_states(chat_id, status)`,
 		`CREATE INDEX IF NOT EXISTS idx_hermes_tasks_chat_thread
@@ -260,19 +267,23 @@ func (s *SQLiteTaskStore) CreateTask(task TaskState) (TaskState, error) {
 	if err != nil {
 		return task, err
 	}
+	phaseUsagesJSON, err := json.Marshal(task.PhaseUsages)
+	if err != nil {
+		return task, err
+	}
 
 	return task, s.execWithRetry(func() error {
 		_, err := s.db.Exec(`
 			INSERT INTO hermes_task_states
 				(id, chat_id, thread_id, planner_session, project_dir, goal, current_idx, accumulated,
 				 status, interrupted_by, interrupt_policy, token_budget, plan_json,
-				 github_issue_number, model_usages, created_at, updated_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+				 github_issue_number, model_usages, phase_usages, created_at, updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			task.ID, task.ChatID, task.ThreadID, task.PlannerSessionID, task.ProjectDir, task.Goal,
 			task.CurrentIdx, task.Accumulated, string(task.Status),
 			task.InterruptedBy, "inject",
 			string(budgetJSON), string(planJSON),
-			task.GithubIssueNumber, string(modelUsagesJSON),
+			task.GithubIssueNumber, string(modelUsagesJSON), string(phaseUsagesJSON),
 			task.CreatedAt.Format(time.RFC3339),
 			task.UpdatedAt.Format(time.RFC3339),
 		)
@@ -291,7 +302,7 @@ func (s *SQLiteTaskStore) GetTask(id string) (TaskState, error) {
 	row := s.db.QueryRow(`
 		SELECT id, chat_id, thread_id, planner_session, project_dir, goal, current_idx, accumulated,
 		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
-		       github_issue_number, model_usages, created_at, updated_at
+		       github_issue_number, model_usages, phase_usages, created_at, updated_at
 		FROM hermes_task_states WHERE id = ?`, id)
 	return s.scanTask(row)
 }
@@ -300,7 +311,7 @@ func (s *SQLiteTaskStore) GetActiveTaskForChat(chatID int64) (TaskState, error) 
 	row := s.db.QueryRow(`
 		SELECT id, chat_id, thread_id, planner_session, project_dir, goal, current_idx, accumulated,
 		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
-		       github_issue_number, model_usages, created_at, updated_at
+		       github_issue_number, model_usages, phase_usages, created_at, updated_at
 		FROM hermes_task_states
 		WHERE chat_id = ? AND status NOT IN ('done','failed','interrupted')
 		ORDER BY created_at DESC LIMIT 1`, chatID)
@@ -612,11 +623,61 @@ func (s *SQLiteTaskStore) AddModelUsage(taskID, model string, inputTokens, outpu
 	})
 }
 
+func (s *SQLiteTaskStore) AddPhaseUsage(taskID, phase, model string, inputTokens, outputTokens int, costUSD float64) error {
+	return s.execWithRetry(func() error {
+		var phaseUsagesJSON string
+		if err := s.db.QueryRow(`SELECT phase_usages FROM hermes_task_states WHERE id = ?`, taskID).
+			Scan(&phaseUsagesJSON); err != nil {
+			return err
+		}
+		var usages []PhaseUsage
+		if phaseUsagesJSON != "" {
+			if err := json.Unmarshal([]byte(phaseUsagesJSON), &usages); err != nil {
+				return err
+			}
+		}
+		found := false
+		for i := range usages {
+			if usages[i].Phase == phase && usages[i].Model == model {
+				usages[i].InputTokens += inputTokens
+				usages[i].OutputTokens += outputTokens
+				usages[i].CostUSD += costUSD
+				usages[i].CallCount++
+				found = true
+				break
+			}
+		}
+		if !found {
+			usages = append(usages, PhaseUsage{
+				Phase:        phase,
+				Model:        model,
+				InputTokens:  inputTokens,
+				OutputTokens: outputTokens,
+				CostUSD:      costUSD,
+				CallCount:    1,
+			})
+		}
+		updated, err := json.Marshal(usages)
+		if err != nil {
+			return err
+		}
+		_, err = s.db.Exec(
+			`UPDATE hermes_task_states SET phase_usages = ?, updated_at = ? WHERE id = ?`,
+			string(updated), time.Now().Format(time.RFC3339), taskID,
+		)
+		if err != nil {
+			return err
+		}
+		s.broadcastUnifiedTask(taskID)
+		return nil
+	})
+}
+
 func (s *SQLiteTaskStore) ListTasksForChat(chatID int64, limit int) ([]TaskState, error) {
 	rows, err := s.db.Query(`
 		SELECT id, chat_id, thread_id, planner_session, project_dir, goal, current_idx, accumulated,
 		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
-		       github_issue_number, model_usages, created_at, updated_at
+		       github_issue_number, model_usages, phase_usages, created_at, updated_at
 		FROM hermes_task_states
 		WHERE chat_id = ?
 		ORDER BY created_at DESC LIMIT ?`, chatID, limit)
@@ -658,7 +719,7 @@ type rowScanner interface {
 
 func (s *SQLiteTaskStore) scanTask(row rowScanner) (TaskState, error) {
 	var task TaskState
-	var statusStr, policyStr, budgetJSON, planJSON, modelUsagesJSON string
+	var statusStr, policyStr, budgetJSON, planJSON, modelUsagesJSON, phaseUsagesJSON string
 	_ = policyStr // legacy interrupt_policy column; field removed, value ignored
 	var interruptedBy sql.NullInt64
 	var createdStr, updatedStr string
@@ -668,7 +729,7 @@ func (s *SQLiteTaskStore) scanTask(row rowScanner) (TaskState, error) {
 		&task.CurrentIdx, &task.Accumulated,
 		&statusStr, &interruptedBy, &policyStr,
 		&budgetJSON, &planJSON,
-		&task.GithubIssueNumber, &modelUsagesJSON,
+		&task.GithubIssueNumber, &modelUsagesJSON, &phaseUsagesJSON,
 		&createdStr, &updatedStr,
 	)
 	if err == sql.ErrNoRows {
@@ -693,6 +754,11 @@ func (s *SQLiteTaskStore) scanTask(row rowScanner) (TaskState, error) {
 			return task, err
 		}
 	}
+	if phaseUsagesJSON != "" {
+		if err := json.Unmarshal([]byte(phaseUsagesJSON), &task.PhaseUsages); err != nil {
+			return task, err
+		}
+	}
 	if task.CreatedAt, err = time.Parse(time.RFC3339, createdStr); err != nil {
 		return task, err
 	}
@@ -713,7 +779,7 @@ func (s *SQLiteTaskStore) scanTaskRowNoArtifacts(rows *sql.Rows) (TaskState, err
 
 func (s *SQLiteTaskStore) scanRowsInto(rows *sql.Rows) (TaskState, error) {
 	var task TaskState
-	var statusStr, policyStr, budgetJSON, planJSON, modelUsagesJSON string
+	var statusStr, policyStr, budgetJSON, planJSON, modelUsagesJSON, phaseUsagesJSON string
 	_ = policyStr // legacy interrupt_policy column; field removed, value ignored
 	var interruptedBy sql.NullInt64
 	var createdStr, updatedStr string
@@ -723,7 +789,7 @@ func (s *SQLiteTaskStore) scanRowsInto(rows *sql.Rows) (TaskState, error) {
 		&task.CurrentIdx, &task.Accumulated,
 		&statusStr, &interruptedBy, &policyStr,
 		&budgetJSON, &planJSON,
-		&task.GithubIssueNumber, &modelUsagesJSON,
+		&task.GithubIssueNumber, &modelUsagesJSON, &phaseUsagesJSON,
 		&createdStr, &updatedStr,
 	)
 	if err != nil {
@@ -742,6 +808,11 @@ func (s *SQLiteTaskStore) scanRowsInto(rows *sql.Rows) (TaskState, error) {
 	}
 	if modelUsagesJSON != "" {
 		if err := json.Unmarshal([]byte(modelUsagesJSON), &task.ModelUsages); err != nil {
+			return task, err
+		}
+	}
+	if phaseUsagesJSON != "" {
+		if err := json.Unmarshal([]byte(phaseUsagesJSON), &task.PhaseUsages); err != nil {
 			return task, err
 		}
 	}

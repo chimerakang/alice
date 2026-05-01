@@ -1030,14 +1030,14 @@ func (a *Agent) resolveAgentMemoryBridge(ctx context.Context, ps *projectState, 
 	if ps == nil || ps.ctx == nil {
 		return ""
 	}
-	// In direct_resume_fallback the codex/claude resume call already failed; the
-	// only context we can trust is RecentMessages from the in-memory chat. Pulling
-	// general_task / static_hint via semantic search here is actively harmful —
-	// short follow-up prompts ("好，繼續") have weak embedding signal and will
-	// surface unrelated past decisions, which the model then treats as the live
-	// request. See issue #145.
+	// In direct resume/model-switch bridges, the only context we can trust is
+	// RecentMessages from the in-memory chat. Pulling general_task / static_hint
+	// via semantic search here is actively harmful: short follow-up prompts
+	// ("好，繼續") have weak embedding signal and can surface unrelated past
+	// decisions, which the model then treats as the live request. See issues
+	// #145 and #146.
 	var resolver *UnifiedMemoryResolver
-	if mode == "direct_resume_fallback" {
+	if mode == "direct_resume_fallback" || mode == "direct_model_switch" {
 		resolver = NewMemoryResolver(nil)
 	} else {
 		resolver = NewMemoryResolverWithAllSources(nil, globalGeneralMemorySource(), defaultStaticHintSourceForProject(ps.ctx.ProjectDir))

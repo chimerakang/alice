@@ -41,6 +41,12 @@ GRANULARITY RULES:
 - Group related operations (all file edits for one feature, all tests for one module).
 - Avoid sequential dependencies within a sub-task unless they're inseparable.
 - NEVER decompose a single command into multiple steps (e.g. "git commit" is 1 task, not 5).
+- SINGLE-ACTION RULE: if the goal is one natural action ("add one test",
+  "fix one function", "add one field", "rename one symbol", "verify one
+  already-implemented change"), return ONE sub-task whose description bundles
+  read context -> modify/verify -> run the relevant check. Do NOT split that
+  into separate Read / Edit / Test sub-tasks; the Executor handles those steps
+  inside one call.
 
 IMPLEMENTATION IMPERATIVE (critical):
 - If the goal references implementation work — keywords like 修, 修正, 修復, 實作,
@@ -56,6 +62,8 @@ IMPLEMENTATION IMPERATIVE (critical):
 - If the goal is "[GitHub #N] ..." with an unchecked checklist, treat the
   unchecked items as the implementation list. Do not silently downgrade them
   to "verify that item X was done".
+- Checked checklist items are already completed. Never create sub-tasks for
+  checked items unless the goal explicitly asks to redo them.
 
 ISSUE INFORMATION SOURCE (critical):
 - For ANY question about a GitHub issue — its body, status, comments, checklist
@@ -159,17 +167,17 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 				// Complexity Gate: direct execution mode (simple goal)
 				return tasks, totalIn, totalOut, totalCost, nil
 			}
-			// Multi-task plan: validate granularity
-			if err := validateGranularityForPlan(tasks); err != nil {
-				// Granularity violation — inject feedback and retry
+			// Multi-task plan: validate granularity and quality before executor tokens are spent.
+			if err := validatePlanQuality(goal, tasks); err != nil {
+				// Quality violation — inject feedback and retry
 				if attempt < p.maxRetries {
 					prompt = fmt.Sprintf(
-						"Decomposition violated granularity rules on attempt %d:\n%s\n\nFix by grouping related operations. Output ONLY the corrected JSON array.",
+						"Plan quality gate rejected attempt %d:\n%s\n\nFix the plan before execution. Group information gathering into deliverable sub-tasks, include code-changing work for implementation goals, and include concrete validation for changed code. Output ONLY the corrected JSON array.",
 						attempt, err.Error(),
 					)
 					continue
 				}
-				return nil, totalIn, totalOut, totalCost, fmt.Errorf("granularity validation failed after retries: %w", err)
+				return nil, totalIn, totalOut, totalCost, fmt.Errorf("plan quality validation failed after retries: %w", err)
 			}
 			return tasks, totalIn, totalOut, totalCost, nil
 		}
@@ -227,6 +235,61 @@ func validateGranularityForPlan(tasks []SubTask) error {
 		return nil // No validation needed for single tasks
 	}
 	return validateGranularity(tasks)
+}
+
+func validatePlanQuality(goal string, tasks []SubTask) error {
+	if err := validateGranularityForPlan(tasks); err != nil {
+		return err
+	}
+	if len(tasks) == 0 {
+		return nil
+	}
+	if err := validateImplementationPlan(goal, tasks); err != nil {
+		return err
+	}
+	if err := validateDeliverableTraceability(goal, tasks); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateImplementationPlan(goal string, tasks []SubTask) error {
+	if !strings.Contains(goal, "[GitHub #") && !strings.Contains(goal, "Hermes quality feedback") {
+		return nil
+	}
+	if !goalRequiresImplementation(goal) || goalIsVerificationOnly(goal) {
+		return nil
+	}
+	if !planHasMutation(tasks) {
+		return fmt.Errorf("missing implementation step: goal asks for implementation/fix work, but the plan has no Edit/Write/file_patch or modifying Bash sub-task")
+	}
+	if !planHasValidation(tasks) {
+		return fmt.Errorf("missing validation: implementation plans must include a concrete build/test/lint/verify command or validation step")
+	}
+	return nil
+}
+
+func validateDeliverableTraceability(goal string, tasks []SubTask) error {
+	if !strings.Contains(goal, "[GitHub #") || len(tasks) <= 1 {
+		return nil
+	}
+	readOnlyCount := 0
+	standaloneVerifyCount := 0
+	for _, task := range tasks {
+		if isStandaloneReadOnlyTask(task) {
+			readOnlyCount++
+		}
+		if isStandaloneValidationTask(task) {
+			standaloneVerifyCount++
+		}
+	}
+	if readOnlyCount > 1 && readOnlyCount >= len(tasks)/2 {
+		return fmt.Errorf("incomplete traceability: too many standalone read/inspect sub-tasks (%d/%d); merge discovery into the deliverable sub-task that satisfies an acceptance criterion", readOnlyCount, len(tasks))
+	}
+	if standaloneVerifyCount > 1 {
+		return fmt.Errorf("over-split validation: %d standalone validation sub-tasks; fold validation into the related deliverable sub-task unless this is a final full-suite verification", standaloneVerifyCount)
+	}
+	return nil
 }
 
 // Compress asks the Planner to condense the accumulated execution log and
@@ -288,6 +351,10 @@ func unmarshalSubTasks(raw string) ([]SubTask, error) {
 // validateGranularity ensures sub-tasks are not oversplit (e.g. per-file operations).
 // Rejects: many short tasks, repetitive patterns (stage file A, stage file B, etc).
 func validateGranularity(tasks []SubTask) error {
+	if looksLikeSplitSingleAction(tasks) {
+		return fmt.Errorf("granularity violation: plan splits one natural action into separate read/modify/verify sub-tasks; bundle them into one sub-task")
+	}
+
 	// Pattern: many (>8) tasks with high repetition ("stage", "add", "update" repeated)
 	if len(tasks) > 8 {
 		descWords := make(map[string]int)
@@ -310,6 +377,139 @@ func validateGranularity(tasks []SubTask) error {
 		}
 	}
 	return nil
+}
+
+func goalRequiresImplementation(goal string) bool {
+	goal = strings.ToLower(goal)
+	return containsAny(goal,
+		"修", "修正", "修復", "實作", "實現", "完成", "新增", "加入", "建立", "重構", "遷移",
+		"fix", "implement", "build", "create", "add ", "update", "refactor", "migrate", "wire ",
+	)
+}
+
+func goalIsVerificationOnly(goal string) bool {
+	goal = strings.ToLower(goal)
+	verifyWords := []string{
+		"verify", "review", "check status", "audit", "report", "inspect", "確認", "檢查", "檢視", "驗證", "報告", "分析",
+	}
+	hasVerify := false
+	for _, word := range verifyWords {
+		if strings.Contains(goal, word) {
+			hasVerify = true
+			break
+		}
+	}
+	if !hasVerify {
+		return false
+	}
+	return !containsAny(goal, "修正", "修復", "實作", "實現", "新增", "加入", "建立", "fix", "implement", "create", "add ")
+}
+
+func planHasMutation(tasks []SubTask) bool {
+	for _, task := range tasks {
+		if taskHasMutation(task) {
+			return true
+		}
+	}
+	return false
+}
+
+func taskHasMutation(task SubTask) bool {
+	for _, hint := range task.ToolHints {
+		hint = strings.ToLower(strings.TrimSpace(hint))
+		switch hint {
+		case "edit", "write", "file_patch":
+			return true
+		case "bash":
+			desc := strings.ToLower(task.Description)
+			if containsAny(desc, "commit", "push", "tag ", "apply", "generate", "make proto", "migration", "migrate", "新增", "修改", "修正", "產生", "生成") {
+				return true
+			}
+		}
+	}
+	desc := strings.ToLower(task.Description)
+	mutationDesc := strings.ReplaceAll(desc, "implementation", "")
+	return containsAny(mutationDesc, "modify", "edit", "write", "add ", "create", "implement ", "fix ", "update", "refactor", "新增", "補", "修改", "修正", "實作")
+}
+
+func planHasValidation(tasks []SubTask) bool {
+	for _, task := range tasks {
+		if taskHasValidation(task) {
+			return true
+		}
+	}
+	return false
+}
+
+func taskHasValidation(task SubTask) bool {
+	desc := strings.ToLower(task.Description)
+	if containsAny(desc, "test", "go test", "npm test", "build", "lint", "typecheck", "verify", "validate", "confirm", "run ", "測試", "驗證", "確認", "編譯", "建置") {
+		return true
+	}
+	for _, hint := range task.ToolHints {
+		if strings.EqualFold(strings.TrimSpace(hint), "Bash") {
+			return true
+		}
+	}
+	return false
+}
+
+func isStandaloneReadOnlyTask(task SubTask) bool {
+	desc := strings.ToLower(task.Description)
+	if taskHasMutation(task) {
+		return false
+	}
+	readHints := 0
+	for _, hint := range task.ToolHints {
+		switch strings.ToLower(strings.TrimSpace(hint)) {
+		case "read", "grep", "glob", "webfetch":
+			readHints++
+		case "bash":
+			if containsAny(desc, "grep", "rg ", "find ", "git status", "git diff", "git log", "ls ", "cat ") {
+				readHints++
+			}
+		}
+	}
+	return readHints > 0 && containsAny(desc, "read", "inspect", "understand", "review", "check", "grep", "search", "map ", "確認", "檢查", "檢視", "讀取")
+}
+
+func isStandaloneValidationTask(task SubTask) bool {
+	if taskHasMutation(task) {
+		return false
+	}
+	desc := strings.ToLower(task.Description)
+	return containsAny(desc, "run ", "test", "build", "lint", "typecheck", "verify", "validate", "confirm", "測試", "驗證", "確認", "建置", "編譯")
+}
+
+func looksLikeSplitSingleAction(tasks []SubTask) bool {
+	if len(tasks) < 2 || len(tasks) > 4 {
+		return false
+	}
+	var readish, changeish, verifyish int
+	for _, t := range tasks {
+		desc := strings.ToLower(t.Description)
+		switch {
+		case containsAny(desc, "read ", "inspect", "understand", "review existing", "look at", "查看", "檢視", "讀取"):
+			readish++
+		case containsAny(desc, "add ", "write ", "modify", "edit", "update", "implement", "fix ", "create", "新增", "補", "修改", "修正", "實作"):
+			changeish++
+		case containsAny(desc, "test", "verify", "run ", "build", "confirm", "validate", "驗證", "測試", "確認"):
+			verifyish++
+		}
+	}
+	if changeish == 0 {
+		return false
+	}
+	return verifyish > 0 && readish+changeish+verifyish == len(tasks)
+}
+
+func containsAny(s string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // ── Error types ───────────────────────────────────────────────────────────────

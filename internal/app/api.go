@@ -252,7 +252,8 @@ func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID, mo
 		}
 	}
 
-	RecordAPICall(latency, !resp.IsError, totalTokens, resp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(model))
+	RecordAPICallWithCache(latency, !resp.IsError, totalTokens, resp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(model),
+		resp.Usage.InputTokens, resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens, resp.Usage.OutputTokens)
 
 	if resp.IsError {
 		return &resp, fmt.Errorf("CLI returned error: %s", resp.Result)
@@ -442,7 +443,8 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 		}
 	}
 
-	RecordAPICall(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(model))
+	RecordAPICallWithCache(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(model),
+		finalResp.Usage.InputTokens, finalResp.Usage.CacheReadInputTokens, finalResp.Usage.CacheCreationInputTokens, finalResp.Usage.OutputTokens)
 
 	if finalResp.IsError {
 		return finalResp, fmt.Errorf("CLI returned error: %s", formatCLIStreamError(finalResp, c.MaxTurns))
@@ -627,7 +629,8 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 		errorType = "cli_plan_error"
 	}
 
-	RecordAPICall(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, 0, projectDir, errorType, ExtractModelShortName(model))
+	RecordAPICallWithCache(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, 0, projectDir, errorType, ExtractModelShortName(model),
+		finalResp.Usage.InputTokens, finalResp.Usage.CacheReadInputTokens, finalResp.Usage.CacheCreationInputTokens, finalResp.Usage.OutputTokens)
 
 	if finalResp.IsError {
 		// Result is sometimes empty when the CLI errors before producing
@@ -741,7 +744,8 @@ func (a *APIClient) Call(ctx context.Context, message, projectDir, sessionID, mo
 		}
 	}
 
-	RecordAPICall(latency, true, totalTokens, totalCost, chatID, projectDir, "", ExtractModelShortName(model))
+	RecordAPICallWithCache(latency, true, totalTokens, totalCost, chatID, projectDir, "", ExtractModelShortName(model),
+		apiResp.Usage.InputTokens, 0, 0, apiResp.Usage.OutputTokens)
 
 	cliResp := &CLIResponse{
 		Type:            "text",

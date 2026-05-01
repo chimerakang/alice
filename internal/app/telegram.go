@@ -187,6 +187,7 @@ const (
 )
 
 var hermesFetchIssue = hermes.FetchIssue
+var hermesCloseIssue = hermes.CloseIssue
 
 var (
 	tasksGitHubIssueListFunc = listGitHubIssuesForTasks
@@ -487,6 +488,7 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "multiagent", "description": "Multi-agent coordination management"},
 		{"command": "agents", "description": "View specialized agent list"},
 		{"command": "tasks", "description": "View to-do list"},
+		{"command": "close", "description": "Close a GitHub issue"},
 		{"command": "lang", "description": "Switch bot language"},
 		{"command": "preview", "description": "Preview webpage screenshot"},
 		{"command": "strict", "description": "Toggle strict review mode"},
@@ -1625,6 +1627,9 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 	case "/tasks":
 		t.handleTasks(key)
 
+	case "/close":
+		t.handleCloseIssueCommand(key, parts, text)
+
 	case "/fast":
 		if !t.config.ModelRouting.EnableDynamicRouting {
 			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
@@ -1850,6 +1855,56 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 	default:
 		t.send(key, t.getLocalizedMessage(key.chatID, "unknown_command", nil))
 	}
+}
+
+var closeIssueURLPattern = regexp.MustCompile(`/issues/([0-9]+)(?:\b|$)`)
+
+func (t *TelegramBot) handleCloseIssueCommand(key chatKey, parts []string, text string) {
+	issueNumber, ok := parseCloseIssueNumber(parts, text)
+	if !ok {
+		t.send(key, "❌ 使用方式：`/close #123` 或 `/close 123`\n\n此指令會關閉目前 topic 對應專案的 GitHub issue。")
+		return
+	}
+	projectDir := t.getAgent(key).ProjectDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	issue, err := hermesFetchIssue(ctx, projectDir, issueNumber)
+	if err != nil {
+		t.send(key, fmt.Sprintf("❌ 無法讀取 Issue #%d：%s", issueNumber, err.Error()))
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(issue.State), "closed") {
+		t.send(key, fmt.Sprintf("ℹ️ Issue #%d 已經是 closed：%s", issue.Number, issue.Title))
+		return
+	}
+	if err := hermesCloseIssue(ctx, projectDir, issueNumber); err != nil {
+		t.send(key, fmt.Sprintf("❌ 關閉 Issue #%d 失敗：%s", issueNumber, err.Error()))
+		return
+	}
+	t.send(key, fmt.Sprintf("✅ 已關閉 Issue #%d：%s", issue.Number, issue.Title))
+}
+
+func parseCloseIssueNumber(parts []string, text string) (int, bool) {
+	if n, ok := ParseIssueNumber(text); ok {
+		return n, true
+	}
+	if len(parts) < 2 {
+		return 0, false
+	}
+	arg := strings.TrimSpace(parts[1])
+	if arg == "" {
+		return 0, false
+	}
+	if matches := closeIssueURLPattern.FindStringSubmatch(arg); len(matches) == 2 {
+		n, err := strconv.Atoi(matches[1])
+		return n, err == nil && n > 0
+	}
+	n, err := strconv.Atoi(strings.TrimPrefix(arg, "#"))
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 // buildContextAwareRows inspects the current chat state and returns inline keyboard rows
@@ -2298,6 +2353,9 @@ func (t *TelegramBot) startHermesFromIssueMode(key chatKey, issueNumber int, pro
 	}
 
 	goal := hermes.BuildGoalFromIssue(issue)
+	if qualityContext := currentHermesQualityContext(time.Now()); qualityContext != "" {
+		goal = strings.TrimSpace(goal) + "\n\n" + qualityContext
+	}
 	if !forceRestart {
 		if task, decision, ok := t.resolveHermesIssueTask(key, projectDir, issueNumber); ok {
 			switch decision {
@@ -2340,6 +2398,11 @@ func (t *TelegramBot) startHermesFromIssueMode(key chatKey, issueNumber int, pro
 		}))
 		t.startHermesTaskWithIssueTier(key, goal, projectDir, issueNumber, budget, ghCfg, t.hermesTierFor(key))
 		return
+	}
+	if updatedGoal, skip := t.maybeRunHermesIssuePreflight(ctx, key, issue, projectDir, goal, cfg); skip {
+		return
+	} else {
+		goal = updatedGoal
 	}
 	t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_start_title", map[string]string{
 		"issueNum": fmt.Sprintf("%d", issueNumber),

@@ -56,6 +56,7 @@ type TaskState struct {
 	TokenBudget       TokenBudget  `json:"token_budget"`
 	GithubIssueNumber int          `json:"github_issue_number,omitempty"` // 0 = no issue linked
 	ModelUsages       []ModelUsage `json:"model_usages"`                  // per-model token tracking
+	PhaseUsages       []PhaseUsage `json:"phase_usages,omitempty"`        // per Hermes phase token tracking
 	CreatedAt         time.Time    `json:"created_at"`
 	UpdatedAt         time.Time    `json:"updated_at"`
 }
@@ -130,6 +131,27 @@ func (t *TaskState) AddUsage(model string, inputTokens, outputTokens int, costUS
 	})
 }
 
+// AddPhaseUsage records token + cost usage for a Hermes pipeline phase.
+func (t *TaskState) AddPhaseUsage(phase, model string, inputTokens, outputTokens int, costUSD float64) {
+	for i := range t.PhaseUsages {
+		if t.PhaseUsages[i].Phase == phase && t.PhaseUsages[i].Model == model {
+			t.PhaseUsages[i].InputTokens += inputTokens
+			t.PhaseUsages[i].OutputTokens += outputTokens
+			t.PhaseUsages[i].CostUSD += costUSD
+			t.PhaseUsages[i].CallCount++
+			return
+		}
+	}
+	t.PhaseUsages = append(t.PhaseUsages, PhaseUsage{
+		Phase:        phase,
+		Model:        model,
+		InputTokens:  inputTokens,
+		OutputTokens: outputTokens,
+		CostUSD:      costUSD,
+		CallCount:    1,
+	})
+}
+
 // SubTask represents an atomic unit of work assigned to an Executor.
 type SubTask struct {
 	ID          string        `json:"id"`
@@ -160,6 +182,21 @@ type ModelUsage struct {
 	OutputTokens int     `json:"output_tokens"`
 	CostUSD      float64 `json:"cost_usd"`
 	CallCount    int     `json:"call_count"`
+}
+
+// PhaseUsage tracks token + cost consumption per Hermes pipeline phase.
+type PhaseUsage struct {
+	Phase        string  `json:"phase"` // planner, executor, reviewer, retry, preflight
+	Model        string  `json:"model"`
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
+	CostUSD      float64 `json:"cost_usd"`
+	CallCount    int     `json:"call_count"`
+}
+
+// TotalTokens returns the sum of input and output tokens.
+func (p *PhaseUsage) TotalTokens() int {
+	return p.InputTokens + p.OutputTokens
 }
 
 // TotalTokens returns the sum of input and output tokens.

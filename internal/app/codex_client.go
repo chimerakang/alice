@@ -285,7 +285,8 @@ func (c *CodexClient) runCodexStream(
 	}
 
 	totalTokens := inputTokens + cachedInputTokens + outputTokens
-	RecordAPICall(latency, !isError, totalTokens, cost, chatID, projectDir, errorType, ExtractModelShortName(model))
+	RecordAPICallWithCache(latency, !isError, totalTokens, cost, chatID, projectDir, errorType, ExtractModelShortName(model),
+		inputTokens, cachedInputTokens, 0, outputTokens)
 
 	if fatalErr != nil {
 		return nil, fatalErr

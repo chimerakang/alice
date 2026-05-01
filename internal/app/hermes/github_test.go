@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeExecutableScript(t *testing.T, dir, name, body string) string {
@@ -172,6 +173,13 @@ func TestCommentDone_WithArtifacts(t *testing.T) {
 	}
 }
 
+func TestCommentDoneWithNote(t *testing.T) {
+	body := CommentDoneWithNote(TaskState{Plan: []SubTask{{Status: SubTaskDone}}}, "Issue was not auto-closed because it is missing a label.")
+	if !strings.Contains(body, "**Note:**") || !strings.Contains(body, "missing a label") {
+		t.Fatalf("note missing from comment:\n%s", body)
+	}
+}
+
 func TestCommentFailed_Fields(t *testing.T) {
 	body := CommentFailed("Parse input", "timeout", 3, 7)
 	if !strings.Contains(body, "Parse input") {
@@ -202,6 +210,7 @@ func TestBuildGoalFromIssue_WithChecklist(t *testing.T) {
 		Number: 42,
 		Title:  "Fix login bug",
 		Body:   "Some body text\n- [ ] Step A\n- [x] Step B\n",
+		State:  "OPEN",
 		Checklist: []ChecklistItem{
 			{Text: "Step A", Checked: false},
 			{Text: "Step B", Checked: true},
@@ -214,12 +223,17 @@ func TestBuildGoalFromIssue_WithChecklist(t *testing.T) {
 	if !strings.Contains(goal, "Step A") {
 		t.Errorf("unchecked item missing: %s", goal)
 	}
-	if strings.Contains(goal, "Step B") {
-		// already checked - should not appear in task list guidance
-		// (it appears in the full body but not in the unchecked list)
+	if !strings.Contains(goal, "Already checked issue items") || !strings.Contains(goal, "Step B") {
+		t.Errorf("checked item should appear only as completed context: %s", goal)
 	}
-	if !strings.Contains(goal, "use these as SubTask") {
+	if strings.Contains(goal, "- [x] Step B\nFull issue") || strings.Contains(goal, "Some body text\n- [ ] Step A") {
+		t.Errorf("raw checklist lines should be omitted from full issue body: %s", goal)
+	}
+	if !strings.Contains(goal, "plan ONLY these as SubTask") {
 		t.Errorf("planner hint missing: %s", goal)
+	}
+	if !strings.Contains(goal, "Issue State Snapshot") || !strings.Contains(goal, "1 unchecked, 1 checked") {
+		t.Errorf("issue state snapshot missing: %s", goal)
 	}
 }
 
@@ -235,6 +249,77 @@ func TestBuildGoalFromIssue_NoChecklist(t *testing.T) {
 	}
 	if !strings.Contains(goal, "Refactor") {
 		t.Errorf("title missing: %s", goal)
+	}
+}
+
+func TestBuildIssueStateSnapshotIncludesRecentHermesSignals(t *testing.T) {
+	issue := &IssueContext{
+		Number: 305,
+		Title:  "Result structure expansion",
+		State:  "OPEN",
+		Labels: []string{"backend"},
+		Checklist: []ChecklistItem{
+			{Text: "Add prize_pct", Checked: true},
+			{Text: "Close issue after verification", Checked: false},
+		},
+		Comments: []IssueComment{
+			{
+				Author:    "alice",
+				CreatedAt: time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC),
+				Body:      "✅ **Hermes 完成** 1/1 SubTasks\n\n**結論**：全部 PASS。\n\n**下一步**：可關閉 issue。",
+			},
+			{
+				Author:    "dev",
+				CreatedAt: time.Date(2026, 5, 1, 10, 1, 0, 0, time.UTC),
+				Body:      "unrelated note",
+			},
+		},
+	}
+	snapshot := BuildIssueStateSnapshot(issue)
+	for _, want := range []string{
+		"State: OPEN",
+		"Labels: backend",
+		"1 unchecked, 1 checked",
+		"Close issue after verification",
+		"Add prize_pct",
+		"Recent Hermes/comment signals",
+		"Latest Hermes status: complete (1/1 SubTasks",
+		"全部 PASS",
+		"可關閉 issue",
+	} {
+		if !strings.Contains(snapshot, want) {
+			t.Fatalf("snapshot missing %q:\n%s", want, snapshot)
+		}
+	}
+}
+
+func TestRecentSuccessfulHermesCompletionDetectsLatestCompleteRun(t *testing.T) {
+	issue := &IssueContext{
+		Comments: []IssueComment{
+			{Body: "✅ **Hermes 完成** 5/5 SubTasks", CreatedAt: time.Date(2026, 5, 1, 1, 0, 0, 0, time.UTC)},
+			{Body: "🤖 **Hermes 開始執行**"},
+			{Body: "✅ **子任務進度** (1/1)"},
+			{Author: "alice", Body: "✅ **Hermes 完成** 1/1 SubTasks", CreatedAt: time.Date(2026, 5, 1, 2, 0, 0, 0, time.UTC)},
+		},
+	}
+	signal, ok := RecentSuccessfulHermesCompletion(issue)
+	if !ok {
+		t.Fatalf("expected latest complete signal")
+	}
+	if signal.Done != 1 || signal.Total != 1 || signal.Author != "alice" {
+		t.Fatalf("unexpected signal: %+v", signal)
+	}
+}
+
+func TestRecentSuccessfulHermesCompletionIgnoresFailedLatestRun(t *testing.T) {
+	issue := &IssueContext{
+		Comments: []IssueComment{
+			{Body: "✅ **Hermes 完成** 5/5 SubTasks"},
+			{Body: "❌ **Hermes 執行失敗**\n\n- 原因: tests failed"},
+		},
+	}
+	if signal, ok := RecentSuccessfulHermesCompletion(issue); ok {
+		t.Fatalf("latest failed run should not count as complete: %+v", signal)
 	}
 }
 
@@ -260,9 +345,9 @@ set -eu
 log="$FAKE_GH_LOG"
 printf '%s\n' "$*" >>"$log"
 case "$*" in
-  "issue view 101 --json title,body,labels")
+  "issue view 101 --json title,body,state,labels,comments")
     cat <<'JSON'
-{"title":"Hermes #101","body":"Intro\n- [ ] Step A\n- [x] Step B\n","labels":[{"name":"hermes-auto-close"},{"name":"complexity:medium"}]}
+{"title":"Hermes #101","state":"OPEN","body":"Intro\n- [ ] Step A\n- [x] Step B\n","labels":[{"name":"hermes-auto-close"},{"name":"complexity:medium"}],"comments":[{"author":{"login":"alice"},"body":"✅ **Hermes 完成** 1/1 SubTasks\n\n**結論**：PASS","createdAt":"2026-05-01T00:00:00Z"}]}
 JSON
     exit 0
     ;;
@@ -292,6 +377,9 @@ exit 1
 	if issue.Title != "Hermes #101" || len(issue.Checklist) != 2 {
 		t.Fatalf("unexpected issue parsed: %+v", issue)
 	}
+	if issue.State != "OPEN" || len(issue.Comments) != 1 || issue.Comments[0].Author != "alice" {
+		t.Fatalf("expected state/comment to be parsed: %+v", issue)
+	}
 	if !HasLabel(issue, "hermes-auto-close") {
 		t.Fatalf("expected label to be parsed: %+v", issue.Labels)
 	}
@@ -305,7 +393,7 @@ exit 1
 		t.Fatalf("ReadFile log: %v", err)
 	}
 	got := string(logBytes)
-	if !strings.Contains(got, "issue view 101 --json title,body,labels") {
+	if !strings.Contains(got, "issue view 101 --json title,body,state,labels,comments") {
 		t.Fatalf("missing issue fetch invocation:\n%s", got)
 	}
 	if !strings.Contains(got, "issue view 101 --json body") {

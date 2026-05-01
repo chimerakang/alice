@@ -116,7 +116,8 @@ func (c *EnhancedCLIClient) CallWithFiles(ctx context.Context, message string, f
 		}
 	}
 
-	RecordAPICall(latency, !resp.IsError, totalTokens, resp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(c.Model))
+	RecordAPICallWithCache(latency, !resp.IsError, totalTokens, resp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(c.Model),
+		resp.Usage.InputTokens, resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens, resp.Usage.OutputTokens)
 
 	log.Printf("[enhanced-cli] completed in %v, tokens: %d, cost: $%.4f",
 		latency, totalTokens, resp.TotalCostUSD)

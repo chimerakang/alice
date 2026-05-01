@@ -42,7 +42,7 @@ func makeTask(id string, chatID int64) TaskState {
 			{ID: "s1", Description: "read auth.go", Status: SubTaskPending},
 			{ID: "s2", Description: "write tests", Status: SubTaskPending},
 		},
-		Status:          TaskStatusPlanning,
+		Status: TaskStatusPlanning,
 		TokenBudget: TokenBudget{
 			MaxTotalTokens: 100_000,
 			StartedAt:      time.Now(),
@@ -309,6 +309,35 @@ func TestAddTokenUsage(t *testing.T) {
 	got, _ := store.GetTask("task-tok")
 	if got.TokenBudget.UsedTokens != 3500 {
 		t.Errorf("used tokens: got %d, want 3500", got.TokenBudget.UsedTokens)
+	}
+}
+
+func TestAddPhaseUsage(t *testing.T) {
+	store := newTestStore(t)
+	if _, err := store.CreateTask(makeTask("task-phase", 6)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.AddPhaseUsage("task-phase", "planner", "claude-opus", 100, 10, 0.12); err != nil {
+		t.Fatalf("AddPhaseUsage planner: %v", err)
+	}
+	if err := store.AddPhaseUsage("task-phase", "planner", "claude-opus", 50, 5, 0.06); err != nil {
+		t.Fatalf("AddPhaseUsage planner second: %v", err)
+	}
+	if err := store.AddPhaseUsage("task-phase", "executor", "claude-sonnet", 200, 20, 0.03); err != nil {
+		t.Fatalf("AddPhaseUsage executor: %v", err)
+	}
+
+	got, err := store.GetTask("task-phase")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if len(got.PhaseUsages) != 2 {
+		t.Fatalf("phase usages = %d, want 2: %#v", len(got.PhaseUsages), got.PhaseUsages)
+	}
+	planner := got.PhaseUsages[0]
+	if planner.Phase != "planner" || planner.Model != "claude-opus" || planner.InputTokens != 150 || planner.OutputTokens != 15 || planner.CallCount != 2 {
+		t.Fatalf("unexpected planner phase usage: %#v", planner)
 	}
 }
 

@@ -285,6 +285,112 @@ func TestMemoryResolverIncludesRecentMessagesWithoutExplicitIssue(t *testing.T) 
 	}
 }
 
+func TestMemoryResolverSkipsHermesTaskMemoryForHermesWithoutExplicitIssue(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	if _, err := store.CreateTask(hermes.TaskState{
+		ID:          "previous-hermes-task",
+		ChatID:      42,
+		ThreadID:    7,
+		ProjectDir:  "/repo",
+		Status:      hermes.TaskStatusDone,
+		Goal:        "舊 Hermes 任務",
+		Accumulated: "這段 persisted Hermes context 不應進入沒有 issue anchor 的新 Hermes prompt。",
+		CreatedAt:   time.Now().Add(-time.Hour),
+		UpdatedAt:   time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	resolver := NewMemoryResolver(tasksvc.New(store))
+	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
+		ChatID:      42,
+		ThreadID:    7,
+		ProjectDir:  "/repo",
+		UserMessage: "繼續處理",
+		Mode:        "hermes",
+		RecentMessages: []contextMessage{
+			{Role: "user", Content: "剛剛討論目前任務"},
+			{Role: "assistant", Content: "下一步是先確認 issue anchor。"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	rendered := bundle.Render()
+	if strings.Contains(rendered, "Persisted Hermes context") || strings.Contains(rendered, "previous-hermes-task") {
+		t.Fatalf("unanchored Hermes prompt leaked persisted task memory:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "下一步是先確認 issue anchor。") {
+		t.Fatalf("expected recent messages to remain available:\n%s", rendered)
+	}
+}
+
+func TestMemoryResolverSkipsHermesTaskMemoryForNonHermesWithoutExplicitIssue(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	if _, err := store.CreateTask(hermes.TaskState{
+		ID:          "active-issue-143",
+		ChatID:      42,
+		ThreadID:    7,
+		ProjectDir:  "/repo",
+		Status:      hermes.TaskStatusExecuting,
+		Goal:        "[GitHub #143] Active Hermes work",
+		Accumulated: "這段 active Hermes memory 不應進入一般文件分析 prompt。",
+		CreatedAt:   time.Now().Add(-time.Hour),
+		UpdatedAt:   time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	resolver := NewMemoryResolver(tasksvc.New(store))
+	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
+		ChatID:      42,
+		ThreadID:    7,
+		ProjectDir:  "/repo",
+		UserMessage: "分析這份文件",
+		Mode:        "document",
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if rendered := bundle.Render(); strings.Contains(rendered, "Persisted Hermes context") || strings.Contains(rendered, "active Hermes memory") {
+		t.Fatalf("non-Hermes prompt leaked Hermes task memory:\n%s", rendered)
+	}
+}
+
+func TestMemoryResolverKeepsIssueScopedHermesTaskMemoryForDocumentMode(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	if _, err := store.CreateTask(hermes.TaskState{
+		ID:                "issue-143",
+		ChatID:            42,
+		ThreadID:          7,
+		ProjectDir:        "/repo",
+		GithubIssueNumber: 143,
+		Status:            hermes.TaskStatusDone,
+		Goal:              "[GitHub #143] Unified Memory Architecture",
+		Accumulated:       "這段 #143 issue memory 可以支援明確 issue 文件分析。",
+		CreatedAt:         time.Now().Add(-time.Hour),
+		UpdatedAt:         time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	resolver := NewMemoryResolver(tasksvc.New(store))
+	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
+		ChatID:      42,
+		ThreadID:    7,
+		ProjectDir:  "/repo",
+		UserMessage: "分析文件並延續 #143",
+		Mode:        "document",
+	})
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	rendered := bundle.Render()
+	if !strings.Contains(rendered, "Persisted Hermes context") || !strings.Contains(rendered, "#143 issue memory") {
+		t.Fatalf("issue-scoped document prompt missing Hermes task memory:\n%s", rendered)
+	}
+}
+
 func TestMemoryResolverClampsLowPrioritySections(t *testing.T) {
 	store := hermes.NewMemoryTaskStore()
 	if _, err := store.CreateTask(hermes.TaskState{
@@ -1554,6 +1660,96 @@ func TestClearAndResetCommandsResetSession(t *testing.T) {
 				t.Fatalf("recent messages after %s = %d, want 0", tt.command, got)
 			}
 		})
+	}
+}
+
+func TestCloseCommandClosesFetchedIssue(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	agent := NewAgent(&mockClient{}, "/tmp/alice-project", key.chatID, key.threadID)
+	bot := &TelegramBot{
+		agents: map[chatKey]*Agent{
+			key: agent,
+		},
+		config:          &Config{DefaultProjectDir: "/tmp/alice-project"},
+		messageQueue:    make(chan *TelegramMessage, 2),
+		langPreferences: map[int64]string{},
+	}
+
+	oldFetch := hermesFetchIssue
+	oldClose := hermesCloseIssue
+	defer func() {
+		hermesFetchIssue = oldFetch
+		hermesCloseIssue = oldClose
+	}()
+	var closedProject string
+	var closedIssue int
+	hermesFetchIssue = func(ctx context.Context, projectDir string, issueNumber int) (*hermes.IssueContext, error) {
+		if projectDir != "/tmp/alice-project" {
+			t.Fatalf("projectDir = %q, want /tmp/alice-project", projectDir)
+		}
+		if issueNumber != 57 {
+			t.Fatalf("issueNumber = %d, want 57", issueNumber)
+		}
+		return &hermes.IssueContext{Number: issueNumber, Title: "Chat history", State: "OPEN"}, nil
+	}
+	hermesCloseIssue = func(ctx context.Context, projectDir string, issueNumber int) error {
+		closedProject = projectDir
+		closedIssue = issueNumber
+		return nil
+	}
+
+	bot.handleCommand(key, "/close 57")
+
+	if closedProject != "/tmp/alice-project" || closedIssue != 57 {
+		t.Fatalf("closed issue = (%q, %d), want (/tmp/alice-project, 57)", closedProject, closedIssue)
+	}
+	assertQueuedMessageContains(t, bot.messageQueue, "已關閉 Issue #57")
+}
+
+func TestCloseCommandSkipsAlreadyClosedIssue(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	agent := NewAgent(&mockClient{}, "/tmp/alice-project", key.chatID, key.threadID)
+	bot := &TelegramBot{
+		agents:       map[chatKey]*Agent{key: agent},
+		config:       &Config{DefaultProjectDir: "/tmp/alice-project"},
+		messageQueue: make(chan *TelegramMessage, 2),
+	}
+
+	oldFetch := hermesFetchIssue
+	oldClose := hermesCloseIssue
+	defer func() {
+		hermesFetchIssue = oldFetch
+		hermesCloseIssue = oldClose
+	}()
+	hermesFetchIssue = func(ctx context.Context, projectDir string, issueNumber int) (*hermes.IssueContext, error) {
+		return &hermes.IssueContext{Number: issueNumber, Title: "Already done", State: "CLOSED"}, nil
+	}
+	hermesCloseIssue = func(ctx context.Context, projectDir string, issueNumber int) error {
+		t.Fatalf("CloseIssue should not be called for closed issue")
+		return nil
+	}
+
+	bot.handleCommand(key, "/close https://github.com/chimerakang/dumbledore/issues/57")
+
+	assertQueuedMessageContains(t, bot.messageQueue, "已經是 closed")
+}
+
+func TestParseCloseIssueNumber(t *testing.T) {
+	cases := []struct {
+		text string
+		want int
+		ok   bool
+	}{
+		{text: "/close #57", want: 57, ok: true},
+		{text: "/close 57", want: 57, ok: true},
+		{text: "/close https://github.com/chimerakang/dumbledore/issues/57", want: 57, ok: true},
+		{text: "/close nope", ok: false},
+	}
+	for _, tc := range cases {
+		got, ok := parseCloseIssueNumber(strings.Fields(tc.text), tc.text)
+		if ok != tc.ok || got != tc.want {
+			t.Fatalf("parseCloseIssueNumber(%q) = (%d, %v), want (%d, %v)", tc.text, got, ok, tc.want, tc.ok)
+		}
 	}
 }
 

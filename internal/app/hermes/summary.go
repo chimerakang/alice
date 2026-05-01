@@ -45,6 +45,10 @@ func (s *TaskSummary) generateMinimal() string {
 		buf.WriteString(fmt.Sprintf("├─ %s：%d 次呼叫，%s tokens\n",
 			label, usage.CallCount, formatNumber(total)))
 	}
+	for _, usage := range sortedPhaseUsages(s.TaskState.PhaseUsages) {
+		buf.WriteString(fmt.Sprintf("├─ %s phase：%d 次呼叫，%s tokens\n",
+			usage.Phase, usage.CallCount, formatNumber(usage.TotalTokens())))
+	}
 
 	// Summary line
 	buf.WriteString(fmt.Sprintf("└─ 合計：%s tokens · 耗時 %s\n",
@@ -91,6 +95,16 @@ func (s *TaskSummary) generateDetailed() string {
 		formatNumber(avgTokens), s.WallclockSeconds/max(1, len(s.TaskState.Plan))))
 	buf.WriteString("\n")
 
+	if len(s.TaskState.PhaseUsages) > 0 {
+		buf.WriteString("🧭 Phase 用量\n")
+		for _, usage := range sortedPhaseUsages(s.TaskState.PhaseUsages) {
+			buf.WriteString(fmt.Sprintf("  %-14s %-10s %d 次   合計: %-8s cost: $%.4f\n",
+				usage.Phase, formatModelLabel(usage.Model), usage.CallCount,
+				formatNumber(usage.TotalTokens()), usage.CostUSD))
+		}
+		buf.WriteString("\n")
+	}
+
 	// Execution time section
 	buf.WriteString("⏱️ 執行時間\n")
 	buf.WriteString(fmt.Sprintf("  合計：%s\n", formatDuration(s.WallclockSeconds)))
@@ -130,6 +144,34 @@ func (s *TaskSummary) generateDetailed() string {
 	}
 
 	return strings.TrimSuffix(buf.String(), "\n")
+}
+
+func sortedPhaseUsages(usages []PhaseUsage) []PhaseUsage {
+	out := append([]PhaseUsage(nil), usages...)
+	order := map[string]int{
+		"preflight":      0,
+		"planner":        1,
+		"retry_planner":  2,
+		"executor":       3,
+		"retry_executor": 4,
+		"reviewer":       5,
+	}
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			oi, okI := order[out[i].Phase]
+			if !okI {
+				oi = 99
+			}
+			oj, okJ := order[out[j].Phase]
+			if !okJ {
+				oj = 99
+			}
+			if oj < oi || (oj == oi && out[j].Model < out[i].Model) {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	return out
 }
 
 // formatModelLabel returns a short label for a model name.

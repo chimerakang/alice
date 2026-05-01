@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -609,6 +610,8 @@ func computeTrendsFromMetrics(metrics []PerformanceMetrics, hours int) map[strin
 	totalLatency := time.Duration(0)
 	totalTokens := 0
 	totalCost := 0.0
+	totalCacheRead := 0
+	totalCacheWrite := 0
 	successful := 0
 	hourlyStats := make(map[int]map[string]interface{})
 
@@ -616,6 +619,8 @@ func computeTrendsFromMetrics(metrics []PerformanceMetrics, hours int) map[strin
 		totalLatency += metric.APICallLatency
 		totalTokens += metric.TokensUsed
 		totalCost += metric.EstimatedCost
+		totalCacheRead += metric.CacheReadTokens
+		totalCacheWrite += metric.CacheWriteTokens
 		if metric.APICallSuccess {
 			successful++
 		}
@@ -627,6 +632,8 @@ func computeTrendsFromMetrics(metrics []PerformanceMetrics, hours int) map[strin
 				"latency_sum": time.Duration(0),
 				"tokens":      0,
 				"cost":        0.0,
+				"cache_read":  0,
+				"cache_write": 0,
 				"errors":      0,
 			}
 		}
@@ -635,19 +642,120 @@ func computeTrendsFromMetrics(metrics []PerformanceMetrics, hours int) map[strin
 		stats["latency_sum"] = stats["latency_sum"].(time.Duration) + metric.APICallLatency
 		stats["tokens"] = stats["tokens"].(int) + metric.TokensUsed
 		stats["cost"] = stats["cost"].(float64) + metric.EstimatedCost
+		stats["cache_read"] = stats["cache_read"].(int) + metric.CacheReadTokens
+		stats["cache_write"] = stats["cache_write"].(int) + metric.CacheWriteTokens
 		if !metric.APICallSuccess || metric.ErrorType != "" {
 			stats["errors"] = stats["errors"].(int) + 1
 		}
 	}
 
+	cacheHitRate := 0.0
+	if totalTokens > 0 {
+		cacheHitRate = float64(totalCacheRead) / float64(totalTokens) * 100
+	}
 	return map[string]interface{}{
-		"period_hours":     hours,
-		"data_points":      len(metrics),
-		"avg_latency_ms":   float64(totalLatency.Nanoseconds()) / float64(len(metrics)) / 1e6,
-		"total_tokens":     totalTokens,
-		"total_cost":       totalCost,
-		"success_rate":     float64(successful) / float64(len(metrics)) * 100,
-		"hourly_breakdown": hourlyStats,
+		"period_hours":       hours,
+		"data_points":        len(metrics),
+		"avg_latency_ms":     float64(totalLatency.Nanoseconds()) / float64(len(metrics)) / 1e6,
+		"total_tokens":       totalTokens,
+		"total_cost":         totalCost,
+		"cache_read_tokens":  totalCacheRead,
+		"cache_write_tokens": totalCacheWrite,
+		"cache_hit_rate":     cacheHitRate,
+		"cache_breakdown":    computeCacheBreakdown(metrics),
+		"success_rate":       float64(successful) / float64(len(metrics)) * 100,
+		"hourly_breakdown":   hourlyStats,
+	}
+}
+
+type cacheBreakdownRow struct {
+	Group                 string  `json:"group"`
+	Calls                 int     `json:"calls"`
+	Tokens                int     `json:"tokens"`
+	InputTokens           int     `json:"input_tokens"`
+	CacheReadTokens       int     `json:"cache_read_tokens"`
+	CacheWriteTokens      int     `json:"cache_write_tokens"`
+	OutputTokens          int     `json:"output_tokens"`
+	Cost                  float64 `json:"cost"`
+	CacheReadInputPercent float64 `json:"cache_read_input_percent"`
+	CacheReadTotalPercent float64 `json:"cache_read_total_percent"`
+}
+
+func computeCacheBreakdown(metrics []PerformanceMetrics) map[string][]cacheBreakdownRow {
+	return map[string][]cacheBreakdownRow{
+		"by_provider": sortedCacheBreakdown(metrics, func(m PerformanceMetrics) string {
+			return cacheProviderForModel(m.Model)
+		}, 0),
+		"by_model": sortedCacheBreakdown(metrics, func(m PerformanceMetrics) string {
+			model := strings.TrimSpace(m.Model)
+			if model == "" {
+				return "unknown"
+			}
+			return model
+		}, 0),
+		"by_project": sortedCacheBreakdown(metrics, func(m PerformanceMetrics) string {
+			project := strings.TrimSpace(m.ProjectPath)
+			if project == "" {
+				return "unknown"
+			}
+			return project
+		}, 10),
+	}
+}
+
+func sortedCacheBreakdown(metrics []PerformanceMetrics, groupFn func(PerformanceMetrics) string, limit int) []cacheBreakdownRow {
+	grouped := make(map[string]*cacheBreakdownRow)
+	for _, metric := range metrics {
+		group := groupFn(metric)
+		row := grouped[group]
+		if row == nil {
+			row = &cacheBreakdownRow{Group: group}
+			grouped[group] = row
+		}
+		row.Calls++
+		row.Tokens += metric.TokensUsed
+		row.InputTokens += metric.InputTokens
+		row.CacheReadTokens += metric.CacheReadTokens
+		row.CacheWriteTokens += metric.CacheWriteTokens
+		row.OutputTokens += metric.OutputTokens
+		row.Cost += metric.EstimatedCost
+	}
+
+	rows := make([]cacheBreakdownRow, 0, len(grouped))
+	for _, row := range grouped {
+		inputDenom := row.InputTokens + row.CacheReadTokens + row.CacheWriteTokens
+		if inputDenom > 0 {
+			row.CacheReadInputPercent = float64(row.CacheReadTokens) * 100 / float64(inputDenom)
+		}
+		if row.Tokens > 0 {
+			row.CacheReadTotalPercent = float64(row.CacheReadTokens) * 100 / float64(row.Tokens)
+		}
+		rows = append(rows, *row)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Tokens == rows[j].Tokens {
+			return rows[i].Group < rows[j].Group
+		}
+		return rows[i].Tokens > rows[j].Tokens
+	})
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows
+}
+
+func cacheProviderForModel(model string) string {
+	short := ExtractModelShortName(model)
+	switch short {
+	case "haiku", "sonnet", "opus":
+		return "claude"
+	case "codex", "gpt-5.5", "gpt-5.4", "gpt-4o", "gpt-4.1", "gpt", "o3", "o4-mini":
+		return "codex"
+	default:
+		if strings.HasPrefix(short, "gpt-") {
+			return "codex"
+		}
+		return "unknown"
 	}
 }
 

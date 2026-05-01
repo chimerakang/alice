@@ -68,6 +68,12 @@
       "max_total_tokens": 500000,
       "max_wallclock_seconds": 3600
     },
+    "preflight": {
+      "enabled": false,
+      "model": "claude-haiku-4-5-20251001",
+      "completion_threshold": 90,
+      "timeout_seconds": 20
+    },
     "summary": {
       "enabled": false,
       "verbosity": "minimal",

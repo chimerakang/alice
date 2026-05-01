@@ -35,13 +35,13 @@ func newIntegrationService(t *testing.T) (*task.Service, *hermes.SQLiteTaskStore
 
 func makeIntegrationTask(id string, chatID int64) hermes.TaskState {
 	return hermes.TaskState{
-		ID:              id,
-		ChatID:          chatID,
-		ProjectDir:      "/repo",
-		Goal:            "integration test goal",
-		Plan:            []hermes.SubTask{{ID: "s1", Description: "step 1", Status: hermes.SubTaskPending}},
-		Status:          hermes.TaskStatusPlanning,
-		TokenBudget:     hermes.TokenBudget{MaxTotalTokens: 50_000, StartedAt: time.Now()},
+		ID:          id,
+		ChatID:      chatID,
+		ProjectDir:  "/repo",
+		Goal:        "integration test goal",
+		Plan:        []hermes.SubTask{{ID: "s1", Description: "step 1", Status: hermes.SubTaskPending}},
+		Status:      hermes.TaskStatusPlanning,
+		TokenBudget: hermes.TokenBudget{MaxTotalTokens: 50_000, StartedAt: time.Now()},
 	}
 }
 
@@ -136,9 +136,9 @@ func (s *stubStore) AdvanceTask(taskID string, nextIdx int, status hermes.TaskSt
 	return nil
 }
 func (s *stubStore) AppendArtifact(taskID string, artifact hermes.Artifact) error { return nil }
-func (s *stubStore) UpdateAccumulated(taskID string, accumulated string) error     { return nil }
-func (s *stubStore) UpdatePlannerSession(taskID string, sessionID string) error    { return nil }
-func (s *stubStore) MarkInterrupted(taskID string, messageID int64) error          { return nil }
+func (s *stubStore) UpdateAccumulated(taskID string, accumulated string) error    { return nil }
+func (s *stubStore) UpdatePlannerSession(taskID string, sessionID string) error   { return nil }
+func (s *stubStore) MarkInterrupted(taskID string, messageID int64) error         { return nil }
 func (s *stubStore) MarkStatus(id string, status hermes.TaskStatus) error {
 	if s.markStatusFn != nil {
 		return s.markStatusFn(id, status)
@@ -146,8 +146,11 @@ func (s *stubStore) MarkStatus(id string, status hermes.TaskStatus) error {
 	return nil
 }
 func (s *stubStore) ResetBudgetStartedAt(taskID string, t time.Time) error { return nil }
-func (s *stubStore) AddTokenUsage(taskID string, delta int) error { return nil }
+func (s *stubStore) AddTokenUsage(taskID string, delta int) error          { return nil }
 func (s *stubStore) AddModelUsage(taskID, model string, in, out int, costUSD float64) error {
+	return nil
+}
+func (s *stubStore) AddPhaseUsage(taskID, phase, model string, in, out int, costUSD float64) error {
 	return nil
 }
 func (s *stubStore) ListTasksForChat(chatID int64, limit int) ([]hermes.TaskState, error) {

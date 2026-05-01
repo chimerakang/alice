@@ -62,9 +62,9 @@
 //     meaningfully improving MTTR for the failure modes seen in production.
 //
 // Re-evaluate if any of the following becomes true:
-//  - Bot process restarts more than once per active Hermes session.
-//  - We move to WAL mode + multiple connections (removes constraint 1).
-//  - A job surfaces that is genuinely non-idempotent and long-running (>30 min).
+//   - Bot process restarts more than once per active Hermes session.
+//   - We move to WAL mode + multiple connections (removes constraint 1).
+//   - A job surfaces that is genuinely non-idempotent and long-running (>30 min).
 package task
 
 import (
@@ -193,6 +193,11 @@ func (svc *Service) AddTokenUsage(taskID string, delta int) error {
 // AddModelUsage implements hermes.TaskStateStore.
 func (svc *Service) AddModelUsage(taskID, model string, inputTokens, outputTokens int, costUSD float64) error {
 	return svc.store.AddModelUsage(taskID, model, inputTokens, outputTokens, costUSD)
+}
+
+// AddPhaseUsage implements hermes.TaskStateStore.
+func (svc *Service) AddPhaseUsage(taskID, phase, model string, inputTokens, outputTokens int, costUSD float64) error {
+	return svc.store.AddPhaseUsage(taskID, phase, model, inputTokens, outputTokens, costUSD)
 }
 
 // ListTasksForChat implements hermes.TaskStateStore.

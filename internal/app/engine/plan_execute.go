@@ -308,10 +308,17 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 
 	for attempt := 0; ; attempt++ {
 		currentGoal := goal
+		var partialRetry partialRetryPlan
 		if attempt > 0 {
-			currentGoal = buildReplanGoal(goal, prevReview, prevPlan)
-			// Reset accumulated state so the new plan executes from scratch.
-			_ = e.store.UpdateAccumulated(taskID, "")
+			partialRetry = buildPartialRetryPlan(prevReview, prevPlan, retryCfg.ScoreThreshold)
+			if len(partialRetry.Preserved) > 0 {
+				currentGoal = buildPartialReplanGoal(goal, prevReview, partialRetry)
+				_ = e.store.UpdateAccumulated(taskID, partialRetry.Accumulated)
+			} else {
+				currentGoal = buildReplanGoal(goal, prevReview, prevPlan)
+				// Reset accumulated state so the new plan executes from scratch.
+				_ = e.store.UpdateAccumulated(taskID, "")
+			}
 		}
 
 		tasks, planIn, planOut, planCost, plannerSkipped, err := e.plan(ctx, currentGoal)
@@ -319,9 +326,17 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 			e.handlePlanningError(ctx, taskID, err)
 			return
 		}
+		if len(partialRetry.Preserved) > 0 {
+			tasks = mergePartialRetryPlan(partialRetry.Preserved, tasks, attempt)
+		}
 		if !plannerSkipped {
 			_ = e.store.AddTokenUsage(taskID, planIn+planOut)
 			_ = e.store.AddModelUsage(taskID, e.cfg.PlannerModel, planIn, planOut, planCost)
+			plannerPhase := "planner"
+			if attempt > 0 {
+				plannerPhase = "retry_planner"
+			}
+			e.recordPhaseUsage(taskID, plannerPhase, e.cfg.PlannerModel, planIn, planOut, planCost)
 			if sid := e.planner.SessionID(); sid != "" {
 				_ = e.store.UpdatePlannerSession(taskID, sid)
 			}
@@ -372,6 +387,10 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 			}
 
 			subTask := tasks[idx]
+			if subTask.Status == hermes.SubTaskDone {
+				completed++
+				continue
+			}
 			operatorHint := pendingOperatorHint
 			pendingOperatorHint = ""
 			finalStatus, finalText, finalTokens, success, subMetrics := e.executeSubTask(ctx, taskID, goal, state, tasks, idx, subTask, cc, reviewMode, strictCfg, operatorHint)
@@ -606,17 +625,26 @@ func (e *PlanExecuteEngine) onDone(ctx context.Context, finalState hermes.TaskSt
 	if issueNum <= 0 || !ghCfg.Enabled {
 		return
 	}
-	if ghCfg.ShouldComment("complete") {
-		body := hermes.CommentDone(finalState)
-		if err := hermes.PostComment(ctx, e.cfg.ProjectDir, issueNum, body); err != nil {
-			log.Printf("[plan_execute] GitHub comment done: %v", err)
+	doneNote := ""
+	if completed == total && ghCfg.AutoCloseLabel != "" {
+		if issue, err := hermes.FetchIssue(ctx, e.cfg.ProjectDir, issueNum); err == nil {
+			if hermes.HasLabel(issue, ghCfg.AutoCloseLabel) {
+				if err := hermes.CloseIssue(ctx, e.cfg.ProjectDir, issueNum); err != nil {
+					log.Printf("[plan_execute] GitHub close issue: %v", err)
+				}
+			} else {
+				doneNote = fmt.Sprintf("Issue was not auto-closed because it does not have the `%s` label.", ghCfg.AutoCloseLabel)
+				log.Printf("[plan_execute] GitHub auto-close skipped issue #%d: missing label %q", issueNum, ghCfg.AutoCloseLabel)
+			}
+		} else {
+			doneNote = fmt.Sprintf("Issue was not auto-closed because Alice could not re-fetch the issue to verify the `%s` label.", ghCfg.AutoCloseLabel)
+			log.Printf("[plan_execute] GitHub auto-close skipped issue #%d: fetch issue: %v", issueNum, err)
 		}
 	}
-	if completed == total && ghCfg.AutoCloseLabel != "" {
-		if issue, err := hermes.FetchIssue(ctx, e.cfg.ProjectDir, issueNum); err == nil && hermes.HasLabel(issue, ghCfg.AutoCloseLabel) {
-			if err := hermes.CloseIssue(ctx, e.cfg.ProjectDir, issueNum); err != nil {
-				log.Printf("[plan_execute] GitHub close issue: %v", err)
-			}
+	if ghCfg.ShouldComment("complete") {
+		body := hermes.CommentDoneWithNote(finalState, doneNote)
+		if err := hermes.PostComment(ctx, e.cfg.ProjectDir, issueNum, body); err != nil {
+			log.Printf("[plan_execute] GitHub comment done: %v", err)
 		}
 	}
 }
@@ -696,6 +724,7 @@ func (e *PlanExecuteEngine) runReview(ctx context.Context, state hermes.TaskStat
 		if err := e.store.AddModelUsage(state.ID, result.ReviewerModel, result.InputTokens, result.OutputTokens, result.CostUSD); err != nil {
 			log.Printf("[plan_execute] AddModelUsage(reviewer) model=%s: %v", result.ReviewerModel, err)
 		}
+		e.recordPhaseUsage(state.ID, "reviewer", result.ReviewerModel, result.InputTokens, result.OutputTokens, result.CostUSD)
 		if err := e.store.AddTokenUsage(state.ID, reviewerTokens); err != nil {
 			log.Printf("[plan_execute] AddTokenUsage(reviewer): %v", err)
 		}
@@ -723,6 +752,18 @@ func (e *PlanExecuteEngine) shouldRunReview(tasks []hermes.SubTask) bool {
 		minTasks = 2
 	}
 	return len(tasks) >= minTasks
+}
+
+func (e *PlanExecuteEngine) recordPhaseUsage(taskID, phase, model string, inputTokens, outputTokens int, costUSD float64) {
+	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(phase) == "" || strings.TrimSpace(model) == "" {
+		return
+	}
+	if inputTokens+outputTokens <= 0 {
+		return
+	}
+	if err := e.store.AddPhaseUsage(taskID, phase, model, inputTokens, outputTokens, costUSD); err != nil {
+		log.Printf("[plan_execute] AddPhaseUsage(%s) model=%s: %v", phase, model, err)
+	}
 }
 
 func (e *PlanExecuteEngine) reviewMode() ReviewMode {
@@ -869,6 +910,7 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 				if err := e.store.AddModelUsage(taskID, result.Model, inputVolume, result.OutputTokens, result.Cost); err != nil {
 					log.Printf("[plan_execute] AddModelUsage(executor) idx=%d model=%s: %v", idx, result.Model, err)
 				}
+				e.recordPhaseUsage(taskID, "executor", result.Model, inputVolume, result.OutputTokens, result.Cost)
 				if err := e.store.AddTokenUsage(taskID, tokensUsed); err != nil {
 					log.Printf("[plan_execute] AddTokenUsage(executor) idx=%d: %v", idx, err)
 				}
@@ -882,6 +924,7 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 			if err := e.store.AddModelUsage(taskID, result.Model, result.InputTokenVolume(), result.OutputTokens, result.Cost); err != nil {
 				log.Printf("[plan_execute] AddModelUsage(executor) idx=%d model=%s: %v", idx, result.Model, err)
 			}
+			e.recordPhaseUsage(taskID, "executor", result.Model, result.InputTokenVolume(), result.OutputTokens, result.Cost)
 			if err := e.store.AddTokenUsage(taskID, tokensUsed); err != nil {
 				log.Printf("[plan_execute] AddTokenUsage(executor) idx=%d: %v", idx, err)
 			}

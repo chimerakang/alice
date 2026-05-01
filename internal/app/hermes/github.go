@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -14,8 +15,18 @@ type IssueContext struct {
 	Number    int
 	Title     string
 	Body      string
+	State     string
 	Labels    []string
 	Checklist []ChecklistItem // parsed from body - [ ] items
+	Comments  []IssueComment
+}
+
+// IssueComment is a compact GitHub issue comment shape used for state
+// reconstruction before planning.
+type IssueComment struct {
+	Author    string
+	Body      string
+	CreatedAt time.Time
 }
 
 // ChecklistItem represents one `- [ ]` or `- [x]` line in an Issue body.
@@ -25,13 +36,21 @@ type ChecklistItem struct {
 	LineNumber int // 0-indexed line in Issue body, for sync anchoring
 }
 
-// ghIssueJSON is the JSON shape returned by `gh issue view --json title,body,labels`.
+// ghIssueJSON is the JSON shape returned by `gh issue view --json ...`.
 type ghIssueJSON struct {
+	State  string `json:"state"`
 	Title  string `json:"title"`
 	Body   string `json:"body"`
 	Labels []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
+	Comments []struct {
+		Author struct {
+			Login string `json:"login"`
+		} `json:"author"`
+		Body      string    `json:"body"`
+		CreatedAt time.Time `json:"createdAt"`
+	} `json:"comments"`
 }
 
 // IssueListItem is a lightweight summary of one open issue.
@@ -59,6 +78,7 @@ type ghIssueListJSON struct {
 
 // checklistRe matches Markdown task list items: `- [ ] text` or `- [x] text`
 var checklistRe = regexp.MustCompile(`(?m)^- \[( |x|X)\] (.+)$`)
+var hermesCompleteRe = regexp.MustCompile(`Hermes 完成\*\*\s+(\d+)/(\d+)\s+SubTasks`)
 
 // gh timeouts cap every `gh` invocation so a hung CLI (network stall,
 // API rate-limit, malformed argument) cannot block the caller forever. The
@@ -206,13 +226,13 @@ func FormatIssueList(items []IssueListItem) string {
 	return sb.String()
 }
 
-// FetchIssue calls `gh issue view N --json title,body,labels` in projectDir
+// FetchIssue calls `gh issue view N --json title,body,state,labels,comments` in projectDir
 // and returns parsed data. projectDir must match the chat's configured repo
 // so gh resolves the correct remote; empty string falls back to cwd.
 func FetchIssue(ctx context.Context, projectDir string, number int) (*IssueContext, error) {
 	out, err := ghOutput(ctx, projectDir, ghTimeoutShort, "issue", "view",
 		fmt.Sprintf("%d", number),
-		"--json", "title,body,labels",
+		"--json", "title,body,state,labels,comments",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("gh issue view %d: %w", number, err)
@@ -227,13 +247,23 @@ func FetchIssue(ctx context.Context, projectDir string, number int) (*IssueConte
 	for i, l := range raw.Labels {
 		labels[i] = l.Name
 	}
+	comments := make([]IssueComment, 0, len(raw.Comments))
+	for _, c := range raw.Comments {
+		comments = append(comments, IssueComment{
+			Author:    c.Author.Login,
+			Body:      c.Body,
+			CreatedAt: c.CreatedAt,
+		})
+	}
 
 	return &IssueContext{
 		Number:    number,
 		Title:     raw.Title,
 		Body:      raw.Body,
+		State:     raw.State,
 		Labels:    labels,
 		Checklist: ExtractChecklist(raw.Body),
+		Comments:  comments,
 	}, nil
 }
 
@@ -260,33 +290,279 @@ func ExtractChecklist(body string) []ChecklistItem {
 func BuildGoalFromIssue(issue *IssueContext) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("[GitHub #%d] %s\n\n", issue.Number, issue.Title))
+	sb.WriteString(BuildIssueStateSnapshot(issue))
+	sb.WriteString("\n")
 
-	hasChecklist := false
+	var unchecked, checked []ChecklistItem
 	for _, item := range issue.Checklist {
 		if !item.Checked {
-			hasChecklist = true
-			break
+			unchecked = append(unchecked, item)
+		} else {
+			checked = append(checked, item)
 		}
 	}
 
-	if hasChecklist {
-		sb.WriteString("Issue has an existing unchecked task list — use these as SubTask descriptions:\n")
-		for _, item := range issue.Checklist {
-			if !item.Checked {
-				sb.WriteString("  - ")
+	if len(unchecked) > 0 {
+		sb.WriteString("Remaining unchecked issue task list — plan ONLY these as SubTask descriptions:\n")
+		for _, item := range unchecked {
+			sb.WriteString("  - [ ] ")
+			sb.WriteString(item.Text)
+			sb.WriteString("\n")
+		}
+		sb.WriteString("\n")
+		if len(checked) > 0 {
+			sb.WriteString("Already checked issue items — treat as completed context; DO NOT plan or redo these unless explicitly requested:\n")
+			for _, item := range checked {
+				sb.WriteString("  - [x] ")
 				sb.WriteString(item.Text)
 				sb.WriteString("\n")
 			}
+			sb.WriteString("\n")
 		}
-		sb.WriteString("\n")
 	}
 
 	if issue.Body != "" {
-		sb.WriteString("Full issue description:\n")
-		sb.WriteString(issue.Body)
+		body := issue.Body
+		if len(issue.Checklist) > 0 {
+			body = stripChecklistLines(body)
+		}
+		if strings.TrimSpace(body) != "" {
+			sb.WriteString("Issue description (checklist lines omitted to avoid re-planning completed items):\n")
+			sb.WriteString(body)
+		}
 	}
 
 	return sb.String()
+}
+
+// BuildIssueStateSnapshot creates a compact deterministic summary for Planner
+// and preflight. It is intentionally shorter than raw comments/body: the goal
+// is to preserve state signals without replaying the whole GitHub thread.
+func BuildIssueStateSnapshot(issue *IssueContext) string {
+	if issue == nil {
+		return "=== Issue State Snapshot ===\n(issue unavailable)\n"
+	}
+	var unchecked, checked []ChecklistItem
+	for _, item := range issue.Checklist {
+		if item.Checked {
+			checked = append(checked, item)
+		} else {
+			unchecked = append(unchecked, item)
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("=== Issue State Snapshot ===\n")
+	state := strings.TrimSpace(issue.State)
+	if state == "" {
+		state = "UNKNOWN"
+	}
+	fmt.Fprintf(&sb, "- Issue: #%d %s\n", issue.Number, issue.Title)
+	fmt.Fprintf(&sb, "- State: %s\n", state)
+	if len(issue.Labels) > 0 {
+		fmt.Fprintf(&sb, "- Labels: %s\n", strings.Join(issue.Labels, ", "))
+	} else {
+		sb.WriteString("- Labels: (none)\n")
+	}
+	if signal, ok := RecentSuccessfulHermesCompletion(issue); ok {
+		fmt.Fprintf(&sb, "- Latest Hermes status: complete (%d/%d SubTasks", signal.Done, signal.Total)
+		if !signal.CreatedAt.IsZero() {
+			fmt.Fprintf(&sb, ", %s", signal.CreatedAt.Format(time.RFC3339))
+		}
+		sb.WriteString(")\n")
+	}
+	fmt.Fprintf(&sb, "- Checklist: %d unchecked, %d checked\n", len(unchecked), len(checked))
+	if len(unchecked) > 0 {
+		sb.WriteString("- Remaining checklist items:\n")
+		for _, item := range unchecked {
+			fmt.Fprintf(&sb, "  - %s\n", item.Text)
+		}
+	}
+	if len(checked) > 0 {
+		sb.WriteString("- Completed checklist items:\n")
+		for _, item := range checked {
+			fmt.Fprintf(&sb, "  - %s\n", item.Text)
+		}
+	}
+	signals := recentIssueCommentSignals(issue.Comments, 5)
+	if len(signals) > 0 {
+		sb.WriteString("- Recent Hermes/comment signals:\n")
+		for _, signal := range signals {
+			sb.WriteString("  - ")
+			sb.WriteString(signal)
+			sb.WriteString("\n")
+		}
+	}
+	sb.WriteString("Planner instruction: treat this snapshot as the source of truth for issue state; do not redo checked/completed items unless repo evidence contradicts them.\n")
+	return sb.String()
+}
+
+// HermesCompletionSignal summarizes the latest successful terminal Hermes
+// lifecycle comment for an issue.
+type HermesCompletionSignal struct {
+	Done      int
+	Total     int
+	Author    string
+	CreatedAt time.Time
+}
+
+// RecentSuccessfulHermesCompletion returns true only when the latest terminal
+// Hermes lifecycle signal in the issue comments is a complete x/x run. This is
+// used as a deterministic guard for legacy issues whose original acceptance
+// checklists remain unchecked even though Hermes already finished and verified
+// them in comments.
+func RecentSuccessfulHermesCompletion(issue *IssueContext) (HermesCompletionSignal, bool) {
+	if issue == nil || len(issue.Comments) == 0 {
+		return HermesCompletionSignal{}, false
+	}
+	var latest HermesCompletionSignal
+	hasLatest := false
+	latestFailed := false
+	for _, comment := range issue.Comments {
+		body := strings.TrimSpace(comment.Body)
+		if body == "" {
+			continue
+		}
+		switch {
+		case strings.Contains(body, "Hermes 執行失敗") || strings.Contains(body, "Hermes Budget 耗盡"):
+			hasLatest = false
+			latestFailed = true
+		case strings.Contains(body, "Hermes 完成"):
+			done, total, ok := parseHermesCompleteCounts(body)
+			if !ok || total <= 0 || done != total {
+				hasLatest = false
+				latestFailed = false
+				continue
+			}
+			latest = HermesCompletionSignal{
+				Done:      done,
+				Total:     total,
+				Author:    comment.Author,
+				CreatedAt: comment.CreatedAt,
+			}
+			hasLatest = true
+			latestFailed = false
+		}
+	}
+	if latestFailed || !hasLatest {
+		return HermesCompletionSignal{}, false
+	}
+	return latest, true
+}
+
+func parseHermesCompleteCounts(body string) (int, int, bool) {
+	matches := hermesCompleteRe.FindStringSubmatch(body)
+	if len(matches) != 3 {
+		return 0, 0, false
+	}
+	done, err1 := strconv.Atoi(matches[1])
+	total, err2 := strconv.Atoi(matches[2])
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+	return done, total, true
+}
+
+func recentIssueCommentSignals(comments []IssueComment, limit int) []string {
+	if limit <= 0 || len(comments) == 0 {
+		return nil
+	}
+	signals := make([]string, 0, limit)
+	for i := len(comments) - 1; i >= 0 && len(signals) < limit; i-- {
+		body := strings.TrimSpace(comments[i].Body)
+		if body == "" || !looksLikeHermesStateComment(body) {
+			continue
+		}
+		signal := extractIssueCommentSignal(body)
+		if signal == "" {
+			continue
+		}
+		prefix := comments[i].Author
+		if comments[i].CreatedAt.IsZero() {
+			prefix = strings.TrimSpace(prefix)
+		} else if prefix == "" {
+			prefix = comments[i].CreatedAt.Format(time.RFC3339)
+		} else {
+			prefix = fmt.Sprintf("%s %s", prefix, comments[i].CreatedAt.Format(time.RFC3339))
+		}
+		if prefix != "" {
+			signal = prefix + ": " + signal
+		}
+		signals = append(signals, truncateOneLine(signal, 500))
+	}
+	return signals
+}
+
+func looksLikeHermesStateComment(body string) bool {
+	lower := strings.ToLower(body)
+	keywords := []string{
+		"hermes", "子任務進度", "執行完成", "執行失敗", "完成",
+		"結論", "下一步", "可關閉", "未驗證", "pass", "fail",
+	}
+	for _, kw := range keywords {
+		if strings.Contains(lower, strings.ToLower(kw)) {
+			return true
+		}
+	}
+	return false
+}
+
+func extractIssueCommentSignal(body string) string {
+	lines := strings.Split(body, "\n")
+	kept := make([]string, 0, 6)
+	for _, line := range lines {
+		line = strings.TrimSpace(strings.TrimLeft(line, "-*># "))
+		if line == "" {
+			continue
+		}
+		if isSignalLine(line) {
+			kept = append(kept, line)
+			if len(kept) >= 6 {
+				break
+			}
+		}
+	}
+	if len(kept) == 0 {
+		return truncateOneLine(body, 500)
+	}
+	return truncateOneLine(strings.Join(kept, " | "), 500)
+}
+
+func isSignalLine(line string) bool {
+	lower := strings.ToLower(line)
+	keywords := []string{
+		"hermes 完成", "hermes 執行失敗", "子任務進度", "結論", "下一步",
+		"可關閉", "未驗證", "全部 pass", "pass", "fail", "失敗", "完成",
+	}
+	for _, kw := range keywords {
+		if strings.Contains(lower, strings.ToLower(kw)) {
+			return true
+		}
+	}
+	return false
+}
+
+func truncateOneLine(text string, max int) string {
+	text = strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	if max <= 0 || len(text) <= max {
+		return text
+	}
+	if max <= 3 {
+		return text[:max]
+	}
+	return text[:max-3] + "..."
+}
+
+func stripChecklistLines(body string) string {
+	lines := strings.Split(body, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if checklistRe.MatchString(line) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
 // UpdateChecklistInBody replaces `- [ ] <text>` with `- [x] <text>` for each
@@ -493,6 +769,10 @@ func CommentStarted(plannerModel, executorModel string) string {
 
 // CommentDone builds the "all done" lifecycle comment.
 func CommentDone(state TaskState) string {
+	return CommentDoneWithNote(state, "")
+}
+
+func CommentDoneWithNote(state TaskState, note string) string {
 	var sb strings.Builder
 	done := 0
 	for _, st := range state.Plan {
@@ -524,6 +804,11 @@ func CommentDone(state TaskState) string {
 				sb.WriteString(fmt.Sprintf("- `%s`\n", a.Path))
 			}
 		}
+	}
+	if strings.TrimSpace(note) != "" {
+		sb.WriteString("\n**Note:**\n")
+		sb.WriteString(strings.TrimSpace(note))
+		sb.WriteString("\n")
 	}
 	return sb.String()
 }

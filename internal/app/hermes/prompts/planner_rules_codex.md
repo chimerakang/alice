@@ -23,6 +23,8 @@
 4. `tool_hints` 必須填入 **Codex executor 真正可用的工具能力**，優先使用 `command_execution`。
 5. 不要在 `tool_hints` 寫入 Claude Code / MCP 專屬工具名稱，例如 `Read`、`Edit`、`Glob`、`Grep`、`WebFetch`、`file_patch`。
 6. 若子任務需要讀檔、搜尋、編輯、測試，請描述為可透過 shell / command execution 完成的操作。
+7. 單一自然動作只能拆成 1 個子任務。例如「補 1 個測試」、「修 1 個 function」、「新增 1 個欄位」、「驗證 1 個已完成改動」都要把讀 context、修改/驗證、跑測試包在同一個 `description` 裡；禁止拆成 Read / Write / Run 三個子任務。
+8. 若 Goal 來自 GitHub issue 且含 checklist，只能把 unchecked / remaining 項目規劃成子任務；checked / completed 項目代表已完成，禁止重做，除非 Goal 明確要求 redo。
 
 ## Codex tier 限制
 

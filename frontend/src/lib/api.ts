@@ -17,6 +17,7 @@ import type {
   QualityDecompositionStats,
   QualityScoreStats,
   QualityInsight,
+  PerformanceTrendsResponse,
   MemoryPreviewQuery,
   MemoryPreviewResponse,
 } from "@/types/alice";
@@ -230,8 +231,11 @@ export const api = {
       `/api/performance/metrics${qs}`
     );
   },
-  getPerformanceTrends: (hours = 24) =>
-    fetchJson<unknown>(`/api/performance/trends?hours=${hours}`),
+  getPerformanceTrends: (params: TimeRangeQuery & { hours?: number } = {}) => {
+    const { hours = 24, startTime, endTime } = params;
+    const qs = buildQuery({ hours, start_time: startTime, end_time: endTime });
+    return fetchJson<PerformanceTrendsResponse>(`/api/performance/trends${qs}`);
+  },
   getPerformanceRecommendations: () =>
     fetchJson<{ recommendations?: unknown[] }>(
       "/api/performance/recommendations"

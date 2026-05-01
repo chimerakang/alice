@@ -160,6 +160,11 @@ type HermesConfig struct {
 	// Resource limits
 	Budget HermesBudgetConfig `json:"budget"`
 
+	// Preflight optionally runs a cheap completion check before starting an
+	// issue-backed Hermes task. It can stop duplicate runs before planner/executor
+	// spend Opus/Sonnet-scale tokens.
+	Preflight HermesPreflightConfig `json:"preflight"`
+
 	// TaskRetry controls task-level re-plan retry on low review score.
 	// Disabled by default; opt in via "task_retry": {"enabled": true}.
 	// See engine.TaskRetryConfig for field semantics.
@@ -205,6 +210,13 @@ type HermesBudgetConfig struct {
 	MaxWallclockSeconds int `json:"max_wallclock_seconds"` // default 600; 0 = unlimited
 }
 
+type HermesPreflightConfig struct {
+	Enabled             bool   `json:"enabled"`
+	Model               string `json:"model"`                // default ModelRouting.FastModel / Haiku
+	CompletionThreshold int    `json:"completion_threshold"` // default 90
+	TimeoutSeconds      int    `json:"timeout_seconds"`      // default 20
+}
+
 // HermesTaskRetryConfig is the JSON-config mirror of engine.TaskRetryConfig.
 // Keep fields aligned with engine.TaskRetryConfig — telegram.go converts
 // between the two via direct type conversion.
@@ -245,7 +257,13 @@ func HermesDefaults(cfg HermesConfig) HermesConfig {
 	if cfg.MaxPlannerJSONRetries == 0 {
 		cfg.MaxPlannerJSONRetries = 3
 	}
-// Budget defaults intentionally not filled in: 0 means unlimited and
+	if cfg.Preflight.CompletionThreshold == 0 {
+		cfg.Preflight.CompletionThreshold = 90
+	}
+	if cfg.Preflight.TimeoutSeconds == 0 {
+		cfg.Preflight.TimeoutSeconds = 20
+	}
+	// Budget defaults intentionally not filled in: 0 means unlimited and
 	// must flow through unchanged. Operators set explicit caps in config.json.
 	if cfg.Summary.Verbosity == "" {
 		cfg.Summary.Verbosity = "minimal"

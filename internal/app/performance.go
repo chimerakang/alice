@@ -16,9 +16,9 @@ var ModelPricing = map[string]struct {
 	InputPerMTok  float64
 	OutputPerMTok float64
 }{
-	"haiku":  {1.00, 5.00},     // Default: Claude Haiku 4.5
-	"sonnet": {3.00, 15.00},    // Default: Claude Sonnet 4.6
-	"opus":   {15.00, 75.00},   // Default: Claude Opus 4.7
+	"haiku":  {1.00, 5.00},   // Default: Claude Haiku 4.5
+	"sonnet": {3.00, 15.00},  // Default: Claude Sonnet 4.6
+	"opus":   {15.00, 75.00}, // Default: Claude Opus 4.7
 }
 
 // InitModelPricing 從 config 初始化模型費率
@@ -112,36 +112,40 @@ func ExtractModelShortName(fullModelID string) string {
 
 // PerformanceMetrics 效能指標結構
 type PerformanceMetrics struct {
-	Timestamp         time.Time      `json:"timestamp"`
-	APICallLatency    time.Duration  `json:"api_call_latency"`
-	APICallSuccess    bool           `json:"api_call_success"`
-	ToolExecutionTime time.Duration  `json:"tool_execution_time"`
-	ToolExecutionType string         `json:"tool_execution_type"`
-	TokensUsed        int            `json:"tokens_used"`
-	EstimatedCost     float64        `json:"estimated_cost"`
-	MemoryUsage       uint64         `json:"memory_usage"`
-	ErrorType         string         `json:"error_type,omitempty"`
-	ChatID            int64          `json:"chat_id"`
-	ProjectPath       string         `json:"project_path,omitempty"`
-	AgentType         string         `json:"agent_type,omitempty"`
-	Model             string         `json:"model,omitempty"` // NEW: "haiku", "sonnet", "opus"
+	Timestamp         time.Time     `json:"timestamp"`
+	APICallLatency    time.Duration `json:"api_call_latency"`
+	APICallSuccess    bool          `json:"api_call_success"`
+	ToolExecutionTime time.Duration `json:"tool_execution_time"`
+	ToolExecutionType string        `json:"tool_execution_type"`
+	TokensUsed        int           `json:"tokens_used"`
+	InputTokens       int           `json:"input_tokens"`
+	CacheReadTokens   int           `json:"cache_read_tokens"`
+	CacheWriteTokens  int           `json:"cache_write_tokens"`
+	OutputTokens      int           `json:"output_tokens"`
+	EstimatedCost     float64       `json:"estimated_cost"`
+	MemoryUsage       uint64        `json:"memory_usage"`
+	ErrorType         string        `json:"error_type,omitempty"`
+	ChatID            int64         `json:"chat_id"`
+	ProjectPath       string        `json:"project_path,omitempty"`
+	AgentType         string        `json:"agent_type,omitempty"`
+	Model             string        `json:"model,omitempty"` // NEW: "haiku", "sonnet", "opus"
 }
 
 // PerformanceAnalytics 效能分析數據
 type PerformanceAnalytics struct {
-	TotalRequests      int64         `json:"total_requests"`
-	SuccessRate        float64       `json:"success_rate"`
-	AvgAPILatency      time.Duration `json:"avg_api_latency"`
-	AvgToolExecution   time.Duration `json:"avg_tool_execution"`
-	TotalTokens        int64         `json:"total_tokens"`
-	TotalCost          float64       `json:"total_cost"`
+	TotalRequests      int64            `json:"total_requests"`
+	SuccessRate        float64          `json:"success_rate"`
+	AvgAPILatency      time.Duration    `json:"avg_api_latency"`
+	AvgToolExecution   time.Duration    `json:"avg_tool_execution"`
+	TotalTokens        int64            `json:"total_tokens"`
+	TotalCost          float64          `json:"total_cost"`
 	ErrorsByType       map[string]int64 `json:"errors_by_type"`
 	ToolUsageStats     map[string]int64 `json:"tool_usage_stats"`
-	PeakMemoryUsage    uint64        `json:"peak_memory_usage"`
-	CurrentMemoryUsage uint64        `json:"current_memory_usage"`
-	UptimeSeconds      int64         `json:"uptime_seconds"`
-	RequestsPerHour    float64       `json:"requests_per_hour"`
-	CostPerRequest     float64       `json:"cost_per_request"`
+	PeakMemoryUsage    uint64           `json:"peak_memory_usage"`
+	CurrentMemoryUsage uint64           `json:"current_memory_usage"`
+	UptimeSeconds      int64            `json:"uptime_seconds"`
+	RequestsPerHour    float64          `json:"requests_per_hour"`
+	CostPerRequest     float64          `json:"cost_per_request"`
 }
 
 // PerformanceRecommendation 效能最佳化建議
@@ -162,15 +166,17 @@ type PerformanceMonitor struct {
 	startTime         time.Time
 
 	// 聚合統計
-	totalRequests     int64
-	successfulCalls   int64
-	totalAPILatency   time.Duration
-	totalToolTime     time.Duration
-	totalTokens       int64
-	totalCost         float64
-	errorCounts       map[string]int64
-	toolUsage         map[string]int64
-	peakMemory        uint64
+	totalRequests   int64
+	successfulCalls int64
+	totalAPILatency time.Duration
+	totalToolTime   time.Duration
+	totalTokens     int64
+	totalCacheRead  int64
+	totalCacheWrite int64
+	totalCost       float64
+	errorCounts     map[string]int64
+	toolUsage       map[string]int64
+	peakMemory      uint64
 }
 
 // NewPerformanceMonitor 建立新的效能監控器
@@ -237,6 +243,8 @@ func (pm *PerformanceMonitor) updateAggregateStats(metric PerformanceMetrics) {
 	pm.totalAPILatency += metric.APICallLatency
 	pm.totalToolTime += metric.ToolExecutionTime
 	pm.totalTokens += int64(metric.TokensUsed)
+	pm.totalCacheRead += int64(metric.CacheReadTokens)
+	pm.totalCacheWrite += int64(metric.CacheWriteTokens)
 	pm.totalCost += metric.EstimatedCost
 
 	if metric.ErrorType != "" {
@@ -337,6 +345,7 @@ func (pm *PerformanceMonitor) LoadFromDB(storage Storage) {
 		log.Printf("[perf-monitor] failed to load from DB: %v", err)
 		return
 	}
+	reversePerformanceMetrics(metrics)
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	pm.metrics = metrics
@@ -349,6 +358,8 @@ func (pm *PerformanceMonitor) LoadFromDB(storage Storage) {
 		pm.totalAPILatency += m.APICallLatency
 		pm.totalToolTime += m.ToolExecutionTime
 		pm.totalTokens += int64(m.TokensUsed)
+		pm.totalCacheRead += int64(m.CacheReadTokens)
+		pm.totalCacheWrite += int64(m.CacheWriteTokens)
 		pm.totalCost += m.EstimatedCost
 		if m.ErrorType != "" {
 			pm.errorCounts[m.ErrorType]++
@@ -361,6 +372,12 @@ func (pm *PerformanceMonitor) LoadFromDB(storage Storage) {
 		}
 	}
 	log.Printf("[perf-monitor] loaded %d metrics from DB", len(metrics))
+}
+
+func reversePerformanceMetrics(metrics []PerformanceMetrics) {
+	for i, j := 0, len(metrics)-1; i < j; i, j = i+1, j-1 {
+		metrics[i], metrics[j] = metrics[j], metrics[i]
+	}
 }
 
 // GetRecentMetrics 獲取最近的效能指標
@@ -396,8 +413,8 @@ func (pm *PerformanceMonitor) GetPerformanceTrends(hours int) map[string]interfa
 	if len(recentMetrics) == 0 {
 		return map[string]interface{}{
 			"period_hours": hours,
-			"data_points": 0,
-			"message": "No data available for the specified period",
+			"data_points":  0,
+			"message":      "No data available for the specified period",
 		}
 	}
 
@@ -405,6 +422,8 @@ func (pm *PerformanceMonitor) GetPerformanceTrends(hours int) map[string]interfa
 	totalLatency := time.Duration(0)
 	totalTokens := 0
 	totalCost := 0.0
+	totalCacheRead := 0
+	totalCacheWrite := 0
 	successful := 0
 
 	hourlyStats := make(map[int]map[string]interface{})
@@ -413,6 +432,8 @@ func (pm *PerformanceMonitor) GetPerformanceTrends(hours int) map[string]interfa
 		totalLatency += metric.APICallLatency
 		totalTokens += metric.TokensUsed
 		totalCost += metric.EstimatedCost
+		totalCacheRead += metric.CacheReadTokens
+		totalCacheWrite += metric.CacheWriteTokens
 		if metric.APICallSuccess {
 			successful++
 		}
@@ -420,11 +441,13 @@ func (pm *PerformanceMonitor) GetPerformanceTrends(hours int) map[string]interfa
 		hour := metric.Timestamp.Hour()
 		if hourlyStats[hour] == nil {
 			hourlyStats[hour] = map[string]interface{}{
-				"requests": 0,
+				"requests":    0,
 				"latency_sum": time.Duration(0),
-				"tokens": 0,
-				"cost": 0.0,
-				"errors": 0,
+				"tokens":      0,
+				"cost":        0.0,
+				"cache_read":  0,
+				"cache_write": 0,
+				"errors":      0,
 			}
 		}
 
@@ -433,19 +456,29 @@ func (pm *PerformanceMonitor) GetPerformanceTrends(hours int) map[string]interfa
 		stats["latency_sum"] = stats["latency_sum"].(time.Duration) + metric.APICallLatency
 		stats["tokens"] = stats["tokens"].(int) + metric.TokensUsed
 		stats["cost"] = stats["cost"].(float64) + metric.EstimatedCost
+		stats["cache_read"] = stats["cache_read"].(int) + metric.CacheReadTokens
+		stats["cache_write"] = stats["cache_write"].(int) + metric.CacheWriteTokens
 		if !metric.APICallSuccess || metric.ErrorType != "" {
 			stats["errors"] = stats["errors"].(int) + 1
 		}
 	}
 
+	cacheDenom := totalTokens
+	cacheHitRate := 0.0
+	if cacheDenom > 0 {
+		cacheHitRate = float64(totalCacheRead) / float64(cacheDenom) * 100
+	}
 	return map[string]interface{}{
-		"period_hours":     hours,
-		"data_points":      len(recentMetrics),
-		"avg_latency_ms":   float64(totalLatency.Nanoseconds()) / float64(len(recentMetrics)) / 1e6,
-		"total_tokens":     totalTokens,
-		"total_cost":       totalCost,
-		"success_rate":     float64(successful) / float64(len(recentMetrics)) * 100,
-		"hourly_breakdown": hourlyStats,
+		"period_hours":       hours,
+		"data_points":        len(recentMetrics),
+		"avg_latency_ms":     float64(totalLatency.Nanoseconds()) / float64(len(recentMetrics)) / 1e6,
+		"total_tokens":       totalTokens,
+		"total_cost":         totalCost,
+		"cache_read_tokens":  totalCacheRead,
+		"cache_write_tokens": totalCacheWrite,
+		"cache_hit_rate":     cacheHitRate,
+		"success_rate":       float64(successful) / float64(len(recentMetrics)) * 100,
+		"hourly_breakdown":   hourlyStats,
 	}
 }
 
@@ -583,16 +616,24 @@ func GetUptimeSeconds() int64 {
 
 // RecordAPICall 記錄 API 呼叫效能
 func RecordAPICall(latency time.Duration, success bool, tokensUsed int, cost float64, chatID int64, projectPath string, errorType string, model string) {
+	RecordAPICallWithCache(latency, success, tokensUsed, cost, chatID, projectPath, errorType, model, 0, 0, 0, 0)
+}
+
+func RecordAPICallWithCache(latency time.Duration, success bool, tokensUsed int, cost float64, chatID int64, projectPath string, errorType string, model string, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens int) {
 	if performanceMonitor != nil {
 		metric := PerformanceMetrics{
-			APICallLatency: latency,
-			APICallSuccess: success,
-			TokensUsed:     tokensUsed,
-			EstimatedCost:  cost,
-			ChatID:         chatID,
-			ProjectPath:    projectPath,
-			ErrorType:      errorType,
-			Model:          model, // NEW: 模型資訊
+			APICallLatency:   latency,
+			APICallSuccess:   success,
+			TokensUsed:       tokensUsed,
+			InputTokens:      inputTokens,
+			CacheReadTokens:  cacheReadTokens,
+			CacheWriteTokens: cacheWriteTokens,
+			OutputTokens:     outputTokens,
+			EstimatedCost:    cost,
+			ChatID:           chatID,
+			ProjectPath:      projectPath,
+			ErrorType:        errorType,
+			Model:            model, // NEW: 模型資訊
 		}
 		performanceMonitor.RecordMetric(metric)
 	}

@@ -1,6 +1,9 @@
 package hermes
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestFormatModelLabel(t *testing.T) {
 	cases := []struct {
@@ -29,5 +32,26 @@ func TestFormatModelLabel(t *testing.T) {
 				t.Errorf("formatModelLabel(%q) = %q, want %q", tc.model, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestTaskSummaryIncludesPhaseUsage(t *testing.T) {
+	summary := TaskSummary{
+		TaskState: &TaskState{
+			ModelUsages: []ModelUsage{
+				{Model: "claude-sonnet-4-6", InputTokens: 100, OutputTokens: 20, CallCount: 1},
+			},
+			PhaseUsages: []PhaseUsage{
+				{Phase: "executor", Model: "claude-sonnet-4-6", InputTokens: 80, OutputTokens: 10, CallCount: 1},
+				{Phase: "planner", Model: "claude-opus-4-7", InputTokens: 20, OutputTokens: 10, CallCount: 1},
+			},
+		},
+		Verbosity: "minimal",
+	}
+	got := summary.GenerateSummary()
+	for _, want := range []string{"planner phase", "executor phase"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summary missing %q:\n%s", want, got)
+		}
 	}
 }

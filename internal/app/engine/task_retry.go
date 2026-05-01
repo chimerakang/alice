@@ -112,3 +112,81 @@ func buildReplanGoal(originalGoal string, prevReview ReviewResult, prevPlan []he
 		"runtime checks. Do not repeat the same decomposition.")
 	return b.String()
 }
+
+type partialRetryPlan struct {
+	Preserved   []hermes.SubTask
+	Failed      []hermes.SubTask
+	Accumulated string
+}
+
+func buildPartialRetryPlan(prevReview ReviewResult, prevPlan []hermes.SubTask, scoreThreshold int) partialRetryPlan {
+	if scoreThreshold <= 0 {
+		scoreThreshold = 60
+	}
+	if len(prevReview.SubTaskResults) == 0 || len(prevPlan) == 0 {
+		return partialRetryPlan{}
+	}
+	scores := make(map[string]ReviewSubTaskResult, len(prevReview.SubTaskResults))
+	for _, result := range prevReview.SubTaskResults {
+		id := strings.TrimSpace(result.SubTaskID)
+		if id != "" {
+			scores[id] = result
+		}
+	}
+	if len(scores) == 0 {
+		return partialRetryPlan{}
+	}
+
+	var out partialRetryPlan
+	completed := 0
+	for _, st := range prevPlan {
+		result, ok := scores[st.ID]
+		if ok && result.Score >= scoreThreshold && st.Status == hermes.SubTaskDone {
+			out.Preserved = append(out.Preserved, st)
+			completed++
+			out.Accumulated, _ = hermes.AppendResult(out.Accumulated, st.Result, completed)
+			continue
+		}
+		out.Failed = append(out.Failed, st)
+	}
+	if len(out.Preserved) == 0 || len(out.Failed) == 0 {
+		return partialRetryPlan{}
+	}
+	return out
+}
+
+func buildPartialReplanGoal(originalGoal string, prevReview ReviewResult, partial partialRetryPlan) string {
+	base := buildReplanGoal(originalGoal, prevReview, partial.Failed)
+	var b strings.Builder
+	b.WriteString(base)
+	b.WriteString("\n\n=== PARTIAL RETRY PRESERVED WORK ===\n")
+	b.WriteString("The following previous sub-tasks were reviewed as good enough and MUST NOT be repeated:\n")
+	for i, st := range partial.Preserved {
+		fmt.Fprintf(&b, "  %d. %s — %s\n", i+1, st.ID, st.Description)
+	}
+	b.WriteString("\nRe-plan ONLY the failed or low-score scope listed in the rejected plan above. Do not include preserved sub-tasks in the new plan.")
+	return b.String()
+}
+
+func mergePartialRetryPlan(preserved, replanned []hermes.SubTask, attempt int) []hermes.SubTask {
+	if len(preserved) == 0 {
+		return replanned
+	}
+	merged := make([]hermes.SubTask, 0, len(preserved)+len(replanned))
+	seen := make(map[string]bool, len(preserved)+len(replanned))
+	for _, st := range preserved {
+		merged = append(merged, st)
+		seen[st.ID] = true
+	}
+	for i, st := range replanned {
+		if strings.TrimSpace(st.ID) == "" || seen[st.ID] {
+			st.ID = fmt.Sprintf("retry%d-s%d", attempt, i+1)
+		}
+		seen[st.ID] = true
+		if st.Status == "" {
+			st.Status = hermes.SubTaskPending
+		}
+		merged = append(merged, st)
+	}
+	return merged
+}

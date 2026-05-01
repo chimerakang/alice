@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -351,5 +354,27 @@ func TestPrepareManualModelSwitchKeepsSameActiveModel(t *testing.T) {
 	}
 	if got := len(agent.RecentMessagesSnapshot()); got == 0 {
 		t.Fatal("recent messages were cleared for same active model")
+	}
+}
+
+func TestResolveAgentMemoryBridgeModelSwitchUsesRecentMessagesOnly(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "CLAUDE.md"), []byte("stale static guidance must not enter model switch bridge"), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md: %v", err)
+	}
+	chatCtx := NewChatContext(1, 0, projectDir)
+	chatCtx.AddRecentMessage("先處理 Hermes token 浪費", "目前重點是 issue state snapshot 與 quality gate")
+	agent := NewAgentWithContext(&modelRecordingClient{model: "sonnet"}, chatCtx)
+
+	bridge := agent.resolveAgentMemoryBridge(context.Background(), agent.current(), "好，繼續", "direct_model_switch")
+
+	if !strings.Contains(bridge, "issue state snapshot") {
+		t.Fatalf("bridge missing recent messages:\n%s", bridge)
+	}
+	if strings.Contains(bridge, "Static project context") || strings.Contains(bridge, "stale static guidance") {
+		t.Fatalf("model switch bridge leaked static project hints:\n%s", bridge)
+	}
+	if strings.Contains(bridge, "Persisted general task context") {
+		t.Fatalf("model switch bridge leaked general memory:\n%s", bridge)
 	}
 }
