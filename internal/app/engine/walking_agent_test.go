@@ -124,6 +124,63 @@ func TestWalkingMaxContextTokens_OverrideAndDefault(t *testing.T) {
 	}
 }
 
+// Issue #149 second watermark fix: a cold call's cache_creation reflects that
+// call's internal tool-use chain, not the transcript that the next walking
+// iteration will inherit. Counting it tripped the watermark on every sub-task
+// that followed a cold start (Hermes Executor with --max-turns 50 routinely
+// uses 100K+ within a single call). This test pins the new behaviour: only
+// walking-active calls feed the watermark; cold calls reset to 0.
+func TestWalkingTokensSeen_ColdCallDoesNotFeedWatermark(t *testing.T) {
+	// Direct simulation of the executeSubTask post-Run state-update logic.
+	// Mirrors the actual code in plan_execute.go executeSubTask.
+	apply := func(walkingSoFar int, walkingActive bool, cacheRead, cacheWrite, input, output int) int {
+		if !walkingActive {
+			// Cold call — reset watermark so the next walking iteration starts fresh.
+			return 0
+		}
+		transcriptSize := cacheRead + cacheWrite
+		if transcriptSize == 0 {
+			transcriptSize = walkingSoFar + input + output
+		}
+		if transcriptSize > walkingSoFar {
+			walkingSoFar = transcriptSize
+		}
+		return walkingSoFar
+	}
+
+	// Cold sub-task 1 (heavy tool use, 200K within-call). After: watermark
+	// reset to 0 because the next sub-task won't carry this transcript.
+	got := apply(0, false, 0, 200_000, 18, 1500)
+	if got != 0 {
+		t.Fatalf("after cold call, watermark = %d, want 0 (cold should not feed watermark)", got)
+	}
+
+	// Walking sub-task 2: cache_read=80K (the actual transcript carried over
+	// from the new resumed session), cache_write=2K delta.
+	got = apply(got, true, 80_000, 2_000, 18, 600)
+	if got != 82_000 {
+		t.Fatalf("walking sub-task 2 watermark = %d, want 82000", got)
+	}
+
+	// Walking sub-task 3: cache_read grows naturally as transcript accumulates.
+	got = apply(got, true, 82_000, 2_500, 18, 700)
+	if got != 84_500 {
+		t.Fatalf("walking sub-task 3 watermark = %d, want 84500", got)
+	}
+
+	// Force-fresh in the middle (e.g., model change, retry) → reset.
+	got = apply(got, false, 0, 50_000, 18, 800)
+	if got != 0 {
+		t.Fatalf("force-fresh mid-task watermark = %d, want 0", got)
+	}
+
+	// Walking resumes after force-fresh, accumulator restarts.
+	got = apply(got, true, 50_000, 1_000, 18, 500)
+	if got != 51_000 {
+		t.Fatalf("walking after force-fresh watermark = %d, want 51000", got)
+	}
+}
+
 // Issue #149 watermark fix: walkingTokensSeen should reflect transcript size
 // (cache_read + cache_write of last call), not a cumulative add of
 // uncached-input + output. The latter heuristic over-counted on Codex (whose

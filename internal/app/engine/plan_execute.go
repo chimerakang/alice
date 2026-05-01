@@ -812,31 +812,43 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 		e.direct.BindSubTask(subTask)
 		result, execErr := e.direct.Run(ctx, prompt, cc, subTaskSink{})
 
-		// Walking-agent state update: track the model that actually ran and
-		// the *transcript size* the model is now sitting on so we can enforce
-		// the context-window watermark.
+		// Walking-agent state update.
 		//
-		// Transcript size is the new (cache_read + cache_creation) on this
-		// call: cache_read covers the prefix that was already cached (= the
+		// Track the model that actually ran (in case the runner picked one
+		// different from our prediction) so the next sub-task's switch can
+		// detect a model boundary.
+		//
+		// Track transcript size only when the prior call was walkingActive.
+		// A cold (force-fresh) call's cache_creation reflects this call's
+		// internal tool-use chain — that work is NOT carried into the next
+		// sub-task because the runner cleared the model session. Counting
+		// it would immediately trip the watermark on every sub-task that
+		// follows a cold call (see issue #149 follow-up). Reset to 0 after
+		// any cold call so the next walking iteration starts measuring
+		// fresh.
+		//
+		// Transcript size is cache_read + cache_creation on this call:
+		// cache_read covers the prefix that was already cached (= the
 		// transcript at the start of this turn), cache_creation covers what
 		// was just added to cache (= this turn's new content). Their sum is
-		// approximately what the next call's prompt cache will contain. Use
-		// max() so the watermark only ever reflects the high-water mark of
-		// the conversation, never decreases.
-		//
-		// Falling back to (input + output) when cache fields aren't reported
-		// is a poor heuristic — Codex's input_tokens already includes the
-		// cached portion, so cumulative add over-counts and trips the
-		// watermark prematurely (issue #149 follow-up). Cache fields fix this.
+		// approximately what the next walking call's prompt cache will read.
+		// Use max() so the watermark only ever reflects the high-water mark.
 		if e.cfg.WalkingAgentEnabled && execErr == nil && result.Model != "" {
 			e.walkingExecutorModel = result.Model
-			transcriptSize := result.CacheReadInputTokens + result.CacheCreationInputTokens
-			if transcriptSize == 0 {
-				// Runner didn't report cache fields — legacy heuristic.
-				transcriptSize = e.walkingTokensSeen + result.InputTokens + result.OutputTokens
-			}
-			if transcriptSize > e.walkingTokensSeen {
-				e.walkingTokensSeen = transcriptSize
+			if walkingActive {
+				transcriptSize := result.CacheReadInputTokens + result.CacheCreationInputTokens
+				if transcriptSize == 0 {
+					// Runner didn't report cache fields — legacy heuristic.
+					transcriptSize = e.walkingTokensSeen + result.InputTokens + result.OutputTokens
+				}
+				if transcriptSize > e.walkingTokensSeen {
+					e.walkingTokensSeen = transcriptSize
+				}
+			} else {
+				// Cold call (first sub-task, model change, retry, watermark
+				// reset, etc). Restart the watermark so the upcoming walking
+				// iterations get to accumulate from zero.
+				e.walkingTokensSeen = 0
 			}
 		} else if execErr != nil && e.cfg.WalkingAgentEnabled {
 			// On error, drop walking state — the next sub-task should start
