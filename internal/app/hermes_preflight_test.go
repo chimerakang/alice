@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"claude-tg-agent/internal/app/hermes"
 	"strings"
 	"testing"
@@ -79,6 +80,46 @@ func TestBuildHermesQualityContextFiltersSuccessAndLimitsWarnings(t *testing.T) 
 	}
 	if strings.Contains(context, "quality_stable") || strings.Contains(context, "should not appear") {
 		t.Fatalf("quality context should filter success and limit entries:\n%s", context)
+	}
+}
+
+// Phase 2.6.A: when preflight is disabled or client is nil, the async path
+// returns immediately with a non-skip verdict so the caller knows the Planner
+// can proceed unguarded.
+func TestRunHermesIssuePreflightAsyncDisabledReturnsImmediately(t *testing.T) {
+	bot := &TelegramBot{}
+	issue := &hermes.IssueContext{Number: 200, Title: "x"}
+	pfCh, cancel := bot.runHermesIssuePreflightAsync(context.Background(), issue, "/repo", "goal", HermesConfig{})
+	defer cancel()
+	select {
+	case v := <-pfCh:
+		if v.skip {
+			t.Fatalf("disabled preflight must not tripwire: %+v", v)
+		}
+		if v.err != nil {
+			t.Fatalf("disabled preflight must not error: %v", v.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("async preflight did not return when disabled")
+	}
+}
+
+// When preflight is enabled but the bot has no Claude client wired in, the
+// async path must not panic — it should report an empty verdict so the
+// Planner continues without interruption.
+func TestRunHermesIssuePreflightAsyncMissingClientFallsThrough(t *testing.T) {
+	bot := &TelegramBot{}
+	issue := &hermes.IssueContext{Number: 201, Title: "x"}
+	cfg := HermesConfig{Preflight: HermesPreflightConfig{Enabled: true, Parallel: true}}
+	pfCh, cancel := bot.runHermesIssuePreflightAsync(context.Background(), issue, "/repo", "goal", cfg)
+	defer cancel()
+	select {
+	case v := <-pfCh:
+		if v.skip || v.err != nil {
+			t.Fatalf("missing client should not trip wire or error: %+v", v)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("async preflight did not return when client is nil")
 	}
 }
 

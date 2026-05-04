@@ -215,6 +215,12 @@ type HermesPreflightConfig struct {
 	Model               string `json:"model"`                // default ModelRouting.FastModel / Haiku
 	CompletionThreshold int    `json:"completion_threshold"` // default 90
 	TimeoutSeconds      int    `json:"timeout_seconds"`      // default 20
+	// Parallel runs the preflight Haiku check concurrently with the Planner
+	// (Phase 2.6.A, OpenAI Agents SDK `run_in_parallel=True` pattern).
+	// When tripwired (verdict says skip), the running task is interrupted.
+	// When false (default), preflight blocks before the Planner kicks off
+	// and its augmented goal is forwarded to the Planner.
+	Parallel bool `json:"parallel"`
 }
 
 // HermesTaskRetryConfig is the JSON-config mirror of engine.TaskRetryConfig.

@@ -14,21 +14,19 @@ const plannerSystemPrompt = `You are the Planner in a Hermes Brain-Executor syst
 Your job:
 1. Receive a goal from the user.
 2. Decide whether to decompose into sub-tasks OR return a single "execute directly" sub-task.
-3. Output ONLY a JSON array inside a fenced code block. No prose before or after.
+3. Call the emit_plan tool with an object that contains a sub_tasks array. No prose before or after.
 
 Each sub-task object must have:
   - "id": unique string (e.g. "s1", "s2")
   - "description": one sentence describing what to do
   - "tool_hints": array of Claude Code tool names the Executor will likely need
 
-Example output:
-` + "```json" + `
-[
+Example tool input:
+{"sub_tasks":[
   {"id":"s1","description":"Read internal/auth/auth.go to understand current structure","tool_hints":["Read"]},
   {"id":"s2","description":"Write unit tests for auth.go in internal/auth/auth_test.go","tool_hints":["Edit","Bash"]},
   {"id":"s3","description":"Run go test ./internal/auth/... and confirm all tests pass","tool_hints":["Bash"]}
-]
-` + "```" + `
+]}
 
 COMPLEXITY GATE (Preferred Behavior):
 - For SIMPLE goals (1-3 sequential operations: e.g. "commit & push & tag", "add file & run test"):
@@ -103,7 +101,7 @@ Limits:
 - Maximum 15 sub-tasks per plan.
 - Prefer underdcomposition (fewer, larger tasks) over overcomposition (many, tiny tasks).
 
-Output ONLY the JSON block. No explanation, no preamble.`
+Output ONLY the emit_plan tool call. No explanation, no preamble.`
 
 // jsonBlockRe extracts the first ```json ... ``` block from Planner output.
 var jsonBlockRe = regexp.MustCompile("(?s)```(?:json)?\\s*\\n?(\\[.*?\\])\\s*```")
@@ -189,7 +187,7 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 				// Quality violation — inject feedback and retry
 				if attempt < p.maxRetries {
 					prompt = fmt.Sprintf(
-						"Plan quality gate rejected attempt %d:\n%s\n\nFix the plan before execution. Group information gathering into deliverable sub-tasks, include code-changing work for implementation goals, and include concrete validation for changed code. Output ONLY the corrected JSON array.",
+						"Plan quality gate rejected attempt %d:\n%s\n\nFix the plan before execution. Group information gathering into deliverable sub-tasks, include code-changing work for implementation goals, and include concrete validation for changed code. Call emit_plan again with the corrected sub_tasks array.",
 						attempt, err.Error(),
 					)
 					continue
@@ -199,19 +197,15 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 			return tasks, totalIn, totalOut, totalCost, nil
 		}
 
-		// Empty plan is syntactically valid JSON but means "Planner found
-		// nothing to do" — distinct from a malformed-JSON failure. Give a
-		// targeted retry message so the Planner either confirms completion
-		// via a single verification sub-task or surfaces remaining work.
+		// Empty plan means "Planner found nothing to do" — distinct from a
+		// malformed schema failure. Give a targeted retry message so the
+		// Planner either confirms completion via a single verification
+		// sub-task or surfaces remaining work.
 		if parseErr == nil && len(tasks) == 0 {
 			if attempt < p.maxRetries {
-				prompt = "Your previous output was an empty JSON array, which means no sub-tasks. " +
-					"Every sub-task object MUST include all three required fields: `id` (string, e.g. \"verify-1\"), `description` (string), and `tool_hints` (array of strings). " +
-					"If the goal is already satisfied by the current state of the project, output exactly:\n" +
-					"```json\n" +
-					"[{\"id\":\"verify-1\",\"description\":\"Verify the goal is already satisfied. Inspect the relevant files, run the relevant build/test/grep commands, and report concrete evidence (file paths, line numbers, command output).\",\"tool_hints\":[\"Read\",\"Bash\"]}]\n" +
-					"```\n" +
-					"If there is real work remaining, list those sub-tasks now (each with id/description/tool_hints). Do not output an empty array again."
+				prompt = "Your previous output described no sub-tasks. Every sub-task object MUST include all three required fields: `id` (string, e.g. \"verify-1\"), `description` (string), and `tool_hints` (array of strings). " +
+					"If the goal is already satisfied by the current state of the project, call emit_plan with a single verification sub-task inside sub_tasks: \"Verify the goal is already satisfied. Inspect the relevant files, run the relevant build/test/grep commands, and report concrete evidence (file paths, line numbers, command output).\" with tool_hints [\"Read\",\"Bash\"]. " +
+					"If there is real work remaining, call emit_plan again with those sub-tasks now. Do not send an empty sub_tasks array again."
 				continue
 			}
 			return nil, totalIn, totalOut, totalCost, &ErrPlannerEmptyPlan{Goal: goal}
@@ -223,13 +217,13 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 				parseErrMsg = parseErr.Error()
 			}
 			prompt = fmt.Sprintf(
-				"Error: JSON parse failed on attempt %d: %s\n"+
+				"Error: emit_plan input parse failed on attempt %d: %s\n"+
 					"Your output was:\n%s\n\n"+
 					"Fix the schema. Every sub-task object MUST include all three required fields:\n"+
 					"  - `id` (string, e.g. \"s1\")\n"+
 					"  - `description` (string)\n"+
 					"  - `tool_hints` (array of strings, e.g. [\"Read\", \"Bash\"])\n"+
-					"Output ONLY the corrected JSON array in a ```json``` block. No prose.",
+					"Call emit_plan again with the corrected sub_tasks array. No prose.",
 				attempt, parseErrMsg, res.Text,
 			)
 		}

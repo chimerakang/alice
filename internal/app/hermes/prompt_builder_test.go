@@ -135,6 +135,12 @@ func TestLoadPromptBuilderForTier_CodexDoesNotFallBackToClaudeFiles(t *testing.T
 	if got := pb.ForRole(RolePlanner); got == "" {
 		t.Error("planner rules empty; embedded default not loaded")
 	}
+	if got := pb.ForRole(RolePlanner); strings.Contains(got, "emit_plan") {
+		t.Errorf("codex planner fallback should not require unavailable emit_plan tool: %q", got)
+	}
+	if got := pb.ForRole(RolePlanner); !strings.Contains(got, "JSON") {
+		t.Errorf("codex planner fallback should require JSON output: %q", got)
+	}
 }
 
 func TestRole_String(t *testing.T) {
@@ -157,8 +163,17 @@ func TestDefaultRulesContainKeyTerms(t *testing.T) {
 	pb := DefaultPromptBuilder()
 
 	planner := pb.ForRole(RolePlanner)
-	if !strings.Contains(planner, "JSON") {
-		t.Error("planner rules should mention JSON format requirement")
+	if !strings.Contains(planner, "emit_plan") {
+		t.Error("planner rules should mention emit_plan tool")
+	}
+	if !strings.Contains(planner, "sub_tasks") {
+		t.Error("planner rules should mention sub_tasks payload")
+	}
+	if !strings.Contains(planner, "SINGLE-ACTION RULE") {
+		t.Error("planner rules should mention SINGLE-ACTION RULE")
+	}
+	if !strings.Contains(planner, "補 1 個測試") {
+		t.Error("planner rules should mention single-action examples")
 	}
 	if !strings.Contains(planner, "config.json") {
 		t.Error("planner rules should mention config.json protection")

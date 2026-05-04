@@ -288,6 +288,100 @@ func (t *TelegramBot) maybeRunHermesIssuePreflight(ctx context.Context, key chat
 	return strings.TrimSpace(goal) + "\n\n" + result.goalContext(), false
 }
 
+// handleParallelPreflightVerdict consumes the verdict from a parallel
+// preflight run and, when the tripwire fires, interrupts the running
+// Hermes coordinator. Non-skip verdicts are advisory in the parallel path
+// (the Planner has already started with the original goal); we log them
+// for telemetry and let the Planner continue.
+func (t *TelegramBot) handleParallelPreflightVerdict(key chatKey, issueNumber int, pfCh <-chan hermesPreflightVerdict) {
+	verdict, ok := <-pfCh
+	if !ok {
+		return
+	}
+	if verdict.err != nil {
+		log.Printf("[hermes.preflight.parallel] issue #%d failed: %v", issueNumber, verdict.err)
+		return
+	}
+	if !verdict.skip {
+		log.Printf("[hermes.preflight.parallel] issue #%d completion=%d%% verdict=%s — Planner continues", issueNumber, verdict.preflight.CompletionPercent, verdict.preflight.Verdict)
+		return
+	}
+	t.hermesMu.RLock()
+	hc := t.hermesCoords[key]
+	t.hermesMu.RUnlock()
+	if hc == nil || hc.coord == nil || !hc.coord.IsRunning() {
+		log.Printf("[hermes.preflight.parallel] issue #%d tripwire fired but no running coord", issueNumber)
+		return
+	}
+	interrupter, isInterruptible := hc.coord.(interruptibleCoordinator)
+	if !isInterruptible {
+		log.Printf("[hermes.preflight.parallel] issue #%d tripwire fired but coord is not interruptible", issueNumber)
+		return
+	}
+	interrupter.InterruptWith(0)
+	t.send(key, fmt.Sprintf("ℹ️ Hermes pre-flight 並行檢查 tripwire：Issue #%d 完成度約 %d%%（%s），已中斷本輪以避免重複消耗 token。\n\n%s", issueNumber, verdict.preflight.CompletionPercent, strings.TrimSpace(verdict.preflight.Verdict), strings.TrimSpace(verdict.preflight.goalContext())))
+}
+
+// hermesPreflightVerdict is the async outcome of a parallel preflight run.
+// Exactly one of (skip, augmentedGoal, err) carries useful information:
+//   - err != nil → preflight failed; caller should fall through and let the
+//     Planner continue with the original goal.
+//   - skip == true → tripwire fired; caller must interrupt the running task.
+//   - otherwise → augmentedGoal contains the goal-context to inject. In the
+//     parallel path this is currently advisory only because the Planner has
+//     already started; we keep it for telemetry / future use.
+type hermesPreflightVerdict struct {
+	skip          bool
+	augmentedGoal string
+	preflight     hermesPreflightResult
+	err           error
+}
+
+// runHermesIssuePreflightAsync starts the preflight Haiku check in a goroutine
+// and returns a buffered channel that receives the verdict exactly once. The
+// returned cancel func aborts the in-flight Haiku call when the caller no
+// longer needs the result (e.g. Planner already finished). The channel is
+// always closed after a single send so consumers can range or select safely.
+func (t *TelegramBot) runHermesIssuePreflightAsync(parent context.Context, issue *hermes.IssueContext, projectDir, goal string, cfg HermesConfig) (<-chan hermesPreflightVerdict, context.CancelFunc) {
+	out := make(chan hermesPreflightVerdict, 1)
+	pf := cfg.Preflight
+	ctx, cancel := context.WithCancel(parent)
+	if !pf.Enabled || t.client == nil || issue == nil {
+		out <- hermesPreflightVerdict{skip: false}
+		close(out)
+		cancel()
+		return out, cancel
+	}
+	model := strings.TrimSpace(pf.Model)
+	if model == "" {
+		model = strings.TrimSpace(t.config.ModelRouting.FastModel)
+	}
+	if model == "" {
+		model = "claude-haiku-4-5-20251001"
+	}
+	threshold := pf.CompletionThreshold
+	if threshold <= 0 {
+		threshold = 90
+	}
+
+	go func() {
+		defer close(out)
+		result, err := t.runHermesIssuePreflight(ctx, issue, projectDir, model, pf)
+		if err != nil {
+			out <- hermesPreflightVerdict{err: err}
+			return
+		}
+		v := hermesPreflightVerdict{preflight: result}
+		if result.shouldSkip(threshold) {
+			v.skip = true
+		} else {
+			v.augmentedGoal = strings.TrimSpace(goal) + "\n\n" + result.goalContext()
+		}
+		out <- v
+	}()
+	return out, cancel
+}
+
 func formatHermesRecentCompletionSkipMessage(issue *hermes.IssueContext, signal hermes.HermesCompletionSignal) string {
 	when := ""
 	if !signal.CreatedAt.IsZero() {

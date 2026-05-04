@@ -454,7 +454,9 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 	return finalResp, nil
 }
 
-// CallPlan invokes Claude Code CLI with --max-turns 3 for planning-only phase.
+// CallPlan invokes Claude Code CLI in planning mode.
+// It loads a temporary MCP server that exposes emit_plan and treats that
+// tool use as the structural end of planning.
 // If sessionID is non-empty, resumes that native Planner session.
 // No tool execution callbacks — planning phase should only think, not act.
 func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
@@ -486,8 +488,6 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 		args = append(args, "--resume", sessionID)
 	}
 
-	args = append(args, message)
-
 	// Diagnostic dump — when CallPlan fails with empty stderr, we want to be
 	// able to replay the exact prompt offline. The file is overwritten each
 	// call so /tmp doesn't fill up.
@@ -502,6 +502,8 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 		Timeout: defaultAgentProcessTimeout,
 	}, "claude", args...)
 	defer cancel()
+
+	cmd.Stdin = strings.NewReader(message)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -536,11 +538,11 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 			Subtype string `json:"subtype"`
 			Message *struct {
 				Content []struct {
-					Type     string `json:"type"`
-					Name     string `json:"name"`
+					Type     string                 `json:"type"`
+					Name     string                 `json:"name"`
 					Input    map[string]interface{} `json:"input"`
-					Text     string `json:"text"`
-					Thinking string `json:"thinking"`
+					Text     string                 `json:"text"`
+					Thinking string                 `json:"thinking"`
 				} `json:"content"`
 			} `json:"message"`
 			SessionID    string  `json:"session_id"`

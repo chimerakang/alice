@@ -175,6 +175,17 @@ Run 2 / 3 / 4 的多數 sub-task 都是「Read X to understand Y」「Run go tes
 
 預期效果：你的案例裡 Run 2/3/4 都會被 Pre-flight 直接 skip，省 8M+ tokens。
 
+**Phase 2.6.A — 並行 preflight guardrail (✅ implemented)**
+
+Sequential preflight 會把 Haiku 的 10–30s 全部疊在 user-perceived 啟動延遲上。借用 OpenAI Agents SDK `run_in_parallel=True` 的 input-guardrail 模式：
+
+- preflight goroutine 與 Planner 同時起跑（Planner 拿原始 goal）。
+- 若 preflight 在 Planner 完成前 tripwire（`shouldSkip` 為真）→ 透過 `interruptibleCoordinator.InterruptWith(0)` 中斷正在跑的 task，把 Haiku 寫的「已完成項」訊息回送 chat。
+- 若 Planner 先完成 → preflight 結果僅作 telemetry，goal augmentation 不再注入（這是相對 sequential 模式的 trade-off）。
+- 若 preflight error → 紀錄 log，Planner 不受影響繼續跑。
+
+開關：`hermes.preflight.parallel`（default `false`，保留舊有 sequential 行為）。Code path 在 [internal/app/hermes_preflight.go](../../internal/app/hermes_preflight.go) (`runHermesIssuePreflightAsync` + `handleParallelPreflightVerdict`) 與 [internal/app/telegram.go](../../internal/app/telegram.go) `startHermesFromIssueMode`。
+
 **選項 B：Issue 勾選表自動回讀**
 - Issue body 含 `- [x]` / `- [ ]` 列表時，Planner 規則明確指示「勾選的不重做」
 - 規劃時排除已勾選項目

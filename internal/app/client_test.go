@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -172,5 +174,66 @@ exit 1
 	}
 	if !strings.Contains(err.Error(), "likely exceeded --max-turns") {
 		t.Fatalf("CallStreamWithFiles() error = %q, want max-turns hint", err)
+	}
+}
+
+func TestCallPlanUsesEmitPlanToolPayloadWhenCLIEmitsToolUse(t *testing.T) {
+	argvPath := filepath.Join(t.TempDir(), "argv.txt")
+	stdinPath := filepath.Join(t.TempDir(), "stdin.txt")
+	script := fmt.Sprintf(`printf '%%s\n' "$@" > %q
+cat > %q
+cat <<'JSON'
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__planner_emit_plan__emit_plan","input":{"sub_tasks":[{"id":"s1","description":"Bundle context, edit, and verify for the e2e test","tool_hints":["Read","Edit","Bash"]}]}}]}}
+{"type":"result","session_id":"planner-session-emit","is_error":false,"num_turns":1,"result":"completed via emit_plan","usage":{"input_tokens":12,"output_tokens":7,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}
+JSON
+`, argvPath, stdinPath)
+	installFakeClaude(t, script)
+
+	client := &CLIClient{Model: "fake-model", MaxTurns: 50}
+	prompt := "補一個 e2e 測試"
+	resp, err := client.CallPlan(context.Background(), prompt, t.TempDir(), "", "", nil)
+	if err != nil {
+		t.Fatalf("CallPlan() error = %v", err)
+	}
+	if resp.SessionID != "planner-session-emit" {
+		t.Fatalf("CallPlan() session = %q, want planner-session-emit", resp.SessionID)
+	}
+	var gotPlan []map[string]any
+	if err := json.Unmarshal([]byte(resp.TextContent), &gotPlan); err != nil {
+		t.Fatalf("CallPlan() text is not JSON: %v", err)
+	}
+	if len(gotPlan) != 1 {
+		t.Fatalf("CallPlan() plan length = %d, want 1", len(gotPlan))
+	}
+	if gotPlan[0]["id"] != "s1" || gotPlan[0]["description"] != "Bundle context, edit, and verify for the e2e test" {
+		t.Fatalf("CallPlan() plan item = %#v, want target sub-task", gotPlan[0])
+	}
+	hints, ok := gotPlan[0]["tool_hints"].([]any)
+	if !ok || len(hints) != 3 || hints[0] != "Read" || hints[1] != "Edit" || hints[2] != "Bash" {
+		t.Fatalf("CallPlan() tool_hints = %#v, want [Read Edit Bash]", gotPlan[0]["tool_hints"])
+	}
+
+	argvBytes, err := os.ReadFile(argvPath)
+	if err != nil {
+		t.Fatalf("read argv capture: %v", err)
+	}
+	argv := string(argvBytes)
+	if strings.Contains(argv, "--max-turns") {
+		t.Fatalf("CallPlan argv unexpectedly contains --max-turns: %s", argv)
+	}
+	if strings.Contains(argv, prompt) {
+		t.Fatalf("CallPlan argv contains prompt; prompt should be sent via stdin: %s", argv)
+	}
+	for _, want := range []string{"--strict-mcp-config", "--mcp-config", "--tools"} {
+		if !strings.Contains(argv, want) {
+			t.Fatalf("CallPlan argv missing %s: %s", want, argv)
+		}
+	}
+	stdinBytes, err := os.ReadFile(stdinPath)
+	if err != nil {
+		t.Fatalf("read stdin capture: %v", err)
+	}
+	if got := string(stdinBytes); got != prompt {
+		t.Fatalf("CallPlan stdin = %q, want prompt %q", got, prompt)
 	}
 }

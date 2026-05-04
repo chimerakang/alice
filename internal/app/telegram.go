@@ -2399,6 +2399,35 @@ func (t *TelegramBot) startHermesFromIssueMode(key chatKey, issueNumber int, pro
 		t.startHermesTaskWithIssueTier(key, goal, projectDir, issueNumber, budget, ghCfg, t.hermesTierFor(key))
 		return
 	}
+	// Phase 2.6.A: when preflight.parallel is enabled, kick off the Haiku check
+	// concurrently with the Planner instead of blocking on it. The recent-
+	// completion shortcut still runs synchronously because it is local + cheap.
+	if cfg.Preflight.Enabled && cfg.Preflight.Parallel {
+		if signal, ok := hermes.RecentSuccessfulHermesCompletion(issue); ok {
+			t.send(key, formatHermesRecentCompletionSkipMessage(issue, signal))
+			return
+		}
+		pfCh, cancelPf := t.runHermesIssuePreflightAsync(ctx, issue, projectDir, goal, cfg)
+		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_start_title", map[string]string{
+			"issueNum": fmt.Sprintf("%d", issueNumber),
+			"title":    issue.Title,
+			"count": fmt.Sprintf("%d", func() int {
+				n := 0
+				for _, item := range issue.Checklist {
+					if !item.Checked {
+						n++
+					}
+				}
+				return n
+			}()),
+		}))
+		t.startHermesTaskWithIssue(key, goal, projectDir, issueNumber, budget, ghCfg)
+		go t.runTrackedJob("hermes.preflight.parallel", func() {
+			defer cancelPf()
+			t.handleParallelPreflightVerdict(key, issueNumber, pfCh)
+		})
+		return
+	}
 	if updatedGoal, skip := t.maybeRunHermesIssuePreflight(ctx, key, issue, projectDir, goal, cfg); skip {
 		return
 	} else {
