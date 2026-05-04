@@ -618,6 +618,21 @@ func isContinuationMessage(message string) bool {
 	runeCount := len([]rune(trimmed))
 	lower := strings.ToLower(trimmed)
 
+	optionReferencePatterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)(處理完|处理完|選|选|做|方案|選項|选项|option)\s*[a-z]\b`),
+		regexp.MustCompile(`(?i)\b[a-z]\s*(的話|的话|這個|这个|那個|那个|方案|選項|选项)`),
+	}
+	for _, pattern := range optionReferencePatterns {
+		if pattern.MatchString(lower) {
+			return true
+		}
+	}
+	for _, phrase := range []string{"第一個", "第一个", "第二個", "第二个", "第三個", "第三个", "前者", "後者", "后者"} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+
 	explicitPrefixes := []string{
 		"但是", "但", "那", "繼續", "继续", "還有", "还有", "所以",
 		"另外", "接著", "然後", "再來", "而且", "不過", "可是",
@@ -708,6 +723,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	a.runMu.Lock()
 	defer a.runMu.Unlock()
 
+	originalUserMessage := userMessage
 	startTime := time.Now()
 
 	// 設定 context with timeout (可透過 config 調整，預設 15 分鐘，0=無限制)
@@ -793,6 +809,13 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		}
 		if selectedBackend == previousBackend {
 			ps.ctx.ClearSession(selectedBackend)
+		}
+	}
+	if !a.suppressMemoryBridge && shouldInjectContinuationBridge(userMessage) {
+		bridge := a.resolveAgentMemoryBridge(ctx, ps, userMessage, "direct_continuation")
+		if bridge != "" && !strings.HasPrefix(userMessage, bridge) {
+			userMessage = bridge + userMessage
+			log.Printf("[agent] continuation context bridge injected (%d recent messages)", len(ps.ctx.RecentMsgs))
 		}
 	}
 	a.lastUsedModel = selectedModel
@@ -936,7 +959,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil, routingReason, routingLatency, deltaCost)
 
 	// Save exchange to recentMessages for context bridge on future model switches
-	addToRecentMessages(ps, userMessage, resp.Result)
+	addToRecentMessages(ps, originalUserMessage, resp.Result)
 
 	a.recordLastCallMetrics(a.lastUsedModel, resp.Usage.InputTokens, resp.Usage.OutputTokens, deltaCost)
 	a.recordLastCallCacheMetrics(resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
@@ -1037,7 +1060,7 @@ func (a *Agent) resolveAgentMemoryBridge(ctx context.Context, ps *projectState, 
 	// decisions, which the model then treats as the live request. See issues
 	// #145 and #146.
 	var resolver *UnifiedMemoryResolver
-	if mode == "direct_resume_fallback" || mode == "direct_model_switch" {
+	if mode == "direct_resume_fallback" || mode == "direct_model_switch" || mode == "direct_continuation" {
 		resolver = NewMemoryResolver(nil)
 	} else {
 		resolver = NewMemoryResolverWithAllSources(nil, globalGeneralMemorySource(), defaultStaticHintSourceForProject(ps.ctx.ProjectDir))
@@ -1056,6 +1079,14 @@ func (a *Agent) resolveAgentMemoryBridge(ctx context.Context, ps *projectState, 
 		return ""
 	}
 	return bundle.Render()
+}
+
+func shouldInjectContinuationBridge(userMessage string) bool {
+	if !isContinuationMessage(userMessage) {
+		return false
+	}
+	_, hasIssue := ParseIssueNumber(userMessage)
+	return !hasIssue
 }
 
 // RunWithPlan executes a two-phase Plan/Execute workflow:

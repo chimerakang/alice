@@ -202,6 +202,16 @@ func TestIsContinuationMessage(t *testing.T) {
 			want:    true,
 		},
 		{
+			name:    "option label follow up",
+			message: "我先問一下，處理完b的話，node graph會是正常的情況嗎？",
+			want:    true,
+		},
+		{
+			name:    "ordinal option follow up",
+			message: "第二個做完後會正常嗎？",
+			want:    true,
+		},
+		{
 			name:    "new long request",
 			message: "請幫我在新的專案裡設計完整的資料庫 migration 與 API 實作",
 			want:    false,
@@ -219,6 +229,38 @@ func TestIsContinuationMessage(t *testing.T) {
 				t.Fatalf("isContinuationMessage(%q) = %v, want %v", tt.message, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAgentRunInjectsRecentBridgeForOptionLabelFollowUp(t *testing.T) {
+	client := &modelRecordingClient{model: "sonnet"}
+	chatCtx := NewChatContext(1, 0, "/tmp/project")
+	chatCtx.SetSession(BackendClaude, "active-sonnet")
+	chatCtx.AddRecentMessage(
+		"GraphFull 現況分析",
+		strings.Repeat("前置說明。", 220)+"\n接下來合理的後續：(a) 對 GraphFull 加 service-level 測試；(b) 點選節點後在 cytoscape 上 highlight 鄰居、或切回 center mode 並帶入 nodeId。要繼續做哪個？",
+	)
+	agent := NewAgentWithContext(client, chatCtx)
+	agent.lastUsedModel = "sonnet"
+	agent.SetRoutingConfig(ModelRoutingConfig{StickySession: true, SessionIdleTimeoutMin: 5})
+
+	if _, err := agent.Run("我先問一下，處理完b的話，node graph會是正常的情況嗎？", nil); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if len(client.messages) != 1 {
+		t.Fatalf("CallStream messages = %d, want 1", len(client.messages))
+	}
+	prompt := client.messages[0]
+	for _, want := range []string{
+		"[Context from previous conversation",
+		"(b) 點選節點後在 cytoscape 上 highlight 鄰居",
+		"center mode",
+		"nodeId",
+		"處理完b",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
 	}
 }
 

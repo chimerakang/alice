@@ -22,7 +22,7 @@ type ModelPreference string
 // ContextMessage saves one turn for cross-engine context bridging.
 type ContextMessage struct {
 	Role    string // "user" or "assistant"
-	Content string // truncated to 500 chars
+	Content string // truncated with head+tail preservation
 }
 
 // ChatContext is the shared conversation state for a Telegram chat/topic.
@@ -88,13 +88,14 @@ func (c *ChatContext) AddRecentMessage(userMsg, assistantMsg string) {
 	if c == nil {
 		return
 	}
-	const maxLen = 500
 	truncate := func(s string) string {
 		runes := []rune(s)
-		if len(runes) > maxLen {
-			return string(runes[:maxLen]) + "..."
+		const maxLen = 900
+		if len(runes) <= maxLen {
+			return s
 		}
-		return s
+		const edgeLen = 430
+		return string(runes[:edgeLen]) + "\n...[middle omitted for continuity]...\n" + string(runes[len(runes)-edgeLen:])
 	}
 	c.RecentMsgs = append(c.RecentMsgs,
 		ContextMessage{Role: "user", Content: truncate(userMsg)},
