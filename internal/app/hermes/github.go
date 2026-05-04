@@ -36,6 +36,16 @@ type ChecklistItem struct {
 	LineNumber int // 0-indexed line in Issue body, for sync anchoring
 }
 
+// IssueReconciliation is the post-run view of whether the Hermes job also
+// satisfied the linked GitHub issue checklist.
+type IssueReconciliation struct {
+	IssueNumber    int
+	IssueState     string
+	ChecklistTotal int
+	CheckedCount   int
+	Unchecked      []ChecklistItem
+}
+
 // ghIssueJSON is the JSON shape returned by `gh issue view --json ...`.
 type ghIssueJSON struct {
 	State  string `json:"state"`
@@ -283,6 +293,53 @@ func ExtractChecklist(body string) []ChecklistItem {
 		})
 	}
 	return items
+}
+
+// ReconcileIssueCompletion summarizes the current issue checklist after a
+// Hermes run. A Hermes task can be done while the issue still has unchecked
+// acceptance criteria; callers use this to keep those lifecycles separate.
+func ReconcileIssueCompletion(issue *IssueContext) IssueReconciliation {
+	if issue == nil {
+		return IssueReconciliation{}
+	}
+	rec := IssueReconciliation{
+		IssueNumber:    issue.Number,
+		IssueState:     issue.State,
+		ChecklistTotal: len(issue.Checklist),
+		Unchecked:      make([]ChecklistItem, 0),
+	}
+	for _, item := range issue.Checklist {
+		if item.Checked {
+			rec.CheckedCount++
+			continue
+		}
+		rec.Unchecked = append(rec.Unchecked, item)
+	}
+	return rec
+}
+
+func (r IssueReconciliation) HasUnchecked() bool {
+	return len(r.Unchecked) > 0
+}
+
+func (r IssueReconciliation) ChecklistComplete() bool {
+	return r.ChecklistTotal > 0 && len(r.Unchecked) == 0
+}
+
+func (r IssueReconciliation) CommentNote() string {
+	var sb strings.Builder
+	switch {
+	case r.ChecklistTotal == 0:
+		sb.WriteString("Post-run issue reconciliation: no GitHub issue checklist items were found to verify.")
+	case r.HasUnchecked():
+		fmt.Fprintf(&sb, "本輪 Hermes job 已完成，但 GitHub Issue checklist 尚未完成（%d/%d checked）。\n\nRemaining unchecked items:\n", r.CheckedCount, r.ChecklistTotal)
+		for _, item := range r.Unchecked {
+			fmt.Fprintf(&sb, "- [ ] %s\n", item.Text)
+		}
+	default:
+		fmt.Fprintf(&sb, "Post-run issue reconciliation: GitHub Issue checklist is complete (%d/%d checked).", r.CheckedCount, r.ChecklistTotal)
+	}
+	return strings.TrimSpace(sb.String())
 }
 
 // BuildGoalFromIssue assembles the Planner goal string from an Issue.

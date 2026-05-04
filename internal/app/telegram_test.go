@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1120,6 +1121,68 @@ func TestCountUncheckedIssueChecklistItems(t *testing.T) {
 	}
 	if got := countUncheckedIssueChecklistItems(nil); got != 0 {
 		t.Fatalf("countUncheckedIssueChecklistItems(nil) = %d, want 0", got)
+	}
+}
+
+func TestFormatHermesIssueReconciliationMessage(t *testing.T) {
+	rec := hermes.ReconcileIssueCompletion(&hermes.IssueContext{
+		Number: 153,
+		Checklist: []hermes.ChecklistItem{
+			{Text: "done", Checked: true},
+			{Text: "remaining", Checked: false},
+		},
+	})
+	text := formatHermesIssueReconciliationMessage(rec)
+	if !strings.Contains(text, "本輪已完成") || !strings.Contains(text, "Issue #153 尚未完成") || !strings.Contains(text, "remaining") {
+		t.Fatalf("unexpected reconciliation text:\n%s", text)
+	}
+}
+
+func TestSendHermesIssueReconciliationQueuesActionsWhenUnchecked(t *testing.T) {
+	oldFetch := hermesFetchIssue
+	defer func() { hermesFetchIssue = oldFetch }()
+	hermesFetchIssue = func(ctx context.Context, projectDir string, issueNumber int) (*hermes.IssueContext, error) {
+		if projectDir != "/repo" || issueNumber != 153 {
+			t.Fatalf("unexpected fetch args: %q #%d", projectDir, issueNumber)
+		}
+		return &hermes.IssueContext{
+			Number: 153,
+			Checklist: []hermes.ChecklistItem{
+				{Text: "done", Checked: true},
+				{Text: "remaining", Checked: false},
+			},
+		}, nil
+	}
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		messageQueue: make(chan *TelegramMessage, 1),
+	}
+	bot.sendHermesIssueReconciliation(context.Background(), key, hermes.TaskState{
+		ID:                "6b1960ba-1111-2222-3333-444444444444",
+		ProjectDir:        "/repo",
+		GithubIssueNumber: 153,
+	})
+	select {
+	case msg := <-bot.messageQueue:
+		if msg.Method != "sendMessage" {
+			t.Fatalf("unexpected method: %s", msg.Method)
+		}
+		if !strings.Contains(fmt.Sprint(msg.Params["text"]), "Issue #153 尚未完成") {
+			t.Fatalf("unexpected text: %#v", msg.Params["text"])
+		}
+		markup, ok := msg.Params["reply_markup"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("reply_markup missing: %#v", msg.Params["reply_markup"])
+		}
+		rows, ok := markup["inline_keyboard"].([][]map[string]interface{})
+		if !ok || len(rows) < 2 {
+			t.Fatalf("inline_keyboard missing or too small: %#v", markup["inline_keyboard"])
+		}
+		if rows[0][0]["callback_data"] != "hermes:continue:6b1960ba-1111-2222-3333-444444444444" {
+			t.Fatalf("unexpected continue button: %#v", rows[0][0])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for reconciliation actions message")
 	}
 }
 

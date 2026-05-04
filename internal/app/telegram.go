@@ -2451,16 +2451,7 @@ func (t *TelegramBot) startHermesFromIssueMode(key chatKey, issueNumber int, pro
 }
 
 func countUncheckedIssueChecklistItems(issue *hermes.IssueContext) int {
-	if issue == nil {
-		return 0
-	}
-	count := 0
-	for _, item := range issue.Checklist {
-		if !item.Checked {
-			count++
-		}
-	}
-	return count
+	return len(hermes.ReconcileIssueCompletion(issue).Unchecked)
 }
 
 // startHermesTask launches a Hermes coordinator for the given goal on the chat's current tier.
@@ -4139,7 +4130,7 @@ func (t *TelegramBot) buildTaskSyncHook(triggerSync bool, projectDir string) fun
 // back into the agent's recentMessages so the next follow-up turn can
 // reference what the previous Hermes task actually did (Issue #108).
 func (t *TelegramBot) buildHermesOnDoneHook(key chatKey, originalGoal string) func(ctx context.Context, state hermes.TaskState) {
-	return func(_ context.Context, state hermes.TaskState) {
+	return func(ctx context.Context, state hermes.TaskState) {
 		summary := state.Accumulated
 		if summary == "" {
 			// Fall back to sub-task results if no rolled-up summary exists.
@@ -4153,11 +4144,56 @@ func (t *TelegramBot) buildHermesOnDoneHook(key chatKey, originalGoal string) fu
 				summary = strings.Join(parts, "\n")
 			}
 		}
-		if summary == "" {
-			return
+		if summary != "" {
+			t.getChatContext(key, "").AddRecentMessage(originalGoal, summary)
+			log.Printf("[hermes] wrote task result back to recentMessages for chat %d (%d chars)", key.chatID, len(summary))
 		}
-		t.getChatContext(key, "").AddRecentMessage(originalGoal, summary)
-		log.Printf("[hermes] wrote task result back to recentMessages for chat %d (%d chars)", key.chatID, len(summary))
+		t.sendHermesIssueReconciliation(ctx, key, state)
+	}
+}
+
+func (t *TelegramBot) sendHermesIssueReconciliation(ctx context.Context, key chatKey, state hermes.TaskState) {
+	if state.GithubIssueNumber <= 0 {
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	issue, err := hermesFetchIssue(ctx, state.ProjectDir, state.GithubIssueNumber)
+	if err != nil {
+		log.Printf("[hermes] post-run issue reconciliation failed for #%d: %v", state.GithubIssueNumber, err)
+		return
+	}
+	rec := hermes.ReconcileIssueCompletion(issue)
+	text := formatHermesIssueReconciliationMessage(rec)
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	if rec.HasUnchecked() {
+		t.sendHermesCandidateActions(key, text, state)
+		return
+	}
+	t.send(key, text)
+}
+
+func formatHermesIssueReconciliationMessage(rec hermes.IssueReconciliation) string {
+	issueLabel := "Issue"
+	if rec.IssueNumber > 0 {
+		issueLabel = fmt.Sprintf("Issue #%d", rec.IssueNumber)
+	}
+	switch {
+	case rec.ChecklistTotal == 0:
+		return fmt.Sprintf("ℹ️ Hermes 本輪已完成；%s 沒有 checklist 可核對。", issueLabel)
+	case rec.HasUnchecked():
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "⚠️ Hermes 本輪已完成，但 %s 尚未完成。\n\n剩餘 checklist（%d/%d checked）：", issueLabel, rec.CheckedCount, rec.ChecklistTotal)
+		for _, item := range rec.Unchecked {
+			fmt.Fprintf(&sb, "\n- %s", item.Text)
+		}
+		sb.WriteString("\n\n可以選擇繼續處理、重新規劃，或停止。")
+		return sb.String()
+	default:
+		return fmt.Sprintf("✅ Hermes 本輪已完成，%s checklist 也已全部完成（%d/%d checked）。", issueLabel, rec.CheckedCount, rec.ChecklistTotal)
 	}
 }
 

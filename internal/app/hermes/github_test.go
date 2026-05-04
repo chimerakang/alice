@@ -180,6 +180,43 @@ func TestCommentDoneWithNote(t *testing.T) {
 	}
 }
 
+func TestReconcileIssueCompletion_Unchecked(t *testing.T) {
+	rec := ReconcileIssueCompletion(&IssueContext{
+		Number: 153,
+		State:  "OPEN",
+		Checklist: []ChecklistItem{
+			{Text: "done", Checked: true},
+			{Text: "remaining", Checked: false},
+		},
+	})
+	if !rec.HasUnchecked() || rec.ChecklistComplete() {
+		t.Fatalf("unexpected reconciliation flags: %#v", rec)
+	}
+	if rec.CheckedCount != 1 || rec.ChecklistTotal != 2 || len(rec.Unchecked) != 1 {
+		t.Fatalf("unexpected reconciliation counts: %#v", rec)
+	}
+	note := rec.CommentNote()
+	if !strings.Contains(note, "尚未完成") || !strings.Contains(note, "remaining") {
+		t.Fatalf("unchecked note missing detail:\n%s", note)
+	}
+}
+
+func TestReconcileIssueCompletion_AllChecked(t *testing.T) {
+	rec := ReconcileIssueCompletion(&IssueContext{
+		Number: 153,
+		Checklist: []ChecklistItem{
+			{Text: "done", Checked: true},
+			{Text: "also done", Checked: true},
+		},
+	})
+	if rec.HasUnchecked() || !rec.ChecklistComplete() {
+		t.Fatalf("unexpected reconciliation flags: %#v", rec)
+	}
+	if note := rec.CommentNote(); !strings.Contains(note, "checklist is complete") || !strings.Contains(note, "2/2") {
+		t.Fatalf("complete note missing detail:\n%s", note)
+	}
+}
+
 func TestCommentFailed_Fields(t *testing.T) {
 	body := CommentFailed("Parse input", "timeout", 3, 7)
 	if !strings.Contains(body, "Parse input") {

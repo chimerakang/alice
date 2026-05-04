@@ -625,24 +625,36 @@ func (e *PlanExecuteEngine) onDone(ctx context.Context, finalState hermes.TaskSt
 	if issueNum <= 0 || !ghCfg.Enabled {
 		return
 	}
-	doneNote := ""
-	if completed == total && ghCfg.AutoCloseLabel != "" {
-		if issue, err := hermes.FetchIssue(ctx, e.cfg.ProjectDir, issueNum); err == nil {
-			if hermes.HasLabel(issue, ghCfg.AutoCloseLabel) {
+	var notes []string
+	issue, fetchErr := hermes.FetchIssue(ctx, e.cfg.ProjectDir, issueNum)
+	if fetchErr != nil {
+		log.Printf("[plan_execute] GitHub post-run reconciliation skipped issue #%d: fetch issue: %v", issueNum, fetchErr)
+		if ghCfg.AutoCloseLabel != "" {
+			notes = append(notes, fmt.Sprintf("Issue was not auto-closed because Alice could not re-fetch the issue to verify the `%s` label.", ghCfg.AutoCloseLabel))
+		}
+	} else {
+		reconciliation := hermes.ReconcileIssueCompletion(issue)
+		notes = append(notes, reconciliation.CommentNote())
+		if reconciliation.HasUnchecked() {
+			log.Printf("[plan_execute] GitHub issue #%d still has %d unchecked checklist items after Hermes done", issueNum, len(reconciliation.Unchecked))
+		}
+		if completed == total && ghCfg.AutoCloseLabel != "" {
+			switch {
+			case reconciliation.HasUnchecked():
+				notes = append(notes, fmt.Sprintf("Issue was not auto-closed because %d checklist item(s) remain unchecked.", len(reconciliation.Unchecked)))
+				log.Printf("[plan_execute] GitHub auto-close skipped issue #%d: unchecked checklist remains", issueNum)
+			case hermes.HasLabel(issue, ghCfg.AutoCloseLabel):
 				if err := hermes.CloseIssue(ctx, e.cfg.ProjectDir, issueNum); err != nil {
 					log.Printf("[plan_execute] GitHub close issue: %v", err)
 				}
-			} else {
-				doneNote = fmt.Sprintf("Issue was not auto-closed because it does not have the `%s` label.", ghCfg.AutoCloseLabel)
+			default:
+				notes = append(notes, fmt.Sprintf("Issue was not auto-closed because it does not have the `%s` label.", ghCfg.AutoCloseLabel))
 				log.Printf("[plan_execute] GitHub auto-close skipped issue #%d: missing label %q", issueNum, ghCfg.AutoCloseLabel)
 			}
-		} else {
-			doneNote = fmt.Sprintf("Issue was not auto-closed because Alice could not re-fetch the issue to verify the `%s` label.", ghCfg.AutoCloseLabel)
-			log.Printf("[plan_execute] GitHub auto-close skipped issue #%d: fetch issue: %v", issueNum, err)
 		}
 	}
 	if ghCfg.ShouldComment("complete") {
-		body := hermes.CommentDoneWithNote(finalState, doneNote)
+		body := hermes.CommentDoneWithNote(finalState, strings.Join(notes, "\n\n"))
 		if err := hermes.PostComment(ctx, e.cfg.ProjectDir, issueNum, body); err != nil {
 			log.Printf("[plan_execute] GitHub comment done: %v", err)
 		}
