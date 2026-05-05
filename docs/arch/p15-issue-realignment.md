@@ -136,7 +136,9 @@ Status 2026-05-05: first implementation slice landed. `RecoveryPolicy` now
 provides pure retry/fallback/fail decisions, and `Agent.Run` direct stream retry
 uses it while preserving the existing retry behavior. Plan/Execute fallback and
 Hermes task-level review retry now route through the same decision shape without
-changing their existing behavior.
+changing their existing behavior. Manual `/retry` sub-task retry limits also use
+RecoveryPolicy now; the Telegram handler still owns formatting and selection,
+but no longer owns the retry-budget decision.
 
 ### Issue E: Hermes Task Agent Resume + Partial Retry
 
@@ -156,8 +158,10 @@ Status 2026-05-05: intra-run partial retry is already implemented for
 task-level review retry: high-score completed sub-tasks are preserved, the
 replan prompt tells the planner not to repeat them, and merged retry plans keep
 preserved work. A pure `TaskResumeDecision` helper now classifies persisted
-`TaskState` into preserved/remaining/fromIdx, which is the safe precursor to
-cross-run `RunFromState` wiring.
+`TaskState` into preserved/remaining/fromIdx. `PlanExecuteEngine.RunFromState`
+is now wired into explicit Hermes continuation paths, including issue-based and
+similar-goal continuation, so resume preserves the original task ID and skips
+completed/skipped sub-tasks instead of replanning from zero.
 
 ### Issue F: Runtime Trace + Token/Cache Observability
 

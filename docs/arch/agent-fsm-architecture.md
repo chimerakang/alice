@@ -255,16 +255,19 @@ Recommended event names:
    - Status 2026-05-05: first slice landed under #156. `RecoveryPolicy` defines
      a pure retry/fallback/fail decision shape, and `Agent.Run` direct stream
      retry now uses it while preserving existing retry timing. Plan/Execute
-     fallback and Hermes task-level review retry also use the same decision
-     shape while preserving existing behavior.
+     fallback, Hermes task-level review retry, and manual `/retry` sub-task
+     retry limits also use the same decision shape while preserving existing
+     behavior.
 
 5. **Hermes Task Agent cleanup**
    - Keep Hermes as the long-task engine.
    - Add TaskState resume/partial retry.
    - Stop giving Hermes ownership of ChatContext/session policy.
    - Status 2026-05-05: intra-run partial retry already preserves high-score
-     sub-tasks on task review retry. `TaskResumeDecision` now provides the pure
-     persisted-state decision needed before wiring cross-run `RunFromState`.
+     sub-tasks on task review retry. `TaskResumeDecision` classifies persisted
+     `TaskState`, and `PlanExecuteEngine.RunFromState` is wired into explicit
+     Hermes continuation paths so completed/skipped sub-tasks are preserved and
+     remaining work resumes under the original task ID.
 
 6. **Trace/observability**
    - Emit trace spans for chat routing, session policy, task phases, execution,
