@@ -189,6 +189,8 @@ normalized runtime events with timestamp/type/chat/thread/task/issue/payload,
 and RecoveryDecision events are now written through this path. Token/cache
 phase accounting remains covered by the earlier `phase_usages` slice; this
 adds the event stream needed to explain retry/fallback/cancel decisions.
+`GET /api/runtime/events` exposes the persisted stream with limit/offset/type
+filters for dashboard and diagnostic tooling.
 
 ## Recommended Order
 
