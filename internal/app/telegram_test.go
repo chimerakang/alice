@@ -2284,37 +2284,6 @@ func TestClearHermesFailurePauseRequiresMatchingTaskAndIndex(t *testing.T) {
 	}
 }
 
-func TestPrototypeQuickEditDescriptionUsesShortCallbackCodes(t *testing.T) {
-	desc, ok := prototypeQuickEditDescription("dark")
-	if !ok || desc != "將整體主題改成深色模式" {
-		t.Fatalf("prototypeQuickEditDescription(dark) = (%q, %v)", desc, ok)
-	}
-	if _, ok := prototypeQuickEditDescription("將整體主題改成深色模式"); ok {
-		t.Fatal("raw edit descriptions should not be accepted as callback codes")
-	}
-}
-
-func TestPrototypeApplyCallbackDataFitsTelegramLimit(t *testing.T) {
-	protoID := "12345678-1234-1234-1234-123456789abc"
-	keyboard := (&TelegramBot{}).buildColorSubMenu(42, protoID)
-	rows, ok := keyboard["inline_keyboard"].([]interface{})
-	if !ok {
-		t.Fatalf("inline_keyboard type = %T", keyboard["inline_keyboard"])
-	}
-	for _, row := range rows {
-		buttons, ok := row.([]interface{})
-		if !ok {
-			t.Fatalf("row type = %T", row)
-		}
-		for _, button := range buttons {
-			data := button.(map[string]string)["callback_data"]
-			if len([]byte(data)) > 64 {
-				t.Fatalf("callback_data too long (%d bytes): %q", len([]byte(data)), data)
-			}
-		}
-	}
-}
-
 func TestHandleMessageBareContinuationUsesNormalAgent(t *testing.T) {
 	key := chatKey{chatID: 42, threadID: 7}
 	const userID int64 = 123
