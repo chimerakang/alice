@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { ArrowDown, ArrowUp, ArrowUpDown, Clock, Loader2, Search } from "lucide-react";
 import { clsx } from "clsx";
 import { api } from "@/lib/api";
@@ -255,16 +256,18 @@ export function ReviewsPageView({
     () => filterAndSortReviews(reviews, filters, sortKey, sortDirection),
     [reviews, filters, sortKey, sortDirection],
   );
+  const { t } = useTranslation();
+
   const verdictOptions: Array<{ value: ReviewVerdictFilter; label: string }> = [
-    { value: "all", label: "All" },
+    { value: "all", label: t("common.all") },
     { value: "pass", label: "Pass" },
     { value: "partial", label: "Partial" },
     { value: "fail", label: "Fail" },
   ];
 
   const emptyMessage = reviews.length === 0
-    ? "目前還沒有 review 結果"
-    : "沒有符合條件的 review";
+    ? t("reviews.empty_no_reviews")
+    : t("reviews.empty_no_match");
 
   const goToTimeline = (taskId: string) => {
     onRowClick(taskId);
@@ -276,14 +279,14 @@ export function ReviewsPageView({
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-gray-400 text-sm">
             <Search className="w-4 h-4 text-accent" />
-            <span>Review History</span>
+            <span>{t("reviews.page_title")}</span>
             <StatusBadge variant={liveConnected ? "success" : "neutral"} size="sm" dot>
-              {liveConnected ? "Live" : "歷史資料"}
+              {liveConnected ? t("common.live") : t("common.historical")}
             </StatusBadge>
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight text-white">Review History</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-white">{t("reviews.page_title")}</h1>
           <p className="text-sm text-gray-500">
-            集中查看所有 review，依 verdict、project、時間與 reviewer model 篩選。
+            {t("reviews.page_subtitle")}
           </p>
         </div>
         <div className="text-xs text-gray-500 font-mono">
@@ -303,12 +306,12 @@ export function ReviewsPageView({
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex items-center gap-2 text-sm text-gray-400">
                 <Clock className="w-4 h-4" />
-                <span>時間範圍</span>
+                <span>{t("reviews.time_range")}</span>
               </div>
               <DateRangeFilter onChange={onTimeRangeChange} />
             </div>
             <SearchFilter
-              placeholder="搜尋 goal 或 feedback_text"
+              placeholder={t("reviews.search_placeholder")}
               onSearch={onSearchChange}
             />
           </div>
@@ -371,7 +374,7 @@ export function ReviewsPageView({
                     direction={sortDirection}
                     onClick={() => onSortChange("timestamp")}
                   >
-                    時間
+                    {t("reviews.column_time")}
                   </SortButton>
                 </th>
                 <th className="px-4 py-3 whitespace-nowrap">
@@ -425,7 +428,7 @@ export function ReviewsPageView({
                     direction={sortDirection}
                     onClick={() => onSortChange("goal")}
                   >
-                    goal 摘要
+                    {t("reviews.column_goal_summary")}
                   </SortButton>
                 </th>
               </tr>
@@ -444,7 +447,7 @@ export function ReviewsPageView({
                     <div className="space-y-2">
                       <p className="text-base text-gray-300">{emptyMessage}</p>
                       <p className="text-sm text-gray-600">
-                        可調整 verdict、project、時間範圍或搜尋條件來縮小結果。
+                        {t("reviews.filter_hint")}
                       </p>
                     </div>
                   </td>
@@ -458,7 +461,7 @@ export function ReviewsPageView({
           </table>
         </div>
         <div className="text-xs text-gray-500">
-          預設依時間由新到舊排序。點列會跳到 Timeline 並展開對應 decision。
+          {t("reviews.footer_hint")}
         </div>
       </div>
     </div>

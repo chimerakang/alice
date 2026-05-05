@@ -637,7 +637,7 @@ export function ReviewPanel({
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge variant={liveConnected ? "success" : "neutral"} size="sm" dot>
-            {liveConnected ? "Live" : "歷史資料"}
+            {liveConnected ? "Live" : "Historical"}
           </StatusBadge>
           <span className="text-xs text-gray-500 font-mono">
             {reviews.length} reviews
@@ -647,7 +647,7 @@ export function ReviewPanel({
 
       {reviews.length === 0 ? (
         <div className="flex items-center justify-center h-40 text-sm text-gray-500">
-          目前還沒有 review 結果
+          No review results yet
         </div>
       ) : (
         <div className="space-y-4">
@@ -738,7 +738,7 @@ export function ReviewPanel({
                       {review.project_path ? <span className="ml-2">{review.project_path}</span> : null}
                     </div>
                     <div className="text-xs text-gray-500">
-                      {review.advisory_retry ? review.retry_note || "建議重新檢視" : "暫無需重跑"}
+                      {review.advisory_retry ? review.retry_note || "Manual review suggested" : "No retry needed"}
                     </div>
                   </div>
                 </div>
@@ -1056,8 +1056,6 @@ export default function Dashboard() {
           <SourcePerformanceChart decisions={allDecisions} />
         </div>
       </div>
-
-      <ReviewPanel reviews={reviewItems} liveConnected={wsConnected} />
 
       {/* ── Row 4: Smart Routing Savings (Issue #74) ── */}
       <div className="space-y-4">

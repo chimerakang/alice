@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { BrainCircuit, Database, FileText, Layers3, RefreshCw, Search } from "lucide-react";
 import { api } from "@/lib/api";
 import type { MemoryPreviewResponse, MemoryPreviewSection } from "@/types/alice";
@@ -70,6 +71,7 @@ function SectionRow({ section }: { section: MemoryPreviewSection }) {
 }
 
 export default function Memory() {
+  const { t } = useTranslation();
   const [form, setForm] = useState<MemoryFormState>(defaultForm);
   const [preview, setPreview] = useState<MemoryPreviewResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -204,7 +206,7 @@ export default function Memory() {
               value={form.message}
               onChange={(event) => updateField("message", event.target.value)}
               className="w-full bg-gray-900 border border-gray-700 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-primary"
-              placeholder="繼續處理 #143"
+              placeholder={t("memory.continue_placeholder")}
             />
           </label>
         </div>

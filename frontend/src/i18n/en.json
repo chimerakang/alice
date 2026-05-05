@@ -1,0 +1,110 @@
+{
+  "nav": {
+    "section_overview": "Overview",
+    "section_quality": "Quality",
+    "section_system": "System",
+    "dashboard": "Dashboard",
+    "timeline": "Timeline",
+    "reviews": "Reviews",
+    "analytics": "Analytics",
+    "checkpoints": "Checkpoints",
+    "performance": "Performance",
+    "runtime": "Runtime",
+    "memory": "Memory",
+    "security": "Security"
+  },
+  "common": {
+    "connected": "Connected",
+    "disconnected": "Disconnected",
+    "live": "Live",
+    "historical": "Historical",
+    "loading": "Loading…",
+    "no_data": "No data",
+    "search": "Search",
+    "all": "All",
+    "filter": "Filter",
+    "refresh": "Refresh",
+    "save": "Save",
+    "cancel": "Cancel",
+    "submit": "Submit"
+  },
+  "dashboard": {
+    "stats": {
+      "sessions": "Sessions",
+      "sessions_total": "{{count}} total",
+      "tools": "Tools",
+      "decisions": "Decisions",
+      "success": "Success",
+      "tokens": "Tokens",
+      "cost": "Cost"
+    },
+    "git_status": {
+      "title": "Git Status",
+      "clean": "Clean",
+      "branch": "Branch",
+      "commit": "Commit",
+      "remote": "Remote"
+    },
+    "system_status": {
+      "title": "System Status",
+      "websocket": "WebSocket",
+      "telegram": "Telegram",
+      "active": "Active",
+      "uptime": "Uptime",
+      "storage": "Storage",
+      "decisions": "DECISIONS",
+      "sec_events": "SEC EVENTS"
+    },
+    "tool_execution": {
+      "title": "Tool Execution",
+      "success_rate": "Tool success rate",
+      "ok": "ok",
+      "err": "err"
+    },
+    "panels": {
+      "activity": "Activity (24h)",
+      "token_usage": "Token Usage (7d)",
+      "no_token_data": "No token data in the last 7 days",
+      "source_distribution": "Source Distribution",
+      "source_performance": "Source Performance",
+      "average_duration_ms": "Average Duration (ms)",
+      "success_rate_pct": "Success Rate (%)",
+      "unknown_source": "Unknown",
+      "model_distribution": "Model Distribution"
+    }
+  },
+  "reviews": {
+    "panel_title": "Review Panel",
+    "summary_title": "Review Summary",
+    "recent": "Recent Reviews",
+    "verdict_distribution": "Verdict Distribution",
+    "top_issue_tags": "Top Issue Tags",
+    "metric_reviews": "REVIEWS",
+    "metric_pass_rate": "PASS RATE",
+    "metric_avg_score": "AVG SCORE",
+    "metric_live": "LIVE",
+    "page_title": "Reviews",
+    "page_subtitle": "Browse all reviews — filter by verdict, project, time range, or reviewer model.",
+    "time_range": "Time range",
+    "search_placeholder": "Search goal or feedback_text",
+    "column_time": "Time",
+    "column_goal_summary": "Goal summary",
+    "empty_no_reviews": "No review results yet",
+    "empty_no_match": "No reviews match the current filter",
+    "filter_hint": "Adjust verdict, project, time range, or search to widen the result set.",
+    "footer_hint": "Sorted by time (newest first). Click a row to jump to Timeline and expand the matching decision.",
+    "advisory_retry_default": "Manual review suggested",
+    "advisory_no_retry": "No retry needed",
+    "review_count": "{{count}} reviews",
+    "subtask_section_title": "Sub-task scores",
+    "subtask_col_desc": "Description (first 60 chars)",
+    "subtask_col_score": "Score"
+  },
+  "savings": {
+    "no_routing_data": "No routing data this week",
+    "load_failed": "Failed to load savings data"
+  },
+  "memory": {
+    "continue_placeholder": "Continue with #143"
+  }
+}

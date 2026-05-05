@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useAppStore } from "@/stores/appStore";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
@@ -27,32 +28,33 @@ import {
 
 const navSections = [
   {
-    label: "Overview",
+    labelKey: "nav.section_overview",
     items: [
-      { to: "/", icon: LayoutDashboard, label: "Dashboard" },
-      { to: "/timeline", icon: Clock, label: "Timeline" },
+      { to: "/", icon: LayoutDashboard, labelKey: "nav.dashboard" },
+      { to: "/timeline", icon: Clock, labelKey: "nav.timeline" },
     ],
   },
   {
-    label: "Quality",
+    labelKey: "nav.section_quality",
     items: [
-      { to: "/reviews", icon: MessageSquareText, label: "Reviews" },
-      { to: "/quality", icon: Gauge, label: "Analytics" },
+      { to: "/reviews", icon: MessageSquareText, labelKey: "nav.reviews" },
+      { to: "/quality", icon: Gauge, labelKey: "nav.analytics" },
     ],
   },
   {
-    label: "System",
+    labelKey: "nav.section_system",
     items: [
-      { to: "/checkpoints", icon: Camera, label: "Checkpoints" },
-      { to: "/performance", icon: BarChart3, label: "Performance" },
-      { to: "/runtime", icon: Activity, label: "Runtime" },
-      { to: "/memory", icon: BrainCircuit, label: "Memory" },
-      { to: "/security", icon: Shield, label: "Security" },
+      { to: "/checkpoints", icon: Camera, labelKey: "nav.checkpoints" },
+      { to: "/performance", icon: BarChart3, labelKey: "nav.performance" },
+      { to: "/runtime", icon: Activity, labelKey: "nav.runtime" },
+      { to: "/memory", icon: BrainCircuit, labelKey: "nav.memory" },
+      { to: "/security", icon: Shield, labelKey: "nav.security" },
     ],
   },
 ];
 
 function AppLayout() {
+  const { t } = useTranslation();
   const { wsConnected, handleWsEvent, setWsConnected } = useAppStore();
 
   useWebSocket({
@@ -79,11 +81,11 @@ function AppLayout() {
         {/* Nav */}
         <nav className="flex-1 py-4 px-3 space-y-4 overflow-y-auto">
           {navSections.map((section) => (
-            <div key={section.label} className="space-y-1">
+            <div key={section.labelKey} className="space-y-1">
               <div className="px-3 pb-1 text-[10px] font-semibold tracking-wider uppercase text-gray-600">
-                {section.label}
+                {t(section.labelKey)}
               </div>
-              {section.items.map(({ to, icon: Icon, label }) => (
+              {section.items.map(({ to, icon: Icon, labelKey }) => (
                 <NavLink
                   key={to}
                   to={to}
@@ -97,7 +99,7 @@ function AppLayout() {
                   }
                 >
                   <Icon className="w-4 h-4" />
-                  {label}
+                  {t(labelKey)}
                 </NavLink>
               ))}
             </div>
@@ -111,12 +113,12 @@ function AppLayout() {
             {wsConnected ? (
               <>
                 <Wifi className="w-3.5 h-3.5 text-success" />
-                <span className="text-success">Connected</span>
+                <span className="text-success">{t("common.connected")}</span>
               </>
             ) : (
               <>
                 <WifiOff className="w-3.5 h-3.5 text-error" />
-                <span className="text-error">Disconnected</span>
+                <span className="text-error">{t("common.disconnected")}</span>
               </>
             )}
           </div>

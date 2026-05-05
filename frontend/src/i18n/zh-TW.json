@@ -1,0 +1,110 @@
+{
+  "nav": {
+    "section_overview": "總覽",
+    "section_quality": "品質",
+    "section_system": "系統",
+    "dashboard": "儀表板",
+    "timeline": "時間軸",
+    "reviews": "Review 紀錄",
+    "analytics": "品質分析",
+    "checkpoints": "檢查點",
+    "performance": "效能",
+    "runtime": "Runtime 事件",
+    "memory": "記憶體",
+    "security": "安全"
+  },
+  "common": {
+    "connected": "已連線",
+    "disconnected": "未連線",
+    "live": "即時",
+    "historical": "歷史資料",
+    "loading": "載入中…",
+    "no_data": "無資料",
+    "search": "搜尋",
+    "all": "全部",
+    "filter": "篩選",
+    "refresh": "重新整理",
+    "save": "儲存",
+    "cancel": "取消",
+    "submit": "送出"
+  },
+  "dashboard": {
+    "stats": {
+      "sessions": "Session 數",
+      "sessions_total": "共 {{count}} 個",
+      "tools": "工具呼叫",
+      "decisions": "決策",
+      "success": "成功率",
+      "tokens": "Tokens",
+      "cost": "成本"
+    },
+    "git_status": {
+      "title": "Git 狀態",
+      "clean": "Clean",
+      "branch": "分支",
+      "commit": "Commit",
+      "remote": "Remote"
+    },
+    "system_status": {
+      "title": "系統狀態",
+      "websocket": "WebSocket",
+      "telegram": "Telegram",
+      "active": "啟用中",
+      "uptime": "運行時間",
+      "storage": "儲存",
+      "decisions": "決策數",
+      "sec_events": "安全事件"
+    },
+    "tool_execution": {
+      "title": "工具執行",
+      "success_rate": "工具成功率",
+      "ok": "成功",
+      "err": "失敗"
+    },
+    "panels": {
+      "activity": "活動 (24h)",
+      "token_usage": "Token 使用量 (7d)",
+      "no_token_data": "過去 7 天沒有 token 資料",
+      "source_distribution": "來源分佈",
+      "source_performance": "來源效能",
+      "average_duration_ms": "平均耗時 (ms)",
+      "success_rate_pct": "成功率 (%)",
+      "unknown_source": "未知",
+      "model_distribution": "模型分佈"
+    }
+  },
+  "reviews": {
+    "panel_title": "Review 面板",
+    "summary_title": "Review 摘要",
+    "recent": "最近的 Review",
+    "verdict_distribution": "Verdict 分佈",
+    "top_issue_tags": "最常出現的 Issue Tag",
+    "metric_reviews": "REVIEW 數",
+    "metric_pass_rate": "通過率",
+    "metric_avg_score": "平均分數",
+    "metric_live": "即時",
+    "page_title": "Review 紀錄",
+    "page_subtitle": "集中查看所有 review，依 verdict、project、時間與 reviewer model 篩選。",
+    "time_range": "時間範圍",
+    "search_placeholder": "搜尋 goal 或 feedback_text",
+    "column_time": "時間",
+    "column_goal_summary": "goal 摘要",
+    "empty_no_reviews": "目前還沒有 review 結果",
+    "empty_no_match": "沒有符合條件的 review",
+    "filter_hint": "可調整 verdict、project、時間範圍或搜尋條件來縮小結果。",
+    "footer_hint": "預設依時間由新到舊排序。點列會跳到 Timeline 並展開對應 decision。",
+    "advisory_retry_default": "建議重新檢視",
+    "advisory_no_retry": "暫無需重跑",
+    "review_count": "{{count}} 筆 review",
+    "subtask_section_title": "Sub-task 評分",
+    "subtask_col_desc": "描述（前 60 字）",
+    "subtask_col_score": "分數"
+  },
+  "savings": {
+    "no_routing_data": "本週還沒有路由數據",
+    "load_failed": "無法載入節省數據"
+  },
+  "memory": {
+    "continue_placeholder": "繼續處理 #143"
+  }
+}

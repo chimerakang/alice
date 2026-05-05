@@ -1,4 +1,5 @@
 import { Fragment, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ChevronDown } from "lucide-react";
 import { clsx } from "clsx";
 import type { UnifiedReviewSubTaskResult } from "@/types/alice";
@@ -15,6 +16,7 @@ interface ReviewSubTaskTableProps {
 }
 
 export default function ReviewSubTaskTable({ subTaskResults, className }: ReviewSubTaskTableProps) {
+  const { t } = useTranslation();
   const [expandedSubTasks, setExpandedSubTasks] = useState<string[]>([]);
 
   if (subTaskResults.length === 0) {
@@ -29,14 +31,14 @@ export default function ReviewSubTaskTable({ subTaskResults, className }: Review
 
   return (
     <div className={clsx("mt-4 space-y-2", className)}>
-      <div className="text-xs text-gray-500 uppercase">Sub-task 評分</div>
+      <div className="text-xs text-gray-500 uppercase">{t("reviews.subtask_section_title")}</div>
       <div className="overflow-hidden rounded-md border border-gray-800/60">
         <table className="w-full border-collapse text-xs">
           <thead className="bg-black/20">
             <tr className="text-gray-500">
               <th className="px-3 py-2 w-12 text-left font-medium">#</th>
-              <th className="px-3 py-2 text-left font-medium">描述（前 60 字）</th>
-              <th className="px-3 py-2 w-24 text-right font-medium">分數</th>
+              <th className="px-3 py-2 text-left font-medium">{t("reviews.subtask_col_desc")}</th>
+              <th className="px-3 py-2 w-24 text-right font-medium">{t("reviews.subtask_col_score")}</th>
             </tr>
           </thead>
           <tbody>

@@ -1,5 +1,6 @@
 import { TrendingDown } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 interface CostSavingsReport {
   period_hours: number;
@@ -26,6 +27,7 @@ interface SavingsBannerProps {
 }
 
 export function SavingsBanner({ hours = 168 }: SavingsBannerProps) {
+  const { t } = useTranslation();
   const [report, setReport] = useState<CostSavingsReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +65,7 @@ export function SavingsBanner({ hours = 168 }: SavingsBannerProps) {
     return (
       <div className="bg-gray-900/50 border border-gray-700 rounded-lg p-6">
         <p className="text-gray-400 text-sm">
-          {report?.total_requests === 0 ? "本週還沒有路由數據" : "無法載入節省數據"}
+          {report?.total_requests === 0 ? t("savings.no_routing_data") : t("savings.load_failed")}
         </p>
       </div>
     );

@@ -1,4 +1,5 @@
 import { useMemo, type ComponentType } from "react";
+import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
 import {
   Activity,
@@ -66,25 +67,27 @@ export default function ReviewSummaryPanel({
   reviews,
   liveConnected = false,
   className,
-  emptyMessage = "目前還沒有 review 結果",
+  emptyMessage,
   showLiveCount = true,
 }: ReviewSummaryPanelProps) {
+  const { t } = useTranslation();
   const stats = useMemo(() => computeReviewSummary(reviews), [reviews]);
   const verdictChartData = useMemo(() => buildReviewVerdictChartData(stats), [stats]);
+  const resolvedEmptyMessage = emptyMessage ?? t("reviews.empty_no_reviews");
 
   return (
     <div className={clsx("space-y-4", className)}>
       <div className="flex items-center gap-2">
         <MessageSquareText className="w-4 h-4 text-accent" />
-        <h3 className="text-sm font-semibold text-gray-400">Review Summary</h3>
+        <h3 className="text-sm font-semibold text-gray-400">{t("reviews.summary_title")}</h3>
         <StatusBadge variant={liveConnected ? "success" : "neutral"} size="sm" dot>
-          {liveConnected ? "Live" : "歷史資料"}
+          {liveConnected ? t("common.live") : t("common.historical")}
         </StatusBadge>
       </div>
 
       {reviews.length === 0 ? (
         <div className="flex items-center justify-center h-40 text-sm text-gray-500">
-          {emptyMessage}
+          {resolvedEmptyMessage}
         </div>
       ) : (
         <div className="space-y-4">
