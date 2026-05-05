@@ -204,3 +204,34 @@ func TestDecideRecoveryCancelsOnWatchdogContextDone(t *testing.T) {
 		t.Fatalf("Reason = %q, want watchdog_context_done", decision.Reason)
 	}
 }
+
+func TestDecideRecoveryRetriesPlannerBelowMax(t *testing.T) {
+	decision := DecideRecovery(RecoveryRequest{
+		Mode:        "planner_retry",
+		Attempt:     1,
+		MaxAttempts: 3,
+	})
+	if decision.Action != RecoveryActionRetry || !decision.Retryable {
+		t.Fatalf("decision = %+v, want retry", decision)
+	}
+	if decision.NextAttempt != 2 {
+		t.Fatalf("NextAttempt = %d, want 2", decision.NextAttempt)
+	}
+	if decision.Reason != "planner_retry" {
+		t.Fatalf("Reason = %q, want planner_retry", decision.Reason)
+	}
+}
+
+func TestDecideRecoveryStopsPlannerAtMax(t *testing.T) {
+	decision := DecideRecovery(RecoveryRequest{
+		Mode:        "planner_retry",
+		Attempt:     3,
+		MaxAttempts: 3,
+	})
+	if decision.Action != RecoveryActionFail || !decision.Terminal {
+		t.Fatalf("decision = %+v, want terminal fail", decision)
+	}
+	if decision.Reason != "max_planner_retries_reached" {
+		t.Fatalf("Reason = %q, want max_planner_retries_reached", decision.Reason)
+	}
+}

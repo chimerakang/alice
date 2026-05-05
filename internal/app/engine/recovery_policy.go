@@ -46,6 +46,8 @@ func DecideRecovery(req RecoveryRequest) RecoveryDecision {
 			return decideStrictReviewRecovery(req)
 		case "watchdog_cancel":
 			return decideWatchdogCancelRecovery(req)
+		case "planner_retry":
+			return decidePlannerRetryRecovery(req)
 		}
 		return RecoveryDecision{Action: RecoveryActionNone, Reason: "no_error"}
 	}
@@ -153,6 +155,29 @@ func decideWatchdogCancelRecovery(req RecoveryRequest) RecoveryDecision {
 		Action:   RecoveryActionCancel,
 		Terminal: true,
 		Reason:   "watchdog_context_done",
+	}
+}
+
+func decidePlannerRetryRecovery(req RecoveryRequest) RecoveryDecision {
+	if req.MaxAttempts <= 0 {
+		return RecoveryDecision{
+			Action:   RecoveryActionFail,
+			Terminal: true,
+			Reason:   "planner_retry_disabled",
+		}
+	}
+	if req.Attempt < req.MaxAttempts {
+		return RecoveryDecision{
+			Action:      RecoveryActionRetry,
+			Retryable:   true,
+			Reason:      "planner_retry",
+			NextAttempt: req.Attempt + 1,
+		}
+	}
+	return RecoveryDecision{
+		Action:   RecoveryActionFail,
+		Terminal: true,
+		Reason:   "max_planner_retries_reached",
 	}
 }
 

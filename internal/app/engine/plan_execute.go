@@ -152,9 +152,22 @@ func NewPlanExecuteEngine(
 	if reporter == nil {
 		reporter = &hermes.NoopProgressReporter{}
 	}
+	planner := hermes.NewPlannerSession(planFn, cfg.MaxPlannerJSONRetries, cfg.PlannerRules)
+	planner.SetRecoveryDecider(func(req hermes.PlannerRecoveryRequest) hermes.PlannerRecoveryDecision {
+		decision := DecideRecovery(RecoveryRequest{
+			Mode:        req.Mode,
+			Attempt:     req.Attempt,
+			MaxAttempts: req.MaxAttempts,
+		})
+		return hermes.PlannerRecoveryDecision{
+			Retry:       decision.Action == RecoveryActionRetry,
+			Reason:      decision.Reason,
+			NextAttempt: decision.NextAttempt,
+		}
+	})
 	return &PlanExecuteEngine{
 		cfg:      cfg,
-		planner:  hermes.NewPlannerSession(planFn, cfg.MaxPlannerJSONRetries, cfg.PlannerRules),
+		planner:  planner,
 		direct:   direct,
 		store:    store,
 		reporter: reporter,

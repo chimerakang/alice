@@ -122,12 +122,28 @@ type CallPlanResult struct {
 // sessionID is the previous Planner native session to resume, when available.
 type CallPlanFunc func(ctx context.Context, message, projectDir, sessionID string) (CallPlanResult, error)
 
+type PlannerRecoveryRequest struct {
+	Mode        string
+	Attempt     int
+	MaxAttempts int
+	Reason      string
+}
+
+type PlannerRecoveryDecision struct {
+	Retry       bool
+	Reason      string
+	NextAttempt int
+}
+
+type PlannerRecoveryFunc func(PlannerRecoveryRequest) PlannerRecoveryDecision
+
 // PlannerSession manages the long-lived Planner CLI session.
 type PlannerSession struct {
 	callFn     CallPlanFunc
 	sessionID  string // Claude Code --resume ID; empty until first call
 	maxRetries int
 	extraRules string // prepended to plannerSystemPrompt when non-empty
+	recoveryFn PlannerRecoveryFunc
 }
 
 // NewPlannerSession creates a Planner session that calls the CLI via callFn.
@@ -144,6 +160,26 @@ func (p *PlannerSession) SessionID() string { return p.sessionID }
 
 // SetSessionID seeds the Planner's CLI --resume session ID.
 func (p *PlannerSession) SetSessionID(sessionID string) { p.sessionID = sessionID }
+
+// SetRecoveryDecider lets the owning runtime decide planner retry policy without
+// making the hermes package import the higher-level engine package.
+func (p *PlannerSession) SetRecoveryDecider(fn PlannerRecoveryFunc) { p.recoveryFn = fn }
+
+func (p *PlannerSession) shouldRetry(mode string, attempt int, reason string) PlannerRecoveryDecision {
+	req := PlannerRecoveryRequest{
+		Mode:        mode,
+		Attempt:     attempt,
+		MaxAttempts: p.maxRetries,
+		Reason:      reason,
+	}
+	if p.recoveryFn != nil {
+		return p.recoveryFn(req)
+	}
+	if attempt < p.maxRetries {
+		return PlannerRecoveryDecision{Retry: true, Reason: reason, NextAttempt: attempt + 1}
+	}
+	return PlannerRecoveryDecision{Retry: false, Reason: "max_planner_retries_reached"}
+}
 
 // Plan sends the goal to the Planner and returns parsed SubTasks plus the
 // accumulated input / output token counts and USD cost across all attempts
@@ -185,7 +221,7 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 			// Multi-task plan: validate granularity and quality before executor tokens are spent.
 			if err := validatePlanQuality(goal, tasks); err != nil {
 				// Quality violation — inject feedback and retry
-				if attempt < p.maxRetries {
+				if p.shouldRetry("planner_retry", attempt, "plan_quality_rejected").Retry {
 					prompt = fmt.Sprintf(
 						"Plan quality gate rejected attempt %d:\n%s\n\nFix the plan before execution. Group information gathering into deliverable sub-tasks, include code-changing work for implementation goals, and include concrete validation for changed code. Call emit_plan again with the corrected sub_tasks array.",
 						attempt, err.Error(),
@@ -202,7 +238,7 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 		// Planner either confirms completion via a single verification
 		// sub-task or surfaces remaining work.
 		if parseErr == nil && len(tasks) == 0 {
-			if attempt < p.maxRetries {
+			if p.shouldRetry("planner_retry", attempt, "empty_plan").Retry {
 				prompt = "Your previous output described no sub-tasks. Every sub-task object MUST include all three required fields: `id` (string, e.g. \"verify-1\"), `description` (string), and `tool_hints` (array of strings). " +
 					"If the goal is already satisfied by the current state of the project, call emit_plan with a single verification sub-task inside sub_tasks: \"Verify the goal is already satisfied. Inspect the relevant files, run the relevant build/test/grep commands, and report concrete evidence (file paths, line numbers, command output).\" with tool_hints [\"Read\",\"Bash\"]. " +
 					"If there is real work remaining, call emit_plan again with those sub-tasks now. Do not send an empty sub_tasks array again."
@@ -211,22 +247,23 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 			return nil, totalIn, totalOut, totalCost, &ErrPlannerEmptyPlan{Goal: goal}
 		}
 
-		if attempt < p.maxRetries {
-			parseErrMsg := "(unknown parse error)"
-			if parseErr != nil {
-				parseErrMsg = parseErr.Error()
-			}
-			prompt = fmt.Sprintf(
-				"Error: emit_plan input parse failed on attempt %d: %s\n"+
-					"Your output was:\n%s\n\n"+
-					"Fix the schema. Every sub-task object MUST include all three required fields:\n"+
-					"  - `id` (string, e.g. \"s1\")\n"+
-					"  - `description` (string)\n"+
-					"  - `tool_hints` (array of strings, e.g. [\"Read\", \"Bash\"])\n"+
-					"Call emit_plan again with the corrected sub_tasks array. No prose.",
-				attempt, parseErrMsg, res.Text,
-			)
+		if !p.shouldRetry("planner_retry", attempt, "json_parse_failed").Retry {
+			return nil, totalIn, totalOut, totalCost, &ErrPlannerJSONFailed{RawOutput: lastText}
 		}
+		parseErrMsg := "(unknown parse error)"
+		if parseErr != nil {
+			parseErrMsg = parseErr.Error()
+		}
+		prompt = fmt.Sprintf(
+			"Error: emit_plan input parse failed on attempt %d: %s\n"+
+				"Your output was:\n%s\n\n"+
+				"Fix the schema. Every sub-task object MUST include all three required fields:\n"+
+				"  - `id` (string, e.g. \"s1\")\n"+
+				"  - `description` (string)\n"+
+				"  - `tool_hints` (array of strings, e.g. [\"Read\", \"Bash\"])\n"+
+				"Call emit_plan again with the corrected sub_tasks array. No prose.",
+			attempt, parseErrMsg, res.Text,
+		)
 	}
 
 	return nil, totalIn, totalOut, totalCost, &ErrPlannerJSONFailed{RawOutput: lastText}

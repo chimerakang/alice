@@ -33,6 +33,34 @@ func TestPlannerSessionResumesAcrossJSONRetries(t *testing.T) {
 	}
 }
 
+func TestPlannerSessionUsesRecoveryDeciderForJSONRetry(t *testing.T) {
+	calls := 0
+	var recoveryReqs []PlannerRecoveryRequest
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (CallPlanResult, error) {
+		calls++
+		return CallPlanResult{Text: "not json"}, nil
+	}
+
+	planner := NewPlannerSession(planFn, 3, "")
+	planner.SetRecoveryDecider(func(req PlannerRecoveryRequest) PlannerRecoveryDecision {
+		recoveryReqs = append(recoveryReqs, req)
+		return PlannerRecoveryDecision{Retry: false, Reason: "test_denied"}
+	})
+	if _, _, _, _, err := planner.Plan(context.Background(), "implement feature", "/repo"); err == nil {
+		t.Fatal("Plan error = nil, want planner JSON failure")
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1 when recovery denies retry", calls)
+	}
+	if len(recoveryReqs) != 1 {
+		t.Fatalf("recovery requests = %d, want 1", len(recoveryReqs))
+	}
+	req := recoveryReqs[0]
+	if req.Mode != "planner_retry" || req.Attempt != 1 || req.MaxAttempts != 3 || req.Reason != "json_parse_failed" {
+		t.Fatalf("unexpected recovery request: %+v", req)
+	}
+}
+
 func TestPlannerSessionUsesSeededSessionID(t *testing.T) {
 	var gotSessionID string
 	planFn := func(ctx context.Context, message, projectDir, sessionID string) (CallPlanResult, error) {
