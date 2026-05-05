@@ -257,6 +257,109 @@ func (e *PlanExecuteEngine) Run(ctx context.Context, goal string, cc *ChatContex
 	return result, nil
 }
 
+func (e *PlanExecuteEngine) RunFromState(ctx context.Context, state hermes.TaskState, cc *ChatContext, prog ProgressSink) (Result, error) {
+	start := time.Now()
+	decision := DecideTaskResume(state)
+	if decision.Terminal {
+		return Result{Text: strings.TrimSpace(state.Accumulated), Duration: time.Since(start)}, nil
+	}
+	if !decision.CanResume {
+		return Result{Duration: time.Since(start)}, fmt.Errorf("task %s is not resumable: %s", state.ID, decision.Reason)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	e.mu.Lock()
+	e.taskID = state.ID
+	e.cancelFn = cancel
+	e.interrupted = false
+	e.mu.Unlock()
+	defer func() {
+		cancel()
+		e.mu.Lock()
+		e.cancelFn = nil
+		e.taskID = ""
+		e.mu.Unlock()
+	}()
+
+	if decision.Reason == "plan_complete_mark_done" {
+		_ = e.store.MarkStatus(state.ID, hermes.TaskStatusDone)
+		updated, _ := e.store.GetTask(state.ID)
+		e.reporter.OnDone(updated)
+		if e.cfg.OnDone != nil {
+			e.cfg.OnDone(runCtx, updated)
+		}
+		if prog != nil {
+			prog.OnComplete(strings.TrimSpace(updated.Accumulated))
+		}
+		return Result{Text: strings.TrimSpace(updated.Accumulated), Duration: time.Since(start)}, nil
+	}
+
+	tasks := append([]hermes.SubTask(nil), state.Plan...)
+	if err := e.store.MarkStatus(state.ID, hermes.TaskStatusExecuting); err != nil {
+		return Result{Duration: time.Since(start)}, err
+	}
+	e.reporter.OnPlanReady(tasks)
+	e.onPlanReady(runCtx, state, tasks)
+
+	completed := len(decision.Preserved)
+	reviewMode := e.reviewMode()
+	strictCfg := e.strictMode()
+	for idx := decision.FromIdx; idx < len(tasks); idx++ {
+		if runCtx.Err() != nil {
+			return Result{Duration: time.Since(start)}, runCtx.Err()
+		}
+		e.mu.Lock()
+		interrupted := e.interrupted
+		e.mu.Unlock()
+		if interrupted {
+			return Result{Duration: time.Since(start)}, fmt.Errorf("task interrupted")
+		}
+		latest, err := e.store.GetTask(state.ID)
+		if err != nil {
+			return Result{Duration: time.Since(start)}, err
+		}
+		if !e.checkBudget(runCtx, state.ID, latest) {
+			current, _ := e.store.GetTask(state.ID)
+			return Result{Text: strings.TrimSpace(current.Accumulated), Duration: time.Since(start)}, fmt.Errorf("task budget exceeded")
+		}
+
+		subTask := tasks[idx]
+		if subTask.Status == hermes.SubTaskDone {
+			completed++
+			continue
+		}
+		if subTask.Status == hermes.SubTaskSkipped {
+			continue
+		}
+		finalStatus, finalText, finalTokens, success, _ := e.executeSubTask(runCtx, state.ID, state.Goal, latest, tasks, idx, subTask, cc, reviewMode, strictCfg, "")
+		tasks[idx].Status = finalStatus
+		tasks[idx].Result = finalText
+		e.reporter.OnSubTaskDone(idx, len(tasks), subTask, success, finalText)
+		e.onSubTaskDone(runCtx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
+		if success {
+			completed++
+			latest, _ = e.store.GetTask(state.ID)
+			updated, _ := hermes.AppendResult(latest.Accumulated, finalText, completed)
+			_ = e.store.UpdateAccumulated(state.ID, updated)
+		}
+		if err := e.store.AdvanceTask(state.ID, idx+1, hermes.TaskStatusExecuting); err != nil {
+			log.Printf("[plan_execute] RunFromState AdvanceTask idx=%d: %v", idx, err)
+		}
+	}
+
+	_ = e.store.MarkStatus(state.ID, hermes.TaskStatusDone)
+	finalState, _ := e.store.GetTask(state.ID)
+	e.reporter.OnDone(finalState)
+	if e.cfg.OnDone != nil {
+		e.cfg.OnDone(runCtx, finalState)
+	}
+	result := Result{Text: strings.TrimSpace(finalState.Accumulated), Duration: time.Since(start)}
+	if prog != nil {
+		prog.OnComplete(result.Text)
+	}
+	return result, nil
+}
+
 func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *ChatContext) {
 	// Walking-agent state lives across all sub-tasks of one task. Reset on
 	// task entry and on task exit so subsequent direct (non-Hermes) work

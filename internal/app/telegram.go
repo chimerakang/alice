@@ -2529,6 +2529,14 @@ func (t *TelegramBot) startHermesFreshTask(key chatKey, goal, projectDir string)
 }
 
 func (t *TelegramBot) startHermesContinuationTask(key chatKey, task hermes.TaskState, projectDir, mode string) {
+	projectDir = hermesContinuationProjectDir(task, projectDir)
+	if mode == "continue" {
+		if decision := appengine.DecideTaskResume(task); decision.CanResume && !decision.Terminal {
+			t.startHermesTaskWithIssueTierFromState(key, task.Goal, projectDir, task.GithubIssueNumber, HermesBudgetConfig{}, t.config.Hermes.GithubIntegration, t.hermesTierFor(key), &task)
+			return
+		}
+	}
+
 	// Re-fetch the issue body when the continuation is anchored on a GitHub
 	// issue. Across days/sessions the issue may have been edited (priorities
 	// re-ordered, requirements clarified, checklist items checked off by other
@@ -2538,14 +2546,14 @@ func (t *TelegramBot) startHermesContinuationTask(key chatKey, task hermes.TaskS
 	if task.GithubIssueNumber > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if issue, err := hermesFetchIssue(ctx, hermesContinuationProjectDir(task, projectDir), task.GithubIssueNumber); err == nil && issue != nil {
+		if issue, err := hermesFetchIssue(ctx, projectDir, task.GithubIssueNumber); err == nil && issue != nil {
 			freshIssueBody = strings.TrimSpace(issue.Body)
 		} else if err != nil {
 			log.Printf("[hermes] continuation issue refresh failed task=%s issue=#%d: %v", task.ID, task.GithubIssueNumber, err)
 		}
 	}
 	goal := buildHermesContinuationGoalWithIssue(task, mode, freshIssueBody)
-	t.startHermesTaskWithIssueTier(key, goal, hermesContinuationProjectDir(task, projectDir), task.GithubIssueNumber, HermesBudgetConfig{}, t.config.Hermes.GithubIntegration, t.hermesTierFor(key))
+	t.startHermesTaskWithIssueTier(key, goal, projectDir, task.GithubIssueNumber, HermesBudgetConfig{}, t.config.Hermes.GithubIntegration, t.hermesTierFor(key))
 }
 
 // startHermesTaskWithIssue preserves the original signature for callers that don't
@@ -3950,6 +3958,10 @@ func (t *TelegramBot) resolveHermesRoleModels(tier string, cfg HermesConfig, str
 // startHermesTaskWithIssueTier is the common implementation that selects models
 // based on the tier ("" or "claude" → Claude; "codex" → GPT/Codex).
 func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir string, issueNumber int, budgetOverride HermesBudgetConfig, ghIntegration GithubIntegrationConfig, tier string) {
+	t.startHermesTaskWithIssueTierFromState(key, goal, projectDir, issueNumber, budgetOverride, ghIntegration, tier, nil)
+}
+
+func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, projectDir string, issueNumber int, budgetOverride HermesBudgetConfig, ghIntegration GithubIntegrationConfig, tier string, resumeTask *hermes.TaskState) {
 	ctx := context.Background()
 	worktreeChanges, worktreeErr := checkHermesCleanWorktree(ctx, projectDir)
 	if worktreeErr != nil {
@@ -4130,6 +4142,20 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	t.hermesMu.Lock()
 	t.hermesCoords[key] = &hermesCoord{coord: coord, enabled: true, continueCh: continueCh, failureDecisionCh: failureDecisionCh, oneShot: oneShot}
 	t.hermesMu.Unlock()
+
+	if resumeTask != nil {
+		taskID := strings.TrimSpace(resumeTask.ID)
+		log.Printf("[hermes] chat %d resuming task %s", key.chatID, taskID)
+		displayTaskID := shortHermesTaskID(taskID)
+		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_task_id_label", map[string]string{"taskID": displayTaskID}))
+		go t.runTrackedJob("hermes.resume", func() {
+			if _, err := coord.RunFromState(ctx, *resumeTask, agent.chatContext, nil); err != nil {
+				log.Printf("[hermes] resume task %s failed: %v", taskID, err)
+				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_start_failed", map[string]string{"error": err.Error()}))
+			}
+		})
+		return
+	}
 
 	taskID, err := coord.Start(ctx, goal, agent.chatContext)
 	if err != nil {

@@ -548,6 +548,62 @@ func TestPlanExecuteEngineTaskRetryPreservesHighScoreSubTasks(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteEngineRunFromStateSkipsPreservedSubTasks(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	task := hermes.TaskState{
+		ID:          "resume-task",
+		ChatID:      42,
+		ThreadID:    7,
+		ProjectDir:  "/repo",
+		Goal:        "continue work",
+		Status:      hermes.TaskStatusExecuting,
+		CurrentIdx:  1,
+		Accumulated: "Sub-task 1 result:\nfirst already done",
+		Plan: []hermes.SubTask{
+			{ID: "s1", Description: "first", Status: hermes.SubTaskDone, Result: "first already done"},
+			{ID: "s2", Description: "second", Status: hermes.SubTaskPending},
+		},
+	}
+	if _, err := store.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	runner := &planExecuteRunner{}
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		ProjectDir: "/repo",
+		ChatID:     42,
+	}, func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		t.Fatal("planner should not be called by RunFromState")
+		return hermes.CallPlanResult{}, nil
+	}, NewDirectEngine(runner), store, &planExecuteReporter{})
+
+	result, err := engine.RunFromState(context.Background(), task, NewChatContext(42, 7, "/repo"), nil)
+	if err != nil {
+		t.Fatalf("RunFromState: %v", err)
+	}
+	if len(runner.prompts) != 1 {
+		t.Fatalf("runner prompts = %d, want 1 for remaining sub-task only", len(runner.prompts))
+	}
+	if !strings.Contains(runner.prompts[0], "second") {
+		t.Fatalf("resume prompt should execute second sub-task:\n%s", runner.prompts[0])
+	}
+	state, err := store.GetTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if state.Status != hermes.TaskStatusDone {
+		t.Fatalf("status = %s, want done", state.Status)
+	}
+	if state.Plan[0].Attempts != 0 {
+		t.Fatalf("preserved sub-task attempts = %d, want 0", state.Plan[0].Attempts)
+	}
+	if state.Plan[1].Status != hermes.SubTaskDone || state.Plan[1].Attempts != 1 {
+		t.Fatalf("remaining sub-task not executed once: %#v", state.Plan[1])
+	}
+	if !strings.Contains(result.Text, "first already done") || !strings.Contains(result.Text, "result for") {
+		t.Fatalf("result should contain preserved and resumed accumulated text:\n%s", result.Text)
+	}
+}
+
 func TestPlanExecuteEngineRetriesBlockedSubTaskAndContinues(t *testing.T) {
 	store := hermes.NewMemoryTaskStore()
 	runner := &planExecuteRunner{}
