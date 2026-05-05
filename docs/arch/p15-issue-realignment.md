@@ -140,7 +140,9 @@ changing their existing behavior. Manual `/retry` sub-task retry limits also use
 RecoveryPolicy now; the Telegram handler still owns formatting and selection,
 but no longer owns the retry-budget decision. Strict per-sub-task review retry
 also routes its retry/exhaustion decision through RecoveryPolicy while
-preserving the existing partial/skipped behavior at retry exhaustion.
+preserving the existing partial/skipped behavior at retry exhaustion. `/retry`
+direct watchdog cancellation now also uses RecoveryPolicy to decide the
+context-done cancellation before the app layer aborts the agent.
 
 ### Issue E: Hermes Task Agent Resume + Partial Retry
 
