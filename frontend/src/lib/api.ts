@@ -20,6 +20,7 @@ import type {
   PerformanceTrendsResponse,
   MemoryPreviewQuery,
   MemoryPreviewResponse,
+  RuntimeEventRecord,
 } from "@/types/alice";
 
 const BASE = "";
@@ -202,6 +203,20 @@ export const api = {
       total: res.total,
       timestamp: res.timestamp,
     };
+  },
+
+  // ========== Runtime Events ==========
+  getRuntimeEvents: (params: { limit?: number; offset?: number; type?: string } = {}) => {
+    const { limit = 50, offset = 0, type } = params;
+    const qs = buildQuery({ limit, offset, type });
+    return fetchJson<{
+      events?: RuntimeEventRecord[];
+      total?: number;
+      limit?: number;
+      offset?: number;
+      type?: string;
+      timestamp?: string;
+    }>(`/api/runtime/events${qs}`);
   },
 
   // ========== Quality Analytics ==========

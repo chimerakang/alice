@@ -251,6 +251,18 @@ export interface UnifiedTask {
   reviews: UnifiedReview[];
 }
 
+// ========== Runtime Events ==========
+
+export interface RuntimeEventRecord {
+  timestamp: string;
+  type: string;
+  chat_id?: number;
+  thread_id?: number;
+  task_id?: string;
+  issue?: number;
+  payload?: Record<string, unknown>;
+}
+
 // ========== Quality Analytics ==========
 
 export interface QualityBucket {
