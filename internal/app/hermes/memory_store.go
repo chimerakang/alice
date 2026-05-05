@@ -160,9 +160,21 @@ func (s *MemoryTaskStore) AddModelUsage(taskID, model string, inputTokens, outpu
 	})
 }
 
+func (s *MemoryTaskStore) AddModelUsageBreakdown(taskID, model string, usage TokenUsageBreakdown) error {
+	return s.update(taskID, func(task *TaskState) {
+		task.AddUsageBreakdown(model, usage)
+	})
+}
+
 func (s *MemoryTaskStore) AddPhaseUsage(taskID, phase, model string, inputTokens, outputTokens int, costUSD float64) error {
 	return s.update(taskID, func(task *TaskState) {
 		task.AddPhaseUsage(phase, model, inputTokens, outputTokens, costUSD)
+	})
+}
+
+func (s *MemoryTaskStore) AddPhaseUsageBreakdown(taskID, phase, model string, usage TokenUsageBreakdown) error {
+	return s.update(taskID, func(task *TaskState) {
+		task.AddPhaseUsageBreakdown(phase, model, usage)
 	})
 }
 

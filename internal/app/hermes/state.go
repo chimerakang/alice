@@ -111,44 +111,74 @@ func ValidateTaskStatusTransition(taskID string, from, to TaskStatus) error {
 // not "free", and the summary should treat the model's CostUSD as authoritative
 // only when CallCount > 0 *and* CostUSD > 0.
 func (t *TaskState) AddUsage(model string, inputTokens, outputTokens int, costUSD float64) {
+	t.AddUsageBreakdown(model, TokenUsageBreakdown{
+		UncachedInputTokens: inputTokens,
+		OutputTokens:        outputTokens,
+		CostUSD:             costUSD,
+	})
+}
+
+func (t *TaskState) AddUsageBreakdown(model string, usage TokenUsageBreakdown) {
 	// Find existing entry for this model.
+	inputTokens := usage.InputVolume()
 	for i := range t.ModelUsages {
 		if t.ModelUsages[i].Model == model {
 			t.ModelUsages[i].InputTokens += inputTokens
-			t.ModelUsages[i].OutputTokens += outputTokens
-			t.ModelUsages[i].CostUSD += costUSD
+			t.ModelUsages[i].UncachedInputTokens += usage.UncachedInputTokens
+			t.ModelUsages[i].CacheReadInputTokens += usage.CacheReadInputTokens
+			t.ModelUsages[i].CacheCreationInputTokens += usage.CacheCreationInputTokens
+			t.ModelUsages[i].OutputTokens += usage.OutputTokens
+			t.ModelUsages[i].CostUSD += usage.CostUSD
 			t.ModelUsages[i].CallCount++
 			return
 		}
 	}
 	// Create new entry if not found.
 	t.ModelUsages = append(t.ModelUsages, ModelUsage{
-		Model:        model,
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
-		CostUSD:      costUSD,
-		CallCount:    1,
+		Model:                    model,
+		InputTokens:              inputTokens,
+		UncachedInputTokens:      usage.UncachedInputTokens,
+		CacheReadInputTokens:     usage.CacheReadInputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens,
+		OutputTokens:             usage.OutputTokens,
+		CostUSD:                  usage.CostUSD,
+		CallCount:                1,
 	})
 }
 
 // AddPhaseUsage records token + cost usage for a Hermes pipeline phase.
 func (t *TaskState) AddPhaseUsage(phase, model string, inputTokens, outputTokens int, costUSD float64) {
+	t.AddPhaseUsageBreakdown(phase, model, TokenUsageBreakdown{
+		UncachedInputTokens: inputTokens,
+		OutputTokens:        outputTokens,
+		CostUSD:             costUSD,
+	})
+}
+
+func (t *TaskState) AddPhaseUsageBreakdown(phase, model string, usage TokenUsageBreakdown) {
+	inputTokens := usage.InputVolume()
 	for i := range t.PhaseUsages {
 		if t.PhaseUsages[i].Phase == phase && t.PhaseUsages[i].Model == model {
 			t.PhaseUsages[i].InputTokens += inputTokens
-			t.PhaseUsages[i].OutputTokens += outputTokens
-			t.PhaseUsages[i].CostUSD += costUSD
+			t.PhaseUsages[i].UncachedInputTokens += usage.UncachedInputTokens
+			t.PhaseUsages[i].CacheReadInputTokens += usage.CacheReadInputTokens
+			t.PhaseUsages[i].CacheCreationInputTokens += usage.CacheCreationInputTokens
+			t.PhaseUsages[i].OutputTokens += usage.OutputTokens
+			t.PhaseUsages[i].CostUSD += usage.CostUSD
 			t.PhaseUsages[i].CallCount++
 			return
 		}
 	}
 	t.PhaseUsages = append(t.PhaseUsages, PhaseUsage{
-		Phase:        phase,
-		Model:        model,
-		InputTokens:  inputTokens,
-		OutputTokens: outputTokens,
-		CostUSD:      costUSD,
-		CallCount:    1,
+		Phase:                    phase,
+		Model:                    model,
+		InputTokens:              inputTokens,
+		UncachedInputTokens:      usage.UncachedInputTokens,
+		CacheReadInputTokens:     usage.CacheReadInputTokens,
+		CacheCreationInputTokens: usage.CacheCreationInputTokens,
+		OutputTokens:             usage.OutputTokens,
+		CostUSD:                  usage.CostUSD,
+		CallCount:                1,
 	})
 }
 
@@ -177,21 +207,39 @@ type Artifact struct {
 // EstimateClaudeCost-derived fallbacks. Treat 0 as "unknown for the calls
 // recorded so far" and prefer the live token×rate estimate path. See #148 1E.
 type ModelUsage struct {
-	Model        string  `json:"model"`        // e.g., "claude-opus-4-7" or "claude-haiku-4-5-20251001"
-	InputTokens  int     `json:"input_tokens"` // full input volume: uncached + cache_read + cache_creation when reported
-	OutputTokens int     `json:"output_tokens"`
-	CostUSD      float64 `json:"cost_usd"`
-	CallCount    int     `json:"call_count"`
+	Model                    string  `json:"model"`        // e.g., "claude-opus-4-7" or "claude-haiku-4-5-20251001"
+	InputTokens              int     `json:"input_tokens"` // full input volume: uncached + cache_read + cache_creation when reported
+	UncachedInputTokens      int     `json:"uncached_input_tokens,omitempty"`
+	CacheReadInputTokens     int     `json:"cache_read_input_tokens,omitempty"`
+	CacheCreationInputTokens int     `json:"cache_creation_input_tokens,omitempty"`
+	OutputTokens             int     `json:"output_tokens"`
+	CostUSD                  float64 `json:"cost_usd"`
+	CallCount                int     `json:"call_count"`
 }
 
 // PhaseUsage tracks token + cost consumption per Hermes pipeline phase.
 type PhaseUsage struct {
-	Phase        string  `json:"phase"` // planner, executor, reviewer, retry, preflight
-	Model        string  `json:"model"`
-	InputTokens  int     `json:"input_tokens"`
-	OutputTokens int     `json:"output_tokens"`
-	CostUSD      float64 `json:"cost_usd"`
-	CallCount    int     `json:"call_count"`
+	Phase                    string  `json:"phase"` // planner, executor, reviewer, retry, preflight
+	Model                    string  `json:"model"`
+	InputTokens              int     `json:"input_tokens"`
+	UncachedInputTokens      int     `json:"uncached_input_tokens,omitempty"`
+	CacheReadInputTokens     int     `json:"cache_read_input_tokens,omitempty"`
+	CacheCreationInputTokens int     `json:"cache_creation_input_tokens,omitempty"`
+	OutputTokens             int     `json:"output_tokens"`
+	CostUSD                  float64 `json:"cost_usd"`
+	CallCount                int     `json:"call_count"`
+}
+
+type TokenUsageBreakdown struct {
+	UncachedInputTokens      int     `json:"uncached_input_tokens,omitempty"`
+	CacheReadInputTokens     int     `json:"cache_read_input_tokens,omitempty"`
+	CacheCreationInputTokens int     `json:"cache_creation_input_tokens,omitempty"`
+	OutputTokens             int     `json:"output_tokens,omitempty"`
+	CostUSD                  float64 `json:"cost_usd,omitempty"`
+}
+
+func (u TokenUsageBreakdown) InputVolume() int {
+	return u.UncachedInputTokens + u.CacheReadInputTokens + u.CacheCreationInputTokens
 }
 
 // TotalTokens returns the sum of input and output tokens.
@@ -199,9 +247,23 @@ func (p *PhaseUsage) TotalTokens() int {
 	return p.InputTokens + p.OutputTokens
 }
 
+func (p *PhaseUsage) CacheHitPercent() float64 {
+	if p.InputTokens <= 0 {
+		return 0
+	}
+	return float64(p.CacheReadInputTokens) * 100 / float64(p.InputTokens)
+}
+
 // TotalTokens returns the sum of input and output tokens.
 func (m *ModelUsage) TotalTokens() int {
 	return m.InputTokens + m.OutputTokens
+}
+
+func (m *ModelUsage) CacheHitPercent() float64 {
+	if m.InputTokens <= 0 {
+		return 0
+	}
+	return float64(m.CacheReadInputTokens) * 100 / float64(m.InputTokens)
 }
 
 // TokenBudget enforces resource limits at the task level.

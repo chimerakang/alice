@@ -342,9 +342,15 @@ func TestPlanExecuteEngineTokenUsageIncludesCacheTokens(t *testing.T) {
 	if executorUsage == nil || executorUsage.InputTokens != 10+100+20 || executorUsage.OutputTokens != 3 {
 		t.Fatalf("executor usage = %#v (all=%#v)", executorUsage, state.ModelUsages)
 	}
+	if executorUsage.UncachedInputTokens != 10 || executorUsage.CacheReadInputTokens != 100 || executorUsage.CacheCreationInputTokens != 20 {
+		t.Fatalf("executor usage cache breakdown = %#v", executorUsage)
+	}
 	executorPhase := findPhaseUsage(state.PhaseUsages, "executor", "claude-sonnet-4-5")
 	if executorPhase == nil || executorPhase.InputTokens != 10+100+20 || executorPhase.OutputTokens != 3 || executorPhase.CostUSD != 0.01 {
 		t.Fatalf("executor phase usage = %#v (all=%#v)", executorPhase, state.PhaseUsages)
+	}
+	if executorPhase.UncachedInputTokens != 10 || executorPhase.CacheReadInputTokens != 100 || executorPhase.CacheCreationInputTokens != 20 {
+		t.Fatalf("executor phase cache breakdown = %#v", executorPhase)
 	}
 }
 

@@ -33,7 +33,13 @@ func (n *NoopTaskStore) AddTokenUsage(taskID string, delta int) error           
 func (n *NoopTaskStore) AddModelUsage(taskID, model string, inputTokens, outputTokens int, costUSD float64) error {
 	return nil
 }
+func (n *NoopTaskStore) AddModelUsageBreakdown(taskID, model string, usage TokenUsageBreakdown) error {
+	return nil
+}
 func (n *NoopTaskStore) AddPhaseUsage(taskID, phase, model string, inputTokens, outputTokens int, costUSD float64) error {
+	return nil
+}
+func (n *NoopTaskStore) AddPhaseUsageBreakdown(taskID, phase, model string, usage TokenUsageBreakdown) error {
 	return nil
 }
 func (n *NoopTaskStore) ListTasksForChat(chatID int64, limit int) ([]TaskState, error) {

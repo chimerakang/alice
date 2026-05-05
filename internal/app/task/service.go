@@ -192,9 +192,19 @@ func (svc *Service) AddModelUsage(taskID, model string, inputTokens, outputToken
 	return svc.store.AddModelUsage(taskID, model, inputTokens, outputTokens, costUSD)
 }
 
+// AddModelUsageBreakdown implements hermes.TaskStateStore.
+func (svc *Service) AddModelUsageBreakdown(taskID, model string, usage hermes.TokenUsageBreakdown) error {
+	return svc.store.AddModelUsageBreakdown(taskID, model, usage)
+}
+
 // AddPhaseUsage implements hermes.TaskStateStore.
 func (svc *Service) AddPhaseUsage(taskID, phase, model string, inputTokens, outputTokens int, costUSD float64) error {
 	return svc.store.AddPhaseUsage(taskID, phase, model, inputTokens, outputTokens, costUSD)
+}
+
+// AddPhaseUsageBreakdown implements hermes.TaskStateStore.
+func (svc *Service) AddPhaseUsageBreakdown(taskID, phase, model string, usage hermes.TokenUsageBreakdown) error {
+	return svc.store.AddPhaseUsageBreakdown(taskID, phase, model, usage)
 }
 
 // ListTasksForChat implements hermes.TaskStateStore.

@@ -63,11 +63,13 @@ type TaskStateStore interface {
 	// seen on this task. costUSD is the per-call USD value reported by the CLI
 	// (or estimated for Max-sub) — see #148 1E.
 	AddModelUsage(taskID, model string, inputTokens, outputTokens int, costUSD float64) error
+	AddModelUsageBreakdown(taskID, model string, usage TokenUsageBreakdown) error
 
 	// AddPhaseUsage accumulates per-phase token + cost usage for Hermes
 	// observability dashboards and postmortems. Phases include planner,
 	// executor, reviewer, retry, and preflight.
 	AddPhaseUsage(taskID, phase, model string, inputTokens, outputTokens int, costUSD float64) error
+	AddPhaseUsageBreakdown(taskID, phase, model string, usage TokenUsageBreakdown) error
 
 	// ListTasksForChat returns recent tasks for a chat (newest first).
 	ListTasksForChat(chatID int64, limit int) ([]TaskState, error)
@@ -571,6 +573,14 @@ func (s *SQLiteTaskStore) AddTokenUsage(taskID string, delta int) error {
 }
 
 func (s *SQLiteTaskStore) AddModelUsage(taskID, model string, inputTokens, outputTokens int, costUSD float64) error {
+	return s.AddModelUsageBreakdown(taskID, model, TokenUsageBreakdown{
+		UncachedInputTokens: inputTokens,
+		OutputTokens:        outputTokens,
+		CostUSD:             costUSD,
+	})
+}
+
+func (s *SQLiteTaskStore) AddModelUsageBreakdown(taskID, model string, usage TokenUsageBreakdown) error {
 	return s.execWithRetry(func() error {
 		var modelUsagesJSON string
 		if err := s.db.QueryRow(`SELECT model_usages FROM hermes_task_states WHERE id = ?`, taskID).
@@ -585,11 +595,15 @@ func (s *SQLiteTaskStore) AddModelUsage(taskID, model string, inputTokens, outpu
 		}
 		// Merge: bump existing row if model already seen, otherwise append.
 		found := false
+		inputTokens := usage.InputVolume()
 		for i := range usages {
 			if usages[i].Model == model {
 				usages[i].InputTokens += inputTokens
-				usages[i].OutputTokens += outputTokens
-				usages[i].CostUSD += costUSD
+				usages[i].UncachedInputTokens += usage.UncachedInputTokens
+				usages[i].CacheReadInputTokens += usage.CacheReadInputTokens
+				usages[i].CacheCreationInputTokens += usage.CacheCreationInputTokens
+				usages[i].OutputTokens += usage.OutputTokens
+				usages[i].CostUSD += usage.CostUSD
 				usages[i].CallCount++
 				found = true
 				break
@@ -597,11 +611,14 @@ func (s *SQLiteTaskStore) AddModelUsage(taskID, model string, inputTokens, outpu
 		}
 		if !found {
 			usages = append(usages, ModelUsage{
-				Model:        model,
-				InputTokens:  inputTokens,
-				OutputTokens: outputTokens,
-				CostUSD:      costUSD,
-				CallCount:    1,
+				Model:                    model,
+				InputTokens:              inputTokens,
+				UncachedInputTokens:      usage.UncachedInputTokens,
+				CacheReadInputTokens:     usage.CacheReadInputTokens,
+				CacheCreationInputTokens: usage.CacheCreationInputTokens,
+				OutputTokens:             usage.OutputTokens,
+				CostUSD:                  usage.CostUSD,
+				CallCount:                1,
 			})
 		}
 		updated, err := json.Marshal(usages)
@@ -624,6 +641,14 @@ func (s *SQLiteTaskStore) AddModelUsage(taskID, model string, inputTokens, outpu
 }
 
 func (s *SQLiteTaskStore) AddPhaseUsage(taskID, phase, model string, inputTokens, outputTokens int, costUSD float64) error {
+	return s.AddPhaseUsageBreakdown(taskID, phase, model, TokenUsageBreakdown{
+		UncachedInputTokens: inputTokens,
+		OutputTokens:        outputTokens,
+		CostUSD:             costUSD,
+	})
+}
+
+func (s *SQLiteTaskStore) AddPhaseUsageBreakdown(taskID, phase, model string, usage TokenUsageBreakdown) error {
 	return s.execWithRetry(func() error {
 		var phaseUsagesJSON string
 		if err := s.db.QueryRow(`SELECT phase_usages FROM hermes_task_states WHERE id = ?`, taskID).
@@ -637,11 +662,15 @@ func (s *SQLiteTaskStore) AddPhaseUsage(taskID, phase, model string, inputTokens
 			}
 		}
 		found := false
+		inputTokens := usage.InputVolume()
 		for i := range usages {
 			if usages[i].Phase == phase && usages[i].Model == model {
 				usages[i].InputTokens += inputTokens
-				usages[i].OutputTokens += outputTokens
-				usages[i].CostUSD += costUSD
+				usages[i].UncachedInputTokens += usage.UncachedInputTokens
+				usages[i].CacheReadInputTokens += usage.CacheReadInputTokens
+				usages[i].CacheCreationInputTokens += usage.CacheCreationInputTokens
+				usages[i].OutputTokens += usage.OutputTokens
+				usages[i].CostUSD += usage.CostUSD
 				usages[i].CallCount++
 				found = true
 				break
@@ -649,12 +678,15 @@ func (s *SQLiteTaskStore) AddPhaseUsage(taskID, phase, model string, inputTokens
 		}
 		if !found {
 			usages = append(usages, PhaseUsage{
-				Phase:        phase,
-				Model:        model,
-				InputTokens:  inputTokens,
-				OutputTokens: outputTokens,
-				CostUSD:      costUSD,
-				CallCount:    1,
+				Phase:                    phase,
+				Model:                    model,
+				InputTokens:              inputTokens,
+				UncachedInputTokens:      usage.UncachedInputTokens,
+				CacheReadInputTokens:     usage.CacheReadInputTokens,
+				CacheCreationInputTokens: usage.CacheCreationInputTokens,
+				OutputTokens:             usage.OutputTokens,
+				CostUSD:                  usage.CostUSD,
+				CallCount:                1,
 			})
 		}
 		updated, err := json.Marshal(usages)

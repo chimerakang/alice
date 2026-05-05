@@ -150,7 +150,13 @@ func (s *stubStore) AddTokenUsage(taskID string, delta int) error          { ret
 func (s *stubStore) AddModelUsage(taskID, model string, in, out int, costUSD float64) error {
 	return nil
 }
+func (s *stubStore) AddModelUsageBreakdown(taskID, model string, usage hermes.TokenUsageBreakdown) error {
+	return nil
+}
 func (s *stubStore) AddPhaseUsage(taskID, phase, model string, in, out int, costUSD float64) error {
+	return nil
+}
+func (s *stubStore) AddPhaseUsageBreakdown(taskID, phase, model string, usage hermes.TokenUsageBreakdown) error {
 	return nil
 }
 func (s *stubStore) ListTasksForChat(chatID int64, limit int) ([]hermes.TaskState, error) {

@@ -474,7 +474,11 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 		}
 		if !plannerSkipped {
 			_ = e.store.AddTokenUsage(taskID, planIn+planOut)
-			_ = e.store.AddModelUsage(taskID, e.cfg.PlannerModel, planIn, planOut, planCost)
+			_ = e.store.AddModelUsageBreakdown(taskID, e.cfg.PlannerModel, hermes.TokenUsageBreakdown{
+				UncachedInputTokens: planIn,
+				OutputTokens:        planOut,
+				CostUSD:             planCost,
+			})
 			plannerPhase := "planner"
 			if attempt > 0 {
 				plannerPhase = "retry_planner"
@@ -887,7 +891,11 @@ func (e *PlanExecuteEngine) runReview(ctx context.Context, state hermes.TaskStat
 	// total cost include the review pass — previously this was uncounted, so
 	// dashboards under-reported by exactly the reviewer's share. See #148 1E.
 	if reviewerTokens := result.InputTokens + result.OutputTokens; result.ReviewerModel != "" && reviewerTokens > 0 {
-		if err := e.store.AddModelUsage(state.ID, result.ReviewerModel, result.InputTokens, result.OutputTokens, result.CostUSD); err != nil {
+		if err := e.store.AddModelUsageBreakdown(state.ID, result.ReviewerModel, hermes.TokenUsageBreakdown{
+			UncachedInputTokens: result.InputTokens,
+			OutputTokens:        result.OutputTokens,
+			CostUSD:             result.CostUSD,
+		}); err != nil {
 			log.Printf("[plan_execute] AddModelUsage(reviewer) model=%s: %v", result.ReviewerModel, err)
 		}
 		e.recordPhaseUsage(state.ID, "reviewer", result.ReviewerModel, result.InputTokens, result.OutputTokens, result.CostUSD)
@@ -921,14 +929,32 @@ func (e *PlanExecuteEngine) shouldRunReview(tasks []hermes.SubTask) bool {
 }
 
 func (e *PlanExecuteEngine) recordPhaseUsage(taskID, phase, model string, inputTokens, outputTokens int, costUSD float64) {
+	e.recordPhaseUsageBreakdown(taskID, phase, model, hermes.TokenUsageBreakdown{
+		UncachedInputTokens: inputTokens,
+		OutputTokens:        outputTokens,
+		CostUSD:             costUSD,
+	})
+}
+
+func (e *PlanExecuteEngine) recordPhaseUsageBreakdown(taskID, phase, model string, usage hermes.TokenUsageBreakdown) {
 	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(phase) == "" || strings.TrimSpace(model) == "" {
 		return
 	}
-	if inputTokens+outputTokens <= 0 {
+	if usage.InputVolume()+usage.OutputTokens <= 0 {
 		return
 	}
-	if err := e.store.AddPhaseUsage(taskID, phase, model, inputTokens, outputTokens, costUSD); err != nil {
+	if err := e.store.AddPhaseUsageBreakdown(taskID, phase, model, usage); err != nil {
 		log.Printf("[plan_execute] AddPhaseUsage(%s) model=%s: %v", phase, model, err)
+	}
+}
+
+func tokenUsageBreakdownFromResult(result Result) hermes.TokenUsageBreakdown {
+	return hermes.TokenUsageBreakdown{
+		UncachedInputTokens:      result.InputTokens,
+		CacheReadInputTokens:     result.CacheReadInputTokens,
+		CacheCreationInputTokens: result.CacheCreationInputTokens,
+		OutputTokens:             result.OutputTokens,
+		CostUSD:                  result.Cost,
 	}
 }
 
@@ -1071,12 +1097,12 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 				log.Printf("[plan_execute] UpdateSubTask(failed) idx=%d: %v", idx, err)
 			}
 			tokensUsed := result.TokenVolume()
-			inputVolume := result.InputTokenVolume()
 			if result.Model != "" && tokensUsed > 0 {
-				if err := e.store.AddModelUsage(taskID, result.Model, inputVolume, result.OutputTokens, result.Cost); err != nil {
+				usage := tokenUsageBreakdownFromResult(result)
+				if err := e.store.AddModelUsageBreakdown(taskID, result.Model, usage); err != nil {
 					log.Printf("[plan_execute] AddModelUsage(executor) idx=%d model=%s: %v", idx, result.Model, err)
 				}
-				e.recordPhaseUsage(taskID, "executor", result.Model, inputVolume, result.OutputTokens, result.Cost)
+				e.recordPhaseUsageBreakdown(taskID, "executor", result.Model, usage)
 				if err := e.store.AddTokenUsage(taskID, tokensUsed); err != nil {
 					log.Printf("[plan_execute] AddTokenUsage(executor) idx=%d: %v", idx, err)
 				}
@@ -1087,10 +1113,11 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 		text := strings.TrimSpace(result.Text)
 		tokensUsed := result.TokenVolume()
 		if result.Model != "" && tokensUsed > 0 {
-			if err := e.store.AddModelUsage(taskID, result.Model, result.InputTokenVolume(), result.OutputTokens, result.Cost); err != nil {
+			usage := tokenUsageBreakdownFromResult(result)
+			if err := e.store.AddModelUsageBreakdown(taskID, result.Model, usage); err != nil {
 				log.Printf("[plan_execute] AddModelUsage(executor) idx=%d model=%s: %v", idx, result.Model, err)
 			}
-			e.recordPhaseUsage(taskID, "executor", result.Model, result.InputTokenVolume(), result.OutputTokens, result.Cost)
+			e.recordPhaseUsageBreakdown(taskID, "executor", result.Model, usage)
 			if err := e.store.AddTokenUsage(taskID, tokensUsed); err != nil {
 				log.Printf("[plan_execute] AddTokenUsage(executor) idx=%d: %v", idx, err)
 			}

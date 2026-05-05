@@ -341,6 +341,40 @@ func TestAddPhaseUsage(t *testing.T) {
 	}
 }
 
+func TestAddUsageBreakdown(t *testing.T) {
+	store := newTestStore(t)
+	if _, err := store.CreateTask(makeTask("task-breakdown", 6)); err != nil {
+		t.Fatal(err)
+	}
+
+	usage := TokenUsageBreakdown{
+		UncachedInputTokens:      10,
+		CacheReadInputTokens:     100,
+		CacheCreationInputTokens: 20,
+		OutputTokens:             3,
+		CostUSD:                  0.01,
+	}
+	if err := store.AddModelUsageBreakdown("task-breakdown", "claude-sonnet", usage); err != nil {
+		t.Fatalf("AddModelUsageBreakdown: %v", err)
+	}
+	if err := store.AddPhaseUsageBreakdown("task-breakdown", "executor", "claude-sonnet", usage); err != nil {
+		t.Fatalf("AddPhaseUsageBreakdown: %v", err)
+	}
+
+	got, err := store.GetTask("task-breakdown")
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	model := got.ModelUsages[0]
+	if model.InputTokens != 130 || model.UncachedInputTokens != 10 || model.CacheReadInputTokens != 100 || model.CacheCreationInputTokens != 20 || model.OutputTokens != 3 {
+		t.Fatalf("model usage breakdown = %#v", model)
+	}
+	phase := got.PhaseUsages[0]
+	if phase.InputTokens != 130 || phase.UncachedInputTokens != 10 || phase.CacheReadInputTokens != 100 || phase.CacheCreationInputTokens != 20 || phase.OutputTokens != 3 {
+		t.Fatalf("phase usage breakdown = %#v", phase)
+	}
+}
+
 // ── ListTasksForChat ───────────────────────────────────────────────────────────
 
 func TestListTasksForChat(t *testing.T) {

@@ -194,7 +194,11 @@ filters for dashboard and diagnostic tooling. The follow-up guardrail slice
 adds deterministic `IssueQualityGate` events before Hermes issue planning:
 closed issues and recent complete Hermes runs are skipped, empty issues ask for
 clarification, and allowed issues continue into the existing preflight/Planner
-path.
+path. Hermes `model_usages` / `phase_usages` now also preserve cache-token
+breakdown for new executor calls (`uncached_input_tokens`,
+`cache_read_input_tokens`, `cache_creation_input_tokens`) while keeping legacy
+`input_tokens` as the full input volume, so summaries and dashboards can show
+cache hit rate without a DB migration.
 
 ## Recommended Order
 

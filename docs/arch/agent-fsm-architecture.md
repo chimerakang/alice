@@ -281,7 +281,9 @@ Recommended event names:
      queryable through `GET /api/runtime/events`. The next guardrail slice adds
      deterministic `IssueQualityGate` events before Hermes issue planning so
      closed, recently completed, or underspecified issues can be skipped or
-     clarified before spending Planner tokens.
+     clarified before spending Planner tokens. New Hermes phase/model usage
+     rows also keep cache-token breakdown while preserving legacy full
+     `input_tokens` totals.
 
 ## Non-Goals
 

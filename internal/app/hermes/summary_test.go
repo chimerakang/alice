@@ -39,17 +39,17 @@ func TestTaskSummaryIncludesPhaseUsage(t *testing.T) {
 	summary := TaskSummary{
 		TaskState: &TaskState{
 			ModelUsages: []ModelUsage{
-				{Model: "claude-sonnet-4-6", InputTokens: 100, OutputTokens: 20, CallCount: 1},
+				{Model: "claude-sonnet-4-6", InputTokens: 100, CacheReadInputTokens: 80, CacheCreationInputTokens: 10, OutputTokens: 20, CallCount: 1},
 			},
 			PhaseUsages: []PhaseUsage{
-				{Phase: "executor", Model: "claude-sonnet-4-6", InputTokens: 80, OutputTokens: 10, CallCount: 1},
+				{Phase: "executor", Model: "claude-sonnet-4-6", InputTokens: 80, CacheReadInputTokens: 60, CacheCreationInputTokens: 10, OutputTokens: 10, CallCount: 1},
 				{Phase: "planner", Model: "claude-opus-4-7", InputTokens: 20, OutputTokens: 10, CallCount: 1},
 			},
 		},
 		Verbosity: "minimal",
 	}
 	got := summary.GenerateSummary()
-	for _, want := range []string{"planner phase", "executor phase"} {
+	for _, want := range []string{"planner phase", "executor phase", "cache_read", "80.0%", "75.0%"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("summary missing %q:\n%s", want, got)
 		}

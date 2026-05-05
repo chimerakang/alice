@@ -42,12 +42,20 @@ func (s *TaskSummary) generateMinimal() string {
 		label := formatModelLabel(usage.Model)
 		total := usage.TotalTokens()
 		totalTokens += total
-		buf.WriteString(fmt.Sprintf("├─ %s：%d 次呼叫，%s tokens\n",
-			label, usage.CallCount, formatNumber(total)))
+		cacheNote := ""
+		if usage.CacheReadInputTokens > 0 || usage.CacheCreationInputTokens > 0 {
+			cacheNote = fmt.Sprintf(" · cache_read %.1f%%", usage.CacheHitPercent())
+		}
+		buf.WriteString(fmt.Sprintf("├─ %s：%d 次呼叫，%s tokens%s\n",
+			label, usage.CallCount, formatNumber(total), cacheNote))
 	}
 	for _, usage := range sortedPhaseUsages(s.TaskState.PhaseUsages) {
-		buf.WriteString(fmt.Sprintf("├─ %s phase：%d 次呼叫，%s tokens\n",
-			usage.Phase, usage.CallCount, formatNumber(usage.TotalTokens())))
+		cacheNote := ""
+		if usage.CacheReadInputTokens > 0 || usage.CacheCreationInputTokens > 0 {
+			cacheNote = fmt.Sprintf(" · cache_read %.1f%%", usage.CacheHitPercent())
+		}
+		buf.WriteString(fmt.Sprintf("├─ %s phase：%d 次呼叫，%s tokens%s\n",
+			usage.Phase, usage.CallCount, formatNumber(usage.TotalTokens()), cacheNote))
 	}
 
 	// Summary line
@@ -69,11 +77,19 @@ func (s *TaskSummary) generateDetailed() string {
 		label := formatModelLabel(usage.Model)
 		total := usage.TotalTokens()
 		totalTokens += total
-		buf.WriteString(fmt.Sprintf("  %-10s %d 次   輸入: %-8s 輸出: %-8s 合計: %s\n",
+		cacheNote := ""
+		if usage.CacheReadInputTokens > 0 || usage.CacheCreationInputTokens > 0 {
+			cacheNote = fmt.Sprintf(" cache_read: %s (%.1f%%) cache_write: %s",
+				formatNumber(usage.CacheReadInputTokens),
+				usage.CacheHitPercent(),
+				formatNumber(usage.CacheCreationInputTokens))
+		}
+		buf.WriteString(fmt.Sprintf("  %-10s %d 次   輸入: %-8s 輸出: %-8s 合計: %s%s\n",
 			label, usage.CallCount,
 			formatNumber(usage.InputTokens),
 			formatNumber(usage.OutputTokens),
-			formatNumber(total)))
+			formatNumber(total),
+			cacheNote))
 	}
 	buf.WriteString("\n")
 
@@ -98,9 +114,16 @@ func (s *TaskSummary) generateDetailed() string {
 	if len(s.TaskState.PhaseUsages) > 0 {
 		buf.WriteString("🧭 Phase 用量\n")
 		for _, usage := range sortedPhaseUsages(s.TaskState.PhaseUsages) {
-			buf.WriteString(fmt.Sprintf("  %-14s %-10s %d 次   合計: %-8s cost: $%.4f\n",
+			cacheNote := ""
+			if usage.CacheReadInputTokens > 0 || usage.CacheCreationInputTokens > 0 {
+				cacheNote = fmt.Sprintf(" cache_read: %s (%.1f%%) cache_write: %s",
+					formatNumber(usage.CacheReadInputTokens),
+					usage.CacheHitPercent(),
+					formatNumber(usage.CacheCreationInputTokens))
+			}
+			buf.WriteString(fmt.Sprintf("  %-14s %-10s %d 次   合計: %-8s cost: $%.4f%s\n",
 				usage.Phase, formatModelLabel(usage.Model), usage.CallCount,
-				formatNumber(usage.TotalTokens()), usage.CostUSD))
+				formatNumber(usage.TotalTokens()), usage.CostUSD, cacheNote))
 		}
 		buf.WriteString("\n")
 	}
