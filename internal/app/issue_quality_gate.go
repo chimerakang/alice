@@ -60,7 +60,7 @@ func decideIssueQualityGate(issue *hermes.IssueContext, forceRestart bool) issue
 			Signal:  &signal,
 		}
 	}
-	if strings.TrimSpace(issue.Body) == "" && len(issue.Checklist) == 0 && len(issue.Comments) == 0 && !forceRestart {
+	if issueNeedsAcceptanceClarification(issue) && !forceRestart {
 		return issueQualityGateDecision{
 			Action:  issueQualityGateNeedsClarification,
 			Reason:  "missing_acceptance_context",
@@ -68,6 +68,20 @@ func decideIssueQualityGate(issue *hermes.IssueContext, forceRestart bool) issue
 		}
 	}
 	return issueQualityGateDecision{Action: issueQualityGateAllow, Reason: "gate_passed"}
+}
+
+func issueNeedsAcceptanceClarification(issue *hermes.IssueContext) bool {
+	if issue == nil {
+		return false
+	}
+	if len(issue.Checklist) > 0 || len(issue.Comments) > 0 {
+		return false
+	}
+	body := strings.TrimSpace(issue.Body)
+	if body == "" {
+		return true
+	}
+	return len([]rune(body)) < 80
 }
 
 func recordIssueQualityGateDecision(ctx context.Context, key chatKey, issue *hermes.IssueContext, decision issueQualityGateDecision, forceRestart bool) {

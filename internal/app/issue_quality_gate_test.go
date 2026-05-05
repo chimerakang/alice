@@ -59,6 +59,37 @@ func TestDecideIssueQualityGateNeedsClarificationForEmptyIssue(t *testing.T) {
 	}
 }
 
+func TestDecideIssueQualityGateNeedsClarificationForThinIssue(t *testing.T) {
+	issue := &hermes.IssueContext{
+		Number: 148,
+		Title:  "Thin",
+		State:  "OPEN",
+		Body:   "fix it",
+	}
+
+	decision := decideIssueQualityGate(issue, false)
+
+	if decision.Action != issueQualityGateNeedsClarification || decision.Reason != "missing_acceptance_context" {
+		t.Fatalf("decision = %+v, want needs clarification", decision)
+	}
+}
+
+func TestDecideIssueQualityGateAllowsThinIssueWithChecklist(t *testing.T) {
+	issue := &hermes.IssueContext{
+		Number:    148,
+		Title:     "Thin but structured",
+		State:     "OPEN",
+		Body:      "fix it",
+		Checklist: []hermes.ChecklistItem{{Text: "Acceptance item", Checked: false}},
+	}
+
+	decision := decideIssueQualityGate(issue, false)
+
+	if decision.Action != issueQualityGateAllow || decision.Reason != "gate_passed" {
+		t.Fatalf("decision = %+v, want allow", decision)
+	}
+}
+
 func TestRecordIssueQualityGateDecisionPersistsRuntimeEvent(t *testing.T) {
 	prev := globalStorage
 	s := newTestSQLiteStorage(t)

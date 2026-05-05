@@ -137,13 +137,25 @@ type PlannerRecoveryDecision struct {
 
 type PlannerRecoveryFunc func(PlannerRecoveryRequest) PlannerRecoveryDecision
 
+type PlanQualityGateEvent struct {
+	Action      string
+	Reason      string
+	Attempt     int
+	MaxAttempts int
+	TaskCount   int
+	Violation   string
+}
+
+type PlanQualityGateReporter func(PlanQualityGateEvent)
+
 // PlannerSession manages the long-lived Planner CLI session.
 type PlannerSession struct {
-	callFn     CallPlanFunc
-	sessionID  string // Claude Code --resume ID; empty until first call
-	maxRetries int
-	extraRules string // prepended to plannerSystemPrompt when non-empty
-	recoveryFn PlannerRecoveryFunc
+	callFn          CallPlanFunc
+	sessionID       string // Claude Code --resume ID; empty until first call
+	maxRetries      int
+	extraRules      string // prepended to plannerSystemPrompt when non-empty
+	recoveryFn      PlannerRecoveryFunc
+	qualityReporter PlanQualityGateReporter
 }
 
 // NewPlannerSession creates a Planner session that calls the CLI via callFn.
@@ -164,6 +176,16 @@ func (p *PlannerSession) SetSessionID(sessionID string) { p.sessionID = sessionI
 // SetRecoveryDecider lets the owning runtime decide planner retry policy without
 // making the hermes package import the higher-level engine package.
 func (p *PlannerSession) SetRecoveryDecider(fn PlannerRecoveryFunc) { p.recoveryFn = fn }
+
+func (p *PlannerSession) SetPlanQualityGateReporter(fn PlanQualityGateReporter) {
+	p.qualityReporter = fn
+}
+
+func (p *PlannerSession) reportPlanQualityGate(event PlanQualityGateEvent) {
+	if p.qualityReporter != nil {
+		p.qualityReporter(event)
+	}
+}
 
 func (p *PlannerSession) shouldRetry(mode string, attempt int, reason string) PlannerRecoveryDecision {
 	req := PlannerRecoveryRequest{
@@ -216,12 +238,32 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 			// allow it without further validation. Otherwise validate granularity.
 			if len(tasks) == 1 && isDirectExecutionTask(tasks[0]) {
 				// Complexity Gate: direct execution mode (simple goal)
+				p.reportPlanQualityGate(PlanQualityGateEvent{
+					Action:      "allow",
+					Reason:      "direct_execution",
+					Attempt:     attempt,
+					MaxAttempts: p.maxRetries,
+					TaskCount:   len(tasks),
+				})
 				return tasks, totalIn, totalOut, totalCost, nil
 			}
 			// Multi-task plan: validate granularity and quality before executor tokens are spent.
 			if err := validatePlanQuality(goal, tasks); err != nil {
 				// Quality violation — inject feedback and retry
-				if p.shouldRetry("planner_retry", attempt, "plan_quality_rejected").Retry {
+				decision := p.shouldRetry("planner_retry", attempt, "plan_quality_rejected")
+				action := "fail"
+				if decision.Retry {
+					action = "replan"
+				}
+				p.reportPlanQualityGate(PlanQualityGateEvent{
+					Action:      action,
+					Reason:      "plan_quality_rejected",
+					Attempt:     attempt,
+					MaxAttempts: p.maxRetries,
+					TaskCount:   len(tasks),
+					Violation:   err.Error(),
+				})
+				if decision.Retry {
 					prompt = fmt.Sprintf(
 						"Plan quality gate rejected attempt %d:\n%s\n\nFix the plan before execution. Group information gathering into deliverable sub-tasks, include code-changing work for implementation goals, and include concrete validation for changed code. Call emit_plan again with the corrected sub_tasks array.",
 						attempt, err.Error(),
@@ -230,6 +272,13 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 				}
 				return nil, totalIn, totalOut, totalCost, fmt.Errorf("plan quality validation failed after retries: %w", err)
 			}
+			p.reportPlanQualityGate(PlanQualityGateEvent{
+				Action:      "allow",
+				Reason:      "gate_passed",
+				Attempt:     attempt,
+				MaxAttempts: p.maxRetries,
+				TaskCount:   len(tasks),
+			})
 			return tasks, totalIn, totalOut, totalCost, nil
 		}
 

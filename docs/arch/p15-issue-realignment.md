@@ -190,11 +190,13 @@ and RecoveryDecision events are now written through this path. Token/cache
 phase accounting remains covered by the earlier `phase_usages` slice; this
 adds the event stream needed to explain retry/fallback/cancel decisions.
 `GET /api/runtime/events` exposes the persisted stream with limit/offset/type
-filters for dashboard and diagnostic tooling. The follow-up guardrail slice
-adds deterministic `IssueQualityGate` events before Hermes issue planning:
-closed issues and recent complete Hermes runs are skipped, empty issues ask for
-clarification, and allowed issues continue into the existing preflight/Planner
-path. Hermes `model_usages` / `phase_usages` now also preserve cache-token
+filters for dashboard and diagnostic tooling. Guardrail slices add deterministic
+`IssueQualityGate` events before Hermes issue planning and `PlanQualityGate`
+events around Planner output quality: allow, replan, and final failure decisions
+are visible before executor/reviewer tokens are spent. Closed issues and recent
+complete Hermes runs are skipped, underspecified issues ask for clarification,
+and allowed issues continue into the existing preflight/Planner path. Hermes
+`model_usages` / `phase_usages` now also preserve cache-token
 breakdown for new executor calls (`uncached_input_tokens`,
 `cache_read_input_tokens`, `cache_creation_input_tokens`) while keeping legacy
 `input_tokens` as the full input volume, so summaries and dashboards can show

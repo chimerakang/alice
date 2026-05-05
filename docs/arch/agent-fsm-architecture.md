@@ -278,12 +278,12 @@ Recommended event names:
    - Status 2026-05-05: first persisted trace slice landed under #148.
      `runtime_events` stores normalized runtime events, starting with
      RecoveryDecision events emitted by RecoveryPolicy paths. The events are
-     queryable through `GET /api/runtime/events`. The next guardrail slice adds
-     deterministic `IssueQualityGate` events before Hermes issue planning so
-     closed, recently completed, or underspecified issues can be skipped or
-     clarified before spending Planner tokens. New Hermes phase/model usage
-     rows also keep cache-token breakdown while preserving legacy full
-     `input_tokens` totals.
+     queryable through `GET /api/runtime/events`. Guardrail slices now add
+     deterministic `IssueQualityGate` events before Hermes issue planning and
+     `PlanQualityGate` events when Planner output is allowed, sent back for
+     replan, or rejected after retry budget. New Hermes phase/model usage rows
+     also keep cache-token breakdown while preserving legacy full `input_tokens`
+     totals.
 
 ## Non-Goals
 

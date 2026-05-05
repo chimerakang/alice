@@ -124,6 +124,7 @@ func TestPlannerSessionRejectsSplitSingleActionAndRetries(t *testing.T) {
 
 func TestPlannerSessionRejectsImplementationPlanWithoutMutation(t *testing.T) {
 	var prompts []string
+	var gates []PlanQualityGateEvent
 	calls := 0
 	planFn := func(ctx context.Context, message, projectDir, sessionID string) (CallPlanResult, error) {
 		prompts = append(prompts, message)
@@ -144,6 +145,9 @@ func TestPlannerSessionRejectsImplementationPlanWithoutMutation(t *testing.T) {
 	}
 
 	planner := NewPlannerSession(planFn, 2, "")
+	planner.SetPlanQualityGateReporter(func(event PlanQualityGateEvent) {
+		gates = append(gates, event)
+	})
 	tasks, _, _, _, err := planner.Plan(context.Background(), "[GitHub #12] 修正 auth refresh-token bug", "/repo")
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
@@ -156,6 +160,15 @@ func TestPlannerSessionRejectsImplementationPlanWithoutMutation(t *testing.T) {
 	}
 	if len(prompts) < 2 || !containsAny(prompts[1], "Plan quality gate rejected", "missing implementation step") {
 		t.Fatalf("retry prompt did not include implementation feedback:\n%v", prompts)
+	}
+	if len(gates) != 2 {
+		t.Fatalf("quality gate events = %d, want 2: %#v", len(gates), gates)
+	}
+	if gates[0].Action != "replan" || gates[0].Reason != "plan_quality_rejected" || !containsAny(gates[0].Violation, "missing implementation step") {
+		t.Fatalf("first quality gate = %+v, want replan rejection", gates[0])
+	}
+	if gates[1].Action != "allow" || gates[1].Reason != "gate_passed" {
+		t.Fatalf("second quality gate = %+v, want allow", gates[1])
 	}
 }
 

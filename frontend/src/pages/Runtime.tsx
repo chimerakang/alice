@@ -15,7 +15,8 @@ import {
 
 const EVENT_TYPE_OPTIONS = [
   { value: "RecoveryDecision", label: "Recovery" },
-  { value: "IssueQualityGate", label: "Quality Gate" },
+  { value: "IssueQualityGate", label: "Issue Gate" },
+  { value: "PlanQualityGate", label: "Plan Gate" },
   { value: "", label: "All" },
 ];
 
@@ -51,6 +52,7 @@ function payloadNumber(event: RuntimeEventRecord, key: string): number {
 function actionVariant(action: string): "success" | "warning" | "error" | "info" | "neutral" {
   switch (action) {
     case "retry":
+    case "replan":
       return "warning";
     case "fallback":
     case "allow":
@@ -71,6 +73,7 @@ function actionVariant(action: string): "success" | "warning" | "error" | "info"
 function actionIcon(action: string) {
   switch (action) {
     case "retry":
+    case "replan":
       return RotateCcw;
     case "fallback":
     case "allow":
@@ -101,6 +104,8 @@ function RuntimeEventRow({ event }: { event: RuntimeEventRecord }) {
   const commentCount = payloadNumber(event, "comment_count");
   const completionDone = payloadNumber(event, "completion_done");
   const completionTotal = payloadNumber(event, "completion_total");
+  const taskCount = payloadNumber(event, "task_count");
+  const violation = payloadString(event, "violation");
   const Icon = actionIcon(action);
 
   return (
@@ -142,6 +147,8 @@ function RuntimeEventRow({ event }: { event: RuntimeEventRecord }) {
               </span>
             )}
             {commentCount > 0 && <span>{commentCount} comments</span>}
+            {taskCount > 0 && <span>{taskCount} planned tasks</span>}
+            {violation && <span className="text-warning">{violation}</span>}
           </div>
         </div>
         <div className="text-[11px] font-mono text-gray-600">{event.type}</div>
@@ -189,7 +196,7 @@ export default function Runtime() {
             Runtime Events
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Persisted runtime decisions for recovery and Hermes issue gates.
+            Persisted runtime decisions for recovery and Hermes quality gates.
           </p>
         </div>
         <button
@@ -203,7 +210,7 @@ export default function Runtime() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        {["allow", "skip", "needs_clarification", "retry", "fallback"].map((action) => (
+        {["allow", "skip", "needs_clarification", "replan", "retry", "fail"].map((action) => (
           <div key={action} className="card p-4">
             <div className="text-xs text-gray-500 uppercase">{action}</div>
             <div className="text-2xl font-bold font-mono text-white mt-1">

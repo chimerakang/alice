@@ -151,6 +151,7 @@ func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 	reviewPhase := &recordingReviewPhase{}
 	reviewStore := &recordingReviewStore{}
 	reviewNotifier := &recordingReviewNotifier{}
+	var runtimeEvents []Event
 	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
 		return hermes.CallPlanResult{
 			Text: "```json\n" +
@@ -172,6 +173,9 @@ func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 		ReviewPhase:           reviewPhase,
 		ReviewStore:           reviewStore,
 		OnReview:              reviewNotifier.Notify,
+		OnRuntimeEvent: func(ctx context.Context, event Event) {
+			runtimeEvents = append(runtimeEvents, event)
+		},
 	}, planFn, NewDirectEngine(runner), store, reporter)
 
 	taskID, err := engine.Start(context.Background(), "complex implementation goal", NewChatContext(42, 0, "/repo"))
@@ -203,6 +207,20 @@ func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 	wantEvents := []string{"plan", "start:s1", "done:s1", "start:s2", "done:s2", "complete:done"}
 	if !reflect.DeepEqual(reporter.events, wantEvents) {
 		t.Fatalf("events:\n got %#v\nwant %#v", reporter.events, wantEvents)
+	}
+	var planGate *Event
+	for i := range runtimeEvents {
+		if runtimeEvents[i].Type == "PlanQualityGate" {
+			planGate = &runtimeEvents[i]
+			break
+		}
+	}
+	if planGate == nil {
+		t.Fatalf("runtime events = %#v, want PlanQualityGate", runtimeEvents)
+	}
+	payload, ok := planGate.Payload.(map[string]any)
+	if !ok || payload["action"] != "allow" || payload["reason"] != "gate_passed" || payload["task_count"] != 2 {
+		t.Fatalf("PlanQualityGate payload = %#v", planGate.Payload)
 	}
 	// #148 1E: ModelUsages now also records reviewer's tokens + cost. Assert
 	// the planner row by lookup; reviewer row presence is asserted separately.

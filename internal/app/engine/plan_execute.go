@@ -180,6 +180,20 @@ func NewPlanExecuteEngine(
 			NextAttempt: decision.NextAttempt,
 		}
 	})
+	planner.SetPlanQualityGateReporter(func(gate hermes.PlanQualityGateEvent) {
+		engine.emitRuntimeEvent(context.Background(), Event{
+			Type:      "PlanQualityGate",
+			Timestamp: time.Now(),
+			Payload: map[string]any{
+				"action":       gate.Action,
+				"reason":       gate.Reason,
+				"attempt":      gate.Attempt,
+				"max_attempts": gate.MaxAttempts,
+				"task_count":   gate.TaskCount,
+				"violation":    gate.Violation,
+			},
+		})
+	})
 	return engine
 }
 
