@@ -252,6 +252,17 @@ const (
 	abortTaskFinished
 )
 
+func markChatInterrupting(ctx *ChatContext, reason string) {
+	if ctx == nil {
+		return
+	}
+	if err := ctx.TransitionState(appengine.ChatStateInterrupting, reason); err == nil {
+		return
+	}
+	_ = ctx.TransitionState(appengine.ChatStateBusy, reason+"_busy")
+	_ = ctx.TransitionState(appengine.ChatStateInterrupting, reason)
+}
+
 func (t *TelegramBot) abortActiveTask(key chatKey, messageID int64) abortTaskResult {
 	t.hermesMu.RLock()
 	hc := t.hermesCoords[key]
@@ -265,6 +276,7 @@ func (t *TelegramBot) abortActiveTask(key chatKey, messageID int64) abortTaskRes
 	t.hermesMu.RUnlock()
 
 	if coord != nil && coord.IsRunning() {
+		markChatInterrupting(t.getChatContext(key, ""), "hermes_interrupt")
 		if interrupter, ok := coord.(interruptibleCoordinator); ok {
 			interrupter.InterruptWith(messageID)
 			return abortTaskAborted
@@ -276,6 +288,7 @@ func (t *TelegramBot) abortActiveTask(key chatKey, messageID int64) abortTaskRes
 	if !agent.IsProcessing() {
 		return abortTaskNone
 	}
+	markChatInterrupting(agent.current().ctx, "agent_interrupt")
 	if agent.Abort() {
 		return abortTaskAborted
 	}
@@ -909,6 +922,21 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		return
 	}
 
+	chatCtx := t.getChatContext(key, "")
+	if chatCtx.CurrentState == appengine.ChatStateBusy {
+		markChatInterrupting(chatCtx, "telegram_text_interrupt")
+	} else {
+		_ = chatCtx.TransitionState(appengine.ChatStateReceiving, "telegram_text")
+	}
+	defer func() {
+		switch chatCtx.CurrentState {
+		case appengine.ChatStateAwaitingInput, appengine.ChatStateBusy:
+			return
+		default:
+			_ = chatCtx.TransitionState(appengine.ChatStateIdle, "telegram_text_done")
+		}
+	}()
+
 	// 安全檢查和 PII 檢測
 	if security.Global() != nil {
 		// 記錄用戶請求安全事件
@@ -940,6 +968,8 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			text = filteredText
 		}
 	}
+
+	_ = chatCtx.TransitionState(appengine.ChatStateRouting, "telegram_route")
 
 	// 處理指令
 	if strings.HasPrefix(text, "/") {
@@ -1008,6 +1038,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			if strings.HasPrefix(cl.MatchedRule, "action-verb+issue-ref:") {
 				if issueNum, ok := ParseIssueNumber(text); ok {
 					t.send(key, fmt.Sprintf("🤖 判定為複雜任務（%s）— 拉取 Issue #%d 內容後啟動 Hermes", cl.MatchedRule, issueNum))
+					_ = chatCtx.TransitionState(appengine.ChatStateDispatching, "telegram_hermes_issue")
 					go t.runTrackedJob("hermes.issue", func() {
 						t.startHermesFromIssue(key, issueNum, projectDir)
 					})
@@ -1016,6 +1047,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			}
 
 			t.send(key, fmt.Sprintf("🤖 判定為複雜任務（%s）— 自動啟動 Hermes 模式", cl.MatchedRule))
+			_ = chatCtx.TransitionState(appengine.ChatStateDispatching, "telegram_hermes_task")
 			go t.runTrackedJob("hermes.task", func() {
 				t.startHermesTask(key, text, projectDir)
 			})
@@ -1113,6 +1145,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 
 	// 發送「處理中」提示
 	t.sendTyping(key)
+	_ = chatCtx.TransitionState(appengine.ChatStateDispatching, "telegram_agent")
 
 	var response string
 	var err error
@@ -2529,16 +2562,26 @@ func (t *TelegramBot) buildHermesGoalWithContext(key chatKey, currentRequest str
 
 	chatCtx := t.getChatContext(key, "")
 	recentMessages := chatCtx.RecentMessagesSnapshot()
+	issueNumber, hasIssueScope := ParseIssueNumber(currentRequest)
+	decision := appengine.DecideSessionPolicy(appengine.SessionPolicyRequest{
+		Mode:             "hermes",
+		HasNativeSession: chatCtx.Session(chatCtx.LastBackend) != "",
+		HasIssueScope:    hasIssueScope,
+	})
+	if !decision.AllowRecentMemory {
+		recentMessages = nil
+	}
 	var taskSource hermesMemoryTaskSource
 	if t != nil && t.taskSvc != nil {
 		taskSource = t.taskSvc
 	}
-	resolver := NewMemoryResolverWithAllSources(taskSource, globalGeneralMemorySource(), defaultStaticHintSourceForProject(chatCtx.ProjectDir))
+	resolver := newMemoryResolverForSessionPolicy(taskSource, chatCtx.ProjectDir, decision)
 	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
 		ChatID:         key.chatID,
 		ThreadID:       key.threadID,
 		ProjectDir:     chatCtx.ProjectDir,
 		UserMessage:    currentRequest,
+		IssueNumber:    issueNumber,
 		Mode:           "hermes",
 		BudgetChars:    defaultMemoryBudgetChars,
 		RecentMessages: recentMessages,
@@ -6246,15 +6289,26 @@ func (t *TelegramBot) resolveTelegramRunnerMemoryPrompt(ctx context.Context, key
 	if t != nil && t.taskSvc != nil {
 		taskSource = t.taskSvc
 	}
-	resolver := NewMemoryResolverWithAllSources(taskSource, globalGeneralMemorySource(), defaultStaticHintSourceForProject(agent.ProjectDir()))
+	issueNumber, hasIssueScope := ParseIssueNumber(prompt)
+	decision := appengine.DecideSessionPolicy(appengine.SessionPolicyRequest{
+		Mode:             mode,
+		HasNativeSession: ps.ctx.Session(ps.ctx.LastBackend) != "",
+		HasIssueScope:    hasIssueScope,
+	})
+	recentMessages := ps.ctx.RecentMessagesSnapshot()
+	if !decision.AllowRecentMemory {
+		recentMessages = nil
+	}
+	resolver := newMemoryResolverForSessionPolicy(taskSource, agent.ProjectDir(), decision)
 	bundle, err := resolver.Resolve(ctx, MemoryRequest{
 		ChatID:         key.chatID,
 		ThreadID:       key.threadID,
 		ProjectDir:     agent.ProjectDir(),
 		UserMessage:    prompt,
+		IssueNumber:    issueNumber,
 		Mode:           mode,
 		BudgetChars:    defaultMemoryBudgetChars,
-		RecentMessages: ps.ctx.RecentMessagesSnapshot(),
+		RecentMessages: recentMessages,
 	})
 	if err != nil {
 		log.Printf("[telegram] memory resolve failed mode=%s chat=%d thread=%d: %v", mode, key.chatID, key.threadID, err)

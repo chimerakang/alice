@@ -15,21 +15,24 @@ import (
 	"sync"
 	"time"
 
+	appengine "claude-tg-agent/internal/app/engine"
 	"claude-tg-agent/internal/app/security"
 )
 
 // AgentInfo represents agent information for the API
 type AgentInfo struct {
-	ChatID       int64      `json:"chat_id"`
-	ThreadID     int        `json:"thread_id"`
-	ProjectDir   string     `json:"project_dir"`
-	SessionID    string     `json:"session_id"`
-	IsActive     bool       `json:"is_active"`
-	IsProcessing bool       `json:"is_processing"`
-	LastActivity time.Time  `json:"last_activity"`
-	CreatedAt    time.Time  `json:"created_at"`
-	ProjectCount int        `json:"project_count"`
-	Stats        TokenStats `json:"stats"`
+	ChatID         int64                       `json:"chat_id"`
+	ThreadID       int                         `json:"thread_id"`
+	ProjectDir     string                      `json:"project_dir"`
+	SessionID      string                      `json:"session_id"`
+	IsActive       bool                        `json:"is_active"`
+	IsProcessing   bool                        `json:"is_processing"`
+	Execution      appengine.ExecutionSnapshot `json:"execution"`
+	ExecutionState string                      `json:"execution_state"`
+	LastActivity   time.Time                   `json:"last_activity"`
+	CreatedAt      time.Time                   `json:"created_at"`
+	ProjectCount   int                         `json:"project_count"`
+	Stats          TokenStats                  `json:"stats"`
 }
 
 // DetailedStats represents enhanced statistics
@@ -432,18 +435,21 @@ func (wi *WebInterface) getAllAgentsInfo() []AgentInfo {
 		if agent == nil {
 			continue
 		}
+		execution := agent.ExecutionSnapshot()
 
 		info := AgentInfo{
-			ChatID:       key.chatID,
-			ThreadID:     key.threadID,
-			ProjectDir:   agent.ProjectDir(),
-			SessionID:    agent.SessionID(),
-			IsActive:     agent.IsActive(),
-			IsProcessing: agent.IsProcessing(),
-			LastActivity: agent.LastActivity(),
-			CreatedAt:    agent.CreatedAt(),
-			ProjectCount: agent.ProjectCount(),
-			Stats:        agent.Stats(),
+			ChatID:         key.chatID,
+			ThreadID:       key.threadID,
+			ProjectDir:     agent.ProjectDir(),
+			SessionID:      agent.SessionID(),
+			IsActive:       agent.IsActive(),
+			IsProcessing:   agent.IsProcessing(),
+			Execution:      execution,
+			ExecutionState: string(execution.State),
+			LastActivity:   agent.LastActivity(),
+			CreatedAt:      agent.CreatedAt(),
+			ProjectCount:   agent.ProjectCount(),
+			Stats:          agent.Stats(),
 		}
 		agentInfos = append(agentInfos, info)
 	}
@@ -467,18 +473,21 @@ func (wi *WebInterface) getAgentInfo(chatID int64, threadID int) *AgentInfo {
 	if !exists || agent == nil {
 		return nil
 	}
+	execution := agent.ExecutionSnapshot()
 
 	return &AgentInfo{
-		ChatID:       chatID,
-		ThreadID:     threadID,
-		ProjectDir:   agent.ProjectDir(),
-		SessionID:    agent.SessionID(),
-		IsActive:     agent.IsActive(),
-		IsProcessing: agent.IsProcessing(),
-		LastActivity: agent.LastActivity(),
-		CreatedAt:    agent.CreatedAt(),
-		ProjectCount: agent.ProjectCount(),
-		Stats:        agent.Stats(),
+		ChatID:         chatID,
+		ThreadID:       threadID,
+		ProjectDir:     agent.ProjectDir(),
+		SessionID:      agent.SessionID(),
+		IsActive:       agent.IsActive(),
+		IsProcessing:   agent.IsProcessing(),
+		Execution:      execution,
+		ExecutionState: string(execution.State),
+		LastActivity:   agent.LastActivity(),
+		CreatedAt:      agent.CreatedAt(),
+		ProjectCount:   agent.ProjectCount(),
+		Stats:          agent.Stats(),
 	}
 }
 
@@ -535,17 +544,20 @@ func (wi *WebInterface) getDetailedStats() DetailedStats {
 
 		// Add to recent agents (limit to 5 most recent)
 		if len(recentAgents) < 5 {
+			execution := agent.ExecutionSnapshot()
 			info := AgentInfo{
-				ChatID:       key.chatID,
-				ThreadID:     key.threadID,
-				ProjectDir:   agent.ProjectDir(),
-				SessionID:    agent.SessionID(),
-				IsActive:     agent.IsActive(),
-				IsProcessing: agent.IsProcessing(),
-				LastActivity: agent.LastActivity(),
-				CreatedAt:    agent.CreatedAt(),
-				ProjectCount: agent.ProjectCount(),
-				Stats:        stats,
+				ChatID:         key.chatID,
+				ThreadID:       key.threadID,
+				ProjectDir:     agent.ProjectDir(),
+				SessionID:      agent.SessionID(),
+				IsActive:       agent.IsActive(),
+				IsProcessing:   agent.IsProcessing(),
+				Execution:      execution,
+				ExecutionState: string(execution.State),
+				LastActivity:   agent.LastActivity(),
+				CreatedAt:      agent.CreatedAt(),
+				ProjectCount:   agent.ProjectCount(),
+				Stats:          stats,
 			}
 			recentAgents = append(recentAgents, info)
 		}

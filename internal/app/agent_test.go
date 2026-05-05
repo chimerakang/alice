@@ -2,15 +2,20 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	appengine "claude-tg-agent/internal/app/engine"
 )
 
 type modelRecordingClient struct {
 	model    string
+	response string
+	err      error
 	calls    []string
 	sessions []string
 	messages []string
@@ -24,9 +29,16 @@ func (c *modelRecordingClient) CallStream(ctx context.Context, message, projectD
 	c.calls = append(c.calls, modelOverride)
 	c.sessions = append(c.sessions, sessionID)
 	c.messages = append(c.messages, message)
+	if c.err != nil {
+		return &CLIResponse{TextContent: "partial", SessionID: "session-" + modelOverride}, c.err
+	}
+	result := c.response
+	if result == "" {
+		result = "ok"
+	}
 	resp := &CLIResponse{
-		Result:       "ok",
-		TextContent:  "ok",
+		Result:       result,
+		TextContent:  result,
 		SessionID:    "session-" + modelOverride,
 		TotalCostUSD: 0,
 	}
@@ -36,7 +48,10 @@ func (c *modelRecordingClient) CallStream(ctx context.Context, message, projectD
 }
 
 func (c *modelRecordingClient) CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
-	return nil, nil
+	if c.err != nil {
+		return nil, c.err
+	}
+	return &CLIResponse{Result: "plan", TextContent: "plan", SessionID: "plan-session"}, nil
 }
 
 func (c *modelRecordingClient) GetModel() string {
@@ -264,6 +279,79 @@ func TestAgentRunInjectsRecentBridgeForOptionLabelFollowUp(t *testing.T) {
 	}
 }
 
+func TestAgentRunSetsAwaitingInputForChoiceResponse(t *testing.T) {
+	client := &modelRecordingClient{
+		model:    "sonnet",
+		response: "接下來合理的後續：(a) 補 service-level 測試；(b) highlight 鄰居並帶入 nodeId。你想先做哪個？",
+	}
+	chatCtx := NewChatContext(1, 0, "/tmp/project")
+	agent := NewAgentWithContext(client, chatCtx)
+
+	if _, err := agent.Run("分析 node graph", nil); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if got := chatCtx.StateSnapshot().State; got != string(appengine.ChatStateAwaitingInput) {
+		t.Fatalf("chat state = %q, want %q", got, appengine.ChatStateAwaitingInput)
+	}
+}
+
+func TestAgentRunUpdatesExecutionLifecycle(t *testing.T) {
+	client := &modelRecordingClient{model: "sonnet"}
+	agent := NewAgent(client, "/tmp/project", 1, 0)
+
+	if _, err := agent.Run("hello", nil); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if agent.IsProcessing() {
+		t.Fatal("IsProcessing after successful Run = true, want false")
+	}
+	snapshot := agent.executionLifecycle().Snapshot()
+	if snapshot.State != appengine.ExecutionStateSucceeded {
+		t.Fatalf("execution state = %q, want %q", snapshot.State, appengine.ExecutionStateSucceeded)
+	}
+	if !snapshot.Terminal {
+		t.Fatal("execution terminal = false, want true")
+	}
+}
+
+func TestAgentRunMarksExecutionFailedOnStreamError(t *testing.T) {
+	client := &modelRecordingClient{model: "sonnet", err: errors.New("boom")}
+	agent := NewAgent(client, "/tmp/project", 1, 0)
+
+	if _, err := agent.Run("hello", nil); err == nil {
+		t.Fatal("Run returned nil error, want failure")
+	}
+	if agent.IsProcessing() {
+		t.Fatal("IsProcessing after failed Run = true, want false")
+	}
+	snapshot := agent.executionLifecycle().Snapshot()
+	if snapshot.State != appengine.ExecutionStateFailed {
+		t.Fatalf("execution state = %q, want %q", snapshot.State, appengine.ExecutionStateFailed)
+	}
+	if !snapshot.Terminal {
+		t.Fatal("execution terminal = false, want true")
+	}
+}
+
+func TestAgentRunWithPlanUpdatesExecutionLifecycle(t *testing.T) {
+	agent := NewAgent(&mockClient{}, "/tmp/project", 1, 0)
+	agent.SetPlanMode(true, "planner", "executor")
+
+	if _, err := agent.RunWithPlan("build a plan", nil); err != nil {
+		t.Fatalf("RunWithPlan returned error: %v", err)
+	}
+	if agent.IsProcessing() {
+		t.Fatal("IsProcessing after successful RunWithPlan = true, want false")
+	}
+	snapshot := agent.executionLifecycle().Snapshot()
+	if snapshot.State != appengine.ExecutionStateSucceeded {
+		t.Fatalf("execution state = %q, want %q", snapshot.State, appengine.ExecutionStateSucceeded)
+	}
+	if !snapshot.Terminal {
+		t.Fatal("execution terminal = false, want true")
+	}
+}
+
 func TestAgentRunKeepsContinuationModelWhenStickyDisabled(t *testing.T) {
 	client := &modelRecordingClient{model: "sonnet"}
 	agent := NewAgent(client, "/tmp/project", 1, 0)
@@ -304,6 +392,124 @@ func TestAgentRunKeepsLastModelForActiveStickySession(t *testing.T) {
 	}
 	if client.calls[1] != "opus" {
 		t.Fatalf("second model = %q, want sticky opus", client.calls[1])
+	}
+}
+
+func TestDecideDirectModel(t *testing.T) {
+	tests := []struct {
+		name       string
+		setup      func(*Agent)
+		message    string
+		wantModel  string
+		wantReason string
+	}{
+		{
+			name: "user override",
+			setup: func(agent *Agent) {
+				agent.SetModelOverride("opus")
+			},
+			message:    "translate this",
+			wantModel:  "opus",
+			wantReason: "user_command",
+		},
+		{
+			name: "sticky session",
+			setup: func(agent *Agent) {
+				agent.lastUsedModel = "opus"
+				agent.current().ctx.SetSession(BackendClaude, "claude-session")
+			},
+			message:    "translate this",
+			wantModel:  "opus",
+			wantReason: "sticky_session",
+		},
+		{
+			name: "follow up inherits current session when sticky disabled",
+			setup: func(agent *Agent) {
+				agent.SetRoutingConfig(ModelRoutingConfig{StickySession: false, SessionIdleTimeoutMin: 5})
+				agent.lastUsedModel = "opus"
+				agent.current().ctx.SetSession(BackendClaude, "claude-session")
+			},
+			message:    "這個也一起修",
+			wantModel:  "opus",
+			wantReason: "follow_up",
+		},
+		{
+			name:       "static rule",
+			message:    "translate this",
+			wantModel:  "haiku",
+			wantReason: "static_rule",
+		},
+		{
+			name:       "default rule",
+			message:    "hello there",
+			wantModel:  "sonnet",
+			wantReason: "default",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			agent := NewAgent(&modelRecordingClient{model: "sonnet"}, "/tmp/project", 1, 0)
+			if tt.setup != nil {
+				tt.setup(agent)
+			}
+			got := agent.decideDirectModel(agent.current(), tt.message)
+			if got.Model != tt.wantModel || got.RoutingReason != tt.wantReason {
+				t.Fatalf("decision = (%q, %q), want (%q, %q)", got.Model, got.RoutingReason, tt.wantModel, tt.wantReason)
+			}
+		})
+	}
+}
+
+func TestDecideDirectSession(t *testing.T) {
+	chatCtx := NewChatContext(1, 0, "/tmp/project")
+	chatCtx.SetSession(BackendClaude, "claude-session")
+	chatCtx.SetSession(BackendCodex, "codex-session")
+	chatCtx.LastBackend = BackendClaude
+	agent := NewAgentWithContext(&modelRecordingClient{model: "sonnet"}, chatCtx)
+
+	claudeDecision := agent.decideDirectSession(agent.current(), "claude-sonnet-4-6")
+	if claudeDecision.Backend != BackendClaude {
+		t.Fatalf("claude backend = %v, want %v", claudeDecision.Backend, BackendClaude)
+	}
+	if claudeDecision.PreviousBackend != BackendClaude {
+		t.Fatalf("previous backend = %v, want %v", claudeDecision.PreviousBackend, BackendClaude)
+	}
+	if claudeDecision.SessionID != "claude-session" || !claudeDecision.HasNativeSession {
+		t.Fatalf("claude session decision = %+v", claudeDecision)
+	}
+
+	codexDecision := agent.decideDirectSession(agent.current(), "gpt-5.5")
+	if codexDecision.Backend != BackendCodex {
+		t.Fatalf("codex backend = %v, want %v", codexDecision.Backend, BackendCodex)
+	}
+	if codexDecision.SessionID != "codex-session" || !codexDecision.HasNativeSession {
+		t.Fatalf("codex session decision = %+v", codexDecision)
+	}
+
+	chatCtx.ClearSession(BackendClaude)
+	freshDecision := agent.decideDirectSession(agent.current(), "claude-opus-4-6")
+	if freshDecision.SessionID != "" || freshDecision.HasNativeSession {
+		t.Fatalf("fresh session decision = %+v", freshDecision)
+	}
+}
+
+func TestDecideDirectRunCombinesModelAndSession(t *testing.T) {
+	chatCtx := NewChatContext(1, 0, "/tmp/project")
+	chatCtx.SetSession(BackendCodex, "codex-session")
+	chatCtx.LastBackend = BackendClaude
+	agent := NewAgentWithContext(&modelRecordingClient{model: "sonnet"}, chatCtx)
+	agent.SetModelOverride("gpt-5.5")
+
+	decision := agent.decideDirectRun(agent.current(), "translate this")
+	if decision.Model != "gpt-5.5" || decision.RoutingReason != "user_command" {
+		t.Fatalf("model decision = (%q, %q), want (gpt-5.5, user_command)", decision.Model, decision.RoutingReason)
+	}
+	if decision.Backend != BackendCodex || decision.PreviousBackend != BackendClaude {
+		t.Fatalf("backend decision = (%v, prev %v), want (%v, prev %v)", decision.Backend, decision.PreviousBackend, BackendCodex, BackendClaude)
+	}
+	if decision.SessionID != "codex-session" || !decision.HasNativeSession {
+		t.Fatalf("session decision = %+v", decision)
 	}
 }
 

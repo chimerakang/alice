@@ -383,7 +383,8 @@ func truncate(s string, n int) string {
 func renderSummary(reports []runReport) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Spike #149 Go Results\n\nModel: `%s`  Workdir: `%s`  Sub-tasks: %d\n\n", reports[0].Model, reports[0].Workdir, len(subTasks))
-	fmt.Fprintln(&b, "\n## Per-mode totals\n")
+	fmt.Fprintln(&b, "## Per-mode totals")
+	fmt.Fprintln(&b)
 	fmt.Fprintln(&b, "| Mode | Calls | Total cost | Total input | cache_read | cache_write (5m / 1h) | Output | Wallclock |")
 	fmt.Fprintln(&b, "|---|---|---|---|---|---|---|---|")
 	for _, r := range reports {
@@ -413,7 +414,9 @@ func renderSummary(reports []runReport) string {
 		if baseline != nil && walking != nil && baseline.totalCost() > 0 {
 			cd := (baseline.totalCost() - walking.totalCost()) / baseline.totalCost() * 100
 			ld := float64(baseline.totalDurationMs()-walking.totalDurationMs()) / float64(maxInt(baseline.totalDurationMs(), 1)) * 100
-			fmt.Fprintln(&b, "\n## Walking vs baseline\n")
+			fmt.Fprintln(&b)
+			fmt.Fprintln(&b, "## Walking vs baseline")
+			fmt.Fprintln(&b)
 			fmt.Fprintf(&b, "- Cost: **%+.1f%%** (walking %s)\n", cd, ifThen(cd > 0, "cheaper", "more expensive"))
 			fmt.Fprintf(&b, "- Wallclock: **%+.1f%%**\n", ld)
 		}

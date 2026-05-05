@@ -49,30 +49,13 @@ func (c TaskRetryConfig) WithDefaults() TaskRetryConfig {
 // the task based on the review result. attempt is the zero-based index
 // of the just-completed attempt (0 = first run).
 func shouldRetryTask(review ReviewResult, cfg TaskRetryConfig, attempt int) bool {
-	if !cfg.Enabled {
-		return false
-	}
-	cfg = cfg.WithDefaults()
-	if attempt >= cfg.MaxTaskRetries {
-		return false
-	}
-	// An empty verdict means the reviewer didn't actually run / didn't
-	// conclude — the most common cause is plan length < ReviewMinSubTasks,
-	// in which case runReview returns ReviewResult{} with no error. That's
-	// "review was skipped", not "review said fail". Triggering a re-plan
-	// here would wipe all completed sub-tasks based on a non-result; the
-	// user reported this as "重審不通過 verdict=, 0/100 — 自動 re-plan
-	// 重新執行" with a 1-sub-task plan that didn't need review.
-	if review.Verdict == "" {
-		return false
-	}
-	if review.Verdict == VerdictFail {
-		return true
-	}
-	if review.OverallScore < cfg.ScoreThreshold {
-		return true
-	}
-	return false
+	decision := DecideRecovery(RecoveryRequest{
+		Mode:      "task_review",
+		Attempt:   attempt,
+		Review:    review,
+		TaskRetry: cfg,
+	})
+	return decision.Action == RecoveryActionRetry
 }
 
 // buildReplanGoal augments the original goal with a structured

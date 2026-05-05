@@ -419,7 +419,7 @@ type Agent struct {
 	// Abort control
 	cancelFunc context.CancelFunc // 取消正在執行的 CLI 子程序
 	cancelMu   sync.Mutex         // 保護 cancelFunc 的併發存取
-	processing bool               // 是否正在處理請求
+	execution  *appengine.ExecutionLifecycle
 
 	// Per-call metrics — populated at the end of every Run/runDirect.
 	// Read via LastCallMetrics() so PlanExecuteEngine can attribute Executor
@@ -469,7 +469,42 @@ func NewAgentWithContext(client Client, chatCtx *ChatContext) *Agent {
 		chatContext:        chatCtx,
 		stickySession:      true,
 		sessionIdleTimeout: 5 * time.Minute,
+		execution:          appengine.NewExecutionLifecycle(),
 	}
+}
+
+func (a *Agent) executionLifecycle() *appengine.ExecutionLifecycle {
+	if a.execution == nil {
+		a.execution = appengine.NewExecutionLifecycle()
+	}
+	return a.execution
+}
+
+func (a *Agent) transitionExecution(to appengine.ExecutionState, reason string) {
+	if err := a.executionLifecycle().Transition(to, reason); err == nil {
+		return
+	}
+	switch to {
+	case appengine.ExecutionStateStarting:
+		snapshot := a.executionLifecycle().Snapshot()
+		if snapshot.Terminal {
+			_ = a.executionLifecycle().Transition(appengine.ExecutionStateStarting, reason)
+		}
+	case appengine.ExecutionStateStreaming:
+		_ = a.executionLifecycle().Transition(appengine.ExecutionStateStarting, reason+"_start")
+		_ = a.executionLifecycle().Transition(appengine.ExecutionStateStreaming, reason)
+	}
+}
+
+func (a *Agent) finishExecutionError(err error, reason string) {
+	if err == nil {
+		return
+	}
+	if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "agent aborted by user") {
+		a.transitionExecution(appengine.ExecutionStateCancelled, reason+"_cancelled")
+		return
+	}
+	a.transitionExecution(appengine.ExecutionStateFailed, reason+"_failed")
 }
 
 // Abort 中斷正在執行的 agent 任務，回傳是否成功中斷
@@ -477,6 +512,7 @@ func (a *Agent) Abort() bool {
 	a.cancelMu.Lock()
 	defer a.cancelMu.Unlock()
 	if a.cancelFunc != nil {
+		a.transitionExecution(appengine.ExecutionStateCancelling, "agent_abort")
 		a.cancelFunc()
 		a.cancelFunc = nil
 		return true
@@ -488,7 +524,13 @@ func (a *Agent) Abort() bool {
 func (a *Agent) IsProcessing() bool {
 	a.cancelMu.Lock()
 	defer a.cancelMu.Unlock()
-	return a.processing
+	return a.executionLifecycle().IsProcessing()
+}
+
+func (a *Agent) ExecutionSnapshot() appengine.ExecutionSnapshot {
+	a.cancelMu.Lock()
+	defer a.cancelMu.Unlock()
+	return a.executionLifecycle().Snapshot()
 }
 
 // SetModelOverride 設定此 agent 的模型覆蓋（用於動態路由）
@@ -559,6 +601,51 @@ func (a *Agent) expireIdleStickySession(ps *projectState, now time.Time) {
 	ps.ctx.ClearSession(BackendKindForModel(a.lastUsedModel))
 	ps.ctx.RecentMsgs = nil
 	a.lastUsedModel = ""
+}
+
+func (a *Agent) decideDirectModel(ps *projectState, userMessage string) appengine.SessionRunDecision {
+	req := appengine.SessionRunRequest{
+		OverrideModel:     a.currentModelOverride,
+		StickyModel:       a.activeStickyModel(ps),
+		ContinuationModel: a.activeContinuationModel(ps, userMessage),
+		DefaultModel:      a.client.GetModel(),
+	}
+	if req.OverrideModel == "" && req.StickyModel == "" && req.ContinuationModel == "" {
+		startRouting := time.Now()
+		req.RoutedModel, req.RoutedReason = a.selectModel(userMessage)
+		req.RoutedLatencyMS = int(time.Since(startRouting).Milliseconds())
+	}
+	return appengine.DecideSessionRun(req)
+}
+
+func (a *Agent) decideDirectSession(ps *projectState, selectedModel string) appengine.SessionRunDecision {
+	req := appengine.SessionRunRequest{
+		OverrideModel: selectedModel,
+	}
+	if ps != nil && ps.ctx != nil {
+		req.PreviousBackend = ps.ctx.LastBackend
+		req.BackendSessions = ps.ctx.Sessions
+	}
+	return appengine.DecideSessionRun(req)
+}
+
+func (a *Agent) decideDirectRun(ps *projectState, userMessage string) appengine.SessionRunDecision {
+	req := appengine.SessionRunRequest{
+		OverrideModel:     a.currentModelOverride,
+		StickyModel:       a.activeStickyModel(ps),
+		ContinuationModel: a.activeContinuationModel(ps, userMessage),
+		DefaultModel:      a.client.GetModel(),
+	}
+	if ps != nil && ps.ctx != nil {
+		req.PreviousBackend = ps.ctx.LastBackend
+		req.BackendSessions = ps.ctx.Sessions
+	}
+	if req.OverrideModel == "" && req.StickyModel == "" && req.ContinuationModel == "" {
+		startRouting := time.Now()
+		req.RoutedModel, req.RoutedReason = a.selectModel(userMessage)
+		req.RoutedLatencyMS = int(time.Since(startRouting).Milliseconds())
+	}
+	return appengine.DecideSessionRun(req)
 }
 
 // opusPlanPrompt 產生計劃階段的 prompt 包裝
@@ -736,60 +823,39 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	}
 	a.cancelMu.Lock()
 	a.cancelFunc = cancel
-	a.processing = true
+	a.transitionExecution(appengine.ExecutionStateStarting, "agent_run")
 	a.cancelMu.Unlock()
 	defer func() {
 		a.cancelMu.Lock()
 		a.cancelFunc = nil
-		a.processing = false
 		a.cancelMu.Unlock()
 		cancel()
 	}()
 
 	ps := a.current()
+	_ = ps.ctx.TransitionState(appengine.ChatStateBusy, "agent_run")
+	finalChatState := appengine.ChatStateIdle
+	defer func() {
+		_ = ps.ctx.TransitionState(finalChatState, "agent_run_done")
+	}()
 	a.expireIdleStickySession(ps, startTime)
 
-	// Handle model selection with three-tier routing priority
-	var routingReason string
-	var routingLatency int
-	selectedModel := ""
-
-	// Priority 1: User command override
-	if a.currentModelOverride != "" {
-		selectedModel = a.currentModelOverride
-		routingReason = "user_command"
-		routingLatency = 0
-	} else if a.activeStickyModel(ps) != "" {
-		// Sticky session fallback for non-Telegram callers or Telegram paths that
-		// intentionally leave override empty for a follow-up turn.
-		selectedModel = a.activeStickyModel(ps)
-		routingReason = "sticky_session"
-		routingLatency = 0
-	} else if a.activeContinuationModel(ps, userMessage) != "" {
-		selectedModel = a.activeContinuationModel(ps, userMessage)
-		routingReason = "follow_up"
-		routingLatency = 0
-	} else {
-		// Priority 2: Static rules-based routing
-		startRouting := time.Now()
-		selectedModel, routingReason = a.selectModel(userMessage)
-		routingLatency = int(time.Since(startRouting).Milliseconds())
+	runDecision := a.decideDirectRun(ps, userMessage)
+	selectedModel := runDecision.Model
+	routingReason := runDecision.RoutingReason
+	routingLatency := runDecision.LatencyMS
+	if routingReason == "static_rule" || routingReason == "default" {
 		msgPreview := userMessage
 		if len(msgPreview) > 50 {
 			msgPreview = msgPreview[:50]
 		}
 		log.Printf("[telegram] model routing: message=%q selected=%s reason=%s latency=%dms", msgPreview, selectedModel, routingReason, routingLatency)
 	}
-
-	if selectedModel == "" {
-		selectedModel = a.client.GetModel() // Use default if no model selected
-		routingReason = "default"
-	}
 	if onUpdate != nil {
 		onUpdate(processingStatusForModel(selectedModel), false)
 	}
-	selectedBackend := BackendKindForModel(selectedModel)
-	previousBackend := ps.ctx.LastBackend
+	selectedBackend := runDecision.Backend
+	previousBackend := runDecision.PreviousBackend
 
 	// If model changed, bridge recent messages. Native sessions are kept per
 	// backend; same-backend model changes still start a fresh session.
@@ -831,7 +897,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		}
 	}
 
-	sessionID := ps.ctx.Session(selectedBackend)
+	sessionID := runDecision.SessionID
 	log.Printf("[agent] calling CLI (stream), session=%s, project=%s, model=%s routing_reason=%s", sessionID, a.projectDir, a.lastUsedModel, routingReason)
 
 	// Pre-generate decision ID so checkpoints created during streaming
@@ -847,7 +913,14 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			backoff := time.Duration(attempt*15) * time.Second
+			a.transitionExecution(appengine.ExecutionStateRetrying, "agent_retry")
+			recovery := appengine.DecideRecovery(appengine.RecoveryRequest{
+				Mode:        "direct_stream",
+				Attempt:     attempt - 1,
+				MaxAttempts: maxRetries,
+				ErrorText:   err.Error(),
+			})
+			backoff := recovery.RetryAfter
 			log.Printf("[agent] retry %d/%d after %v (previous error: %v)", attempt, maxRetries, backoff, err)
 			if onUpdate != nil {
 				onUpdate(fmt.Sprintf("🔄 重試中 (%d/%d)...", attempt, maxRetries), false)
@@ -860,6 +933,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 			toolCallsForDecision = nil
 		}
 
+		a.transitionExecution(appengine.ExecutionStateStreaming, "agent_stream")
 		resp, userMessage, sessionID, err = a.callStreamWithResumeBridge(ctx, ps, userMessage, selectedBackend, sessionID, a.lastUsedModel, func(toolName string, toolInput map[string]interface{}) {
 			// Check if we should create a checkpoint before executing this tool
 			a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
@@ -899,7 +973,13 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 			break
 		}
 
-		if isRetryableError(err) && attempt < maxRetries {
+		recovery := appengine.DecideRecovery(appengine.RecoveryRequest{
+			Mode:        "direct_stream",
+			Attempt:     attempt,
+			MaxAttempts: maxRetries,
+			ErrorText:   err.Error(),
+		})
+		if recovery.Action == appengine.RecoveryActionRetry {
 			log.Printf("[agent] retryable error detected: %v", err)
 			if resp != nil && resp.SessionID != "" {
 				ps.ctx.SetSession(selectedBackend, resp.SessionID)
@@ -930,6 +1010,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 			ps.ctx.LastActivity = time.Now()
 		}
 		a.logDecision(userMessage, partialText, toolCallsForDecision, startTime, resp, err, routingReason, routingLatency, deltaCost)
+		a.finishExecutionError(err, "agent_run")
 		return partialText, fmt.Errorf("CLI call failed: %w", err)
 	}
 
@@ -960,9 +1041,13 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 
 	// Save exchange to recentMessages for context bridge on future model switches
 	addToRecentMessages(ps, originalUserMessage, resp.Result)
+	if appengine.AssistantAwaitsInput(resp.Result) {
+		finalChatState = appengine.ChatStateAwaitingInput
+	}
 
 	a.recordLastCallMetrics(a.lastUsedModel, resp.Usage.InputTokens, resp.Usage.OutputTokens, deltaCost)
 	a.recordLastCallCacheMetrics(resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
+	a.transitionExecution(appengine.ExecutionStateSucceeded, "agent_run_succeeded")
 
 	return resp.Result, nil
 }
@@ -1053,17 +1138,15 @@ func (a *Agent) resolveAgentMemoryBridge(ctx context.Context, ps *projectState, 
 	if ps == nil || ps.ctx == nil {
 		return ""
 	}
-	// In direct resume/model-switch bridges, the only context we can trust is
-	// RecentMessages from the in-memory chat. Pulling general_task / static_hint
-	// via semantic search here is actively harmful: short follow-up prompts
-	// ("好，繼續") have weak embedding signal and can surface unrelated past
-	// decisions, which the model then treats as the live request. See issues
-	// #145 and #146.
-	var resolver *UnifiedMemoryResolver
-	if mode == "direct_resume_fallback" || mode == "direct_model_switch" || mode == "direct_continuation" {
-		resolver = NewMemoryResolver(nil)
-	} else {
-		resolver = NewMemoryResolverWithAllSources(nil, globalGeneralMemorySource(), defaultStaticHintSourceForProject(ps.ctx.ProjectDir))
+	_, hasIssueScope := ParseIssueNumber(userMessage)
+	decision := appengine.DecideSessionPolicy(appengine.SessionPolicyRequest{
+		Mode:          mode,
+		HasIssueScope: hasIssueScope,
+	})
+	resolver := newMemoryResolverForSessionPolicy(nil, ps.ctx.ProjectDir, decision)
+	recentMessages := ps.ctx.RecentMessagesSnapshot()
+	if !decision.AllowRecentMemory {
+		recentMessages = nil
 	}
 	bundle, err := resolver.Resolve(ctx, MemoryRequest{
 		ChatID:         ps.ctx.ChatID,
@@ -1072,7 +1155,7 @@ func (a *Agent) resolveAgentMemoryBridge(ctx context.Context, ps *projectState, 
 		UserMessage:    userMessage,
 		Mode:           mode,
 		BudgetChars:    defaultMemoryBudgetChars,
-		RecentMessages: ps.ctx.RecentMessagesSnapshot(),
+		RecentMessages: recentMessages,
 	})
 	if err != nil {
 		log.Printf("[agent] memory bridge resolve failed mode=%s chat=%d thread=%d: %v", mode, ps.ctx.ChatID, ps.ctx.ThreadID, err)
@@ -1107,12 +1190,11 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 	}
 	a.cancelMu.Lock()
 	a.cancelFunc = cancel
-	a.processing = true
+	a.transitionExecution(appengine.ExecutionStateStarting, "agent_plan_run")
 	a.cancelMu.Unlock()
 	defer func() {
 		a.cancelMu.Lock()
 		a.cancelFunc = nil
-		a.processing = false
 		a.cancelMu.Unlock()
 		cancel()
 	}()
@@ -1186,11 +1268,21 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 	result, err := engine.Run(ctx, userMessage, a.chatContext, nil)
 	if err != nil {
 		log.Printf("[agent] plan/execute via PlanExecuteEngine failed: %v", err)
+		recovery := appengine.DecideRecovery(appengine.RecoveryRequest{
+			Mode:      "plan_execute",
+			ErrorText: err.Error(),
+			Fallback:  "direct",
+		})
 		if onUpdate != nil {
 			onUpdate("⚠️ Plan phase failed, falling back to direct execution...", false)
 		}
-		return a.runDirect(ctx, userMessage, onUpdate, startTime)
+		if recovery.Action == appengine.RecoveryActionFallback {
+			return a.runDirect(ctx, userMessage, onUpdate, startTime)
+		}
+		a.finishExecutionError(err, "agent_plan_run")
+		return "", err
 	}
+	a.transitionExecution(appengine.ExecutionStateSucceeded, "agent_plan_run_succeeded")
 	return result.Text, nil
 }
 
@@ -1262,6 +1354,7 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 
 	sessionID := ps.ctx.Session(selectedBackend)
 	log.Printf("[agent] runDirect: session=%s, project=%s, model=%s", sessionID, a.projectDir, selectedModel)
+	a.transitionExecution(appengine.ExecutionStateStreaming, "agent_run_direct_stream")
 
 	currentDecisionID := generateDecisionID(a.chatID, a.threadID, startTime)
 	var toolCallsForDecision []ToolExecution
@@ -1307,6 +1400,7 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 			ps.ctx.LastActivity = time.Now()
 		}
 		a.logDecision(userMessage, partialText, toolCallsForDecision, startTime, resp, err, "opus_plan_fallback", 0, deltaCost)
+		a.finishExecutionError(err, "agent_run_direct")
 		return partialText, fmt.Errorf("CLI call failed: %w", err)
 	}
 
@@ -1325,23 +1419,14 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 
 	a.recordLastCallMetrics(selectedModel, resp.Usage.InputTokens, resp.Usage.OutputTokens, deltaCost)
 	a.recordLastCallCacheMetrics(resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
+	a.transitionExecution(appengine.ExecutionStateSucceeded, "agent_run_direct_succeeded")
 
 	return resp.Result, nil
 }
 
 // isRetryableError determines if a CLI error is transient and worth retrying.
 func isRetryableError(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := err.Error()
-	return strings.Contains(s, "rate limit") ||
-		strings.Contains(s, "429") ||
-		strings.Contains(s, "overloaded") ||
-		strings.Contains(s, "529") ||
-		strings.Contains(s, "temporary") ||
-		strings.Contains(s, "connection reset") ||
-		strings.Contains(s, "EOF")
+	return appengine.IsRetryableRecoveryError(err)
 }
 
 // addToRecentMessages 儲存最近一輪對話（最多保留 5 輪）

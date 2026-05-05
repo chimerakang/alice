@@ -12,10 +12,7 @@
 //	(new) ──> planning
 //	planning ──> executing
 //	planning ──> done | failed | interrupted     (plan-phase early exit)
-//	executing ──> validating
 //	executing ──> done | failed | interrupted
-//	validating ──> executing                     (review sends sub-task back)
-//	validating ──> done | failed | interrupted
 //	done       ──> (terminal)
 //	failed     ──> (terminal)
 //	interrupted ──> (terminal)
@@ -28,7 +25,7 @@
 //
 // The hermes.TaskStatus string values are identical to the `status` column
 // in the unified `tasks` table. No transformation is required; both sides
-// use: "planning", "executing", "validating", "done", "failed", "interrupted".
+// use: "planning", "executing", "done", "failed", "interrupted".
 // Similarly, hermes.SubTaskStatus maps directly to the `sub_tasks.status`
 // column: "pending", "in_progress", "done", "failed", "skipped".
 //

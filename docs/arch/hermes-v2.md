@@ -1,5 +1,11 @@
 # Hermes v2 設計藍圖（Phase 2）
 
+> Status update, 2026-05-05: this document remains useful for Hermes-specific
+> cost and retry ideas, but the broader architecture is now defined in
+> [agent-fsm-architecture.md](agent-fsm-architecture.md). Hermes v2 work should
+> be implemented as Task Agent slices, not as a Hermes-owned chat/session
+> redesign.
+
 延伸 [hermes-walking-agent.md](hermes-walking-agent.md)（Phase A / Phase 1）。本文涵蓋 issue #149 scope tree 中的 **B**：在 walking-agent 落地後，把 Hermes 整體運作再壓縮一輪。屬於藍圖性質——具體實作會依 Phase 1 的真實量測決定優先序。
 
 不在本文範圍：scope tree 中的 **C**（sub-task 平行化、loop coordinator、跨 chat session pool）。那是更遠期的探索。

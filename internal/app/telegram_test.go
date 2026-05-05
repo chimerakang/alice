@@ -3063,4 +3063,26 @@ func TestAbortActiveTaskInterruptsRunningHermesCoordinator(t *testing.T) {
 	if coord.interruptFrom != 12345 {
 		t.Fatalf("interrupt message id = %d, want 12345", coord.interruptFrom)
 	}
+	if got := bot.getChatContext(key, "").StateSnapshot().State; got != string(appengine.ChatStateInterrupting) {
+		t.Fatalf("chat state = %q, want %q", got, appengine.ChatStateInterrupting)
+	}
+}
+
+func TestAbortActiveTaskMarksAgentInterrupting(t *testing.T) {
+	key := chatKey{chatID: 77, threadID: 3}
+	agent := NewAgent(&mockClient{}, "/repo", key.chatID, key.threadID)
+	agent.transitionExecution(appengine.ExecutionStateStarting, "test_busy")
+	bot := &TelegramBot{
+		config:       &Config{DefaultProjectDir: "/repo"},
+		agents:       map[chatKey]*Agent{key: agent},
+		chatContexts: map[chatKey]*ChatContext{key: agent.current().ctx},
+		hermesCoords: map[chatKey]*hermesCoord{},
+	}
+
+	if got := bot.abortActiveTask(key, 0); got != abortTaskFinished {
+		t.Fatalf("abortActiveTask result = %v, want %v", got, abortTaskFinished)
+	}
+	if got := agent.current().ctx.StateSnapshot().State; got != string(appengine.ChatStateInterrupting) {
+		t.Fatalf("chat state = %q, want %q", got, appengine.ChatStateInterrupting)
+	}
 }

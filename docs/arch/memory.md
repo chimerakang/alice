@@ -12,6 +12,11 @@ target layering, and the first implementation boundary.
 - Reduce repeated rediscovery while still allowing targeted verification.
 - Make later observability straightforward by carrying source and scope metadata.
 
+MemoryResolver does not own backend session lifecycle. Under the current
+[agent/FSM runtime architecture](agent-fsm-architecture.md), MemoryResolver
+returns scoped prompt sections; the Session Agent decides whether the next model
+call uses native resume, memory injection, both, or neither.
+
 ## Memory Layers
 
 | Layer | Current Source | Lifecycle | Inject When | Stale / Invalid When | Budget Rule |

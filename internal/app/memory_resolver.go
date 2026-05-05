@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	appengine "claude-tg-agent/internal/app/engine"
 	"claude-tg-agent/internal/app/hermes"
 )
 
@@ -135,6 +136,18 @@ func NewMemoryResolverWithSources(tasks hermesMemoryTaskSource, general generalM
 
 func NewMemoryResolverWithAllSources(tasks hermesMemoryTaskSource, general generalMemorySource, static staticHintSource) *UnifiedMemoryResolver {
 	return &UnifiedMemoryResolver{tasks: tasks, general: general, static: static}
+}
+
+func newMemoryResolverForSessionPolicy(taskSource hermesMemoryTaskSource, projectDir string, decision appengine.SessionPolicyDecision) *UnifiedMemoryResolver {
+	var general generalMemorySource
+	if decision.AllowGeneralMemory {
+		general = globalGeneralMemorySource()
+	}
+	var static staticHintSource
+	if decision.AllowStaticHints {
+		static = defaultStaticHintSourceForProject(projectDir)
+	}
+	return NewMemoryResolverWithAllSources(taskSource, general, static)
 }
 
 func defaultStaticHintSourceForProject(projectDir string) staticHintSource {

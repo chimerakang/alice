@@ -418,7 +418,7 @@ func TestHandleRetryCommandIndexLowScoreExecutesRetry(t *testing.T) {
 func TestRunSubTaskRetryReturnsBusyWhenAgentAlreadyProcessing(t *testing.T) {
 	key := chatKey{chatID: 42, threadID: 7}
 	agent := NewAgent(&retryCommandTestClient{}, "/repo", key.chatID, key.threadID)
-	agent.processing = true
+	agent.transitionExecution(appengine.ExecutionStateStarting, "test_busy")
 	bot := &TelegramBot{
 		config:       &Config{DefaultProjectDir: "/repo"},
 		agents:       map[chatKey]*Agent{key: agent},
