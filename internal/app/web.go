@@ -109,6 +109,7 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/decisions/sources/stats", wi.handleSourceStats)
 	mux.HandleFunc("/api/decisions/sources/performance", wi.handleSourcePerformance)
 	mux.HandleFunc("/api/tasks", wi.handleUnifiedTasks)
+	mux.HandleFunc("/api/runtime/events", wi.handleRuntimeEvents)
 	mux.HandleFunc("/api/memory/preview", wi.handleMemoryPreview)
 	mux.HandleFunc("/api/quality/decomposition", wi.handleQualityDecomposition)
 	mux.HandleFunc("/api/quality/scores", wi.handleQualityScores)
@@ -970,6 +971,51 @@ func (wi *WebInterface) handleRecentDecisions(w http.ResponseWriter, r *http.Req
 	})(w, r)
 }
 
+func (wi *WebInterface) handleRuntimeEvents(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalStorage == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Storage is unavailable",
+			})
+			return
+		}
+
+		query := r.URL.Query()
+		limit := parsePositiveIntParam(query.Get("limit"), 50)
+		offset := parsePositiveIntParam(query.Get("offset"), 0)
+		eventType := strings.TrimSpace(query.Get("type"))
+
+		var (
+			events []RuntimeEventRecord
+			err    error
+		)
+		if eventType != "" {
+			events, err = globalStorage.GetRuntimeEventsByType(eventType, limit)
+		} else {
+			events, err = globalStorage.GetRuntimeEvents(limit, offset)
+		}
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"events":    events,
+			"total":     len(events),
+			"limit":     limit,
+			"offset":    offset,
+			"type":      eventType,
+			"timestamp": time.Now(),
+		})
+	})(w, r)
+}
+
 // handleUnifiedTasks returns task-centric execution graphs from the transitional
 // #114 schema: tasks -> sub_tasks -> tool_events/artifacts/reviews.
 func (wi *WebInterface) handleUnifiedTasks(w http.ResponseWriter, r *http.Request) {
@@ -1247,6 +1293,13 @@ func parseAPITime(value string) (time.Time, error) {
 		return parsed, nil
 	}
 	return time.Parse("2006-01-02T15:04:05Z", value)
+}
+
+func parsePositiveIntParam(value string, fallback int) int {
+	if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+		return parsed
+	}
+	return fallback
 }
 
 // handleDecisionsRange returns decision logs within a specified time range
