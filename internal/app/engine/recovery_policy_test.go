@@ -194,3 +194,13 @@ func TestDecideRecoveryAllowsPassingStrictReview(t *testing.T) {
 		t.Fatalf("Reason = %q, want strict_review_allowed", decision.Reason)
 	}
 }
+
+func TestDecideRecoveryCancelsOnWatchdogContextDone(t *testing.T) {
+	decision := DecideRecovery(RecoveryRequest{Mode: "watchdog_cancel"})
+	if decision.Action != RecoveryActionCancel || !decision.Terminal {
+		t.Fatalf("decision = %+v, want terminal cancel", decision)
+	}
+	if decision.Reason != "watchdog_context_done" {
+		t.Fatalf("Reason = %q, want watchdog_context_done", decision.Reason)
+	}
+}

@@ -11,6 +11,7 @@ const (
 	RecoveryActionNone     RecoveryAction = "none"
 	RecoveryActionRetry    RecoveryAction = "retry"
 	RecoveryActionFallback RecoveryAction = "fallback"
+	RecoveryActionCancel   RecoveryAction = "cancel"
 	RecoveryActionFail     RecoveryAction = "fail"
 )
 
@@ -43,6 +44,8 @@ func DecideRecovery(req RecoveryRequest) RecoveryDecision {
 			return decideSubTaskRetryRecovery(req)
 		case "strict_review":
 			return decideStrictReviewRecovery(req)
+		case "watchdog_cancel":
+			return decideWatchdogCancelRecovery(req)
 		}
 		return RecoveryDecision{Action: RecoveryActionNone, Reason: "no_error"}
 	}
@@ -142,6 +145,14 @@ func decideStrictReviewRecovery(req RecoveryRequest) RecoveryDecision {
 		Action:   RecoveryActionNone,
 		Terminal: true,
 		Reason:   "max_strict_review_retries_reached",
+	}
+}
+
+func decideWatchdogCancelRecovery(req RecoveryRequest) RecoveryDecision {
+	return RecoveryDecision{
+		Action:   RecoveryActionCancel,
+		Terminal: true,
+		Reason:   "watchdog_context_done",
 	}
 }
 

@@ -725,7 +725,8 @@ func (t *TelegramBot) runRetryDirectWithWatchdog(ctx context.Context, agent *Age
 	case outcome := <-done:
 		return outcome.result, outcome.err
 	case <-ctx.Done():
-		if agent != nil {
+		decision := appengine.DecideRecovery(appengine.RecoveryRequest{Mode: "watchdog_cancel"})
+		if decision.Action == appengine.RecoveryActionCancel && agent != nil {
 			agent.Abort()
 		}
 		select {
