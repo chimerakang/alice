@@ -1,7 +1,7 @@
 # Master Tasks
 
 > Auto-generated from GitHub Issues.
-> Last updated: 2026-05-02
+> Last updated: 2026-05-05
 > Run `/task-sync` to regenerate.
 
 ## Status Legend
@@ -27,7 +27,7 @@
 | P12 - Dashboard Analytics | Claude Code Hooks UI 增強：統計圖表 + 用戶指南 | 100% (1/1) | ✅ |
 | P13 - Future Enhancements | 未來功能增強與優化 | 62% (23/37) | 🔄 |
 | P14 - Commercialization Strategy | Alice AI Agent 商業化發展策略與產品定位 | 0% (0/6) | 🔄 |
-| P15 - Hermes Stabilization & Cleanup | Hermes v2 stabilization, memory isolation, token observability, routing cleanup, and execution-engine consolidation. | 0% (0/5) | 🔄 |
+| P15 - Hermes Stabilization & Cleanup | Hermes v2 stabilization, memory isolation, token observability, routing cleanup, and execution-engine consolidation. | 71% (5/7) | 🔄 |
 | P15 - Parallel Subagents & Orchestration | Implementation of parallel subagent execution with isolated contexts, tool-level parallelism, and orchestration | 91% (11/12) | 🔄 |
 | P16 - Multi-Backend Execution | Support for multiple execution backends: Local, Docker, SSH | 100% (1/1) | ✅ |
 | P2 - Monitoring | Web Dashboard + API + 監控系統 | 100% (7/7) | ✅ |
@@ -663,7 +663,8 @@
 | | — 新增資料庫 prototypes 表和 CRUD 操作 | | ☐ |
 | | — 新增 i18n 訊息（zh-TW.json, en.json） | | ☐ |
 | | — 撰寫測試 | | ☐ |
-| | — 更新 CLAUDE.md 文檔 | | ☐ |
+| | — 更新 CLAUDE.md 文檔 | | ✅ |
+| | — Issue #92 全 12 項 checklist 實作完成並驗證綠燈，無剩餘工作；輸出一句話狀態報告表示 #92 實作完成、issue 仍為 OPEN，等待使用者明訓授權才進行 commit / push / `gh issue close 92`，不進行任何 git 或 GitHub 寫入操作 | | ✅ |
 | P13.35 | **Model routing 造成 session context 丟失：改採 Sticky + Follow-up detection** | [#93](https://github.com/chimerakang/alice/issues/93) | ✅ |
 | | — [agent.go](../blob/main/internal/app/agent.go) — 重構 model routing 邏輯，加入 sticky 判斷 | | ☐ |
 | | — [agent.go](../blob/main/internal/app/agent.go) — 重寫 \`isContinuationMessage()\` | | ☐ |
@@ -963,12 +964,12 @@
 | | — 客戶付款延遲：建立付款保障機制 | | ☐ |
 | | — 投資回報不佳：設定止損線 | | ☐ |
 
-## P15 - Hermes Stabilization & Cleanup (🔄 0%)
+## P15 - Hermes Stabilization & Cleanup (🔄 71%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
-| P15.1 | **[Refactor 階段⑥] 拆掉舊 Coordinator / DecisionLog / hermes_bridge 收尾** | [#115](https://github.com/chimerakang/alice/issues/115) | 🔄 |
-| P15.2 | **[Epic] Alice 架構統一：ExecutionEngine + Review 反饋機制（6-8 週）** | [#120](https://github.com/chimerakang/alice/issues/120) | 🔄 |
+| P15.1 | **Post-stabilization cleanup: retire legacy coordinator / DecisionLog bridge** | [#115](https://github.com/chimerakang/alice/issues/115) | 🔄 |
+| P15.2 | **[Closed/Superseded Epic] Alice architecture unification: ExecutionEngine + Review feedback** | [#120](https://github.com/chimerakang/alice/issues/120) | ✅ |
 | | — #116 hermes_tasks schema 缺 budget 欄位 | | ✅ |
 | | — #117 Pre-Planner skip 多動詞訊息應走 Planner | | ✅ |
 | | — #118 Hermes 啟用時 #N 引用應 auto-fetch issue body | | ✅ |
@@ -987,7 +988,7 @@
 | | — **#124** ReviewPhase Phase 2: StrictReviewMode（硬 BLOCK + 對手 backend 互審 + auto-trigger，**P2，8 天**） | | ☐ |
 | | — #113 階段⑤ ChatRouter | | ☐ |
 | | — #115 階段⑥ 拆舊收尾（依賴 #110-#112 全部 close） | | ☐ |
-| P15.3 | **建立 Alice Unified Memory Architecture** | [#143](https://github.com/chimerakang/alice/issues/143) | 🔄 |
+| P15.3 | **建立 Alice Unified Memory Architecture** | [#143](https://github.com/chimerakang/alice/issues/143) | ✅ |
 | | — 有 `docs/arch/memory.md` 描述現有與目標 memory 架構。 | | ☐ |
 | | — 定義 `MemoryResolver` 或等價統一入口，至少能組合 recent messages + Hermes TaskState + issue-scoped memory。 | | ☐ |
 | | — Hermes issue follow-up、一般 direct follow-up、文件分析 follow-up 都能透過同一套 memory policy 取得上下文。 | | ☐ |
@@ -1012,15 +1013,15 @@
 | | — MemoryResolver 可讀取 general task memory。 | | ☐ |
 | | — Dashboard 或 API 可檢視 memory source、scope、updated_at、preview。 | | ☐ |
 | | — Debug log 能看到本次注入了哪些 memory sections 與裁切後大小。 | | ☐ |
-| P15.4 | **Hermes mode 架構精簡：路由規則、狀態機、訊息流** | [#144](https://github.com/chimerakang/alice/issues/144) | 🔄 |
+| P15.4 | **Hermes mode 架構精簡：路由規則、狀態機、訊息流** | [#144](https://github.com/chimerakang/alice/issues/144) | ✅ |
 | | — classifier.go 規則 < 30 行，刪除 status query 反向判斷 | | ☐ |
 | | — 新增 `/hermes` 指令明確 opt-in | | ☐ |
 | | — `TaskStatusValidating` 移除，state 縮為 `planning/executing/done/failed/interrupted` | | ☐ |
 | | — `InterruptPolicy` 移除，固定 inject 行為 | | ☐ |
 | | — store.go SubTask 變更入口收斂為 `UpdateSubTask` | | ☐ |
 | | — 既有 hermes 測試通過 (`go test ./internal/app/hermes/... ./internal/app/...`) | | ☐ |
-| P15.5 | **Bug (latent): direct_model_switch bridge 仍可能因語意檢索注入不相關歷史 memory** | [#146](https://github.com/chimerakang/alice/issues/146) | 🔄 |
-| P15.6 | **Token/Cost 後台數字與實際用量嚴重落差，Hermes 反而用量上升** | [#148](https://github.com/chimerakang/alice/issues/148) | 🔄 |
+| P15.5 | **SessionPolicy: direct bridge / model switch memory source policy** | [#146](https://github.com/chimerakang/alice/issues/146) | ✅ |
+| P15.6 | **Runtime trace + token/cache observability** | [#148](https://github.com/chimerakang/alice/issues/148) | 🔄 |
 | | — **1A**: \`Usage\` struct 加 \`CacheReadInputTokens\` / \`CacheCreationInputTokens\` 欄位，[api.go](internal/app/api.go) 與 [enhanced_cli.go](internal/app/enhanced_cli.go) 三處 JSON 解析補齊 | | ☐ |
 | | — **1B**: [agent.go:843-867](internal/app/agent.go#L843-L867) cost delta 修正：session ID 變動時重置 \`lastTotalCostUSD\`；或乾脆改用每 call 非累計值（從 CLI 拿 per-call cost 而不是 session cumulative） | | ☐ |
 | | — **1C**: dashboard schema 加上 cache 欄位顯示，總 token 用 \`InputTokens + CacheReadInputTokens + CacheCreationInputTokens\` 計 | | ☐ |
@@ -1031,7 +1032,7 @@
 | | — **2C**: 評估 strict mode review 的成本：是否所有 sub-task 都需要 review？low-risk sub-task 可不送 review 即省 5×N 中的 N 次 | | ☐ |
 | | — **3A**: dashboard 加 \"cache hit %\" 指標，實時看 caching 是否有效 | | ☐ |
 | | — **3B**: 每個 Hermes task 結束時輸出 token breakdown（uncached / cache_read / cache_creation / output） | | ☐ |
-| P15.7 | **Spike: Single-session walking agent via Python Claude Agent SDK (#148 Phase 2)** | [#149](https://github.com/chimerakang/alice/issues/149) | 🔄 |
+| P15.7 | **Spike: Single-session walking agent via Python Claude Agent SDK (#148 Phase 2)** | [#149](https://github.com/chimerakang/alice/issues/149) | ✅ |
 | | — 獨立 Python script (\`scripts/spike_walking_agent.py\` 或類似位置) | | ☐ |
 | | — 用 \`ClaudeSDKClient\` 跑 N 個假 sub-task（用真實 Hermes Executor rules，但 sub-task description 用測試固定組） | | ☐ |
 | | — 同樣 N 個 sub-task 用 Alice 現有 \`claude -p\` 模式跑一次（複製 buildSubTaskGoal 邏輯） | | ☐ |
@@ -1141,7 +1142,7 @@
 | | — Read internal/app/hermes/coordinator.go and task_state.go to understand existing lifecycle events and TaskState.GithubIssueNumber field | | ✅ |
 | | — Read docs/MASTER_TASKS.md and .claude/skills/task-sync files to understand existing GitHub Issue workflow integration | | ✅ |
 | | — Create internal/app/hermes/github.go with IssueContext struct and FetchIssue(ctx, number) function that shells out to 'gh issue view N --json title,body,labels' | | ✅ |
-| | — Implement ParseChecklist helper in internal/app/hermes/github.go that extracts '- [ ]' and '- [x]' items from Issue body with line numbers for sync anchoring | | ✅ |
+| | — Implement ParseChecklist helper in internal/app/hermes/github.go that extracts '- [ ]' and '- [x]' items from Issue body with line numbers for sync anchoring | | ☐ |
 | | — Implement SyncChecklist(ctx, number, subtasks) in github.go that updates Issue body checking off completed SubTasks via 'gh issue edit N --body' | | ✅ |
 | | — Implement PostComment(ctx, number, event, payload) in github.go supporting start/complete/fail/budget_exceeded event templates with artifacts, tokens, wallclock | | ✅ |
 | | — Implement ApplyLabel(ctx, number, label) and CloseIssue(ctx, number) in github.go via 'gh issue edit --add-label' and 'gh issue close' | | ✅ |
@@ -1709,13 +1710,13 @@
 | [#54](https://github.com/chimerakang/alice/issues/54) | 產品授權與定價模式設計 | P14 - Commercialization Strategy | 🔄 |
 | [#56](https://github.com/chimerakang/alice/issues/56) | 品牌定位與行銷策略規劃 | P14 - Commercialization Strategy | 🔄 |
 | [#58](https://github.com/chimerakang/alice/issues/58) | Alice 商業化執行藍圖：6個月行動計畫 | P14 - Commercialization Strategy | 🔄 |
-| [#115](https://github.com/chimerakang/alice/issues/115) | [Refactor 階段⑥] 拆掉舊 Coordinator / DecisionLog / hermes_bridge 收尾 | P15 - Hermes Stabilization & Cleanup | 🔄 |
-| [#120](https://github.com/chimerakang/alice/issues/120) | [Epic] Alice 架構統一：ExecutionEngine + Review 反饋機制（6-8 週） | P15 - Hermes Stabilization & Cleanup | 🔄 |
-| [#143](https://github.com/chimerakang/alice/issues/143) | 建立 Alice Unified Memory Architecture | P15 - Hermes Stabilization & Cleanup | 🔄 |
-| [#144](https://github.com/chimerakang/alice/issues/144) | Hermes mode 架構精簡：路由規則、狀態機、訊息流 | P15 - Hermes Stabilization & Cleanup | 🔄 |
-| [#146](https://github.com/chimerakang/alice/issues/146) | Bug (latent): direct_model_switch bridge 仍可能因語意檢索注入不相關歷史 memory | P15 - Hermes Stabilization & Cleanup | 🔄 |
-| [#148](https://github.com/chimerakang/alice/issues/148) | Token/Cost 後台數字與實際用量嚴重落差，Hermes 反而用量上升 | P15 - Hermes Stabilization & Cleanup | 🔄 |
-| [#149](https://github.com/chimerakang/alice/issues/149) | Spike: Single-session walking agent via Python Claude Agent SDK (#148 Phase 2) | P15 - Hermes Stabilization & Cleanup | 🔄 |
+| [#115](https://github.com/chimerakang/alice/issues/115) | Post-stabilization cleanup: retire legacy coordinator / DecisionLog bridge | P15 - Hermes Stabilization & Cleanup | 🔄 |
+| [#120](https://github.com/chimerakang/alice/issues/120) | [Closed/Superseded Epic] Alice architecture unification: ExecutionEngine + Review feedback | P15 - Hermes Stabilization & Cleanup | ✅ |
+| [#143](https://github.com/chimerakang/alice/issues/143) | 建立 Alice Unified Memory Architecture | P15 - Hermes Stabilization & Cleanup | ✅ |
+| [#144](https://github.com/chimerakang/alice/issues/144) | Hermes mode 架構精簡：路由規則、狀態機、訊息流 | P15 - Hermes Stabilization & Cleanup | ✅ |
+| [#146](https://github.com/chimerakang/alice/issues/146) | SessionPolicy: direct bridge / model switch memory source policy | P15 - Hermes Stabilization & Cleanup | ✅ |
+| [#148](https://github.com/chimerakang/alice/issues/148) | Runtime trace + token/cache observability | P15 - Hermes Stabilization & Cleanup | 🔄 |
+| [#149](https://github.com/chimerakang/alice/issues/149) | Spike: Single-session walking agent via Python Claude Agent SDK (#148 Phase 2) | P15 - Hermes Stabilization & Cleanup | ✅ |
 | [#87](https://github.com/chimerakang/alice/issues/87) | feat: Implement parallel subagent execution with isolated contexts | P15 - Parallel Subagents & Orchestration | ✅ |
 | [#95](https://github.com/chimerakang/alice/issues/95) | [Epic] Alice Hermes 化路徑圖：Brain-Executor 架構遷移 | P15 - Parallel Subagents & Orchestration | ✅ |
 | [#96](https://github.com/chimerakang/alice/issues/96) | Hermes: Tool Execution Hooks — Post-validator + Path guard | P15 - Parallel Subagents & Orchestration | ✅ |
@@ -1768,9 +1769,9 @@
 
 ## Summary
 
-**Total Issues:** 98
-**Completed:** 72 ✅
-**In Progress:** 26 🔄
+**Total Issues:** 100
+**Completed:** 77 ✅
+**In Progress:** 23 🔄
 
-**Last sync:** 2026-05-01 17:36 UTC
+**Last sync:** 2026-05-05 12:31 UTC
 

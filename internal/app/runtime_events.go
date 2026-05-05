@@ -63,3 +63,34 @@ func recordRecoveryDecision(ctx context.Context, req appengine.RecoveryRequest, 
 	event.Issue = issue
 	recordRuntimeEvent(ctx, event)
 }
+
+type hermesInteractionGatePayload struct {
+	Action     string `json:"action"`
+	Reason     string `json:"reason,omitempty"`
+	SubTaskIdx int    `json:"subtask_idx,omitempty"`
+	SubTaskNum int    `json:"subtask_num,omitempty"`
+	Total      int    `json:"total,omitempty"`
+	SubTask    string `json:"subtask,omitempty"`
+}
+
+func recordHermesInteractionGate(ctx context.Context, key chatKey, action, reason, taskID string, idx, total int, subTask string) {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		return
+	}
+	recordRuntimeEvent(ctx, appengine.Event{
+		Type:      "HermesInteractionGate",
+		Timestamp: time.Now(),
+		ChatID:    key.chatID,
+		ThreadID:  key.threadID,
+		TaskID:    strings.TrimSpace(taskID),
+		Payload: hermesInteractionGatePayload{
+			Action:     action,
+			Reason:     strings.TrimSpace(reason),
+			SubTaskIdx: idx,
+			SubTaskNum: idx + 1,
+			Total:      total,
+			SubTask:    strings.TrimSpace(subTask),
+		},
+	})
+}

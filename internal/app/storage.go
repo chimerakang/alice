@@ -87,6 +87,13 @@ type Storage interface {
 	GetActiveSkills() ([]AutoSkill, error)
 	GetSkillsByChat(chatID int64) ([]AutoSkill, error)
 
+	// Prototypes
+	CreatePrototype(p Prototype) error
+	GetPrototype(id string) (Prototype, error)
+	UpdatePrototype(p Prototype) error
+	ListPrototypesByChat(chatID int64) ([]Prototype, error)
+	GetPrototypeByMessageID(messageID int64) (Prototype, error)
+
 	// Data Retention
 	CleanupOldData(retentionDays int) error
 
@@ -406,6 +413,22 @@ func (s *SQLiteStorage) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_prompt_classifications_source ON prompt_classifications(source);
 	`
 
+	prototypesSQL := `
+	CREATE TABLE IF NOT EXISTS prototypes (
+		id TEXT PRIMARY KEY,
+		chat_id INTEGER NOT NULL,
+		original_prompt TEXT NOT NULL,
+		current_html TEXT NOT NULL,
+		edit_history TEXT DEFAULT '[]',
+		version INTEGER DEFAULT 1,
+		message_id INTEGER DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_prototypes_chat_id ON prototypes(chat_id);
+	CREATE INDEX IF NOT EXISTS idx_prototypes_message_id ON prototypes(message_id);
+	`
+
 	// 執行所有 SQL 語句
 	tables := []string{
 		toolExecutionsSQL,
@@ -419,6 +442,7 @@ func (s *SQLiteStorage) initTables() error {
 		parallelExecutionsSQL,
 		scheduledTasksSQL,
 		promptClassificationsSQL,
+		prototypesSQL,
 	}
 
 	for _, tableSQL := range tables {
@@ -2096,4 +2120,98 @@ func (s *SQLiteStorage) ListPromptClassifications(limit int) ([]PromptClassifica
 		recs = append(recs, r)
 	}
 	return recs, rows.Err()
+}
+
+// ==================== Prototypes ====================
+
+func (s *SQLiteStorage) CreatePrototype(p Prototype) error {
+	histJSON, _ := json.Marshal(p.EditHistory)
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(`
+			INSERT INTO prototypes (id, chat_id, original_prompt, current_html, edit_history, version, message_id, created_at, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			p.ID, p.ChatID, p.OriginalPrompt, p.CurrentHTML, string(histJSON), p.Version, p.MessageID, p.CreatedAt, p.UpdatedAt,
+		)
+		return err
+	})
+}
+
+func (s *SQLiteStorage) GetPrototype(id string) (Prototype, error) {
+	var p Prototype
+	var histJSON string
+	var createdAt, updatedAt string
+	err := s.db.QueryRow(`
+		SELECT id, chat_id, original_prompt, current_html, COALESCE(edit_history,'[]'),
+			version, COALESCE(message_id,0), created_at, updated_at
+		FROM prototypes WHERE id=?`, id).
+		Scan(&p.ID, &p.ChatID, &p.OriginalPrompt, &p.CurrentHTML, &histJSON,
+			&p.Version, &p.MessageID, &createdAt, &updatedAt)
+	if err != nil {
+		return p, err
+	}
+	_ = json.Unmarshal([]byte(histJSON), &p.EditHistory)
+	p.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	p.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+	return p, nil
+}
+
+func (s *SQLiteStorage) UpdatePrototype(p Prototype) error {
+	histJSON, _ := json.Marshal(p.EditHistory)
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(`
+			UPDATE prototypes
+			SET current_html=?, edit_history=?, version=?, message_id=?, updated_at=?
+			WHERE id=?`,
+			p.CurrentHTML, string(histJSON), p.Version, p.MessageID, p.UpdatedAt, p.ID,
+		)
+		return err
+	})
+}
+
+func (s *SQLiteStorage) ListPrototypesByChat(chatID int64) ([]Prototype, error) {
+	rows, err := s.db.Query(`
+		SELECT id, chat_id, original_prompt, current_html, COALESCE(edit_history,'[]'),
+			version, COALESCE(message_id,0), created_at, updated_at
+		FROM prototypes WHERE chat_id=? ORDER BY created_at DESC`, chatID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPrototypes(rows)
+}
+
+func (s *SQLiteStorage) GetPrototypeByMessageID(messageID int64) (Prototype, error) {
+	var p Prototype
+	var histJSON string
+	var createdAt, updatedAt string
+	err := s.db.QueryRow(`
+		SELECT id, chat_id, original_prompt, current_html, COALESCE(edit_history,'[]'),
+			version, COALESCE(message_id,0), created_at, updated_at
+		FROM prototypes WHERE message_id=?`, messageID).
+		Scan(&p.ID, &p.ChatID, &p.OriginalPrompt, &p.CurrentHTML, &histJSON,
+			&p.Version, &p.MessageID, &createdAt, &updatedAt)
+	if err != nil {
+		return p, err
+	}
+	_ = json.Unmarshal([]byte(histJSON), &p.EditHistory)
+	p.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	p.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+	return p, nil
+}
+
+func scanPrototypes(rows *sql.Rows) ([]Prototype, error) {
+	var result []Prototype
+	for rows.Next() {
+		var p Prototype
+		var histJSON, createdAt, updatedAt string
+		if err := rows.Scan(&p.ID, &p.ChatID, &p.OriginalPrompt, &p.CurrentHTML, &histJSON,
+			&p.Version, &p.MessageID, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(histJSON), &p.EditHistory)
+		p.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+		p.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+		result = append(result, p)
+	}
+	return result, rows.Err()
 }

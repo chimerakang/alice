@@ -230,6 +230,10 @@ Recommended event names:
      `ChatState`, option-reference follow-ups inject same-thread recent context,
      assistant choice prompts can leave the chat in `awaiting_input`, and active
      task abort/interrupt paths mark `interrupting`.
+   - Status 2026-05-06: Hermes failure-pause ownership is now guarded at the
+     Telegram text boundary. Plain text no longer starts a second Hermes/normal
+     route while a sub-task is waiting for retry/skip/abort buttons; `/chat ...`
+     is the explicit normal-chat bypass.
 
 2. **SessionPolicy / Session Agent**
    - Pull sticky session, model-switch bridge, resume fallback, and memory
@@ -284,6 +288,10 @@ Recommended event names:
      replan, or rejected after retry budget. New Hermes phase/model usage rows
      also keep cache-token breakdown while preserving legacy full `input_tokens`
      totals.
+   - Status 2026-05-06: chat/Hermes boundary decisions now emit
+     `HermesInteractionGate` events for `block_until_choice`, `normal_bypass`,
+     `timeout_skip`, and `stale_timeout_suppressed`. The Runtime dashboard has a
+     Hermes Gate filter and displays sub-task context for these events.
 
 ## Non-Goals
 

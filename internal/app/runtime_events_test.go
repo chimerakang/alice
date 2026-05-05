@@ -76,3 +76,30 @@ func TestRecordRecoveryDecisionPersistsRuntimeEvent(t *testing.T) {
 		t.Fatalf("payload = %+v", got.Payload)
 	}
 }
+
+func TestRecordHermesInteractionGatePersistsRuntimeEvent(t *testing.T) {
+	prev := globalStorage
+	s := newTestSQLiteStorage(t)
+	globalStorage = s
+	t.Cleanup(func() { globalStorage = prev })
+
+	recordHermesInteractionGate(context.Background(), chatKey{chatID: 42, threadID: 7}, "block_until_choice", "failure_pause_active", "task-1", 2, 5, "修復部署設定")
+
+	events, err := s.GetRuntimeEventsByType("HermesInteractionGate", 10)
+	if err != nil {
+		t.Fatalf("GetRuntimeEventsByType: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	got := events[0]
+	if got.Type != "HermesInteractionGate" || got.ChatID != 42 || got.ThreadID != 7 || got.TaskID != "task-1" {
+		t.Fatalf("event metadata = %+v", got)
+	}
+	if got.Payload["action"] != "block_until_choice" || got.Payload["reason"] != "failure_pause_active" || got.Payload["subtask"] != "修復部署設定" {
+		t.Fatalf("payload = %+v", got.Payload)
+	}
+	if got.Payload["subtask_idx"] != float64(2) || got.Payload["subtask_num"] != float64(3) || got.Payload["total"] != float64(5) {
+		t.Fatalf("numeric payload = %+v", got.Payload)
+	}
+}

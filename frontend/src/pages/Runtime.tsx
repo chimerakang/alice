@@ -17,6 +17,7 @@ const EVENT_TYPE_OPTIONS = [
   { value: "RecoveryDecision", label: "Recovery" },
   { value: "IssueQualityGate", label: "Issue Gate" },
   { value: "PlanQualityGate", label: "Plan Gate" },
+  { value: "HermesInteractionGate", label: "Hermes Gate" },
   { value: "", label: "All" },
 ];
 
@@ -53,15 +54,19 @@ function actionVariant(action: string): "success" | "warning" | "error" | "info"
   switch (action) {
     case "retry":
     case "replan":
+    case "block_until_choice":
       return "warning";
     case "fallback":
     case "allow":
+    case "normal_bypass":
       return "info";
     case "cancel":
     case "fail":
+    case "stale_timeout_suppressed":
       return "error";
     case "none":
     case "skip":
+    case "timeout_skip":
       return "neutral";
     case "needs_clarification":
       return "warning";
@@ -77,14 +82,18 @@ function actionIcon(action: string) {
       return RotateCcw;
     case "fallback":
     case "allow":
+    case "normal_bypass":
       return RefreshCw;
     case "cancel":
     case "fail":
+    case "stale_timeout_suppressed":
       return XCircle;
     case "none":
     case "needs_clarification":
+    case "block_until_choice":
       return AlertTriangle;
     case "skip":
+    case "timeout_skip":
       return CheckCircle2;
     default:
       return CheckCircle2;
@@ -106,6 +115,9 @@ function RuntimeEventRow({ event }: { event: RuntimeEventRecord }) {
   const completionTotal = payloadNumber(event, "completion_total");
   const taskCount = payloadNumber(event, "task_count");
   const violation = payloadString(event, "violation");
+  const subTaskNum = payloadNumber(event, "subtask_num");
+  const subTaskTotal = payloadNumber(event, "total");
+  const subTask = payloadString(event, "subtask");
   const Icon = actionIcon(action);
 
   return (
@@ -148,7 +160,14 @@ function RuntimeEventRow({ event }: { event: RuntimeEventRecord }) {
             )}
             {commentCount > 0 && <span>{commentCount} comments</span>}
             {taskCount > 0 && <span>{taskCount} planned tasks</span>}
+            {subTaskNum > 0 && (
+              <span>
+                subtask {subTaskNum}
+                {subTaskTotal > 0 ? `/${subTaskTotal}` : ""}
+              </span>
+            )}
             {violation && <span className="text-warning">{violation}</span>}
+            {subTask && <span className="text-gray-400 truncate max-w-xl">{subTask}</span>}
           </div>
         </div>
         <div className="text-[11px] font-mono text-gray-600">{event.type}</div>
@@ -196,7 +215,7 @@ export default function Runtime() {
             Runtime Events
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Persisted runtime decisions for recovery and Hermes quality gates.
+            Persisted runtime decisions for recovery, Hermes quality gates, and chat routing guards.
           </p>
         </div>
         <button
@@ -210,7 +229,7 @@ export default function Runtime() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        {["allow", "skip", "needs_clarification", "replan", "retry", "fail"].map((action) => (
+        {["allow", "skip", "replan", "retry", "block_until_choice", "normal_bypass", "timeout_skip", "fail"].map((action) => (
           <div key={action} className="card p-4">
             <div className="text-xs text-gray-500 uppercase">{action}</div>
             <div className="text-2xl font-bold font-mono text-white mt-1">

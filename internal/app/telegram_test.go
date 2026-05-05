@@ -1977,7 +1977,7 @@ func TestHandleMessageHermesEnabledIssueRefFetchesIssue(t *testing.T) {
 		messageQueue: make(chan *TelegramMessage, 10),
 	}
 
-	bot.handleMessage(key, userID, "接下來請處理 #109", "", nil, nil, nil, "", 1)
+	bot.handleMessage(key, userID, "接下來請處理 #109", "", nil, nil, nil, "", 1, 0)
 
 	select {
 	case <-called:
@@ -2019,7 +2019,7 @@ func TestHandleMessageHermesContinuationWithIssueRefFetchesIssue(t *testing.T) {
 		messageQueue: make(chan *TelegramMessage, 10),
 	}
 
-	bot.handleMessage(key, userID, "繼續處理＃１３７", "", nil, nil, nil, "", 1)
+	bot.handleMessage(key, userID, "繼續處理＃１３７", "", nil, nil, nil, "", 1, 0)
 
 	select {
 	case <-called:
@@ -2055,12 +2055,263 @@ func TestHandleMessageIssueStatusQuestionDoesNotFetchIssueInHermesMode(t *testin
 		messageQueue: make(chan *TelegramMessage, 10),
 	}
 
-	bot.handleMessage(key, userID, "#184 要繼續處理嗎", "", nil, nil, nil, "", 1)
+	bot.handleMessage(key, userID, "#184 要繼續處理嗎", "", nil, nil, nil, "", 1, 0)
 
 	select {
 	case <-called:
 		t.Fatal("status question should not fetch GitHub issue through Hermes")
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestHandleMessageBlocksTextDuringHermesFailurePause(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	const userID int64 = 123
+	const projectDir = "/tmp/alice-project"
+
+	prevStorage := globalStorage
+	storage := newTestSQLiteStorage(t)
+	globalStorage = storage
+	t.Cleanup(func() { globalStorage = prevStorage })
+
+	called := make(chan struct{}, 1)
+	oldFetchIssue := hermesFetchIssue
+	hermesFetchIssue = func(ctx context.Context, gotProjectDir string, gotIssueNumber int) (*hermes.IssueContext, error) {
+		called <- struct{}{}
+		return nil, errors.New("unexpected fetch")
+	}
+	defer func() { hermesFetchIssue = oldFetchIssue }()
+
+	bot := &TelegramBot{
+		agents: map[chatKey]*Agent{
+			key: NewAgent(&mockClient{}, projectDir, key.chatID, key.threadID),
+		},
+		allowIDs: map[int64]bool{userID: true},
+		config: &Config{
+			Hermes: HermesConfig{Enabled: true},
+		},
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {
+				enabled:           true,
+				failureDecisionCh: make(chan appengine.FailurePauseChoice, 1),
+				failureCtx: &failurePauseCtx{
+					taskID:  "ecd58b36-dbb4-442f-9e96-3ef844f5ac9b",
+					idx:     0,
+					total:   1,
+					subDesc: "在 VPS 上執行監控系統 runtime 驗證",
+				},
+			},
+		},
+		messageQueue: make(chan *TelegramMessage, 10),
+	}
+
+	bot.handleMessage(key, userID, "請繼續處理 #109", "", nil, nil, nil, "", 1, 0)
+
+	assertQueuedMessageContains(t, bot.messageQueue, "正在等待你按上方按鈕")
+	select {
+	case <-called:
+		t.Fatal("failure pause text guard should block Hermes issue fetch")
+	case <-time.After(100 * time.Millisecond):
+	}
+	events, err := storage.GetRuntimeEventsByType("HermesInteractionGate", 10)
+	if err != nil {
+		t.Fatalf("GetRuntimeEventsByType: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	if events[0].TaskID != "ecd58b36-dbb4-442f-9e96-3ef844f5ac9b" || events[0].Payload["action"] != "block_until_choice" {
+		t.Fatalf("unexpected gate event: %+v", events[0])
+	}
+}
+
+func TestHandleMessageChatBypassSkipsHermesFailurePauseGuard(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	const userID int64 = 123
+	const projectDir = "/tmp/alice-project"
+
+	prevStorage := globalStorage
+	storage := newTestSQLiteStorage(t)
+	globalStorage = storage
+	t.Cleanup(func() { globalStorage = prevStorage })
+
+	called := make(chan struct{}, 1)
+	oldFetchIssue := hermesFetchIssue
+	hermesFetchIssue = func(ctx context.Context, gotProjectDir string, gotIssueNumber int) (*hermes.IssueContext, error) {
+		called <- struct{}{}
+		return nil, errors.New("unexpected fetch")
+	}
+	defer func() { hermesFetchIssue = oldFetchIssue }()
+
+	bot := &TelegramBot{
+		agents: map[chatKey]*Agent{
+			key: NewAgent(&mockClient{}, projectDir, key.chatID, key.threadID),
+		},
+		allowIDs: map[int64]bool{userID: true},
+		config: &Config{
+			Hermes: HermesConfig{Enabled: true},
+		},
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {
+				enabled:           true,
+				failureDecisionCh: make(chan appengine.FailurePauseChoice, 1),
+				failureCtx: &failurePauseCtx{
+					taskID: "ecd58b36-dbb4-442f-9e96-3ef844f5ac9b",
+					idx:    0,
+					total:  1,
+				},
+			},
+		},
+		messageQueue: make(chan *TelegramMessage, 20),
+	}
+
+	bot.handleMessage(key, userID, "/chat 有連線到vps上面檢查過嗎", "", nil, nil, nil, "", 1, 0)
+
+	select {
+	case <-called:
+		t.Fatal("/chat bypass should not route through Hermes issue fetch")
+	case <-time.After(100 * time.Millisecond):
+	}
+	for {
+		select {
+		case msg := <-bot.messageQueue:
+			text, _ := msg.Params["text"].(string)
+			if strings.Contains(text, "正在等待你按上方按鈕") {
+				t.Fatalf("/chat bypass should skip failure-pause guard, got %q", text)
+			}
+		default:
+			events, err := storage.GetRuntimeEventsByType("HermesInteractionGate", 10)
+			if err != nil {
+				t.Fatalf("GetRuntimeEventsByType: %v", err)
+			}
+			if len(events) != 1 {
+				t.Fatalf("events = %d, want 1", len(events))
+			}
+			if events[0].Payload["action"] != "normal_bypass" || events[0].Payload["reason"] != "explicit_chat_prefix" {
+				t.Fatalf("unexpected gate event: %+v", events[0])
+			}
+			return
+		}
+	}
+}
+
+func TestHandleMessageChatBypassDoesNotBecomeHermesFailureHint(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	const userID int64 = 123
+	const projectDir = "/tmp/alice-project"
+
+	prevStorage := globalStorage
+	storage := newTestSQLiteStorage(t)
+	globalStorage = storage
+	t.Cleanup(func() { globalStorage = prevStorage })
+
+	failureCh := make(chan appengine.FailurePauseChoice, 1)
+	bot := &TelegramBot{
+		agents: map[chatKey]*Agent{
+			key: NewAgent(&mockClient{}, projectDir, key.chatID, key.threadID),
+		},
+		allowIDs: map[int64]bool{userID: true},
+		config: &Config{
+			Hermes: HermesConfig{Enabled: true},
+		},
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {
+				enabled:                true,
+				failureDecisionCh:      failureCh,
+				awaitingFailureHint:    true,
+				awaitingHintCancelTime: time.Now().Add(time.Minute),
+				failureCtx: &failurePauseCtx{
+					taskID: "ecd58b36-dbb4-442f-9e96-3ef844f5ac9b",
+					idx:    0,
+					total:  1,
+				},
+			},
+		},
+		messageQueue: make(chan *TelegramMessage, 20),
+	}
+
+	bot.handleMessage(key, userID, "/chat 這個狀態是怎麼回事", "", nil, nil, nil, "", 1, 0)
+
+	select {
+	case choice := <-failureCh:
+		t.Fatalf("/chat bypass should not be forwarded as Hermes retry hint: %+v", choice)
+	case <-time.After(100 * time.Millisecond):
+	}
+	events, err := storage.GetRuntimeEventsByType("HermesInteractionGate", 10)
+	if err != nil {
+		t.Fatalf("GetRuntimeEventsByType: %v", err)
+	}
+	if len(events) != 1 || events[0].Payload["action"] != "normal_bypass" {
+		t.Fatalf("unexpected gate events: %+v", events)
+	}
+}
+
+func TestClearHermesFailurePauseRequiresMatchingTaskAndIndex(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {
+				failureDecisionCh: make(chan appengine.FailurePauseChoice, 1),
+				failureCtx: &failurePauseCtx{
+					taskID: "new-task",
+					idx:    1,
+					total:  2,
+				},
+				awaitingFailureHint:    true,
+				awaitingHintCancelTime: time.Now().Add(time.Minute),
+			},
+		},
+	}
+
+	if bot.clearHermesFailurePause(key, "old-task", 0) {
+		t.Fatal("stale pause clear should not report success")
+	}
+	if bot.hermesCoords[key].failureCtx == nil {
+		t.Fatal("stale pause clear should not remove active failure context")
+	}
+	if !bot.hermesCoords[key].awaitingFailureHint {
+		t.Fatal("stale pause clear should not reset active awaiting-hint state")
+	}
+
+	if !bot.clearHermesFailurePause(key, "new-task", 1) {
+		t.Fatal("matching pause clear should report success")
+	}
+	if bot.hermesCoords[key].failureCtx != nil {
+		t.Fatal("matching pause clear should remove failure context")
+	}
+	if bot.hermesCoords[key].awaitingFailureHint {
+		t.Fatal("matching pause clear should reset awaiting-hint state")
+	}
+}
+
+func TestPrototypeQuickEditDescriptionUsesShortCallbackCodes(t *testing.T) {
+	desc, ok := prototypeQuickEditDescription("dark")
+	if !ok || desc != "將整體主題改成深色模式" {
+		t.Fatalf("prototypeQuickEditDescription(dark) = (%q, %v)", desc, ok)
+	}
+	if _, ok := prototypeQuickEditDescription("將整體主題改成深色模式"); ok {
+		t.Fatal("raw edit descriptions should not be accepted as callback codes")
+	}
+}
+
+func TestPrototypeApplyCallbackDataFitsTelegramLimit(t *testing.T) {
+	protoID := "12345678-1234-1234-1234-123456789abc"
+	keyboard := (&TelegramBot{}).buildColorSubMenu(42, protoID)
+	rows, ok := keyboard["inline_keyboard"].([]interface{})
+	if !ok {
+		t.Fatalf("inline_keyboard type = %T", keyboard["inline_keyboard"])
+	}
+	for _, row := range rows {
+		buttons, ok := row.([]interface{})
+		if !ok {
+			t.Fatalf("row type = %T", row)
+		}
+		for _, button := range buttons {
+			data := button.(map[string]string)["callback_data"]
+			if len([]byte(data)) > 64 {
+				t.Fatalf("callback_data too long (%d bytes): %q", len([]byte(data)), data)
+			}
+		}
 	}
 }
 
@@ -2099,7 +2350,7 @@ func TestHandleMessageBareContinuationUsesNormalAgent(t *testing.T) {
 		messageQueue: make(chan *TelegramMessage, 20),
 	}
 
-	bot.handleMessage(key, userID, "繼續處理", "", nil, nil, nil, "", 1)
+	bot.handleMessage(key, userID, "繼續處理", "", nil, nil, nil, "", 1, 0)
 
 	for {
 		select {
@@ -2163,7 +2414,7 @@ func TestHandleMessageHermesIssueRefTakesPrecedenceOverContinuation(t *testing.T
 		messageQueue: make(chan *TelegramMessage, 20),
 	}
 
-	bot.handleMessage(key, userID, "繼續處理 #137", "", nil, nil, nil, "", 1)
+	bot.handleMessage(key, userID, "繼續處理 #137", "", nil, nil, nil, "", 1, 0)
 
 	select {
 	case <-fetchedIssue:
@@ -2853,7 +3104,7 @@ func TestHandleTasksGeneralTopicShowsNoRepoMessage(t *testing.T) {
 	}
 	bot.setChatlanguage(key.chatID, "zh-TW")
 
-	bot.handleMessage(key, 123, "/tasks", "", nil, nil, nil, "", 1)
+	bot.handleMessage(key, 123, "/tasks", "", nil, nil, nil, "", 1, 0)
 
 	select {
 	case msg := <-bot.messageQueue:

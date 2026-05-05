@@ -45,3 +45,4 @@ Build / restart 操作（`go build`、`pkill alice`、process restart）只有�
 - Subtask 拆分框架與驗收標準：讀 [`docs/SUBTASK_FRAMEWORK.md`](docs/SUBTASK_FRAMEWORK.md) 與 [`docs/SUBTASK_DECISION_CARD.md`](docs/SUBTASK_DECISION_CARD.md)
 - Hermes prompt 規則與工具限制：讀 [`internal/app/hermes/prompts/planner_rules_codex.md`](internal/app/hermes/prompts/planner_rules_codex.md) 與 [`internal/app/hermes/prompts/executor_rules_codex.md`](internal/app/hermes/prompts/executor_rules_codex.md)
 - Dashboard、WebSocket、Storage、Git integration：讀 [`docs/DASHBOARD.md`](docs/DASHBOARD.md)、[`docs/WEBSOCKET_REALTIME.md`](docs/WEBSOCKET_REALTIME.md)、[`docs/STORAGE_PERSISTENCE.md`](docs/STORAGE_PERSISTENCE.md)、[`docs/GIT_INTEGRATION.md`](docs/GIT_INTEGRATION.md)
+- `/prototype` UI 原型生成（PrototypeManager、chromedp 截圖、Inline Keyboard）：讀 [`docs/arch/prototype.md`](docs/arch/prototype.md)
