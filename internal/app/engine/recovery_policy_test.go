@@ -235,3 +235,40 @@ func TestDecideRecoveryStopsPlannerAtMax(t *testing.T) {
 		t.Fatalf("Reason = %q, want max_planner_retries_reached", decision.Reason)
 	}
 }
+
+func TestRecoveryTraceEvent(t *testing.T) {
+	at := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	req := RecoveryRequest{
+		Mode:        "direct_stream",
+		Attempt:     1,
+		MaxAttempts: 2,
+		Fallback:    "direct",
+	}
+	decision := RecoveryDecision{
+		Action:      RecoveryActionRetry,
+		Reason:      "transient_error",
+		RetryAfter:  30 * time.Second,
+		Retryable:   true,
+		NextAttempt: 2,
+	}
+	event := RecoveryTraceEvent(req, decision, at)
+	if event.Type != "RecoveryDecision" || !event.Timestamp.Equal(at) {
+		t.Fatalf("event metadata = %+v", event)
+	}
+	payload, ok := event.Payload.(RecoveryTracePayload)
+	if !ok {
+		t.Fatalf("payload type = %T, want RecoveryTracePayload", event.Payload)
+	}
+	if payload.Mode != "direct_stream" || payload.Action != RecoveryActionRetry || payload.Reason != "transient_error" {
+		t.Fatalf("payload core fields = %+v", payload)
+	}
+	if payload.Attempt != 1 || payload.MaxAttempts != 2 || payload.NextAttempt != 2 {
+		t.Fatalf("payload attempts = %+v", payload)
+	}
+	if payload.RetryAfter != 30*time.Second || !payload.Retryable || payload.Terminal {
+		t.Fatalf("payload flags = %+v", payload)
+	}
+	if payload.Fallback != "direct" {
+		t.Fatalf("Fallback = %q, want direct", payload.Fallback)
+	}
+}

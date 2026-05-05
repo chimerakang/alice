@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"log"
 	"strings"
 	"time"
 )
@@ -33,6 +34,19 @@ type RecoveryDecision struct {
 	Terminal    bool
 	Reason      string
 	NextAttempt int
+}
+
+type RecoveryTracePayload struct {
+	Mode        string         `json:"mode"`
+	Action      RecoveryAction `json:"action"`
+	Reason      string         `json:"reason"`
+	Attempt     int            `json:"attempt"`
+	MaxAttempts int            `json:"max_attempts"`
+	NextAttempt int            `json:"next_attempt,omitempty"`
+	RetryAfter  time.Duration  `json:"retry_after,omitempty"`
+	Retryable   bool           `json:"retryable"`
+	Terminal    bool           `json:"terminal"`
+	Fallback    string         `json:"fallback,omitempty"`
 }
 
 func DecideRecovery(req RecoveryRequest) RecoveryDecision {
@@ -76,6 +90,47 @@ func DecideRecovery(req RecoveryRequest) RecoveryDecision {
 		Terminal: true,
 		Reason:   "terminal_error",
 	}
+}
+
+func RecoveryTraceEvent(req RecoveryRequest, decision RecoveryDecision, at time.Time) Event {
+	if at.IsZero() {
+		at = time.Now()
+	}
+	return Event{
+		Type:      "RecoveryDecision",
+		Timestamp: at,
+		Payload: RecoveryTracePayload{
+			Mode:        strings.TrimSpace(req.Mode),
+			Action:      decision.Action,
+			Reason:      decision.Reason,
+			Attempt:     req.Attempt,
+			MaxAttempts: req.MaxAttempts,
+			NextAttempt: decision.NextAttempt,
+			RetryAfter:  decision.RetryAfter,
+			Retryable:   decision.Retryable,
+			Terminal:    decision.Terminal,
+			Fallback:    strings.TrimSpace(req.Fallback),
+		},
+	}
+}
+
+func LogRecoveryDecision(req RecoveryRequest, decision RecoveryDecision) {
+	event := RecoveryTraceEvent(req, decision, time.Now())
+	payload, _ := event.Payload.(RecoveryTracePayload)
+	log.Printf(
+		"[recovery] event=%s mode=%s action=%s reason=%s attempt=%d max_attempts=%d next_attempt=%d retry_after=%s retryable=%t terminal=%t fallback=%q",
+		event.Type,
+		payload.Mode,
+		payload.Action,
+		payload.Reason,
+		payload.Attempt,
+		payload.MaxAttempts,
+		payload.NextAttempt,
+		payload.RetryAfter,
+		payload.Retryable,
+		payload.Terminal,
+		payload.Fallback,
+	)
 }
 
 func decideTaskReviewRecovery(req RecoveryRequest) RecoveryDecision {

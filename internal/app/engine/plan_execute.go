@@ -154,11 +154,13 @@ func NewPlanExecuteEngine(
 	}
 	planner := hermes.NewPlannerSession(planFn, cfg.MaxPlannerJSONRetries, cfg.PlannerRules)
 	planner.SetRecoveryDecider(func(req hermes.PlannerRecoveryRequest) hermes.PlannerRecoveryDecision {
-		decision := DecideRecovery(RecoveryRequest{
+		recoveryReq := RecoveryRequest{
 			Mode:        req.Mode,
 			Attempt:     req.Attempt,
 			MaxAttempts: req.MaxAttempts,
-		})
+		}
+		decision := DecideRecovery(recoveryReq)
+		LogRecoveryDecision(recoveryReq, decision)
 		return hermes.PlannerRecoveryDecision{
 			Retry:       decision.Action == RecoveryActionRetry,
 			Reason:      decision.Reason,
@@ -594,8 +596,18 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 		// Both OnReview and OnReviewSkipped are fired manually below so
 		// that retry attempts stay quiet on the user side.
 		review, reviewErr := e.runReview(ctx, finalState, ReviewModePerTask, -1, "", false, blockCount, autoFixedCount)
-
-		if reviewErr == nil && shouldRetryTask(review, retryCfg, attempt) {
+		recovery := RecoveryDecision{Action: RecoveryActionNone, Reason: "review_error"}
+		if reviewErr == nil {
+			recoveryReq := RecoveryRequest{
+				Mode:      "task_review",
+				Attempt:   attempt,
+				Review:    review,
+				TaskRetry: retryCfg,
+			}
+			recovery = DecideRecovery(recoveryReq)
+			LogRecoveryDecision(recoveryReq, recovery)
+		}
+		if reviewErr == nil && recovery.Action == RecoveryActionRetry {
 			if e.cfg.OnTaskRetry != nil {
 				e.cfg.OnTaskRetry(ctx, attempt, maxRetries, review)
 			}
@@ -1073,12 +1085,14 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 					if decision.Verdict == VerdictBlock {
 						metrics.blockedOnce = true
 						reviewFeedback = buildStrictRetryFeedback(reviewResult, decision)
-						recovery := DecideRecovery(RecoveryRequest{
+						recoveryReq := RecoveryRequest{
 							Mode:        "strict_review",
 							Attempt:     attempts,
 							MaxAttempts: strictCfg.MaxRetriesPerSub,
 							Strict:      decision,
-						})
+						}
+						recovery := DecideRecovery(recoveryReq)
+						LogRecoveryDecision(recoveryReq, recovery)
 						if recovery.Action == RecoveryActionRetry {
 							attempts = recovery.NextAttempt
 							if err := e.store.UpdateSubTask(taskID, idx, hermes.SubTaskInProgress, text, tokensUsed); err != nil {

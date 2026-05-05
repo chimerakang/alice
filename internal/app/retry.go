@@ -50,11 +50,14 @@ func retrySelectionNeedsRetry(selection retrySelection) bool {
 }
 
 func decideSubTaskRetryRecovery(selection retrySelection) appengine.RecoveryDecision {
-	return appengine.DecideRecovery(appengine.RecoveryRequest{
+	recoveryReq := appengine.RecoveryRequest{
 		Mode:        "sub_task_retry",
 		Attempt:     selection.RetryCount,
 		MaxAttempts: maxSubTaskRetryAttempts,
-	})
+	}
+	decision := appengine.DecideRecovery(recoveryReq)
+	appengine.LogRecoveryDecision(recoveryReq, decision)
+	return decision
 }
 
 func formatRetryNoRetryNeeded(selection retrySelection) string {
@@ -725,7 +728,9 @@ func (t *TelegramBot) runRetryDirectWithWatchdog(ctx context.Context, agent *Age
 	case outcome := <-done:
 		return outcome.result, outcome.err
 	case <-ctx.Done():
-		decision := appengine.DecideRecovery(appengine.RecoveryRequest{Mode: "watchdog_cancel"})
+		recoveryReq := appengine.RecoveryRequest{Mode: "watchdog_cancel"}
+		decision := appengine.DecideRecovery(recoveryReq)
+		appengine.LogRecoveryDecision(recoveryReq, decision)
 		if decision.Action == appengine.RecoveryActionCancel && agent != nil {
 			agent.Abort()
 		}

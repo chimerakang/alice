@@ -973,12 +973,14 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 			break
 		}
 
-		recovery := appengine.DecideRecovery(appengine.RecoveryRequest{
+		recoveryReq := appengine.RecoveryRequest{
 			Mode:        "direct_stream",
 			Attempt:     attempt,
 			MaxAttempts: maxRetries,
 			ErrorText:   err.Error(),
-		})
+		}
+		recovery := appengine.DecideRecovery(recoveryReq)
+		appengine.LogRecoveryDecision(recoveryReq, recovery)
 		if recovery.Action == appengine.RecoveryActionRetry {
 			log.Printf("[agent] retryable error detected: %v", err)
 			if resp != nil && resp.SessionID != "" {
@@ -1268,11 +1270,13 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 	result, err := engine.Run(ctx, userMessage, a.chatContext, nil)
 	if err != nil {
 		log.Printf("[agent] plan/execute via PlanExecuteEngine failed: %v", err)
-		recovery := appengine.DecideRecovery(appengine.RecoveryRequest{
+		recoveryReq := appengine.RecoveryRequest{
 			Mode:      "plan_execute",
 			ErrorText: err.Error(),
 			Fallback:  "direct",
-		})
+		}
+		recovery := appengine.DecideRecovery(recoveryReq)
+		appengine.LogRecoveryDecision(recoveryReq, recovery)
 		if onUpdate != nil {
 			onUpdate("⚠️ Plan phase failed, falling back to direct execution...", false)
 		}
