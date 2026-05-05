@@ -49,6 +49,14 @@ func retrySelectionNeedsRetry(selection retrySelection) bool {
 	return verdict == "partial" || verdict == "fail" || selection.SubTaskReview.Score < 70
 }
 
+func decideSubTaskRetryRecovery(selection retrySelection) appengine.RecoveryDecision {
+	return appengine.DecideRecovery(appengine.RecoveryRequest{
+		Mode:        "sub_task_retry",
+		Attempt:     selection.RetryCount,
+		MaxAttempts: maxSubTaskRetryAttempts,
+	})
+}
+
 func formatRetryNoRetryNeeded(selection retrySelection) string {
 	verdict := strings.TrimSpace(selection.Review.Verdict)
 	if verdict == "" {
@@ -560,7 +568,7 @@ func (t *TelegramBot) handleRetryCommand(key chatKey, parts []string) {
 		}
 
 		for i, selection := range selections {
-			if selection.RetryCount >= maxSubTaskRetryAttempts {
+			if decision := decideSubTaskRetryRecovery(selection); decision.Action != appengine.RecoveryActionRetry {
 				t.send(key, fmt.Sprintf("⛔ sub-task #%d 已 retry %d 次，達到上限，建議人工介入。", selection.DisplaySubTaskIdx, selection.RetryCount))
 				continue
 			}

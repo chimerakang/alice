@@ -35,8 +35,11 @@ type RecoveryDecision struct {
 
 func DecideRecovery(req RecoveryRequest) RecoveryDecision {
 	if strings.TrimSpace(req.ErrorText) == "" {
-		if req.Mode == "task_review" {
+		switch req.Mode {
+		case "task_review":
 			return decideTaskReviewRecovery(req)
+		case "sub_task_retry":
+			return decideSubTaskRetryRecovery(req)
 		}
 		return RecoveryDecision{Action: RecoveryActionNone, Reason: "no_error"}
 	}
@@ -95,6 +98,29 @@ func decideTaskReviewRecovery(req RecoveryRequest) RecoveryDecision {
 		}
 	}
 	return RecoveryDecision{Action: RecoveryActionNone, Reason: "review_passed"}
+}
+
+func decideSubTaskRetryRecovery(req RecoveryRequest) RecoveryDecision {
+	if req.MaxAttempts <= 0 {
+		return RecoveryDecision{
+			Action:   RecoveryActionNone,
+			Terminal: true,
+			Reason:   "sub_task_retry_disabled",
+		}
+	}
+	if req.Attempt >= req.MaxAttempts {
+		return RecoveryDecision{
+			Action:   RecoveryActionNone,
+			Terminal: true,
+			Reason:   "max_sub_task_retries_reached",
+		}
+	}
+	return RecoveryDecision{
+		Action:      RecoveryActionRetry,
+		Retryable:   true,
+		Reason:      "sub_task_retry_allowed",
+		NextAttempt: req.Attempt + 1,
+	}
 }
 
 func IsRetryableRecoveryError(err error) bool {

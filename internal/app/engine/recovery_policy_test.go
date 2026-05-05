@@ -107,3 +107,34 @@ func TestDecideRecoverySkipsEmptyTaskReviewVerdict(t *testing.T) {
 		t.Fatalf("Reason = %q, want review_skipped", decision.Reason)
 	}
 }
+
+func TestDecideRecoveryAllowsSubTaskRetryBelowMax(t *testing.T) {
+	decision := DecideRecovery(RecoveryRequest{
+		Mode:        "sub_task_retry",
+		Attempt:     2,
+		MaxAttempts: 3,
+	})
+	if decision.Action != RecoveryActionRetry {
+		t.Fatalf("Action = %q, want %q", decision.Action, RecoveryActionRetry)
+	}
+	if decision.NextAttempt != 3 {
+		t.Fatalf("NextAttempt = %d, want 3", decision.NextAttempt)
+	}
+	if decision.Reason != "sub_task_retry_allowed" {
+		t.Fatalf("Reason = %q, want sub_task_retry_allowed", decision.Reason)
+	}
+}
+
+func TestDecideRecoveryStopsSubTaskRetryAtMax(t *testing.T) {
+	decision := DecideRecovery(RecoveryRequest{
+		Mode:        "sub_task_retry",
+		Attempt:     3,
+		MaxAttempts: 3,
+	})
+	if decision.Action != RecoveryActionNone || !decision.Terminal {
+		t.Fatalf("decision = %+v, want terminal none", decision)
+	}
+	if decision.Reason != "max_sub_task_retries_reached" {
+		t.Fatalf("Reason = %q, want max_sub_task_retries_reached", decision.Reason)
+	}
+}
