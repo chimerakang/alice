@@ -255,9 +255,10 @@ Recommended event names:
    - Status 2026-05-05: first slice landed under #156. `RecoveryPolicy` defines
      a pure retry/fallback/fail decision shape, and `Agent.Run` direct stream
      retry now uses it while preserving existing retry timing. Plan/Execute
-     fallback, Hermes task-level review retry, strict sub-task review retry,
-     manual `/retry` sub-task retry limits, and retry watchdog cancellation also
-     use the same decision shape while preserving existing behavior.
+     fallback, Planner JSON/empty-plan/quality retry, Hermes task-level review
+     retry, strict sub-task review retry, manual `/retry` sub-task retry limits,
+     and retry watchdog cancellation also use the same decision shape while
+     preserving existing behavior.
 
 5. **Hermes Task Agent cleanup**
    - Keep Hermes as the long-task engine.

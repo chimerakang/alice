@@ -134,15 +134,16 @@ Out of scope: UI for manual retry menus, unless needed for tests.
 
 Status 2026-05-05: first implementation slice landed. `RecoveryPolicy` now
 provides pure retry/fallback/fail decisions, and `Agent.Run` direct stream retry
-uses it while preserving the existing retry behavior. Plan/Execute fallback and
-Hermes task-level review retry now route through the same decision shape without
-changing their existing behavior. Manual `/retry` sub-task retry limits also use
-RecoveryPolicy now; the Telegram handler still owns formatting and selection,
-but no longer owns the retry-budget decision. Strict per-sub-task review retry
-also routes its retry/exhaustion decision through RecoveryPolicy while
-preserving the existing partial/skipped behavior at retry exhaustion. `/retry`
-direct watchdog cancellation now also uses RecoveryPolicy to decide the
-context-done cancellation before the app layer aborts the agent.
+uses it while preserving the existing retry behavior. Plan/Execute fallback,
+Planner JSON/empty-plan/quality retry, and Hermes task-level review retry now
+route through the same decision shape without changing their existing behavior.
+Manual `/retry` sub-task retry limits also use RecoveryPolicy now; the Telegram
+handler still owns formatting and selection, but no longer owns the retry-budget
+decision. Strict per-sub-task review retry also routes its retry/exhaustion
+decision through RecoveryPolicy while preserving the existing partial/skipped
+behavior at retry exhaustion. `/retry` direct watchdog cancellation now also uses
+RecoveryPolicy to decide the context-done cancellation before the app layer
+aborts the agent.
 
 ### Issue E: Hermes Task Agent Resume + Partial Retry
 
