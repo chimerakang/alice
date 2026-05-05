@@ -2372,6 +2372,16 @@ func (t *TelegramBot) startHermesFromIssueMode(key chatKey, issueNumber int, pro
 	cfg := HermesDefaults(t.config.Hermes)
 	ghCfg := t.config.Hermes.GithubIntegration
 
+	gateDecision := decideIssueQualityGate(issue, forceRestart)
+	recordIssueQualityGateDecision(ctx, key, issue, gateDecision, forceRestart)
+	switch gateDecision.Action {
+	case issueQualityGateSkip, issueQualityGateNeedsClarification:
+		if gateDecision.Message != "" {
+			t.send(key, gateDecision.Message)
+		}
+		return
+	}
+
 	// Apply complexity label budget overrides if present
 	budget := HermesBudgetConfig{
 		MaxTotalTokens:      cfg.Budget.MaxTotalTokens,

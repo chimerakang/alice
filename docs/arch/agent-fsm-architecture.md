@@ -278,7 +278,10 @@ Recommended event names:
    - Status 2026-05-05: first persisted trace slice landed under #148.
      `runtime_events` stores normalized runtime events, starting with
      RecoveryDecision events emitted by RecoveryPolicy paths. The events are
-     queryable through `GET /api/runtime/events`.
+     queryable through `GET /api/runtime/events`. The next guardrail slice adds
+     deterministic `IssueQualityGate` events before Hermes issue planning so
+     closed, recently completed, or underspecified issues can be skipped or
+     clarified before spending Planner tokens.
 
 ## Non-Goals
 
