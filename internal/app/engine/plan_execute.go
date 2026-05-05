@@ -1060,8 +1060,14 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 					if decision.Verdict == VerdictBlock {
 						metrics.blockedOnce = true
 						reviewFeedback = buildStrictRetryFeedback(reviewResult, decision)
-						if attempts < strictCfg.MaxRetriesPerSub {
-							attempts++
+						recovery := DecideRecovery(RecoveryRequest{
+							Mode:        "strict_review",
+							Attempt:     attempts,
+							MaxAttempts: strictCfg.MaxRetriesPerSub,
+							Strict:      decision,
+						})
+						if recovery.Action == RecoveryActionRetry {
+							attempts = recovery.NextAttempt
 							if err := e.store.UpdateSubTask(taskID, idx, hermes.SubTaskInProgress, text, tokensUsed); err != nil {
 								log.Printf("[plan_execute] UpdateSubTask(retry) idx=%d: %v", idx, err)
 							}

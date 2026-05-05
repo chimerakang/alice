@@ -138,3 +138,59 @@ func TestDecideRecoveryStopsSubTaskRetryAtMax(t *testing.T) {
 		t.Fatalf("Reason = %q, want max_sub_task_retries_reached", decision.Reason)
 	}
 }
+
+func TestDecideRecoveryRetriesBlockedStrictReview(t *testing.T) {
+	decision := DecideRecovery(RecoveryRequest{
+		Mode:        "strict_review",
+		Attempt:     0,
+		MaxAttempts: 2,
+		Strict: StrictReviewDecision{
+			Verdict:   VerdictBlock,
+			Retryable: true,
+		},
+	})
+	if decision.Action != RecoveryActionRetry {
+		t.Fatalf("Action = %q, want %q", decision.Action, RecoveryActionRetry)
+	}
+	if decision.NextAttempt != 1 {
+		t.Fatalf("NextAttempt = %d, want 1", decision.NextAttempt)
+	}
+	if decision.Reason != "strict_review_blocked" {
+		t.Fatalf("Reason = %q, want strict_review_blocked", decision.Reason)
+	}
+}
+
+func TestDecideRecoveryStopsBlockedStrictReviewAtMax(t *testing.T) {
+	decision := DecideRecovery(RecoveryRequest{
+		Mode:        "strict_review",
+		Attempt:     2,
+		MaxAttempts: 2,
+		Strict: StrictReviewDecision{
+			Verdict:   VerdictBlock,
+			Retryable: true,
+		},
+	})
+	if decision.Action != RecoveryActionNone || !decision.Terminal {
+		t.Fatalf("decision = %+v, want terminal none", decision)
+	}
+	if decision.Reason != "max_strict_review_retries_reached" {
+		t.Fatalf("Reason = %q, want max_strict_review_retries_reached", decision.Reason)
+	}
+}
+
+func TestDecideRecoveryAllowsPassingStrictReview(t *testing.T) {
+	decision := DecideRecovery(RecoveryRequest{
+		Mode:        "strict_review",
+		Attempt:     0,
+		MaxAttempts: 2,
+		Strict: StrictReviewDecision{
+			Verdict: VerdictAllow,
+		},
+	})
+	if decision.Action != RecoveryActionNone || decision.Terminal {
+		t.Fatalf("decision = %+v, want non-terminal none", decision)
+	}
+	if decision.Reason != "strict_review_allowed" {
+		t.Fatalf("Reason = %q, want strict_review_allowed", decision.Reason)
+	}
+}

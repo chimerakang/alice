@@ -21,6 +21,7 @@ type RecoveryRequest struct {
 	ErrorText   string
 	Fallback    string
 	Review      ReviewResult
+	Strict      StrictReviewDecision
 	TaskRetry   TaskRetryConfig
 }
 
@@ -40,6 +41,8 @@ func DecideRecovery(req RecoveryRequest) RecoveryDecision {
 			return decideTaskReviewRecovery(req)
 		case "sub_task_retry":
 			return decideSubTaskRetryRecovery(req)
+		case "strict_review":
+			return decideStrictReviewRecovery(req)
 		}
 		return RecoveryDecision{Action: RecoveryActionNone, Reason: "no_error"}
 	}
@@ -120,6 +123,25 @@ func decideSubTaskRetryRecovery(req RecoveryRequest) RecoveryDecision {
 		Retryable:   true,
 		Reason:      "sub_task_retry_allowed",
 		NextAttempt: req.Attempt + 1,
+	}
+}
+
+func decideStrictReviewRecovery(req RecoveryRequest) RecoveryDecision {
+	if req.Strict.Verdict != VerdictBlock {
+		return RecoveryDecision{Action: RecoveryActionNone, Reason: "strict_review_allowed"}
+	}
+	if req.Attempt < req.MaxAttempts {
+		return RecoveryDecision{
+			Action:      RecoveryActionRetry,
+			Retryable:   true,
+			Reason:      "strict_review_blocked",
+			NextAttempt: req.Attempt + 1,
+		}
+	}
+	return RecoveryDecision{
+		Action:   RecoveryActionNone,
+		Terminal: true,
+		Reason:   "max_strict_review_retries_reached",
 	}
 }
 
