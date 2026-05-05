@@ -184,6 +184,12 @@ Scope:
 Out of scope: changing billing source of truth or reconciling with provider
 exports.
 
+Status 2026-05-05: first persisted trace slice landed. `runtime_events` stores
+normalized runtime events with timestamp/type/chat/thread/task/issue/payload,
+and RecoveryDecision events are now written through this path. Token/cache
+phase accounting remains covered by the earlier `phase_usages` slice; this
+adds the event stream needed to explain retry/fallback/cancel decisions.
+
 ## Recommended Order
 
 1. Issue A: Chat FSM + #154 fix.
