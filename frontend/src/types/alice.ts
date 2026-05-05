@@ -82,18 +82,27 @@ export interface GitDiffResponse {
 
 // ========== Agent ==========
 
+export interface ExecutionSnapshot {
+  state: string;
+  since: string;
+  terminal: boolean;
+  reason: string;
+}
+
 export interface AgentInfo {
-  id: string;
   chat_id: number;
   thread_id: number;
   project_dir: string;
   session_id: string;
-  status: Status;
+  is_active: boolean;
+  is_processing: boolean;
+  status?: string;
+  execution?: ExecutionSnapshot;
+  execution_state?: string;
   created_at: string;
-  last_active: string;
-  token_stats?: TokenStats;
-  model: string;
-  git_state?: GitState;
+  last_activity: string;
+  project_count: number;
+  stats: TokenStats;
 }
 
 // ========== Tool ==========
@@ -521,6 +530,7 @@ export interface StatsResponse {
   success_rate: number;
   uptime_seconds: number;
   timestamp: string;
+  recent_agents?: AgentInfo[];
   total_tokens_used: number;
   total_cost_usd: number;
 }

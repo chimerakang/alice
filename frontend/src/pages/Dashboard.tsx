@@ -6,6 +6,7 @@ import type {
   StatsResponse,
   DecisionLog,
   GitState,
+  AgentInfo,
 } from "@/types/alice";
 import DateRangeFilter from "@/components/DateRangeFilter";
 import type { DateRange } from "@/components/DateRangeFilter";
@@ -280,6 +281,82 @@ function SystemStatusCard({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function executionVariant(state: string): "success" | "error" | "warning" | "info" | "neutral" {
+  switch (state) {
+    case "starting":
+    case "streaming":
+    case "retrying":
+      return "warning";
+    case "cancelling":
+      return "info";
+    case "succeeded":
+      return "success";
+    case "failed":
+    case "cancelled":
+      return "error";
+    default:
+      return "neutral";
+  }
+}
+
+function formatRelativeTime(value?: string) {
+  if (!value) return "—";
+  const ts = new Date(value).getTime();
+  if (Number.isNaN(ts)) return "—";
+
+  const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
+function ExecutionStateCard({ agents }: { agents: AgentInfo[] }) {
+  const recentAgents = agents.slice(0, 5);
+
+  return (
+    <div className="card p-5">
+      <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
+        <Bot className="w-4 h-4 text-info" />
+        Agent Execution
+      </h3>
+      {recentAgents.length === 0 ? (
+        <p className="text-sm text-gray-500">No recent agents</p>
+      ) : (
+        <div className="space-y-3">
+          {recentAgents.map((agent) => {
+            const projectName = agent.project_dir.split("/").filter(Boolean).pop() || "unknown";
+            const state = agent.execution_state || agent.execution?.state || agent.status || "idle";
+            const detail = agent.execution?.reason || (agent.is_active ? "active" : "inactive");
+
+            return (
+              <div
+                key={`${agent.chat_id}:${agent.thread_id}:${agent.session_id}`}
+                className="flex items-start justify-between gap-3"
+              >
+                <div className="min-w-0">
+                  <div className="text-sm text-gray-200 truncate">{projectName}</div>
+                  <div className="text-xs text-gray-500 truncate">{detail}</div>
+                </div>
+                <div className="shrink-0 text-right space-y-1">
+                  <StatusBadge variant={executionVariant(state)} size="sm" dot>
+                    {state}
+                  </StatusBadge>
+                  <div className="text-[10px] text-gray-600 font-mono">
+                    {formatRelativeTime(agent.last_activity)}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -930,14 +1007,15 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* ── Row 2: Git + System Status + Tool Success ── */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* ── Row 2: Git + System Status + Agent Execution + Tool Success ── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
         <GitStatusCard projectGitStates={projectGitStates} />
         <SystemStatusCard
           wsConnected={wsConnected}
           stats={stats}
           storageStats={storageStats}
         />
+        <ExecutionStateCard agents={stats?.recent_agents || []} />
         <div className="card p-5">
           <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-success" />
