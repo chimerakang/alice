@@ -57,6 +57,7 @@ func decideSubTaskRetryRecovery(selection retrySelection) appengine.RecoveryDeci
 	}
 	decision := appengine.DecideRecovery(recoveryReq)
 	appengine.LogRecoveryDecision(recoveryReq, decision)
+	recordRecoveryDecision(context.Background(), recoveryReq, decision, chatKey{}, selection.Task.ID, selection.Task.GithubIssueNumber)
 	return decision
 }
 
@@ -731,6 +732,11 @@ func (t *TelegramBot) runRetryDirectWithWatchdog(ctx context.Context, agent *Age
 		recoveryReq := appengine.RecoveryRequest{Mode: "watchdog_cancel"}
 		decision := appengine.DecideRecovery(recoveryReq)
 		appengine.LogRecoveryDecision(recoveryReq, decision)
+		var key chatKey
+		if agent != nil {
+			key = chatKey{chatID: agent.chatID, threadID: agent.threadID}
+		}
+		recordRecoveryDecision(ctx, recoveryReq, decision, key, "", 0)
 		if decision.Action == appengine.RecoveryActionCancel && agent != nil {
 			agent.Abort()
 		}

@@ -4129,6 +4129,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, p
 		OnReview:                     onReview,
 		OnReviewSkipped:              onReviewSkipped,
 		OnTaskRetry:                  onTaskRetry,
+		OnRuntimeEvent:               recordRuntimeEvent,
 		TaskRetry:                    appengine.TaskRetryConfig(cfg.TaskRetry),
 		ContinueCh:                   continueCh,
 		OnSubTaskFailurePause:        t.makeHermesFailureDecisionCallback(key, failureDecisionCh),

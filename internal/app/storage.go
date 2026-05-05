@@ -32,6 +32,11 @@ type Storage interface {
 	GetDecisionLogsByTimeRangeWithOffset(start, end time.Time, limit int, offset int, source string) ([]DecisionLog, error)
 	GetDecisionLogsByProject(projectPath string, limit int) ([]DecisionLog, error)
 
+	// Runtime Events
+	InsertRuntimeEvent(event RuntimeEventRecord) error
+	GetRuntimeEvents(limit int, offset int) ([]RuntimeEventRecord, error)
+	GetRuntimeEventsByType(eventType string, limit int) ([]RuntimeEventRecord, error)
+
 	// Performance Metrics
 	InsertPerformanceMetric(metric PerformanceMetrics) error
 	GetPerformanceMetrics(limit int, offset int) ([]PerformanceMetrics, error)
@@ -258,6 +263,24 @@ func (s *SQLiteStorage) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_performance_metrics_model ON performance_metrics(model);
 	`
 
+	runtimeEventsSQL := `
+	CREATE TABLE IF NOT EXISTS runtime_events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		timestamp DATETIME NOT NULL,
+		type TEXT NOT NULL,
+		chat_id INTEGER,
+		thread_id INTEGER,
+		task_id TEXT DEFAULT '',
+		issue_number INTEGER DEFAULT 0,
+		payload_json TEXT NOT NULL DEFAULT '{}',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_runtime_events_timestamp ON runtime_events(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_runtime_events_type ON runtime_events(type);
+	CREATE INDEX IF NOT EXISTS idx_runtime_events_task_id ON runtime_events(task_id);
+	CREATE INDEX IF NOT EXISTS idx_runtime_events_chat_id ON runtime_events(chat_id);
+	`
+
 	// Security Events 表
 	securityEventsSQL := `
 	CREATE TABLE IF NOT EXISTS security_events (
@@ -387,6 +410,7 @@ func (s *SQLiteStorage) initTables() error {
 	tables := []string{
 		toolExecutionsSQL,
 		decisionLogsSQL,
+		runtimeEventsSQL,
 		performanceMetricsSQL,
 		securityEventsSQL,
 		topicSettingsSQL,
@@ -634,6 +658,70 @@ func (s *SQLiteStorage) InsertDecisionLog(log DecisionLog) error {
 		return fmt.Errorf("insert unified task: %w", err)
 	}
 	return nil
+}
+
+// ==================== Runtime Events ====================
+
+func (s *SQLiteStorage) InsertRuntimeEvent(event RuntimeEventRecord) error {
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now()
+	}
+	payloadJSON, err := json.Marshal(event.Payload)
+	if err != nil {
+		return fmt.Errorf("marshal runtime event payload: %w", err)
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO runtime_events
+		(timestamp, type, chat_id, thread_id, task_id, issue_number, payload_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		event.Timestamp, event.Type, event.ChatID, event.ThreadID, event.TaskID, event.Issue, string(payloadJSON))
+	return err
+}
+
+func (s *SQLiteStorage) GetRuntimeEvents(limit int, offset int) ([]RuntimeEventRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT timestamp, type, chat_id, thread_id, task_id, issue_number, payload_json
+		FROM runtime_events
+		ORDER BY timestamp DESC
+		LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRuntimeEvents(rows)
+}
+
+func (s *SQLiteStorage) GetRuntimeEventsByType(eventType string, limit int) ([]RuntimeEventRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT timestamp, type, chat_id, thread_id, task_id, issue_number, payload_json
+		FROM runtime_events
+		WHERE type = ?
+		ORDER BY timestamp DESC
+		LIMIT ?`, eventType, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRuntimeEvents(rows)
+}
+
+func scanRuntimeEvents(rows *sql.Rows) ([]RuntimeEventRecord, error) {
+	var events []RuntimeEventRecord
+	for rows.Next() {
+		var event RuntimeEventRecord
+		var payloadJSON string
+		if err := rows.Scan(&event.Timestamp, &event.Type, &event.ChatID, &event.ThreadID, &event.TaskID, &event.Issue, &payloadJSON); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(payloadJSON) != "" {
+			_ = json.Unmarshal([]byte(payloadJSON), &event.Payload)
+		}
+		if event.Payload == nil {
+			event.Payload = map[string]interface{}{}
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
 }
 
 // GetDecisionLogs 獲取決策記錄（分頁）

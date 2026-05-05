@@ -61,6 +61,11 @@ type PlanExecuteConfig struct {
 	// re-plan, since OnReview is suppressed for non-final attempts.
 	OnTaskRetry func(ctx context.Context, attempt, maxRetries int, review ReviewResult)
 
+	// OnRuntimeEvent receives normalized runtime events emitted by the engine.
+	// The app layer can persist these as trace/span records without making the
+	// engine depend on storage packages.
+	OnRuntimeEvent func(ctx context.Context, event Event)
+
 	ContinueCh      chan struct{}
 	ContinueTimeout time.Duration
 
@@ -153,6 +158,13 @@ func NewPlanExecuteEngine(
 		reporter = &hermes.NoopProgressReporter{}
 	}
 	planner := hermes.NewPlannerSession(planFn, cfg.MaxPlannerJSONRetries, cfg.PlannerRules)
+	engine := &PlanExecuteEngine{
+		cfg:      cfg,
+		planner:  planner,
+		direct:   direct,
+		store:    store,
+		reporter: reporter,
+	}
 	planner.SetRecoveryDecider(func(req hermes.PlannerRecoveryRequest) hermes.PlannerRecoveryDecision {
 		recoveryReq := RecoveryRequest{
 			Mode:        req.Mode,
@@ -161,19 +173,14 @@ func NewPlanExecuteEngine(
 		}
 		decision := DecideRecovery(recoveryReq)
 		LogRecoveryDecision(recoveryReq, decision)
+		engine.emitRuntimeEvent(context.Background(), RecoveryTraceEvent(recoveryReq, decision, time.Now()))
 		return hermes.PlannerRecoveryDecision{
 			Retry:       decision.Action == RecoveryActionRetry,
 			Reason:      decision.Reason,
 			NextAttempt: decision.NextAttempt,
 		}
 	})
-	return &PlanExecuteEngine{
-		cfg:      cfg,
-		planner:  planner,
-		direct:   direct,
-		store:    store,
-		reporter: reporter,
-	}
+	return engine
 }
 
 func (e *PlanExecuteEngine) Name() string {
@@ -184,6 +191,24 @@ func (e *PlanExecuteEngine) TaskID() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.taskID
+}
+
+func (e *PlanExecuteEngine) emitRuntimeEvent(ctx context.Context, event Event) {
+	if e.cfg.OnRuntimeEvent != nil {
+		if event.ChatID == 0 {
+			event.ChatID = e.cfg.ChatID
+		}
+		if event.ThreadID == 0 {
+			event.ThreadID = e.cfg.ThreadID
+		}
+		if event.Issue == 0 {
+			event.Issue = e.cfg.GithubIssueNumber
+		}
+		if event.TaskID == "" {
+			event.TaskID = e.TaskID()
+		}
+		e.cfg.OnRuntimeEvent(ctx, event)
+	}
 }
 
 func (e *PlanExecuteEngine) IsRunning() bool {
@@ -606,6 +631,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 			}
 			recovery = DecideRecovery(recoveryReq)
 			LogRecoveryDecision(recoveryReq, recovery)
+			e.emitRuntimeEvent(ctx, RecoveryTraceEvent(recoveryReq, recovery, time.Now()))
 		}
 		if reviewErr == nil && recovery.Action == RecoveryActionRetry {
 			if e.cfg.OnTaskRetry != nil {
@@ -1093,6 +1119,7 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 						}
 						recovery := DecideRecovery(recoveryReq)
 						LogRecoveryDecision(recoveryReq, recovery)
+						e.emitRuntimeEvent(ctx, RecoveryTraceEvent(recoveryReq, recovery, time.Now()))
 						if recovery.Action == RecoveryActionRetry {
 							attempts = recovery.NextAttempt
 							if err := e.store.UpdateSubTask(taskID, idx, hermes.SubTaskInProgress, text, tokensUsed); err != nil {

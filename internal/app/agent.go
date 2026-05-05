@@ -981,6 +981,7 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		}
 		recovery := appengine.DecideRecovery(recoveryReq)
 		appengine.LogRecoveryDecision(recoveryReq, recovery)
+		recordRecoveryDecision(ctx, recoveryReq, recovery, chatKey{chatID: a.chatID, threadID: a.threadID}, "", 0)
 		if recovery.Action == appengine.RecoveryActionRetry {
 			log.Printf("[agent] retryable error detected: %v", err)
 			if resp != nil && resp.SessionID != "" {
@@ -1265,6 +1266,7 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 		ThreadID:              a.threadID,
 		MaxPlannerJSONRetries: 1,
 		Budget:                hermes.TokenBudget{},
+		OnRuntimeEvent:        recordRuntimeEvent,
 	}, planFn, direct, store, &hermes.NoopProgressReporter{})
 
 	result, err := engine.Run(ctx, userMessage, a.chatContext, nil)
@@ -1277,6 +1279,7 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 		}
 		recovery := appengine.DecideRecovery(recoveryReq)
 		appengine.LogRecoveryDecision(recoveryReq, recovery)
+		recordRecoveryDecision(ctx, recoveryReq, recovery, chatKey{chatID: a.chatID, threadID: a.threadID}, "", 0)
 		if onUpdate != nil {
 			onUpdate("⚠️ Plan phase failed, falling back to direct execution...", false)
 		}
