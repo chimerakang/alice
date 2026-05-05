@@ -15,6 +15,7 @@ import {
 
 const EVENT_TYPE_OPTIONS = [
   { value: "RecoveryDecision", label: "Recovery" },
+  { value: "IssueQualityGate", label: "Quality Gate" },
   { value: "", label: "All" },
 ];
 
@@ -52,12 +53,16 @@ function actionVariant(action: string): "success" | "warning" | "error" | "info"
     case "retry":
       return "warning";
     case "fallback":
+    case "allow":
       return "info";
     case "cancel":
     case "fail":
       return "error";
     case "none":
+    case "skip":
       return "neutral";
+    case "needs_clarification":
+      return "warning";
     default:
       return "success";
   }
@@ -68,12 +73,16 @@ function actionIcon(action: string) {
     case "retry":
       return RotateCcw;
     case "fallback":
+    case "allow":
       return RefreshCw;
     case "cancel":
     case "fail":
       return XCircle;
     case "none":
+    case "needs_clarification":
       return AlertTriangle;
+    case "skip":
+      return CheckCircle2;
     default:
       return CheckCircle2;
   }
@@ -86,6 +95,12 @@ function RuntimeEventRow({ event }: { event: RuntimeEventRecord }) {
   const attempt = payloadNumber(event, "attempt");
   const maxAttempts = payloadNumber(event, "max_attempts");
   const nextAttempt = payloadNumber(event, "next_attempt");
+  const unchecked = payloadNumber(event, "unchecked_count");
+  const checked = payloadNumber(event, "checked_count");
+  const checklistTotal = payloadNumber(event, "checklist_total");
+  const commentCount = payloadNumber(event, "comment_count");
+  const completionDone = payloadNumber(event, "completion_done");
+  const completionTotal = payloadNumber(event, "completion_total");
   const Icon = actionIcon(action);
 
   return (
@@ -115,6 +130,18 @@ function RuntimeEventRow({ event }: { event: RuntimeEventRecord }) {
                 {nextAttempt > 0 ? ` -> ${nextAttempt}` : ""}
               </span>
             )}
+            {checklistTotal > 0 && (
+              <span>
+                checklist {checked}/{checklistTotal}
+                {unchecked > 0 ? `, ${unchecked} open` : ""}
+              </span>
+            )}
+            {completionTotal > 0 && (
+              <span>
+                completed {completionDone}/{completionTotal}
+              </span>
+            )}
+            {commentCount > 0 && <span>{commentCount} comments</span>}
           </div>
         </div>
         <div className="text-[11px] font-mono text-gray-600">{event.type}</div>
@@ -162,7 +189,7 @@ export default function Runtime() {
             Runtime Events
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Persisted runtime decisions for retry, fallback, and cancellation.
+            Persisted runtime decisions for recovery and Hermes issue gates.
           </p>
         </div>
         <button
@@ -176,7 +203,7 @@ export default function Runtime() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        {["retry", "fallback", "cancel", "fail", "none"].map((action) => (
+        {["allow", "skip", "needs_clarification", "retry", "fallback"].map((action) => (
           <div key={action} className="card p-4">
             <div className="text-xs text-gray-500 uppercase">{action}</div>
             <div className="text-2xl font-bold font-mono text-white mt-1">
