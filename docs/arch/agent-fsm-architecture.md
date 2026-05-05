@@ -258,7 +258,9 @@ Recommended event names:
      fallback, Planner JSON/empty-plan/quality retry, Hermes task-level review
      retry, strict sub-task review retry, manual `/retry` sub-task retry limits,
      and retry watchdog cancellation also use the same decision shape while
-     preserving existing behavior.
+     preserving existing behavior. Recovery decisions now emit a normalized
+     `RecoveryDecision` runtime event payload and log line that can become a
+     persisted trace span in the observability slice.
 
 5. **Hermes Task Agent cleanup**
    - Keep Hermes as the long-task engine.
