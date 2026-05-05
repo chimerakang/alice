@@ -18,6 +18,7 @@ const EVENT_TYPE_OPTIONS = [
   { value: "IssueQualityGate", label: "Issue Gate" },
   { value: "PlanQualityGate", label: "Plan Gate" },
   { value: "HermesInteractionGate", label: "Hermes Gate" },
+  { value: "CodexSessionUpdate", label: "Codex" },
   { value: "", label: "All" },
 ];
 
@@ -59,6 +60,7 @@ function actionVariant(action: string): "success" | "warning" | "error" | "info"
     case "fallback":
     case "allow":
     case "normal_bypass":
+    case "session_update":
       return "info";
     case "cancel":
     case "fail":
@@ -118,6 +120,13 @@ function RuntimeEventRow({ event }: { event: RuntimeEventRecord }) {
   const subTaskNum = payloadNumber(event, "subtask_num");
   const subTaskTotal = payloadNumber(event, "total");
   const subTask = payloadString(event, "subtask");
+  const eventType = payloadString(event, "event_type");
+  const itemType = payloadString(event, "item_type");
+  const command = payloadString(event, "command");
+  const message = payloadString(event, "message");
+  const tokensInput = payloadNumber(event, "tokens_input");
+  const cachedInput = payloadNumber(event, "cached_input_tokens");
+  const tokensOutput = payloadNumber(event, "tokens_output");
   const Icon = actionIcon(action);
 
   return (
@@ -160,6 +169,14 @@ function RuntimeEventRow({ event }: { event: RuntimeEventRecord }) {
             )}
             {commentCount > 0 && <span>{commentCount} comments</span>}
             {taskCount > 0 && <span>{taskCount} planned tasks</span>}
+            {eventType && <span>{eventType}</span>}
+            {itemType && <span>{itemType}</span>}
+            {(tokensInput > 0 || cachedInput > 0 || tokensOutput > 0) && (
+              <span>
+                tokens {tokensInput}
+                {cachedInput > 0 ? ` + ${cachedInput} cached` : ""} / {tokensOutput}
+              </span>
+            )}
             {subTaskNum > 0 && (
               <span>
                 subtask {subTaskNum}
@@ -167,6 +184,8 @@ function RuntimeEventRow({ event }: { event: RuntimeEventRecord }) {
               </span>
             )}
             {violation && <span className="text-warning">{violation}</span>}
+            {command && <span className="text-gray-400 truncate max-w-xl">{command}</span>}
+            {message && <span className="text-gray-400 truncate max-w-xl">{message}</span>}
             {subTask && <span className="text-gray-400 truncate max-w-xl">{subTask}</span>}
           </div>
         </div>
@@ -215,7 +234,7 @@ export default function Runtime() {
             Runtime Events
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            Persisted runtime decisions for recovery, Hermes quality gates, and chat routing guards.
+            Persisted runtime decisions for recovery, Hermes quality gates, chat routing guards, and Codex session updates.
           </p>
         </div>
         <button
@@ -229,7 +248,7 @@ export default function Runtime() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        {["allow", "skip", "replan", "retry", "block_until_choice", "normal_bypass", "timeout_skip", "fail"].map((action) => (
+        {["allow", "skip", "replan", "retry", "session_update", "block_until_choice", "normal_bypass", "fail"].map((action) => (
           <div key={action} className="card p-4">
             <div className="text-xs text-gray-500 uppercase">{action}</div>
             <div className="text-2xl font-bold font-mono text-white mt-1">

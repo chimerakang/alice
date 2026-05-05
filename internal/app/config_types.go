@@ -19,6 +19,12 @@ type RenderingConfig struct {
 	ChromeExecutable      string `json:"chrome_executable"`
 }
 
+// CodexInterceptionConfig controls observe-only Codex CLI session ingestion.
+type CodexInterceptionConfig struct {
+	Enabled     bool   `json:"enabled"`
+	SessionsDir string `json:"sessions_dir"`
+}
+
 // ModelRoutingConfig 動態模型路由設定
 type ModelRoutingConfig struct {
 	EnableDynamicRouting  bool   `json:"enable_dynamic_routing"`

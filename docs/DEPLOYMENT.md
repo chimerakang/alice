@@ -148,6 +148,45 @@ When routing Hermes through `/ghermes`, keep these Codex backend constraints in 
 - There is no direct `--max-turns` equivalent flag for Codex runs; rely on prompt-side guardrails and bounded task descriptions.
 - Planner tool isolation is prompt-enforced only; `codexPlanGuard` reduces misuse risk but does not provide a hard runtime sandbox.
 
+### Codex Session Observation
+
+Alice can observe local Codex CLI / VS Code activity without intercepting or
+blocking it. Enable the JSONL watcher with:
+
+```json
+{
+  "codex_interception": {
+    "enabled": true,
+    "sessions_dir": "~/.codex/sessions"
+  }
+}
+```
+
+If `sessions_dir` is empty, Alice watches `~/.codex/sessions`. The watcher reads
+new lines from `rollout-*.jsonl` files and persists normalized
+`CodexSessionUpdate` runtime events. These events are visible from:
+
+- `GET /api/runtime/events?type=CodexSessionUpdate`
+- the dashboard Runtime page using the Codex filter
+- WebSocket event type `codex_session_update`
+
+External runners can send the same normalized payload directly:
+
+```bash
+curl -X POST http://localhost:8080/api/hooks/codex-session-update \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "session_id": "thread-id",
+    "event": "session_update",
+    "source": "codex-vscode",
+    "event_type": "item.completed",
+    "message": "summary"
+  }'
+```
+
+This is observe-only Phase 1. Alice does not block Codex prompts, alter VS Code,
+or proxy the Codex CLI process.
+
 ### Security Configuration
 
 ```bash

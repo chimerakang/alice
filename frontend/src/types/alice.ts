@@ -518,7 +518,8 @@ export type WebSocketEventType =
   | "performance_metric"
   | "security_alert"
   | "agent_status"
-  | "hook_session_active";
+  | "hook_session_active"
+  | "codex_session_update";
 
 // ========== API Responses ==========
 

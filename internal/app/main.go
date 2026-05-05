@@ -71,6 +71,9 @@ type Config struct {
 	// HTML Rendering Settings
 	Rendering RenderingConfig `json:"rendering"`
 
+	// Codex CLI observe-only interception.
+	CodexInterception CodexInterceptionConfig `json:"codex_interception"`
+
 	// Model Routing Settings
 	ModelRouting ModelRoutingConfig `json:"model_routing"`
 
@@ -858,6 +861,12 @@ func Main() {
 
 	appCtx, cancelApp := context.WithCancel(context.Background())
 	defer cancelApp()
+
+	if watcher, err := StartCodexSessionWatcher(appCtx, config.CodexInterception); err != nil {
+		log.Printf("⚠️ Warning: failed to start Codex session watcher: %v", err)
+	} else if watcher != nil {
+		log.Printf("   Codex session watcher: enabled")
+	}
 
 	// Initialize Cron Scheduler
 	if config.EnablePersistence && globalStorage != nil {

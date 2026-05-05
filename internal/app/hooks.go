@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -14,8 +15,8 @@ import (
 // ClaudeCodeHookPayload represents the structured payload sent by the hook script
 type ClaudeCodeHookPayload struct {
 	SessionID       string         `json:"session_id"`
-	Event           string         `json:"event"`            // "session_complete", "session_active"
-	Source          string         `json:"source"`           // "terminal", "vscode", "unknown"
+	Event           string         `json:"event"`  // "session_complete", "session_active"
+	Source          string         `json:"source"` // "terminal", "vscode", "unknown"
 	TranscriptPath  string         `json:"transcript_path"`
 	ProjectDir      string         `json:"project_dir"`
 	UserPrompt      string         `json:"user_prompt,omitempty"`
@@ -285,6 +286,40 @@ func (wi *WebInterface) handleUserPromptSubmit(w http.ResponseWriter, r *http.Re
 
 		// Observe mode / dry-run: return empty object so Claude Code proceeds unchanged.
 		json.NewEncoder(w).Encode(map[string]interface{}{})
+	})(w, r)
+}
+
+func (wi *WebInterface) handleCodexSessionUpdate(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.Method != http.MethodPost {
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+
+		var payload CodexSessionUpdatePayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"invalid JSON: %s"}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		if strings.TrimSpace(payload.SessionID) == "" && strings.TrimSpace(payload.ThreadID) == "" && strings.TrimSpace(payload.SessionPath) == "" {
+			http.Error(w, `{"error":"session_id, thread_id, or session_path is required"}`, http.StatusBadRequest)
+			return
+		}
+		if payload.SessionID == "" {
+			payload.SessionID = payload.ThreadID
+		}
+		if payload.SessionID == "" {
+			payload.SessionID = strings.TrimSuffix(filepath.Base(payload.SessionPath), filepath.Ext(payload.SessionPath))
+		}
+
+		recordCodexSessionUpdate(r.Context(), payload)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":  "ok",
+			"session": payload.SessionID,
+			"event":   payload.Event,
+		})
 	})(w, r)
 }
 
