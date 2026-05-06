@@ -78,6 +78,7 @@ type SubTaskResult struct {
 	Result     string        `json:"result,omitempty"`
 	TokensUsed int           `json:"tokens_used,omitempty"`
 	Attempts   int           `json:"attempts,omitempty"`
+	EndedAt    *time.Time    `json:"ended_at,omitempty"`
 }
 
 // HermesInterrupt captures a durable human-in-the-loop pause. Telegram callback
