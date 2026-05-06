@@ -1,7 +1,7 @@
 # Master Tasks
 
 > Auto-generated from GitHub Issues.
-> Last updated: 2026-05-05
+> Last updated: 2026-05-06
 > Run `/task-sync` to regenerate.
 
 ## Status Legend
@@ -25,9 +25,9 @@
 | P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 100% (1/1) | ✅ |
 | P11 - User Experience | 指令健全性和用戶體驗改善 | 100% (1/1) | ✅ |
 | P12 - Dashboard Analytics | Claude Code Hooks UI 增強：統計圖表 + 用戶指南 | 100% (1/1) | ✅ |
-| P13 - Future Enhancements | 未來功能增強與優化 | 62% (23/37) | 🔄 |
+| P13 - Future Enhancements | 未來功能增強與優化 | 64% (24/37) | 🔄 |
 | P14 - Commercialization Strategy | Alice AI Agent 商業化發展策略與產品定位 | 0% (0/6) | 🔄 |
-| P15 - Hermes Stabilization & Cleanup | Hermes v2 stabilization, memory isolation, token observability, routing cleanup, and execution-engine consolidation. | 71% (5/7) | 🔄 |
+| P15 - Hermes Stabilization & Cleanup | Hermes v2 stabilization, memory isolation, token observability, routing cleanup, and execution-engine consolidation. | 50% (5/10) | 🔄 |
 | P15 - Parallel Subagents & Orchestration | Implementation of parallel subagent execution with isolated contexts, tool-level parallelism, and orchestration | 91% (11/12) | 🔄 |
 | P16 - Multi-Backend Execution | Support for multiple execution backends: Local, Docker, SSH | 100% (1/1) | ✅ |
 | P2 - Monitoring | Web Dashboard + API + 監控系統 | 100% (7/7) | ✅ |
@@ -92,7 +92,7 @@
 | | — 用戶可依照文件快速設置 Claude Code Hooks | | ✅ |
 | | — 設置指南包含完整的故障排除說明 | | ✅ |
 
-## P13 - Future Enhancements (🔄 62%)
+## P13 - Future Enhancements (🔄 64%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
@@ -651,7 +651,7 @@
 | | — 撰寫整合測試 | | ☐ |
 | | — 更新文檔 (CLAUDE.md) | | ☐ |
 | | — 更新 i18n 訊息（zh-TW.json, en.json） | | ☐ |
-| P13.34 | **feat: Telegram 對話式 UI 原型生成 (/prototype 命令)** | [#92](https://github.com/chimerakang/alice/issues/92) | 🔄 |
+| P13.34 | **feat: Telegram 對話式 UI 原型生成 (/prototype 命令)** | [#92](https://github.com/chimerakang/alice/issues/92) | ✅ |
 | | — 建立 `PrototypeManager` 核心類別 (`internal/app/prototype.go`) | | ☐ |
 | | — 實作 Claude Code CLI prompt 策略（生成 + 修改） | | ☐ |
 | | — 整合 chromedp 伺服器端截圖 | | ☐ |
@@ -964,7 +964,7 @@
 | | — 客戶付款延遲：建立付款保障機制 | | ☐ |
 | | — 投資回報不佳：設定止損線 | | ☐ |
 
-## P15 - Hermes Stabilization & Cleanup (🔄 71%)
+## P15 - Hermes Stabilization & Cleanup (🔄 50%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
@@ -1038,6 +1038,70 @@
 | | — 同樣 N 個 sub-task 用 Alice 現有 \`claude -p\` 模式跑一次（複製 buildSubTaskGoal 邏輯） | | ☐ |
 | | — 兩邊輸出 cost / token / latency 比較表 | | ☐ |
 | | — 跑 N=5 / N=10 / N=20 三個規模看是否有 prompt-length issue | | ☐ |
+| P15.8 | **Optimize Hermes token efficiency with outlier reporting and compact continuation context** | [#158](https://github.com/chimerakang/alice/issues/158) | 🔄 |
+| | — 在 runtime / dashboard 增加 Hermes token efficiency 區塊 | | ☐ |
+| | — 顯示每個 Hermes task 的 nominal tokens、cache-adjusted tokens、saved%、cache_read% | | ☐ |
+| | — 顯示 planner / executor / reviewer phase breakdown | | ☐ |
+| | — 標記 outlier：例如 `>10M tokens`、`cache_read <30%`、`fresh session too often` | | ☐ |
+| | — 提供最近 24h / 7d 聚合：平均、中位數、P95、top outliers | | ☐ |
+| | — 補 backend API 或現有 API 擴充，讓 frontend 不需要自己解析 raw JSON | | ☐ |
+| | — 任務開始前估算 context snapshot 大小 | | ☐ |
+| | — 超過門檻時自動 compact，只保留 issue、未完成 checklist、最近 task 摘要、必要檔案線索 | | ☐ |
+| | — walking session watermark 觸發前先嘗試 compact continuation context | | ☐ |
+| | — 在 runtime event 中記錄 compact 前後 token / char 大小 | | ☐ |
+| | — 對超大 fresh task 加 warning 或降載策略，避免直接膨脹到 10M+ / 40M+ | | ☐ |
+| | — all-failed retry 只注入該批低分 subtask 的 reviewer feedback | | ☐ |
+| | — index retry 只注入指定 subtask 的結果、feedback、必要上下文 | | ☐ |
+| | — continuation 依 GitHub issue unchecked checklist 建立最小上下文 | | ☐ |
+| | — 避免把完整前次 Hermes transcript 或 accumulated 整包帶入 | | ☐ |
+| | — 確認 #331 類型任務 retry 後 token 明顯下降 | | ☐ |
+| | — Dashboard / API 可以列出 top token outliers 與 cache efficiency | | ☐ |
+| | — 至少能比較 nominal tokens vs cache-adjusted tokens | | ☐ |
+| | — 最近任務可看出 phase breakdown，包含 planner / executor / reviewer | | ☐ |
+| | — 針對一個真實 issue retry / continuation，token 使用量比原始 fresh task 明顯下降 | | ☐ |
+| | — 補測試：token aggregation、cache-adjusted 計算、outlier 標記、compact context 選取規則 | | ☐ |
+| P15.9 | **Prevent Hermes no-op continuation loops when GitHub checklist is unsynced** | [#159](https://github.com/chimerakang/alice/issues/159) | 🔄 |
+| | — 在 issue reconciliation 中偵測「Hermes/review 已通過但 GitHub checklist 未勾」的狀態，輸出明確原因：`checklist_unsynced`。 | | ☐ |
+| | — Telegram 完成訊息增加選項： | | ☐ |
+| | — `同步 checklist`：根據 Hermes 執行計劃或已完成 subtask 嘗試勾選 issue body checklist。 | | ☐ |
+| | — `重新驗證`：只跑 final validation，不重新實作。 | | ☐ |
+| | — `重新規劃剩餘項`：只針對仍未被證據覆蓋的 checklist。 | | ☐ |
+| | — 避免 planner 對已驗證完成但 checklist 未勾的 issue 產生 no-op executor task；應改成 checklist sync / validation action。 | | ☐ |
+| | — 在 GitHub issue comment 中明確列出：哪些項目已由證據覆蓋、哪些只是 checklist 未勾、哪些仍缺實作。 | | ☐ |
+| | — 若無法安全自動勾選 checklist，至少提示使用者「目前阻塞點是 GitHub checklist 未同步」。 | | ☐ |
+| | — 補 runtime event，例如 `IssueChecklistUnsynced` 或在既有 `IssueQualityGate` payload 加 `reason=checklist_unsynced`。 | | ☐ |
+| | — 用 #157 類型案例重現時，不會連續產生只回報「已完成」的 no-op Hermes continuation。 | | ☐ |
+| | — Telegram 能清楚顯示：卡住原因是 checklist 未同步，而不是 executor 失敗。 | | ☐ |
+| | — 使用者可透過按鈕或指令選擇同步 checklist、重新驗證或只重規劃真正剩餘工作。 | | ☐ |
+| | — GitHub issue comment / body 更新結果可追蹤，避免誤勾沒有證據的 checklist。 | | ☐ |
+| | — 補測試涵蓋：review passed + unchecked checklist、no-op continuation prevention、checklist sync action rendering。 | | ☐ |
+| P15.10 | **Add IssueOps Agent FSM for GitHub issue lifecycle, checklist sync, and close readiness** | [#160](https://github.com/chimerakang/alice/issues/160) | 🔄 |
+| | — 新增 IssueState / IssueEvent / IssueTransition 型別，沿用或對齊現有 Task FSM pattern。 | | ☐ |
+| | — 實作 `ValidIssueTransition(from, event, to)` 或等價 guard-driven transition helper。 | | ☐ |
+| | — 補 `IsTerminal()` / `NeedsHumanDecision()` 等共通介面。 | | ☐ |
+| | — 加入 transition table 測試，覆蓋 happy path、checklist unsynced、blocked、closed。 | | ☐ |
+| | — 建立 IssueOps service / agent，不直接混在 Executor 裡。 | | ✅ |
+| | — 負責讀取 GitHub issue body、解析 checklist、建立 checklist mapping。 | | ☐ |
+| | — 負責收集 Hermes subtask result、review result、validation command 作為 evidence。 | | ☐ |
+| | — 負責產生 issue comment / body patch，但實際寫入前需通過 guard。 | | ☐ |
+| | — 對外提供高階操作：`PlanIssue`、`RecordEvidence`、`SyncChecklist`、`AssessCloseReadiness`、`CloseIssue`。 | | ☐ |
+| | — 將目前 post-run issue reconciliation 改為呼叫 IssueOps FSM，而不是只讀 checklist 判斷。 | | ☐ |
+| | — #159 的 `checklist_unsynced` 狀態應由 IssueOps Agent 發出。 | | ☐ |
+| | — Telegram completion message 根據 Issue FSM state 顯示不同 action：同步 checklist、重新驗證、重新規劃剩餘項、關閉 issue。 | | ☐ |
+| | — 避免 planner 對 `checklist_unsynced` 產生 no-op continuation。 | | ☐ |
+| | — Runtime event 增加 Issue FSM state transition 記錄。 | | ☐ |
+| | — 自動勾 checklist 前列出 evidence mapping。 | | ☐ |
+| | — 對低信心 mapping 要求人工確認。 | | ☐ |
+| | — 支援 dry-run：只顯示將更新哪些 checklist / comment，不真正寫入。 | | ☐ |
+| | — GitHub API / gh CLI 失敗時進入 `blocked`，並提供 retry action。 | | ☐ |
+| | — 防止 issue body 被覆蓋掉使用者手動新增內容。 | | ☐ |
+| | — #157 類型案例不再出現 executor/review 已完成但 checklist 未同步後反覆 no-op continuation。 | | ☐ |
+| | — IssueOps FSM 能明確輸出目前 state，例如 `checklist_unsynced`、`ready_to_close`、`blocked`。 | | ☐ |
+| | — Telegram 可以依 Issue FSM state 顯示正確操作，而不是單純「繼續 / 重新規劃 / 停止」。 | | ☐ |
+| | — 每個自動勾選 checklist item 都能追溯到 Hermes subtask result、review result 或 validation command。 | | ☐ |
+| | — Issue close 前必須通過 `CanAutoClose` guard。 | | ☐ |
+| | — 補單元測試：transition table、guard、checklist mapping、sync dry-run、blocked recovery。 | | ☐ |
+| | — Add final IssueOps acceptance regression coverage for GitHub #160 by inspecting `internal/app/issueops`, `internal/app/hermes`, `internal/app/engine`, and `internal/app/telegram`, then modifying the relevant Go test files to assert that `checklist_unsynced`, `ready_to_close`, and `blocked` states drive non-no-op continuation actions, evidence-backed checklist sync, blocked retry recovery, runtime transition recording, and `CanAutoClose` guarding; finish by running the focused package tests and `go test ./...` to report concrete file paths, line numbers, and command output. | | ✅ |
 
 ## P15 - Parallel Subagents & Orchestration (🔄 91%)
 
@@ -1142,7 +1206,7 @@
 | | — Read internal/app/hermes/coordinator.go and task_state.go to understand existing lifecycle events and TaskState.GithubIssueNumber field | | ✅ |
 | | — Read docs/MASTER_TASKS.md and .claude/skills/task-sync files to understand existing GitHub Issue workflow integration | | ✅ |
 | | — Create internal/app/hermes/github.go with IssueContext struct and FetchIssue(ctx, number) function that shells out to 'gh issue view N --json title,body,labels' | | ✅ |
-| | — Implement ParseChecklist helper in internal/app/hermes/github.go that extracts '- [ ]' and '- [x]' items from Issue body with line numbers for sync anchoring | | ☐ |
+| | — Implement ParseChecklist helper in internal/app/hermes/github.go that extracts '- [ ]' and '- [x]' items from Issue body with line numbers for sync anchoring | | ✅ |
 | | — Implement SyncChecklist(ctx, number, subtasks) in github.go that updates Issue body checking off completed SubTasks via 'gh issue edit N --body' | | ✅ |
 | | — Implement PostComment(ctx, number, event, payload) in github.go supporting start/complete/fail/budget_exceeded event templates with artifacts, tokens, wallclock | | ✅ |
 | | — Implement ApplyLabel(ctx, number, label) and CloseIssue(ctx, number) in github.go via 'gh issue edit --add-label' and 'gh issue close' | | ✅ |
@@ -1700,7 +1764,7 @@
 | [#89](https://github.com/chimerakang/alice/issues/89) | feat: Implement cron scheduler for automated tasks | P13 - Future Enhancements | ✅ |
 | [#90](https://github.com/chimerakang/alice/issues/90) | bug: CallStream 丟棄 CLI exit error 時的 streaming 結果導致「執行錯誤」 | P13 - Future Enhancements | ✅ |
 | [#91](https://github.com/chimerakang/alice/issues/91) | feat: Claude Design 整合 - UI 原型與設計生成 [等待 API 開放] | P13 - Future Enhancements | 🔄 |
-| [#92](https://github.com/chimerakang/alice/issues/92) | feat: Telegram 對話式 UI 原型生成 (/prototype 命令) | P13 - Future Enhancements | 🔄 |
+| [#92](https://github.com/chimerakang/alice/issues/92) | feat: Telegram 對話式 UI 原型生成 (/prototype 命令) | P13 - Future Enhancements | ✅ |
 | [#93](https://github.com/chimerakang/alice/issues/93) | Model routing 造成 session context 丟失：改採 Sticky + Follow-up detection | P13 - Future Enhancements | ✅ |
 | [#129](https://github.com/chimerakang/alice/issues/129) | 整合 OpenAI Image Generation (gpt-image-2 / DALL-E) 為遊戲開發鋪路 | P13 - Future Enhancements | 🔄 |
 | [#130](https://github.com/chimerakang/alice/issues/130) | research: VS Code 上的 Codex CLI 訊息攔截方案 | P13 - Future Enhancements | 🔄 |
@@ -1717,6 +1781,9 @@
 | [#146](https://github.com/chimerakang/alice/issues/146) | SessionPolicy: direct bridge / model switch memory source policy | P15 - Hermes Stabilization & Cleanup | ✅ |
 | [#148](https://github.com/chimerakang/alice/issues/148) | Runtime trace + token/cache observability | P15 - Hermes Stabilization & Cleanup | 🔄 |
 | [#149](https://github.com/chimerakang/alice/issues/149) | Spike: Single-session walking agent via Python Claude Agent SDK (#148 Phase 2) | P15 - Hermes Stabilization & Cleanup | ✅ |
+| [#158](https://github.com/chimerakang/alice/issues/158) | Optimize Hermes token efficiency with outlier reporting and compact continuation context | P15 - Hermes Stabilization & Cleanup | 🔄 |
+| [#159](https://github.com/chimerakang/alice/issues/159) | Prevent Hermes no-op continuation loops when GitHub checklist is unsynced | P15 - Hermes Stabilization & Cleanup | 🔄 |
+| [#160](https://github.com/chimerakang/alice/issues/160) | Add IssueOps Agent FSM for GitHub issue lifecycle, checklist sync, and close readiness | P15 - Hermes Stabilization & Cleanup | 🔄 |
 | [#87](https://github.com/chimerakang/alice/issues/87) | feat: Implement parallel subagent execution with isolated contexts | P15 - Parallel Subagents & Orchestration | ✅ |
 | [#95](https://github.com/chimerakang/alice/issues/95) | [Epic] Alice Hermes 化路徑圖：Brain-Executor 架構遷移 | P15 - Parallel Subagents & Orchestration | ✅ |
 | [#96](https://github.com/chimerakang/alice/issues/96) | Hermes: Tool Execution Hooks — Post-validator + Path guard | P15 - Parallel Subagents & Orchestration | ✅ |
@@ -1769,9 +1836,9 @@
 
 ## Summary
 
-**Total Issues:** 100
-**Completed:** 77 ✅
-**In Progress:** 23 🔄
+**Total Issues:** 103
+**Completed:** 78 ✅
+**In Progress:** 25 🔄
 
-**Last sync:** 2026-05-05 12:31 UTC
+**Last sync:** 2026-05-06 03:57 UTC
 

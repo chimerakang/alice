@@ -169,9 +169,17 @@ function SortButton({
 
 function ReviewRow({
   review,
+  verdictLabel,
+  retryNoteLabel,
+  retryRunLabel,
+  reviewerLabel,
   onClick,
 }: {
   review: ReviewFeedItem;
+  verdictLabel: string;
+  retryNoteLabel: string;
+  retryRunLabel: string;
+  reviewerLabel: string;
   onClick: (taskId: string) => void;
 }) {
   const verdictVariant = review.verdict === "pass" ? "success" : review.verdict === "fail" ? "error" : "warning";
@@ -192,12 +200,12 @@ function ReviewRow({
       </td>
       <td className="px-4 py-3">
         <div className="flex items-center gap-2">
-          <StatusBadge variant={verdictVariant} size="sm">
-            {review.verdict}
+          <StatusBadge variant={verdictVariant} size="sm" title={retryNoteLabel}>
+            {verdictLabel}
           </StatusBadge>
           {review.run_source === "retry" && (
             <span className="px-1.5 py-0.5 rounded bg-primary/10 text-[10px] text-primary">
-              retry
+              {retryRunLabel}
             </span>
           )}
         </div>
@@ -206,7 +214,7 @@ function ReviewRow({
         {review.overall_score}/100
       </td>
       <td className="px-4 py-3 text-sm text-gray-300">
-        {review.reviewer_model || "reviewer"}
+        {reviewerLabel}
       </td>
       <td className="px-4 py-3">
         {tags.length > 0 ? (
@@ -260,9 +268,9 @@ export function ReviewsPageView({
 
   const verdictOptions: Array<{ value: ReviewVerdictFilter; label: string }> = [
     { value: "all", label: t("common.all") },
-    { value: "pass", label: "Pass" },
-    { value: "partial", label: "Partial" },
-    { value: "fail", label: "Fail" },
+    { value: "pass", label: t("reviews.verdicts.pass") },
+    { value: "partial", label: t("reviews.verdicts.partial") },
+    { value: "fail", label: t("reviews.verdicts.fail") },
   ];
 
   const emptyMessage = reviews.length === 0
@@ -290,7 +298,7 @@ export function ReviewsPageView({
           </p>
         </div>
         <div className="text-xs text-gray-500 font-mono">
-          {filteredReviews.length} / {reviews.length} reviews
+          {t("reviews.filtered_summary", { visible: filteredReviews.length, total: reviews.length })}
         </div>
       </div>
 
@@ -318,9 +326,9 @@ export function ReviewsPageView({
 
           <div className="flex flex-wrap items-end gap-3">
             <label className="space-y-1">
-              <span className="block text-[11px] uppercase tracking-wide text-gray-500">Verdict</span>
-              <select
-                value={filters.verdict}
+                <span className="block text-[11px] uppercase tracking-wide text-gray-500">{t("reviews.filters.verdict")}</span>
+                <select
+                  value={filters.verdict}
                 onChange={(e) => onVerdictChange(e.target.value as ReviewVerdictFilter)}
                 className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-primary/50"
               >
@@ -331,13 +339,13 @@ export function ReviewsPageView({
             </label>
 
             <label className="space-y-1">
-              <span className="block text-[11px] uppercase tracking-wide text-gray-500">Project</span>
+              <span className="block text-[11px] uppercase tracking-wide text-gray-500">{t("reviews.filters.project")}</span>
               <select
                 value={filters.projectPath}
                 onChange={(e) => onProjectChange(e.target.value)}
                 className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-primary/50 min-w-[180px]"
               >
-                <option value="all">All</option>
+                <option value="all">{t("common.all")}</option>
                 {projectOptions.map((project) => (
                   <option key={project} value={project}>
                     {project}
@@ -347,13 +355,13 @@ export function ReviewsPageView({
             </label>
 
             <label className="space-y-1">
-              <span className="block text-[11px] uppercase tracking-wide text-gray-500">Reviewer model</span>
+              <span className="block text-[11px] uppercase tracking-wide text-gray-500">{t("reviews.filters.reviewer_model")}</span>
               <select
                 value={filters.reviewerModel}
                 onChange={(e) => onReviewerModelChange(e.target.value)}
                 className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 focus:outline-none focus:border-primary/50 min-w-[180px]"
               >
-                <option value="all">All</option>
+                <option value="all">{t("common.all")}</option>
                 {reviewerOptions.map((model) => (
                   <option key={model} value={model}>
                     {model}
@@ -383,7 +391,7 @@ export function ReviewsPageView({
                     direction={sortDirection}
                     onClick={() => onSortChange("project_path")}
                   >
-                    project
+                    {t("reviews.columns.project")}
                   </SortButton>
                 </th>
                 <th className="px-4 py-3 whitespace-nowrap">
@@ -392,7 +400,7 @@ export function ReviewsPageView({
                     direction={sortDirection}
                     onClick={() => onSortChange("verdict")}
                   >
-                    verdict
+                    {t("reviews.columns.verdict")}
                   </SortButton>
                 </th>
                 <th className="px-4 py-3 whitespace-nowrap">
@@ -401,7 +409,7 @@ export function ReviewsPageView({
                     direction={sortDirection}
                     onClick={() => onSortChange("overall_score")}
                   >
-                    score
+                    {t("reviews.columns.score")}
                   </SortButton>
                 </th>
                 <th className="px-4 py-3 whitespace-nowrap">
@@ -410,7 +418,7 @@ export function ReviewsPageView({
                     direction={sortDirection}
                     onClick={() => onSortChange("reviewer_model")}
                   >
-                    reviewer model
+                    {t("reviews.columns.reviewer_model")}
                   </SortButton>
                 </th>
                 <th className="px-4 py-3 whitespace-nowrap">
@@ -419,7 +427,7 @@ export function ReviewsPageView({
                     direction={sortDirection}
                     onClick={() => onSortChange("issue_tags")}
                   >
-                    tags
+                    {t("reviews.columns.tags")}
                   </SortButton>
                 </th>
                 <th className="px-4 py-3 whitespace-nowrap">
@@ -438,7 +446,7 @@ export function ReviewsPageView({
                 <tr>
                   <td colSpan={7} className="px-4 py-14 text-center text-gray-500">
                     <Loader2 className="w-6 h-6 mx-auto mb-2 animate-spin text-primary" />
-                    Loading reviews...
+                    {t("reviews.loading_reviews")}
                   </td>
                 </tr>
               ) : filteredReviews.length === 0 ? (
@@ -453,9 +461,24 @@ export function ReviewsPageView({
                   </td>
                 </tr>
               ) : (
-                filteredReviews.map((review) => (
-                  <ReviewRow key={review.key} review={review} onClick={goToTimeline} />
-                ))
+                filteredReviews.map((review) => {
+                  const verdictKey =
+                    review.verdict === "allow" || review.verdict === "pass" || review.verdict === "partial" || review.verdict === "fail" || review.verdict === "block"
+                      ? review.verdict
+                      : "partial";
+
+                  return (
+                    <ReviewRow
+                      key={review.key}
+                      review={review}
+                      verdictLabel={t(`reviews.verdicts.${verdictKey}`)}
+                      retryNoteLabel={t(`reviews.retry_note.${review.retry_note}`)}
+                      retryRunLabel={t("reviews.run_source.retry")}
+                      reviewerLabel={review.reviewer_model || t("reviews.reviewer_fallback")}
+                      onClick={goToTimeline}
+                    />
+                  );
+                })
               )}
             </tbody>
           </table>

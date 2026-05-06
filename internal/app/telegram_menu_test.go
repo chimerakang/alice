@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	appengine "claude-tg-agent/internal/app/engine"
 	"claude-tg-agent/internal/app/hermes"
 )
 
@@ -224,6 +225,52 @@ func TestSendRetryConfirmationLatestMode(t *testing.T) {
 		rows := markup["inline_keyboard"].([][]map[string]interface{})
 		if rows[0][0]["callback_data"] != "retry:run:latest" {
 			t.Errorf("run button = %v, want retry:run:latest", rows[0][0]["callback_data"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out")
+	}
+}
+
+func TestSendRetryConfirmationAllMode(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{messageQueue: make(chan *TelegramMessage, 1)}
+
+	bot.sendRetryConfirmation(key, "all", "task-abc", 0)
+
+	select {
+	case msg := <-bot.messageQueue:
+		markup := msg.Params["reply_markup"].(map[string]interface{})
+		rows := markup["inline_keyboard"].([][]map[string]interface{})
+		if rows[0][0]["callback_data"] != "retry:run:all:task-abc" {
+			t.Errorf("run button = %v, want retry:run:all:task-abc", rows[0][0]["callback_data"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out")
+	}
+}
+
+func TestSendReviewNotificationIncludesAllFailedRetryAction(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{messageQueue: make(chan *TelegramMessage, 1)}
+
+	bot.sendReviewNotification(key, appengine.ReviewNotification{
+		TaskID:          "38bd507a",
+		Verdict:         appengine.VerdictPartial,
+		OverallScore:    70,
+		AdvisoryRetry:   true,
+		FailingSubTasks: 3,
+		RetryNote:       "建議人工評估後重跑 3 個失敗/低分子任務",
+	})
+
+	select {
+	case msg := <-bot.messageQueue:
+		markup := msg.Params["reply_markup"].(map[string]interface{})
+		rows := markup["inline_keyboard"].([][]map[string]interface{})
+		if rows[0][0]["callback_data"] != "retry:confirm:all:38bd507a" {
+			t.Errorf("all failed button = %v, want retry:confirm:all:38bd507a", rows[0][0]["callback_data"])
+		}
+		if rows[0][1]["callback_data"] != "retry:confirm:lowest:38bd507a" {
+			t.Errorf("lowest button = %v, want retry:confirm:lowest:38bd507a", rows[0][1]["callback_data"])
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out")

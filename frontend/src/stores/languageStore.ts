@@ -58,10 +58,10 @@ export async function syncLanguagePreference(language: Language): Promise<void> 
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to sync language: ${response.statusText}`);
+      throw new Error("language_sync_failed");
     }
   } catch (error) {
-    console.error("Error syncing language preference:", error);
+    console.error("language_sync_failed", error);
     throw error;
   }
 }

@@ -26,7 +26,19 @@
     "refresh": "Refresh",
     "save": "Save",
     "cancel": "Cancel",
-    "submit": "Submit"
+    "submit": "Submit",
+    "unknown": "Unknown"
+  },
+  "date_range": {
+    "presets": {
+      "1h": "1h",
+      "6h": "6h",
+      "24h": "24h",
+      "7d": "7d",
+      "30d": "30d",
+      "all": "All"
+    },
+    "reset": "Reset filter"
   },
   "dashboard": {
     "stats": {
@@ -40,10 +52,15 @@
     },
     "git_status": {
       "title": "Git Status",
+      "no_info": "No git information available",
+      "dirty": "Dirty",
       "clean": "Clean",
+      "project": "Project",
       "branch": "Branch",
       "commit": "Commit",
-      "remote": "Remote"
+      "remote": "Remote",
+      "modified": "Modified",
+      "modified_files": "{{count}} files"
     },
     "system_status": {
       "title": "System Status",
@@ -58,19 +75,140 @@
     "tool_execution": {
       "title": "Tool Execution",
       "success_rate": "Tool success rate",
+      "no_data": "No tool execution data",
       "ok": "ok",
       "err": "err"
+    },
+    "execution_state": {
+      "title": "Agent Execution",
+      "no_recent_agents": "No recent agents",
+      "unknown_project": "unknown",
+      "active": "active",
+      "inactive": "inactive",
+      "states": {
+        "starting": "starting",
+        "streaming": "streaming",
+        "retrying": "retrying",
+        "cancelling": "cancelling",
+        "succeeded": "succeeded",
+        "failed": "failed",
+        "cancelled": "cancelled",
+        "idle": "idle"
+      }
+    },
+    "recent_decisions": {
+      "title": "Recent AI Decisions",
+      "view_all": "View all",
+      "no_decisions_yet": "No decisions yet",
+      "no_prompt": "No prompt",
+      "tools_count": "{{count}} tools",
+      "duration_seconds": "{{seconds}}s"
+    },
+    "recent_tools": {
+      "title": "Recent Tool Executions",
+      "waiting": "Waiting for tool executions...",
+      "duration_ms": "{{duration}}ms"
     },
     "panels": {
       "activity": "Activity (24h)",
       "token_usage": "Token Usage (7d)",
       "no_token_data": "No token data in the last 7 days",
+      "no_activity_data": "No activity data in the last 24h",
       "source_distribution": "Source Distribution",
       "source_performance": "Source Performance",
       "average_duration_ms": "Average Duration (ms)",
       "success_rate_pct": "Success Rate (%)",
+      "total_decisions": "Decisions",
       "unknown_source": "Unknown",
-      "model_distribution": "Model Distribution"
+      "model_distribution": "Model Distribution",
+      "cost_trend": "Cost Trend",
+      "smart_routing_savings": "Smart Routing Savings",
+      "actual_vs_default_model": "Actual vs. Default Model",
+      "period": "Period: {{label}}",
+      "savings_period": "Last {{hours}} hours ({{start}} - {{end}})",
+      "saved_percent": "Saved ({{percent}}%)",
+      "actual_cost": "Actual Cost",
+      "default_model_cost": "If using Sonnet (default)",
+      "expected_cost": "Expected Cost",
+      "savings": "Savings",
+      "total_requests": "Total Requests",
+      "cost_per_request": "Cost per Request",
+      "models_used": "Models Used",
+      "efficiency": "Efficiency",
+      "no_decision_data": "No decision data available",
+      "no_source_data": "No source data available",
+      "no_performance_data": "No performance data available",
+      "no_cost_data": "No cost data available",
+      "calls": "Calls",
+      "cost": "Cost",
+      "calls_count": "{{count}} calls",
+      "total_requests_short": "{{count}} requests"
+    },
+    "chart_series": {
+      "input": "Input",
+      "output": "Output"
+    },
+    "sources": {
+      "terminal": "Terminal",
+      "vscode": "VS Code",
+      "telegram": "Telegram",
+      "unknown": "Unknown"
+    },
+    "models": {
+      "haiku": "Haiku (Fast)",
+      "sonnet": "Sonnet (Standard)",
+      "opus": "Opus (Deep)"
+    }
+  },
+  "performance": {
+    "title": "Performance Analytics",
+    "last_updated": "Last updated: {{time}}",
+    "summary": {
+      "total_operations": "Total Operations",
+      "avg_response_time": "Avg Response Time",
+      "error_rate": "Error Rate",
+      "throughput": "Throughput"
+    },
+    "charts": {
+      "api_response_time_trend": "API Response Time Trend",
+      "cost_trend": "Cost Trend (USD)",
+      "token_usage_over_time": "Token Usage Over Time",
+      "cache_hit_rate": "Cache Hit Rate",
+      "memory_usage": "Memory Usage (MB)"
+    },
+    "chart_series": {
+      "cost": "Cost",
+      "cache_hit": "Cache hit",
+      "memory": "Memory",
+      "avg_time": "Avg Time",
+      "count": "Count"
+    },
+    "cache_breakdown": {
+      "title": "Cache Breakdown",
+      "provider": "Provider",
+      "model": "Model",
+      "group": "Group",
+      "calls": "Calls",
+      "input_hit": "Input Hit",
+      "total_hit": "Total Hit",
+      "cache_read": "Cache Read",
+      "tokens": "Tokens",
+      "cost": "Cost"
+    },
+    "tool_distribution": {
+      "title": "Tool Execution Time Distribution"
+    },
+    "recommendations": {
+      "title": "Performance Optimization Recommendations",
+      "priority": {
+        "high": "High priority",
+        "medium": "Medium priority",
+        "low": "Low priority"
+      }
+    },
+    "empty": {
+      "no_metrics": "No performance metrics available yet.",
+      "no_metrics_hint": "Charts will populate as the system processes requests."
     }
   },
   "reviews": {
@@ -79,6 +217,8 @@
     "recent": "Recent Reviews",
     "verdict_distribution": "Verdict Distribution",
     "top_issue_tags": "Top Issue Tags",
+    "no_verdict_data": "No verdict data",
+    "no_issue_tags": "No issue tags recorded",
     "metric_reviews": "REVIEWS",
     "metric_pass_rate": "PASS RATE",
     "metric_avg_score": "AVG SCORE",
@@ -89,22 +229,457 @@
     "search_placeholder": "Search goal or feedback_text",
     "column_time": "Time",
     "column_goal_summary": "Goal summary",
+    "columns": {
+      "project": "Project",
+      "verdict": "Verdict",
+      "score": "Score",
+      "reviewer_model": "Reviewer model",
+      "tags": "Tags"
+    },
+    "filters": {
+      "verdict": "Verdict",
+      "project": "Project",
+      "reviewer_model": "Reviewer model"
+    },
+    "verdicts": {
+      "allow": "Allow",
+      "pass": "Pass",
+      "partial": "Partial",
+      "fail": "Fail",
+      "block": "Block"
+    },
+    "reviewer_fallback": "reviewer",
+    "loading_reviews": "Loading reviews...",
+    "filtered_summary": "{{visible}} / {{total}} reviews",
     "empty_no_reviews": "No review results yet",
     "empty_no_match": "No reviews match the current filter",
     "filter_hint": "Adjust verdict, project, time range, or search to widen the result set.",
     "footer_hint": "Sorted by time (newest first). Click a row to jump to Timeline and expand the matching decision.",
-    "advisory_retry_default": "Manual review suggested",
-    "advisory_no_retry": "No retry needed",
+    "retry_note": {
+      "no_retry": "No retry needed",
+      "manual_review": "Manual review suggested"
+    },
+    "run_source": {
+      "retry": "retry"
+    },
     "review_count": "{{count}} reviews",
     "subtask_section_title": "Sub-task scores",
+    "subtask_col_index": "#",
     "subtask_col_desc": "Description (first 60 chars)",
-    "subtask_col_score": "Score"
+    "subtask_col_score": "Score",
+    "subtask_feedback": "Feedback",
+    "subtask_issue_tags": "Issue Tags",
+    "subtask_no_issue_tags": "No issue tags"
+  },
+  "timeline": {
+    "title": "AI Decision Timeline",
+    "header": {
+      "decisions_count": "{{count}} decisions"
+    },
+    "search_placeholder": "Search prompts, responses, tools...",
+    "filters": {
+      "success": "Success",
+      "has_errors": "Has Errors"
+    },
+    "sources": {
+      "all": "All Sources",
+      "telegram": "Telegram",
+      "terminal": "Terminal",
+      "vscode": "VS Code",
+      "all_projects": "All Projects"
+    },
+    "empty": {
+      "no_decisions": "No decisions yet",
+      "no_decisions_hint": "Decisions will appear here as the AI agent processes tasks.",
+      "no_match": "No decisions match your filter",
+      "no_match_hint": "Try adjusting your search or filter criteria."
+    },
+    "status": {
+      "done": "done",
+      "failed": "failed"
+    },
+    "actions": {
+      "load_more": "Load More"
+    },
+    "pagination": {
+      "summary": "{{count}} decisions · Page {{page}} of {{totalPages}}"
+    },
+    "detail": {
+      "title": "Decision Detail",
+      "previous": "Previous decision",
+      "next": "Next decision",
+      "success": "Success",
+      "has_errors": "Has Errors",
+      "time": "Time",
+      "duration": "Duration",
+      "tokens": "Tokens",
+      "tools": "Tools",
+      "input_tokens": "Input: {{count}} tokens",
+      "output_tokens": "Output: {{count}} tokens",
+      "user_prompt": "User Prompt",
+      "no_prompt": "No prompt",
+      "ai_thinking": "AI Thinking",
+      "ai_response": "AI Response",
+      "no_response": "No response recorded",
+      "sub_tasks": "Sub Tasks ({{count}})",
+      "no_description": "No description",
+      "pending": "pending",
+      "model": "Model",
+      "tokens_colon": "Tokens:",
+      "route": "Route",
+      "artifacts": "Artifacts",
+      "review": "review",
+      "reviewer": "reviewer",
+      "reviews": "Reviews ({{count}})",
+      "tool_execution_timeline": "Tool Execution Timeline",
+      "tool_calls": "Tool Calls ({{count}})",
+      "ok": "OK",
+      "error": "Error",
+      "loading_diff": "Loading diff...",
+      "git_changes": "Git Changes",
+      "git_state": "Git State",
+      "branch": "Branch",
+      "commit": "Commit",
+      "working_tree_dirty": "Working tree has uncommitted changes",
+      "modified_files": "Modified files:",
+      "session": "Session",
+      "project": "Project",
+      "id": "ID",
+      "no_feedback": "No feedback"
+    },
+    "entry": {
+      "no_prompt": "No prompt",
+      "tools_count": "{{success}}/{{total}} tools",
+      "no_tools": "No tools",
+      "error": "Error",
+      "success": "Success",
+      "detail": "Detail",
+      "safety_checkpoint": "Safety Checkpoint",
+      "untitled_checkpoint": "Untitled checkpoint",
+      "restore": "Restore"
+    }
+  },
+  "quality": {
+    "title": "Quality Analytics",
+    "subtitle": "Decomposition quality, review outcomes, and rule-based insights.",
+    "stats": {
+      "avg_sub_tasks": "Avg Sub-tasks",
+      "avg_sub_tasks_detail": "±{{stddev}} across {{count}} tasks",
+      "pass_rate": "Pass Rate",
+      "pass_rate_detail": "{{count}} reviews",
+      "avg_score": "Avg Score",
+      "avg_score_detail": "Sub-task avg {{score}}",
+      "partial_rate": "Partial Rate",
+      "partial_rate_detail": "Best granularity {{granularity}}"
+    },
+  "sections": {
+    "decomposition_effect": "Decomposition Effect",
+    "review_scoreboard": "Review Scoreboard",
+    "alice_insights": "Alice Insights"
+  },
+  "time_windows": {
+    "7d": "7d",
+    "30d": "30d",
+    "90d": "90d"
+  },
+  "charts": {
+    "granularity_distribution": "Granularity Distribution",
+    "granularity_vs_score": "Granularity vs Score",
+    "weekly_sub_task_trend": "Weekly Sub-task Trend",
+      "description_length_vs_fail_rate": "Description Length vs Fail Rate",
+      "pass_partial_fail_trend": "Pass / Partial / Fail Trend",
+      "verdict_distribution": "Verdict Distribution",
+      "top_issue_tags": "Top Issue Tags",
+      "low_scoring_sub_tasks": "Low-scoring Sub-tasks",
+      "sub_tasks": "Sub-tasks",
+      "score": "Score"
+    },
+    "verdicts": {
+      "pass": "Pass",
+      "partial": "Partial",
+      "fail": "Fail"
+    },
+    "empty": {
+      "no_issue_tags": "No issue tags in this window.",
+      "no_low_scoring_sub_tasks": "No low-scoring sub-tasks.",
+      "no_active_insights": "No active insights in this window."
+    }
+  },
+  "checkpoints": {
+    "title": "AI Decision History & Safety Checkpoints",
+    "subtitle": "AI reasoning process with attached safety snapshots",
+    "stats": {
+      "decisions": "{{count}} decisions",
+      "with_checkpoints": "{{count}} with checkpoints"
+    },
+    "search_placeholder": "Search prompts, responses, tools...",
+    "projects": {
+      "all": "All Projects"
+    },
+    "filters": {
+      "success": "Success",
+      "has_errors": "Has Errors",
+      "with_checkpoint": "With Checkpoint"
+    },
+    "trigger": {
+      "manual": "Manual",
+      "auto": "Auto",
+      "pre_danger": "Pre-Danger",
+      "unknown": "Unknown"
+    },
+    "entry": {
+      "no_prompt": "No prompt",
+      "tools_count": "{{success}}/{{total}} tools",
+      "no_tools": "No tools",
+      "error": "Error",
+      "success": "Success",
+      "detail": "Detail",
+      "safety_checkpoint": "Safety Checkpoint",
+      "untitled_checkpoint": "Untitled checkpoint",
+      "restore": "Restore"
+    },
+    "detail": {
+      "title": "Decision Detail",
+      "error": "Error",
+      "success": "Success",
+      "previous": "Previous decision",
+      "next": "Next decision",
+      "timestamp": "Timestamp",
+      "duration": "Duration",
+      "tokens": "Tokens",
+      "token_split": "{{input}}↗ + {{output}}↙ = {{total}}",
+      "tools": "Tools",
+      "tools_executed": "{{count}} executed",
+      "user_prompt": "User Prompt",
+      "no_prompt": "No prompt",
+      "ai_thinking": "AI Thinking Process",
+      "tool_execution_timeline": "Tool Execution Timeline",
+      "ai_response": "AI Response",
+      "code_changes": "Code Changes"
+    },
+    "restore": {
+      "title": "Restore Checkpoint",
+      "this_checkpoint": "this checkpoint",
+      "message": "This will restore the project to \"{{description}}\". Uncommitted changes may be lost.",
+      "restoring": "Restoring...",
+      "restore": "Restore"
+    },
+    "actions": {
+      "load_more": "Load More"
+    },
+    "empty": {
+      "no_match": "No decisions match your filters",
+      "no_decisions": "No AI decisions recorded yet",
+      "hint": "Start a conversation with Alice to see AI reasoning and decision history."
+    }
+  },
+  "runtime": {
+    "title": "Runtime Events",
+    "subtitle": "Persisted runtime decisions for recovery, Hermes quality gates, chat routing guards, and Codex session updates.",
+    "event_types": {
+      "recovery": "Recovery",
+      "issue_gate": "Issue Gate",
+      "plan_gate": "Plan Gate",
+      "hermes_gate": "Hermes Gate",
+      "codex": "Codex"
+    },
+    "actions": {
+      "allow": "Allow",
+      "skip": "Skip",
+      "replan": "Replan",
+      "retry": "Retry",
+      "session_update": "Session Update",
+      "block_until_choice": "Block Until Choice",
+      "normal_bypass": "Bypass",
+      "fail": "Fail"
+    },
+    "filters": {
+      "title": "Filter"
+    },
+    "empty": {
+      "loading": "Loading runtime events",
+      "no_events": "No runtime events found"
+    },
+    "error": {
+      "load_failed": "Failed to load runtime events"
+    },
+    "row": {
+      "task": "task {{id}}",
+      "issue": "issue #{{issue}}",
+      "chat": "chat {{chat}}",
+      "attempt": "attempt {{attempt}}/{{maxAttempts}}{{nextAttempt}}",
+      "checklist": "checklist {{checked}}/{{checklistTotal}}{{unchecked}}",
+      "open_count": ", {{count}} open",
+      "completed": "completed {{completionDone}}/{{completionTotal}}",
+      "comments": "{{count}} comments",
+      "planned_tasks": "{{count}} planned tasks",
+      "event_type": "event type: {{value}}",
+      "item_type": "item type: {{value}}",
+      "tokens": "tokens {{tokensInput}}{{cachedInput}} / {{tokensOutput}}",
+      "cached": " + {{count}} cached",
+      "subtask": "subtask {{subTaskNum}}{{subTaskTotal}}"
+    }
+  },
+  "security": {
+    "title": "Security & Privacy",
+    "actions": {
+      "export_audit_log": "Export Audit Log"
+    },
+    "summary": {
+      "total_events": "Total Events",
+      "blocked": "Blocked",
+      "pii_detections": "PII Detections",
+      "threat_level": "Threat Level"
+    },
+    "charts": {
+      "severity_distribution": "Security Event Severity Distribution",
+      "events_trend": "Security Events Trend ({{range}})",
+      "recent_pii_records": "Recent PII Detection Records"
+    },
+    "table": {
+      "timestamp": "Timestamp",
+      "pii_type": "PII Type",
+      "location": "Location",
+      "source": "Source",
+      "matches": "Matches",
+      "preview": "Preview",
+      "events": "{{count}} events",
+      "chat": "Chat {{chat}}",
+      "unknown": "Unknown",
+      "matches_found": "{{count}} found",
+      "redacted": "[redacted]",
+      "na": "N/A",
+      "no_description": "No description",
+      "type": "Type",
+      "severity": "Severity",
+      "description": "Description"
+    },
+    "search_placeholder": "Search events...",
+    "severity": {
+      "all": "All Severities",
+      "low": "Low",
+      "medium": "Medium",
+      "high": "High",
+      "critical": "Critical"
+    },
+    "source": {
+      "telegram": "Telegram",
+      "http": "HTTP",
+      "system": "System"
+    },
+    "location": {
+      "telegram_message": "Telegram Message",
+      "telegram_photo": "Telegram Photo",
+      "voice_message": "Voice Message",
+      "batch_photos": "Batch Photos",
+      "agent_logs": "Agent Logs"
+    },
+    "empty": {
+      "no_pii": "No PII detections recorded.",
+      "no_events": "No security events found."
+    },
+    "modal": {
+      "title": "Security Event Details",
+      "timestamp": "Timestamp",
+      "event_type": "Event Type",
+      "severity": "Severity",
+      "description": "Description",
+      "affected_chat_user": "Affected Chat/User",
+      "chat_id": "Chat ID",
+      "user_id": "User ID",
+      "message_type": "Message Type",
+      "project": "Project",
+      "message_info": "Message Info",
+      "message_id": "Message ID",
+      "redacted_preview_title": "Redacted Content Preview (Sensitive Data Filtered)",
+      "redacted_preview_hint": "To view the full conversation, check the original Telegram chat ID listed above.",
+      "pii_matches_found": "PII Matches Found",
+      "instances": "{{count}} instances",
+      "pii_pattern_detected": "PII Pattern Detected"
+    },
+    "time_ranges": {
+      "last_12_hours": "Last 12 Hours",
+      "last_1_hour": "Last 1 Hour",
+      "last_6_hours": "Last 6 Hours",
+      "last_24_hours": "Last 24 Hours",
+      "last_7_days": "Last 7 Days",
+      "last_30_days": "Last 30 Days"
+    },
+    "csv": {
+      "timestamp": "Timestamp",
+      "type": "Type",
+      "severity": "Severity",
+      "description": "Description",
+      "source_ip": "Source IP"
+    }
   },
   "savings": {
     "no_routing_data": "No routing data this week",
-    "load_failed": "Failed to load savings data"
+    "load_failed": "Failed to load savings data",
+    "error": {
+      "fetch_failed": "Failed to fetch savings data",
+      "unknown": "Unknown error"
+    }
   },
   "memory": {
+    "title": "Memory",
+    "subtitle": "Resolver sections, scopes, budgets, and prompt previews.",
+    "actions": {
+      "preview": "Preview"
+    },
+    "errors": {
+      "chat_id_required": "chat_id is required.",
+      "load_failed": "Failed to load memory preview."
+    },
+    "form": {
+      "chat_id": "Chat ID",
+      "thread_id": "Thread ID",
+      "issue": "Issue",
+      "budget": "Budget",
+      "project_dir": "Project Directory",
+      "mode": "Mode",
+      "message": "Message"
+    },
+    "placeholders": {
+      "chat_id": "42",
+      "thread_id": "0",
+      "issue": "143",
+      "budget": "6000",
+      "project_dir": "/Volumes/eclipse/projects/alice"
+    },
+    "mode": {
+      "preview": "preview",
+      "hermes": "hermes",
+      "direct_resume_fallback": "direct_resume_fallback",
+      "document": "document",
+      "photo": "photo",
+      "voice": "voice"
+    },
+    "sources": {
+      "issue_task": "issue_task",
+      "hermes_task": "hermes_task",
+      "general_task": "general_task",
+      "recent_messages": "recent_messages",
+      "unknown": "unknown"
+    },
+    "section": {
+      "priority": "priority {{priority}}",
+      "chars": "{{count}} chars"
+    },
+    "stats": {
+      "sections": "Sections",
+      "rendered_size": "Rendered Size",
+      "sources": "Sources"
+    },
+    "sections": {
+      "title": "Sections",
+      "rendered_bundle": "Rendered Bundle"
+    },
+    "empty": {
+      "no_preview": "No preview available.",
+      "no_sections": "No memory sections loaded.",
+      "no_rendered_preview": "No rendered preview loaded."
+    },
     "continue_placeholder": "Continue with #143"
   }
 }

@@ -405,6 +405,7 @@
     "menu_model_hermes_gpt": "⚡ Hermes: GPT",
     "menu_model_backend_status": "Backend 狀態",
     "menu_retry_title": "🔁 Retry\n\n選擇要重跑的 review sub-task。",
+    "menu_retry_title_short": "Retry 選單",
     "menu_retry_latest": "Retry latest",
     "menu_retry_no_storage": "\n\nStorage 尚未啟用，暫時只能使用 slash command。",
     "menu_retry_load_error": "\n\n讀取候選任務失敗：{error}",

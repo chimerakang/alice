@@ -92,19 +92,19 @@ export default function ReviewSummaryPanel({
       ) : (
         <div className="space-y-4">
           <div className={clsx("grid gap-3", showLiveCount ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-1 sm:grid-cols-3")}>
-            <MetricCard label="Reviews" value={stats.total} icon={MessageSquareText} color="text-accent" />
-            <MetricCard label="Pass Rate" value={`${stats.passRate}%`} icon={Activity} color="text-success" />
-            <MetricCard label="Avg Score" value={stats.avgScore} icon={BarChart3} color="text-primary" />
+            <MetricCard label={t("reviews.metric_reviews")} value={stats.total} icon={MessageSquareText} color="text-accent" />
+            <MetricCard label={t("reviews.metric_pass_rate")} value={`${stats.passRate}%`} icon={Activity} color="text-success" />
+            <MetricCard label={t("reviews.metric_avg_score")} value={stats.avgScore} icon={BarChart3} color="text-primary" />
             {showLiveCount ? (
-              <MetricCard label="Live" value={stats.liveCount} icon={Wifi} color="text-cyan-400" />
+              <MetricCard label={t("reviews.metric_live")} value={stats.liveCount} icon={Wifi} color="text-cyan-400" />
             ) : null}
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
             <div className="card p-4">
-              <h4 className="text-xs font-semibold text-gray-400 mb-3">Verdict Distribution</h4>
+              <h4 className="text-xs font-semibold text-gray-400 mb-3">{t("reviews.verdict_distribution")}</h4>
               {verdictChartData.length === 0 ? (
-                <EmptyChart label="No verdict data" />
+                <EmptyChart label={t("reviews.no_verdict_data")} />
               ) : (
                 <div className="flex items-center gap-4">
                   <ResponsiveContainer width={110} height={110}>
@@ -119,16 +119,16 @@ export default function ReviewSummaryPanel({
                         strokeWidth={0}
                       >
                         {verdictChartData.map((entry, index) => (
-                          <Cell key={entry.name} fill={entry.color || ["#22c55e", "#f59e0b", "#ef4444"][index]} />
+                          <Cell key={entry.verdict} fill={entry.color || ["#22c55e", "#f59e0b", "#ef4444"][index]} />
                         ))}
                       </Pie>
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="space-y-2 text-xs">
                     {verdictChartData.map((entry) => (
-                      <div key={entry.name} className="flex items-center gap-2">
+                      <div key={entry.verdict} className="flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
-                        <span className="text-gray-400">{entry.name}</span>
+                        <span className="text-gray-400">{t(`reviews.verdicts.${entry.verdict}`)}</span>
                         <span className="text-white font-mono">{entry.value}</span>
                       </div>
                     ))}
@@ -138,9 +138,9 @@ export default function ReviewSummaryPanel({
             </div>
 
             <div className="card p-4">
-              <h4 className="text-xs font-semibold text-gray-400 mb-3">Top Issue Tags</h4>
+              <h4 className="text-xs font-semibold text-gray-400 mb-3">{t("reviews.top_issue_tags")}</h4>
               {stats.topIssueTags.length === 0 ? (
-                <EmptyChart label="No issue tags recorded" />
+                <EmptyChart label={t("reviews.no_issue_tags")} />
               ) : (
                 <>
                   <ResponsiveContainer width="100%" height={180}>

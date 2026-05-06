@@ -1,6 +1,8 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
+import i18n from "@/i18n";
 import type { TimeRangeQuery } from "@/lib/api";
 import { useAppStore } from "@/stores/appStore";
 import type { DecisionLog, DiffFile } from "@/types/alice";
@@ -35,16 +37,16 @@ import {
 const PAGE_SIZE = 15;
 
 const STATUS_OPTIONS = [
-  { value: "all", label: "All" },
-  { value: "success", label: "Success" },
-  { value: "error", label: "Has Errors" },
+  { value: "all", labelKey: "common.all" },
+  { value: "success", labelKey: "timeline.filters.success" },
+  { value: "error", labelKey: "timeline.filters.has_errors" },
 ];
 
 const SOURCE_OPTIONS = [
-  { value: "all", label: "All Sources", icon: null },
-  { value: "telegram", label: "Telegram", icon: Send },
-  { value: "terminal", label: "Terminal", icon: Monitor },
-  { value: "vscode", label: "VS Code", icon: Code2 },
+  { value: "all", labelKey: "timeline.sources.all", icon: null },
+  { value: "telegram", labelKey: "timeline.sources.telegram", icon: Send },
+  { value: "terminal", labelKey: "timeline.sources.terminal", icon: Monitor },
+  { value: "vscode", labelKey: "timeline.sources.vscode", icon: Code2 },
 ];
 
 function formatDuration(ms: number): string {
@@ -62,7 +64,8 @@ function formatTimestamp(ts: string | { seconds: number; nanos?: number }): stri
   } else {
     return "—";
   }
-  return date.toLocaleString("zh-TW", {
+  const locale = i18n.language === "zh-TW" ? "zh-TW" : "en-US";
+  return date.toLocaleString(locale, {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -95,6 +98,7 @@ export function DecisionDetail({
   onNavigate: (d: DecisionLog) => void;
   openReviewsByDefault?: boolean;
 }) {
+  const { t } = useTranslation();
   const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
   const [diffLoading, setDiffLoading] = useState(false);
 
@@ -156,7 +160,7 @@ export function DecisionDetail({
               onClick={() => prevDecision && onNavigate(prevDecision)}
               disabled={!prevDecision}
               className="p-1 hover:bg-gray-800 rounded disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              title="Previous decision"
+              title={t("timeline.detail.previous")}
             >
               <ChevronLeft className="w-4 h-4 text-gray-400" />
             </button>
@@ -167,20 +171,20 @@ export function DecisionDetail({
               onClick={() => nextDecision && onNavigate(nextDecision)}
               disabled={!nextDecision}
               className="p-1 hover:bg-gray-800 rounded disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              title="Next decision"
+              title={t("timeline.detail.next")}
             >
               <ChevronRight className="w-4 h-4 text-gray-400" />
             </button>
           </div>
 
           <h2 className="text-lg font-semibold text-white flex-1">
-            Decision Detail
+            {t("timeline.detail.title")}
           </h2>
           <StatusBadge
             variant={!hasError ? "success" : "error"}
             dot
           >
-            {!hasError ? "Success" : "Has Errors"}
+            {!hasError ? t("timeline.detail.success") : t("timeline.detail.has_errors")}
           </StatusBadge>
         </div>
 
@@ -188,19 +192,19 @@ export function DecisionDetail({
           {/* Meta info */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-gray-900 rounded-lg p-3">
-              <div className="text-xs text-gray-500 mb-1">Time</div>
+              <div className="text-xs text-gray-500 mb-1">{t("timeline.detail.time")}</div>
               <div className="text-sm text-white font-mono">
                 {formatTimestamp(decision.timestamp)}
               </div>
             </div>
             <div className="bg-gray-900 rounded-lg p-3">
-              <div className="text-xs text-gray-500 mb-1">Duration</div>
+              <div className="text-xs text-gray-500 mb-1">{t("timeline.detail.duration")}</div>
               <div className="text-sm text-white font-mono">
                 {decision.duration_ms > 0 ? formatDuration(decision.duration_ms) : "—"}
               </div>
             </div>
             <div className="bg-gray-900 rounded-lg p-3">
-              <div className="text-xs text-gray-500 mb-1">Tokens</div>
+              <div className="text-xs text-gray-500 mb-1">{t("timeline.detail.tokens")}</div>
               <div className="text-sm text-white font-mono">
                 {decision.tokens_input + decision.tokens_output > 0
                   ? `${((decision.tokens_input + decision.tokens_output) / 1000).toFixed(1)}k`
@@ -208,7 +212,7 @@ export function DecisionDetail({
               </div>
             </div>
             <div className="bg-gray-900 rounded-lg p-3">
-              <div className="text-xs text-gray-500 mb-1">Tools</div>
+              <div className="text-xs text-gray-500 mb-1">{t("timeline.detail.tools")}</div>
               <div className="text-sm text-white font-mono">{toolCount}</div>
             </div>
           </div>
@@ -216,28 +220,28 @@ export function DecisionDetail({
           {/* Token breakdown */}
           {(decision.tokens_input > 0 || decision.tokens_output > 0) && (
             <div className="flex gap-4 text-xs text-gray-500">
-              <span>Input: {decision.tokens_input.toLocaleString()} tokens</span>
-              <span>Output: {decision.tokens_output.toLocaleString()} tokens</span>
+              <span>{t("timeline.detail.input_tokens", { count: decision.tokens_input.toLocaleString() })}</span>
+              <span>{t("timeline.detail.output_tokens", { count: decision.tokens_output.toLocaleString() })}</span>
             </div>
           )}
 
           {/* User Prompt */}
           <CollapsiblePanel
-            title="User Prompt"
+            title={t("timeline.detail.user_prompt")}
             defaultOpen
             badge={
               <MessageSquare className="w-3.5 h-3.5 text-primary" />
             }
           >
             <p className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">
-              {decision.user_prompt || "—"}
+              {decision.user_prompt || t("timeline.detail.no_prompt")}
             </p>
           </CollapsiblePanel>
 
           {/* AI Thinking */}
           {decision.thinking_content && (
             <CollapsiblePanel
-              title="AI Thinking"
+              title={t("timeline.detail.ai_thinking")}
               defaultOpen={false}
               badge={
                 <Brain className="w-3.5 h-3.5 text-purple-400" />
@@ -251,23 +255,23 @@ export function DecisionDetail({
 
           {/* AI Response */}
           <CollapsiblePanel
-            title="AI Response"
+            title={t("timeline.detail.ai_response")}
             defaultOpen
             badge={
               <Bot className="w-3.5 h-3.5 text-accent" />
             }
-          >
-            {decision.agent_response ? (
-              <MarkdownRenderer content={decision.agent_response} />
-            ) : (
-              <p className="text-sm text-gray-500">No response recorded</p>
+            >
+              {decision.agent_response ? (
+                <MarkdownRenderer content={decision.agent_response} />
+              ) : (
+                <p className="text-sm text-gray-500">{t("timeline.detail.no_response")}</p>
             )}
           </CollapsiblePanel>
 
           {/* Unified task graph */}
           {decision.unified_task && decision.unified_task.sub_tasks?.length > 0 && (
             <CollapsiblePanel
-              title={`Sub Tasks (${decision.unified_task.sub_tasks.length})`}
+              title={t("timeline.detail.sub_tasks", { count: decision.unified_task.sub_tasks.length })}
               defaultOpen={decision.unified_task.engine === "plan-execute"}
               badge={
                 <Brain className="w-3.5 h-3.5 text-primary-light" />
@@ -282,7 +286,7 @@ export function DecisionDetail({
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 mb-1">
-                          <p className="text-sm text-white leading-snug">{subTask.description || "—"}</p>
+                          <p className="text-sm text-white leading-snug">{subTask.description || t("timeline.detail.no_description")}</p>
                           <StatusBadge
                             variant={
                               subTask.status === "done"
@@ -293,17 +297,21 @@ export function DecisionDetail({
                             }
                             size="sm"
                           >
-                            {subTask.status || "pending"}
+                            {subTask.status === "done"
+                              ? t("timeline.status.done")
+                              : subTask.status === "failed"
+                                ? t("timeline.status.failed")
+                                : t("timeline.detail.pending")}
                           </StatusBadge>
                         </div>
                         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
-                          {subTask.model && <span>Model: {subTask.model}</span>}
+                          {subTask.model && <span>{t("timeline.detail.model")}: {subTask.model}</span>}
                           {(subTask.input_tokens > 0 || subTask.output_tokens > 0) && (
                             <span>
-                              Tokens: {(subTask.input_tokens + subTask.output_tokens).toLocaleString()}
+                              {t("timeline.detail.tokens_colon")} {(subTask.input_tokens + subTask.output_tokens).toLocaleString()}
                             </span>
                           )}
-                          {subTask.routing_reason && <span>Route: {subTask.routing_reason}</span>}
+                          {subTask.routing_reason && <span>{t("timeline.detail.route")}: {subTask.routing_reason}</span>}
                         </div>
                         {subTask.result_text && (
                           <pre className="mt-2 bg-gray-900 border border-gray-800 rounded p-2 text-xs text-gray-300 whitespace-pre-wrap max-h-40 overflow-y-auto">
@@ -312,7 +320,7 @@ export function DecisionDetail({
                         )}
                         {subTask.artifacts?.length > 0 && (
                           <div className="mt-2 text-xs text-gray-500">
-                            <div className="mb-1">Artifacts</div>
+                            <div className="mb-1">{t("timeline.detail.artifacts")}</div>
                             {subTask.artifacts.map((artifact) => (
                               <div key={artifact.id || artifact.path} className="font-mono text-gray-400">
                                 {artifact.path}{artifact.hash ? ` · ${artifact.hash.slice(0, 8)}` : ""}
@@ -331,7 +339,7 @@ export function DecisionDetail({
           {/* Review results */}
           {decision.unified_task && decision.unified_task.reviews?.length > 0 && (
             <CollapsiblePanel
-              title={`Reviews (${decision.unified_task.reviews.length})`}
+              title={t("timeline.detail.reviews", { count: decision.unified_task.reviews.length })}
               defaultOpen={openReviewsByDefault}
               badge={
                 <BarChart3 className="w-3.5 h-3.5 text-accent" />
@@ -345,9 +353,11 @@ export function DecisionDetail({
                         variant={review.verdict === "pass" ? "success" : review.verdict === "fail" ? "error" : "warning"}
                         size="sm"
                       >
-                        {review.verdict || "review"}
+                        {review.verdict
+                          ? t(`reviews.verdicts.${review.verdict}`, { defaultValue: t("common.unknown") })
+                          : t("timeline.detail.review")}
                       </StatusBadge>
-                      <span className="text-xs text-gray-400">{review.reviewer_model || "reviewer"}</span>
+                      <span className="text-xs text-gray-400">{review.reviewer_model || t("timeline.detail.reviewer")}</span>
                       <span className="text-xs text-gray-500 font-mono ml-auto">{review.overall_score}/100</span>
                     </div>
                     {review.issue_tags?.length > 0 && (
@@ -359,7 +369,9 @@ export function DecisionDetail({
                         ))}
                       </div>
                     )}
-                    <p className="text-sm text-gray-300 whitespace-pre-wrap">{review.feedback_text || "—"}</p>
+                    <p className="text-sm text-gray-300 whitespace-pre-wrap">
+                      {review.feedback_text || t("timeline.detail.no_feedback")}
+                    </p>
                     <ReviewSubTaskTable subTaskResults={review.sub_task_results || []} />
                   </div>
                 ))}
@@ -370,7 +382,7 @@ export function DecisionDetail({
           {/* Tool Call Gantt Timeline */}
           {toolCount > 1 && (
             <CollapsiblePanel
-              title="Tool Execution Timeline"
+              title={t("timeline.detail.tool_execution_timeline")}
               defaultOpen
               badge={
                 <BarChart3 className="w-3.5 h-3.5 text-accent" />
@@ -383,7 +395,7 @@ export function DecisionDetail({
           {/* Tool Calls detail */}
           {toolCount > 0 && (
             <CollapsiblePanel
-              title={`Tool Calls (${toolCount})`}
+              title={t("timeline.detail.tool_calls", { count: toolCount })}
               defaultOpen={toolCount <= 5}
               badge={
                 <Terminal className="w-3.5 h-3.5 text-primary-light" />
@@ -411,10 +423,10 @@ export function DecisionDetail({
                         size="sm"
                       >
                         {String(tool.status) === "STATUS_SUCCESS" || String(tool.status) === "3"
-                          ? "OK"
+                          ? t("timeline.detail.ok")
                           : String(tool.status) === "STATUS_ERROR" || String(tool.status) === "4"
-                            ? "Error"
-                            : "Pending"}
+                            ? t("timeline.detail.error")
+                            : t("timeline.detail.pending")}
                       </StatusBadge>
                       {tool.duration_ms > 0 && (
                         <span className="text-gray-500 tabular-nums">
@@ -447,7 +459,7 @@ export function DecisionDetail({
           {/* Git Diff Viewer */}
           {decision.git_state?.commit_hash && (
             <CollapsiblePanel
-              title="Git Changes"
+              title={t("timeline.detail.git_changes")}
               defaultOpen={diffFiles.length > 0}
               badge={
                 <GitBranch className="w-3.5 h-3.5 text-info" />
@@ -455,19 +467,19 @@ export function DecisionDetail({
             >
               {diffLoading ? (
                 <div className="flex items-center gap-2 text-xs text-gray-500">
-                  <Loader2 className="w-3 h-3 animate-spin" /> Loading diff...
+                  <Loader2 className="w-3 h-3 animate-spin" /> {t("timeline.detail.loading_diff")}
                 </div>
               ) : (
                 <>
                   <div className="text-xs font-mono space-y-1 mb-3">
                     <div className="text-gray-400">
-                      Branch: <span className="text-primary-light">{decision.git_state.branch}</span>
+                      {t("timeline.detail.branch")}: <span className="text-primary-light">{decision.git_state.branch}</span>
                     </div>
                     <div className="text-gray-400">
-                      Commit: <span className="text-primary-light">{decision.git_state.commit_hash?.slice(0, 8)}</span>
+                      {t("timeline.detail.commit")}: <span className="text-primary-light">{decision.git_state.commit_hash?.slice(0, 8)}</span>
                     </div>
                     {decision.git_state.is_dirty && (
-                      <div className="text-warning">Working tree has uncommitted changes</div>
+                      <div className="text-warning">{t("timeline.detail.working_tree_dirty")}</div>
                     )}
                   </div>
                   <DiffViewer files={diffFiles} />
@@ -478,17 +490,17 @@ export function DecisionDetail({
 
           {/* Git State (fallback when no commit hash for diff) */}
           {decision.git_state && !decision.git_state.commit_hash && (
-            <CollapsiblePanel title="Git State">
+            <CollapsiblePanel title={t("timeline.detail.git_state")}>
               <div className="text-xs font-mono space-y-1">
                 <div className="text-gray-400">
-                  Branch: <span className="text-primary-light">{decision.git_state.branch}</span>
+                  {t("timeline.detail.branch")}: <span className="text-primary-light">{decision.git_state.branch}</span>
                 </div>
                 {decision.git_state.is_dirty && (
-                  <div className="text-warning">Working tree has uncommitted changes</div>
+                  <div className="text-warning">{t("timeline.detail.working_tree_dirty")}</div>
                 )}
                 {decision.git_state.modified_files?.length > 0 && (
                   <div className="mt-2">
-                    <div className="text-gray-500 mb-1">Modified files:</div>
+                    <div className="text-gray-500 mb-1">{t("timeline.detail.modified_files")}</div>
                     {decision.git_state.modified_files.map((f, i) => (
                       <div key={i} className="text-gray-400 pl-2">
                         {f}
@@ -503,12 +515,12 @@ export function DecisionDetail({
           {/* Session metadata */}
           <div className="text-xs text-gray-600 space-y-0.5 pt-2 border-t border-gray-800">
             {decision.session_id && (
-              <div>Session: {decision.session_id}</div>
+              <div>{t("timeline.detail.session")}: {decision.session_id}</div>
             )}
             {decision.project_path && (
-              <div>Project: {decision.project_path}</div>
+              <div>{t("timeline.detail.project")}: {decision.project_path}</div>
             )}
-            {decision.id && <div>ID: {decision.id}</div>}
+            {decision.id && <div>{t("timeline.detail.id")}: {decision.id}</div>}
           </div>
         </div>
       </div>
@@ -517,6 +529,7 @@ export function DecisionDetail({
 }
 
 export default function Timeline() {
+  const { t } = useTranslation();
   const { decisions: liveDecisions, wsConnected } = useAppStore();
   const [searchParams] = useSearchParams();
   const [apiDecisions, setApiDecisions] = useState<DecisionLog[]>([]);
@@ -653,18 +666,16 @@ export default function Timeline() {
     <div className="space-y-4 animate-fade-in">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-white">
-          AI Decision Timeline
-        </h2>
+        <h2 className="text-lg font-semibold text-white">{t("timeline.title")}</h2>
         <div className="flex items-center gap-2 text-sm text-gray-400">
           <span
             className={`status-dot ${
               wsConnected ? "status-dot-success" : "status-dot-error"
             }`}
           />
-          {wsConnected ? "Live" : "Disconnected"}
+          {wsConnected ? t("common.live") : t("common.disconnected")}
           <span className="text-gray-600">|</span>
-          <span>{totalCount} decisions</span>
+          <span>{t("timeline.header.decisions_count", { count: totalCount })}</span>
         </div>
       </div>
 
@@ -674,9 +685,9 @@ export default function Timeline() {
       {/* Search & Filter */}
       <div className="space-y-3">
         <SearchFilter
-          placeholder="Search prompts, responses, tools..."
+          placeholder={t("timeline.search_placeholder")}
           onSearch={handleSearch}
-          statusOptions={STATUS_OPTIONS}
+          statusOptions={STATUS_OPTIONS.map((option) => ({ value: option.value, label: t(option.labelKey) }))}
           onStatusChange={handleStatusChange}
           activeStatus={statusFilter}
         />
@@ -693,8 +704,8 @@ export default function Timeline() {
                     ? "bg-primary/15 text-primary border-primary/30"
                     : "text-gray-400 border-gray-700 hover:border-gray-600 hover:text-gray-300"
                 }`}
-              >
-                All Projects
+                >
+                {t("timeline.sources.all_projects")}
               </button>
               {projects.map((p) => {
                 const name = p.split("/").pop() || p;
@@ -732,7 +743,7 @@ export default function Timeline() {
                 }`}
               >
                 {opt.icon && <opt.icon className="w-3 h-3" />}
-                {opt.label}
+                {t(opt.labelKey)}
               </button>
             ))}
           </div>
@@ -749,13 +760,13 @@ export default function Timeline() {
           <Clock className="w-12 h-12 text-gray-600 mx-auto mb-4" />
           <p className="text-gray-400">
             {totalCount === 0
-              ? "No decisions yet"
-              : "No decisions match your filter"}
+              ? t("timeline.empty.no_decisions")
+              : t("timeline.empty.no_match")}
           </p>
           <p className="text-gray-600 text-sm mt-1">
             {totalCount === 0
-              ? "Decisions will appear here as the AI agent processes tasks."
-              : "Try adjusting your search or filter criteria."}
+              ? t("timeline.empty.no_decisions_hint")
+              : t("timeline.empty.no_match_hint")}
           </p>
         </div>
       ) : (
@@ -774,8 +785,7 @@ export default function Timeline() {
           {totalPages > 1 && (
             <div className="flex items-center justify-between pt-2">
               <span className="text-xs text-gray-500">
-                {totalCount} decision{totalCount !== 1 ? "s" : ""}{" "}
-                · Page {page + 1} of {totalPages}
+                {t("timeline.pagination.summary", { count: totalCount, page: page + 1, totalPages })}
               </span>
               <div className="flex items-center gap-1">
                 <button

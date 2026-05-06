@@ -2,6 +2,7 @@ import type { DecisionLog, UnifiedReview, ReviewLiveEvent, UnifiedReviewSubTaskR
 
 export type ReviewSource = "stored" | "live";
 export type ReviewRunSource = "initial" | "retry" | string;
+export type ReviewRetryNote = "no_retry" | "manual_review";
 
 export interface ReviewFeedItem {
   key: string;
@@ -18,7 +19,7 @@ export interface ReviewFeedItem {
   source: ReviewSource;
   run_source: ReviewRunSource;
   advisory_retry: boolean;
-  retry_note: string;
+  retry_note: ReviewRetryNote;
   failing_subtasks: number;
   block_count?: number;
   auto_fixed_count?: number;
@@ -42,9 +43,25 @@ export interface ReviewSummaryStats {
   topIssueTags: Array<{ tag: string; value: number }>;
 }
 
+export type ReviewVerdictChartItem = {
+  verdict: "pass" | "partial" | "fail" | "block";
+  value: number;
+  color: string;
+};
+
 function normalizeVerdict(verdict?: string): "allow" | "pass" | "partial" | "fail" | "block" {
   if (verdict === "pass" || verdict === "fail" || verdict === "block" || verdict === "allow") return verdict;
   return "partial";
+}
+
+function normalizeRetryNote(verdict?: string, advisoryRetry?: boolean, retryNote?: string): ReviewRetryNote {
+  if (retryNote === "no_retry" || retryNote === "manual_review") {
+    return retryNote;
+  }
+  if (advisoryRetry === false || verdict === "pass") {
+    return "no_retry";
+  }
+  return "manual_review";
 }
 
 function buildReviewKey(review: {
@@ -83,7 +100,7 @@ export function normalizeStoredReview(review: UnifiedReview, decision: DecisionL
     source: "stored",
     run_source: review.source || "initial",
     advisory_retry: review.verdict !== "pass",
-    retry_note: review.verdict === "pass" ? "暫無需重跑" : "建議人工評估後再決定是否重跑",
+    retry_note: normalizeRetryNote(review.verdict),
     failing_subtasks: review.sub_task_results?.filter((subTask) => subTask.score < 70).length || 0,
     block_count: review.block_count ?? 0,
     auto_fixed_count: review.auto_fixed_count ?? 0,
@@ -106,7 +123,7 @@ export function normalizeLiveReview(review: ReviewLiveEvent, decision?: Decision
     source: "live",
     run_source: review.source || "initial",
     advisory_retry: Boolean(review.advisory_retry),
-    retry_note: review.retry_note || "",
+    retry_note: normalizeRetryNote(review.verdict, review.advisory_retry, review.retry_note),
     failing_subtasks: review.failing_subtasks || 0,
     block_count: 0,
     auto_fixed_count: 0,
@@ -187,11 +204,13 @@ export function computeReviewSummary(reviews: ReviewFeedItem[]): ReviewSummarySt
   };
 }
 
-export function buildReviewVerdictChartData(stats: ReviewSummaryStats) {
-  return [
-    { name: "Pass", value: stats.verdicts.pass, color: "#22c55e" },
-    { name: "Partial", value: stats.verdicts.partial, color: "#f59e0b" },
-    { name: "Fail", value: stats.verdicts.fail, color: "#ef4444" },
-    { name: "Block", value: stats.verdicts.block, color: "#8b5cf6" },
-  ].filter((item) => item.value > 0);
+export function buildReviewVerdictChartData(stats: ReviewSummaryStats): ReviewVerdictChartItem[] {
+  const chartData: ReviewVerdictChartItem[] = [
+    { verdict: "pass", value: stats.verdicts.pass, color: "#22c55e" },
+    { verdict: "partial", value: stats.verdicts.partial, color: "#f59e0b" },
+    { verdict: "fail", value: stats.verdicts.fail, color: "#ef4444" },
+    { verdict: "block", value: stats.verdicts.block, color: "#8b5cf6" },
+  ];
+
+  return chartData.filter((item) => item.value > 0);
 }

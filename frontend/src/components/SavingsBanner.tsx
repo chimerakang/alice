@@ -40,12 +40,12 @@ export function SavingsBanner({ hours = 168 }: SavingsBannerProps) {
     try {
       setLoading(true);
       const response = await fetch(`/api/costs/savings?hours=${hours}`);
-      if (!response.ok) throw new Error("Failed to fetch savings data");
+      if (!response.ok) throw new Error(t("savings.error.fetch_failed"));
       const data = await response.json();
       setReport(data);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      setError(err instanceof Error ? err.message : t("savings.error.unknown"));
       setReport(null);
     } finally {
       setLoading(false);
@@ -83,9 +83,13 @@ export function SavingsBanner({ hours = 168 }: SavingsBannerProps) {
             <TrendingDown className="w-5 h-5 text-success" />
           </div>
           <div>
-            <h3 className="text-base font-semibold text-white">Smart Routing Savings</h3>
+            <h3 className="text-base font-semibold text-white">{t("dashboard.panels.smart_routing_savings")}</h3>
             <p className="text-xs text-gray-500">
-              Last {report.period_hours} hours ({new Date(report.start_time).toLocaleDateString()} - {new Date(report.end_time).toLocaleDateString()})
+              {t("dashboard.panels.savings_period", {
+                hours: report.period_hours,
+                start: new Date(report.start_time).toLocaleDateString(),
+                end: new Date(report.end_time).toLocaleDateString(),
+              })}
             </p>
           </div>
         </div>
@@ -93,7 +97,7 @@ export function SavingsBanner({ hours = 168 }: SavingsBannerProps) {
           <div className="text-2xl font-bold text-success">
             ${savingsAmount.toFixed(2)}
           </div>
-          <div className="text-xs text-gray-400">Saved ({savingsPercentage}%)</div>
+          <div className="text-xs text-gray-400">{t("dashboard.panels.saved_percent", { percent: savingsPercentage })}</div>
         </div>
       </div>
 
@@ -101,7 +105,7 @@ export function SavingsBanner({ hours = 168 }: SavingsBannerProps) {
         {/* Progress Bar */}
         <div className="space-y-1">
           <div className="flex justify-between text-xs">
-            <span className="text-gray-500">Actual Cost</span>
+            <span className="text-gray-500">{t("dashboard.panels.actual_cost")}</span>
             <span className="text-gray-300 font-medium">${actualCost.toFixed(2)}</span>
           </div>
           <div className="w-full bg-gray-800/50 rounded-full h-2 overflow-hidden">
@@ -113,7 +117,7 @@ export function SavingsBanner({ hours = 168 }: SavingsBannerProps) {
             />
           </div>
           <div className="flex justify-between text-xs">
-            <span className="text-gray-500">If using Sonnet (default)</span>
+            <span className="text-gray-500">{t("dashboard.panels.default_model_cost")}</span>
             <span className="text-gray-300 font-medium">${report.default_model_cost.toFixed(2)}</span>
           </div>
         </div>
@@ -121,19 +125,19 @@ export function SavingsBanner({ hours = 168 }: SavingsBannerProps) {
         {/* Stats Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 pt-4 border-t border-gray-800/50">
           <StatCard
-            label="Total Requests"
+            label={t("dashboard.panels.total_requests")}
             value={report.total_requests.toString()}
           />
           <StatCard
-            label="Cost per Request"
+            label={t("dashboard.panels.cost_per_request")}
             value={`$${(actualCost / report.total_requests).toFixed(4)}`}
           />
           <StatCard
-            label="Models Used"
+            label={t("dashboard.panels.models_used")}
             value={Object.keys(report.by_model).length.toString()}
           />
           <StatCard
-            label="Efficiency"
+            label={t("dashboard.panels.efficiency")}
             value={`${savingsPercentage}%`}
           />
         </div>

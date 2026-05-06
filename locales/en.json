@@ -405,6 +405,7 @@
     "menu_model_hermes_gpt": "⚡ Hermes: GPT",
     "menu_model_backend_status": "Backend Status",
     "menu_retry_title": "🔁 Retry\n\nSelect a review sub-task to re-run.",
+    "menu_retry_title_short": "Retry menu",
     "menu_retry_latest": "Retry latest",
     "menu_retry_no_storage": "\n\nStorage not enabled; please use slash commands for now.",
     "menu_retry_load_error": "\n\nFailed to load retry candidates: {error}",

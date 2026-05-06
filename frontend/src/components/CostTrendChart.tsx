@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   AreaChart,
   Area,
@@ -21,6 +22,7 @@ interface CostTrendChartProps {
 }
 
 export function CostTrendChart({ hours = 168 }: CostTrendChartProps) {
+  const { t } = useTranslation();
   const [data, setData] = useState<ChartDataPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -32,31 +34,19 @@ export function CostTrendChart({ hours = 168 }: CostTrendChartProps) {
   const fetchData = async () => {
     try {
       setLoading(true);
-      // 使用 performance metrics API 獲取詳細數據
       const response = await fetch(
         `/api/performance/analytics?hours=${hours}`
       );
-      if (!response.ok) throw new Error("Failed to fetch data");
+      if (!response.ok) throw new Error(t("savings.error.fetch_failed"));
       const analyticsData = await response.json();
 
-      // 同時獲取 cost savings 報告用於對比
       const savingsResponse = await fetch(`/api/costs/savings?hours=${hours}`);
       const savingsData = savingsResponse.ok
         ? await savingsResponse.json()
         : null;
 
-      // 調試日誌
-      console.log("[CostTrendChart] analyticsData:", analyticsData);
-      console.log("[CostTrendChart] savingsData:", savingsData);
-      console.log("[CostTrendChart] analyticsData.analytics?.total_cost:", analyticsData.analytics?.total_cost);
-      console.log("[CostTrendChart] savingsData truthy:", !!savingsData);
-
-      // 生成圖表數據
       const hasAnalytics = analyticsData?.analytics?.total_cost > 0;
       const hasSavings = savingsData && savingsData.actual_cost !== undefined;
-
-      console.log("[CostTrendChart] hasAnalytics:", hasAnalytics);
-      console.log("[CostTrendChart] hasSavings:", hasSavings);
 
       if (hasAnalytics && hasSavings) {
         const trendData = [
@@ -69,16 +59,14 @@ export function CostTrendChart({ hours = 168 }: CostTrendChartProps) {
             savings: parseFloat(savingsData.savings_cost.toFixed(2)),
           },
         ];
-        console.log("[CostTrendChart] trendData:", trendData);
         setData(trendData);
       } else {
-        console.log("[CostTrendChart] Condition failed, setting empty data");
         setData([]);
       }
 
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      setError(err instanceof Error ? err.message : t("savings.error.unknown"));
       setData([]);
     } finally {
       setLoading(false);
@@ -97,9 +85,9 @@ export function CostTrendChart({ hours = 168 }: CostTrendChartProps) {
   if (error || data.length === 0) {
     return (
       <div className="bg-gray-900/50 border border-gray-700 rounded-lg p-6">
-        <h3 className="text-sm font-medium text-gray-400 mb-4">Cost Trend</h3>
+        <h3 className="text-sm font-medium text-gray-400 mb-4">{t("dashboard.panels.cost_trend")}</h3>
         <p className="text-xs text-gray-500">
-          {error || "No data available"}
+          {error || t("dashboard.panels.no_cost_data")}
         </p>
       </div>
     );
@@ -108,8 +96,8 @@ export function CostTrendChart({ hours = 168 }: CostTrendChartProps) {
   return (
     <div className="bg-gray-900/50 border border-gray-700 rounded-lg p-6">
       <h3 className="text-sm font-medium text-white mb-4 flex items-center gap-2">
-        <span>📈 Cost Trend Analysis</span>
-        <span className="text-xs text-gray-500">(Actual vs. Default Model)</span>
+        <span>📈 {t("dashboard.panels.cost_trend")}</span>
+        <span className="text-xs text-gray-500">{t("dashboard.panels.actual_vs_default_model")}</span>
       </h3>
 
       <ResponsiveContainer width="100%" height={300}>
@@ -139,7 +127,6 @@ export function CostTrendChart({ hours = 168 }: CostTrendChartProps) {
           <XAxis dataKey="time" stroke="rgb(107, 114, 128)" />
           <YAxis stroke="rgb(107, 114, 128)" />
 
-          {/* 成本趨勢區域 */}
           <Area
             type="monotone"
             dataKey="expectedCost"
@@ -147,7 +134,7 @@ export function CostTrendChart({ hours = 168 }: CostTrendChartProps) {
             strokeWidth={2}
             fillOpacity={1}
             fill="url(#colorExpected)"
-            name="If Using Sonnet"
+            name={t("dashboard.panels.default_model_cost")}
           />
           <Area
             type="monotone"
@@ -156,7 +143,7 @@ export function CostTrendChart({ hours = 168 }: CostTrendChartProps) {
             strokeWidth={2}
             fillOpacity={1}
             fill="url(#colorActual)"
-            name="Actual Cost (Routed)"
+            name={t("dashboard.panels.actual_cost")}
           />
 
           <Tooltip
@@ -165,32 +152,34 @@ export function CostTrendChart({ hours = 168 }: CostTrendChartProps) {
               border: "1px solid rgb(55, 65, 81)",
               borderRadius: "8px",
             }}
-            formatter={(value: any) => `$${value.toFixed(2)}`}
-            labelFormatter={(label) => `Period: ${label}`}
+            formatter={(value: any, name?: string) => [
+              `$${Number(value).toFixed(2)}`,
+              name === "expectedCost" ? t("dashboard.panels.default_model_cost") : t("dashboard.panels.actual_cost"),
+            ]}
+            labelFormatter={(label) => t("dashboard.panels.period", { label })}
           />
         </AreaChart>
       </ResponsiveContainer>
 
-      {/* 統計摘要 */}
       <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-gray-700/30">
         {data.map((point, idx) => (
           <>
             <SummaryCard
               key={`${idx}-actual`}
               icon="💚"
-              label="Actual Cost"
+              label={t("dashboard.panels.actual_cost")}
               value={`$${point.actualCost.toFixed(2)}`}
             />
             <SummaryCard
               key={`${idx}-expected`}
               icon="❌"
-              label="Standard Model"
+              label={t("dashboard.panels.default_model_cost")}
               value={`$${point.expectedCost.toFixed(2)}`}
             />
             <SummaryCard
               key={`${idx}-savings`}
               icon="✅"
-              label="Savings"
+              label={t("dashboard.panels.savings")}
               value={`$${point.savings.toFixed(2)}`}
             />
           </>

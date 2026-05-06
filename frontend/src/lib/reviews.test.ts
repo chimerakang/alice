@@ -47,7 +47,7 @@ describe("review summary metrics", () => {
         source: "stored",
         run_source: "initial",
         advisory_retry: true,
-        retry_note: "retry",
+        retry_note: "manual_review",
         failing_subtasks: 0,
       },
       {
@@ -67,7 +67,7 @@ describe("review summary metrics", () => {
         source: "stored",
         run_source: "retry",
         advisory_retry: false,
-        retry_note: "暫無需重跑",
+        retry_note: "no_retry",
         failing_subtasks: 0,
       },
     ]);
@@ -99,6 +99,7 @@ describe("review summary metrics", () => {
     const item = normalizeStoredReview(review, baseDecision());
     expect(item.block_count).toBe(2);
     expect(item.auto_fixed_count).toBe(1);
+    expect(item.retry_note).toBe("manual_review");
   });
 
   it("includes block in verdict chart data", () => {
@@ -114,6 +115,6 @@ describe("review summary metrics", () => {
       topIssueTags: [],
     });
 
-    expect(chart.map((entry) => entry.name)).toContain("Block");
+    expect(chart.map((entry) => entry.verdict)).toContain("block");
   });
 });

@@ -36,7 +36,7 @@ export default function ReviewSubTaskTable({ subTaskResults, className }: Review
         <table className="w-full border-collapse text-xs">
           <thead className="bg-black/20">
             <tr className="text-gray-500">
-              <th className="px-3 py-2 w-12 text-left font-medium">#</th>
+              <th className="px-3 py-2 w-12 text-left font-medium">{t("reviews.subtask_col_index")}</th>
               <th className="px-3 py-2 text-left font-medium">{t("reviews.subtask_col_desc")}</th>
               <th className="px-3 py-2 w-24 text-right font-medium">{t("reviews.subtask_col_score")}</th>
             </tr>
@@ -81,12 +81,12 @@ export default function ReviewSubTaskTable({ subTaskResults, className }: Review
                   <tr className={clsx("border-t border-gray-800/40", !expanded && "hidden")}>
                     <td className="px-3 pb-3" colSpan={3}>
                       <div className="rounded-md border border-gray-800/60 bg-black/20 p-3">
-                        <div className="mb-2">
-                          <div className="text-[10px] uppercase text-gray-500 mb-1">Feedback</div>
+                      <div className="mb-2">
+                          <div className="text-[10px] uppercase text-gray-500 mb-1">{t("reviews.subtask_feedback")}</div>
                           <p className="text-sm text-gray-300 whitespace-pre-wrap">{subTask.feedback || "—"}</p>
                         </div>
                         <div>
-                          <div className="text-[10px] uppercase text-gray-500 mb-1">Issue Tags</div>
+                          <div className="text-[10px] uppercase text-gray-500 mb-1">{t("reviews.subtask_issue_tags")}</div>
                           {tags.length > 0 ? (
                             <div className="flex flex-wrap gap-1">
                               {tags.map((tag) => (
@@ -96,7 +96,7 @@ export default function ReviewSubTaskTable({ subTaskResults, className }: Review
                               ))}
                             </div>
                           ) : (
-                            <span className="text-xs text-gray-500">No issue tags</span>
+                            <span className="text-xs text-gray-500">{t("reviews.subtask_no_issue_tags")}</span>
                           )}
                         </div>
                       </div>

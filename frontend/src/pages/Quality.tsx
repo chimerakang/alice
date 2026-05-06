@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { AlertTriangle, CheckCircle2, Gauge, Info, Lightbulb, ListChecks, TrendingUp } from "lucide-react";
 import {
   Bar,
@@ -53,6 +54,7 @@ function StatCard({ icon, label, value, detail }: { icon: ReactNode; label: stri
 }
 
 export default function Quality() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [windowValue, setWindowValue] = useState<WindowValue>("30d");
   const [decomposition, setDecomposition] = useState<QualityDecompositionStats | null>(null);
@@ -86,11 +88,11 @@ export default function Quality() {
   const verdictData = useMemo(() => {
     const dist = scores?.verdict_distribution || {};
     return [
-      { name: "pass", value: dist.pass || 0 },
-      { name: "partial", value: dist.partial || 0 },
-      { name: "fail", value: dist.fail || 0 },
+      { name: t("quality.verdicts.pass"), value: dist.pass || 0 },
+      { name: t("quality.verdicts.partial"), value: dist.partial || 0 },
+      { name: t("quality.verdicts.fail"), value: dist.fail || 0 },
     ];
-  }, [scores]);
+  }, [scores, t]);
 
   if (loading && !decomposition && !scores) {
     return (
@@ -104,8 +106,8 @@ export default function Quality() {
     <div className="space-y-6 animate-fade-in">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-white">Quality Analytics</h2>
-          <p className="text-sm text-gray-500 mt-1">Decomposition quality, review outcomes, and rule-based insights.</p>
+          <h2 className="text-lg font-semibold text-white">{t("quality.title")}</h2>
+          <p className="text-sm text-gray-500 mt-1">{t("quality.subtitle")}</p>
         </div>
         <div className="inline-flex rounded-lg border border-gray-800 bg-black/30 p-1">
           {(["7d", "30d", "90d"] as WindowValue[]).map((value) => (
@@ -117,27 +119,27 @@ export default function Quality() {
                 windowValue === value ? "bg-primary/15 text-primary" : "text-gray-400 hover:text-gray-200"
               }`}
             >
-              {value}
+              {t(`quality.time_windows.${value}`)}
             </button>
           ))}
         </div>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={<Gauge className="w-4 h-4 text-primary" />} label="Avg Sub-tasks" value={formatNumber(decomposition?.avg_sub_tasks)} detail={`±${formatNumber(decomposition?.stddev_sub_tasks)} across ${decomposition?.task_count || 0} tasks`} />
-        <StatCard icon={<CheckCircle2 className="w-4 h-4 text-success" />} label="Pass Rate" value={formatPercent(scores?.pass_rate)} detail={`${scores?.review_count || 0} reviews`} />
-        <StatCard icon={<TrendingUp className="w-4 h-4 text-info" />} label="Avg Score" value={formatNumber(scores?.avg_overall_score, 0)} detail={`Sub-task avg ${formatNumber(scores?.avg_sub_task_score, 0)}`} />
-        <StatCard icon={<AlertTriangle className="w-4 h-4 text-warning" />} label="Partial Rate" value={formatPercent(scores?.partial_rate)} detail={`Best granularity ${decomposition?.best_granularity || "-"}`} />
+        <StatCard icon={<Gauge className="w-4 h-4 text-primary" />} label={t("quality.stats.avg_sub_tasks")} value={formatNumber(decomposition?.avg_sub_tasks)} detail={t("quality.stats.avg_sub_tasks_detail", { stddev: formatNumber(decomposition?.stddev_sub_tasks), count: decomposition?.task_count || 0 })} />
+        <StatCard icon={<CheckCircle2 className="w-4 h-4 text-success" />} label={t("quality.stats.pass_rate")} value={formatPercent(scores?.pass_rate)} detail={t("quality.stats.pass_rate_detail", { count: scores?.review_count || 0 })} />
+        <StatCard icon={<TrendingUp className="w-4 h-4 text-info" />} label={t("quality.stats.avg_score")} value={formatNumber(scores?.avg_overall_score, 0)} detail={t("quality.stats.avg_score_detail", { score: formatNumber(scores?.avg_sub_task_score, 0) })} />
+        <StatCard icon={<AlertTriangle className="w-4 h-4 text-warning" />} label={t("quality.stats.partial_rate")} value={formatPercent(scores?.partial_rate)} detail={t("quality.stats.partial_rate_detail", { granularity: decomposition?.best_granularity || "-" })} />
       </div>
 
       <section className="space-y-4">
         <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
           <Gauge className="w-4 h-4" />
-          Decomposition Effect
+          {t("quality.sections.decomposition_effect")}
         </h3>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="card p-6">
-            <div className="text-sm font-medium text-gray-300 mb-4">Granularity Distribution</div>
+            <div className="text-sm font-medium text-gray-300 mb-4">{t("quality.charts.granularity_distribution")}</div>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={decomposition?.granularity_buckets || []}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -149,19 +151,19 @@ export default function Quality() {
             </ResponsiveContainer>
           </div>
           <div className="card p-6">
-            <div className="text-sm font-medium text-gray-300 mb-4">Granularity vs Score</div>
+            <div className="text-sm font-medium text-gray-300 mb-4">{t("quality.charts.granularity_vs_score")}</div>
             <ResponsiveContainer width="100%" height={220}>
               <ScatterChart>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                <XAxis dataKey="sub_task_count" name="Sub-tasks" stroke="#9CA3AF" fontSize={12} />
-                <YAxis dataKey="avg_score" name="Score" stroke="#9CA3AF" fontSize={12} domain={[0, 100]} />
+                <XAxis dataKey="sub_task_count" name={t("quality.charts.sub_tasks")} stroke="#9CA3AF" fontSize={12} />
+                <YAxis dataKey="avg_score" name={t("quality.charts.score")} stroke="#9CA3AF" fontSize={12} domain={[0, 100]} />
                 <Tooltip contentStyle={{ backgroundColor: "#1F2937", border: "1px solid #374151", borderRadius: 8 }} />
                 <Scatter data={decomposition?.granularity_scores || []} fill="#22C55E" />
               </ScatterChart>
             </ResponsiveContainer>
           </div>
           <div className="card p-6">
-            <div className="text-sm font-medium text-gray-300 mb-4">Weekly Sub-task Trend</div>
+            <div className="text-sm font-medium text-gray-300 mb-4">{t("quality.charts.weekly_sub_task_trend")}</div>
             <ResponsiveContainer width="100%" height={220}>
               <LineChart data={decomposition?.weekly_trend || []}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -173,7 +175,7 @@ export default function Quality() {
             </ResponsiveContainer>
           </div>
           <div className="card p-6">
-            <div className="text-sm font-medium text-gray-300 mb-4">Description Length vs Fail Rate</div>
+            <div className="text-sm font-medium text-gray-300 mb-4">{t("quality.charts.description_length_vs_fail_rate")}</div>
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={decomposition?.description_buckets || []}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -190,11 +192,11 @@ export default function Quality() {
       <section className="space-y-4">
         <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
           <ListChecks className="w-4 h-4" />
-          Review Scoreboard
+          {t("quality.sections.review_scoreboard")}
         </h3>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="card p-6 lg:col-span-2">
-            <div className="text-sm font-medium text-gray-300 mb-4">Pass / Partial / Fail Trend</div>
+            <div className="text-sm font-medium text-gray-300 mb-4">{t("quality.charts.pass_partial_fail_trend")}</div>
             <ResponsiveContainer width="100%" height={240}>
               <LineChart data={scores?.trend || []}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
@@ -208,7 +210,7 @@ export default function Quality() {
             </ResponsiveContainer>
           </div>
           <div className="card p-6">
-            <div className="text-sm font-medium text-gray-300 mb-4">Verdict Distribution</div>
+            <div className="text-sm font-medium text-gray-300 mb-4">{t("quality.charts.verdict_distribution")}</div>
             <ResponsiveContainer width="100%" height={240}>
               <PieChart>
                 <Pie data={verdictData} dataKey="value" nameKey="name" innerRadius={50} outerRadius={82}>
@@ -224,7 +226,7 @@ export default function Quality() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="card p-6">
-            <div className="text-sm font-medium text-gray-300 mb-4">Top Issue Tags</div>
+            <div className="text-sm font-medium text-gray-300 mb-4">{t("quality.charts.top_issue_tags")}</div>
             <div className="space-y-3">
               {(scores?.top_issue_tags || []).map((tag, index) => (
                 <div key={tag.tag} className="flex items-center justify-between gap-3 text-sm">
@@ -237,11 +239,11 @@ export default function Quality() {
                   </div>
                 </div>
               ))}
-              {(scores?.top_issue_tags || []).length === 0 && <div className="text-sm text-gray-500">No issue tags in this window.</div>}
+              {(scores?.top_issue_tags || []).length === 0 && <div className="text-sm text-gray-500">{t("quality.empty.no_issue_tags")}</div>}
             </div>
           </div>
           <div className="card p-6">
-            <div className="text-sm font-medium text-gray-300 mb-4">Low-scoring Sub-tasks</div>
+            <div className="text-sm font-medium text-gray-300 mb-4">{t("quality.charts.low_scoring_sub_tasks")}</div>
             <div className="space-y-2">
               {(scores?.low_scoring_sub_tasks || []).slice(0, 5).map((item) => (
                 <button
@@ -257,7 +259,7 @@ export default function Quality() {
                   <div className="text-xs text-gray-500 font-mono truncate">{item.task_id}</div>
                 </button>
               ))}
-              {(scores?.low_scoring_sub_tasks || []).length === 0 && <div className="text-sm text-gray-500">No low-scoring sub-tasks.</div>}
+              {(scores?.low_scoring_sub_tasks || []).length === 0 && <div className="text-sm text-gray-500">{t("quality.empty.no_low_scoring_sub_tasks")}</div>}
             </div>
           </div>
         </div>
@@ -266,7 +268,7 @@ export default function Quality() {
       <section className="space-y-4">
         <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
           <Lightbulb className="w-4 h-4" />
-          Alice Insights
+          {t("quality.sections.alice_insights")}
         </h3>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {insights.map((insight) => (
@@ -280,7 +282,7 @@ export default function Quality() {
               </div>
             </div>
           ))}
-          {insights.length === 0 && <div className="text-sm text-gray-500">No active insights in this window.</div>}
+          {insights.length === 0 && <div className="text-sm text-gray-500">{t("quality.empty.no_active_insights")}</div>}
         </div>
       </section>
     </div>

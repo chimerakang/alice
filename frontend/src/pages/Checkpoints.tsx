@@ -1,6 +1,8 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 // import { useNavigate } from "react-router-dom"; // Not needed in this refactor
 import { api } from "@/lib/api";
+import i18n from "@/i18n";
 import type { TimeRangeQuery } from "@/lib/api";
 import { useAppStore } from "@/stores/appStore";
 import type { Checkpoint, DecisionLog, DiffFile } from "@/types/alice";
@@ -43,17 +45,17 @@ import {
 const PAGE_SIZE = 15;
 
 const STATUS_OPTIONS = [
-  { value: "all", label: "All" },
-  { value: "success", label: "Success" },
-  { value: "error", label: "Has Errors" },
-  { value: "with_checkpoint", label: "With Checkpoint" },
+  { value: "all", labelKey: "common.all" },
+  { value: "success", labelKey: "checkpoints.filters.success" },
+  { value: "error", labelKey: "checkpoints.filters.has_errors" },
+  { value: "with_checkpoint", labelKey: "checkpoints.filters.with_checkpoint" },
 ];
 
 const TRIGGER_TYPE_OPTIONS = [
-  { value: "all", label: "All" },
-  { value: "manual", label: "Manual" },
-  { value: "pre_danger", label: "Pre-Danger" },
-  { value: "auto", label: "Auto" },
+  { value: "all", labelKey: "common.all" },
+  { value: "manual", labelKey: "checkpoints.trigger.manual" },
+  { value: "pre_danger", labelKey: "checkpoints.trigger.pre_danger" },
+  { value: "auto", labelKey: "checkpoints.trigger.auto" },
 ];
 
 // ─── Helpers ─────────────────────────────────────────
@@ -67,7 +69,8 @@ function toMs(ts: string | { seconds: number; nanos?: number }): number {
 function formatTimestamp(ts: string | { seconds: number; nanos?: number }): string {
   const ms = toMs(ts);
   if (!ms) return "—";
-  return new Date(ms).toLocaleString("zh-TW", {
+  const locale = i18n.language === "zh-TW" ? "zh-TW" : "en-US";
+  return new Date(ms).toLocaleString(locale, {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
@@ -96,19 +99,19 @@ function triggerIcon(triggerType: string) {
   return <Zap className="w-3 h-3" />;
 }
 
-function triggerLabel(triggerType: string): string {
+function triggerLabel(triggerType: string, t: (key: string) => string): string {
   switch (triggerType) {
     case "manual":
     case "user":
-      return "Manual";
+      return t("checkpoints.trigger.manual");
     case "auto":
     case "automatic":
-      return "Auto";
+      return t("checkpoints.trigger.auto");
     case "pre_danger":
     case "pre_dangerous":
-      return "Pre-Danger";
+      return t("checkpoints.trigger.pre_danger");
     default:
-      return triggerType || "Unknown";
+      return t("checkpoints.trigger.unknown");
   }
 }
 
@@ -161,6 +164,7 @@ function DecisionEntryCard({
   onViewDetail: () => void;
   onRestoreCheckpoint?: () => void;
 }) {
+  const { t } = useTranslation();
   const [checkpointExpanded] = useState(false);
   const toolCount = decision.tool_calls?.length || 0;
   const hasError = decision.tool_calls?.some(
@@ -180,7 +184,7 @@ function DecisionEntryCard({
           <MessageSquare className="w-4 h-4 text-primary mt-0.5 shrink-0" />
           <div className="min-w-0 flex-1">
             <p className="text-sm text-gray-200 leading-relaxed break-all overflow-hidden">
-              {decision.user_prompt?.slice(0, 200) || "No prompt"}
+              {decision.user_prompt?.slice(0, 200) || t("checkpoints.entry.no_prompt")}
               {(decision.user_prompt?.length || 0) > 200 ? "…" : ""}
             </p>
             <div className="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
@@ -205,7 +209,7 @@ function DecisionEntryCard({
             <div className="flex items-center gap-2 text-xs">
               <Terminal className="w-3.5 h-3.5 text-gray-500" />
               <span className="text-gray-400">
-                {toolCount > 0 ? `${successfulTools}/${toolCount} tools` : "No tools"}
+                {toolCount > 0 ? t("checkpoints.entry.tools_count", { success: successfulTools, total: toolCount }) : t("checkpoints.entry.no_tools")}
               </span>
               {decision.duration_ms > 0 && (
                 <span className="text-gray-600">
@@ -221,7 +225,7 @@ function DecisionEntryCard({
 
             {/* Outcome */}
             <StatusBadge variant={hasError ? "error" : "success"} size="sm" dot>
-              {hasError ? "Error" : "Success"}
+              {hasError ? t("checkpoints.entry.error") : t("checkpoints.entry.success")}
             </StatusBadge>
           </div>
 
@@ -231,7 +235,7 @@ function DecisionEntryCard({
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-primary border border-primary/30 rounded-lg hover:bg-primary/10 transition-colors"
           >
             <ExternalLink className="w-3 h-3" />
-            Detail
+            {t("checkpoints.entry.detail")}
           </button>
         </div>
 
@@ -241,10 +245,10 @@ function DecisionEntryCard({
             title={
               <div className="flex items-center gap-2">
                 <Camera className="w-3.5 h-3.5 text-accent" />
-                <span className="text-sm font-medium text-gray-300">Safety Checkpoint</span>
+                <span className="text-sm font-medium text-gray-300">{t("checkpoints.entry.safety_checkpoint")}</span>
                 <StatusBadge variant={triggerVariant(linkedCheckpoint.trigger_type)} size="sm">
                   {triggerIcon(linkedCheckpoint.trigger_type)}
-                  {triggerLabel(linkedCheckpoint.trigger_type)}
+                  {triggerLabel(linkedCheckpoint.trigger_type, t)}
                 </StatusBadge>
               </div>
             }
@@ -254,7 +258,7 @@ function DecisionEntryCard({
             <div className="space-y-2 text-xs">
               {/* Description */}
               <p className="text-gray-300 leading-relaxed">
-                {linkedCheckpoint.description || "Untitled checkpoint"}
+                {linkedCheckpoint.description || t("checkpoints.entry.untitled_checkpoint")}
               </p>
 
               {/* Dangerous operation */}
@@ -290,7 +294,7 @@ function DecisionEntryCard({
                     className="ml-auto flex items-center gap-1 px-2 py-1 text-warning border border-warning/30 rounded hover:bg-warning/10 transition-colors"
                   >
                     <RotateCcw className="w-3 h-3" />
-                    Restore
+                    {t("checkpoints.entry.restore")}
                   </button>
                 )}
               </div>
@@ -315,6 +319,7 @@ function DecisionDetailPanel({
   onClose: () => void;
   onNavigate: (d: DecisionLog) => void;
 }) {
+  const { t } = useTranslation();
   const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
   const [diffLoading, setDiffLoading] = useState(false);
 
@@ -361,9 +366,9 @@ function DecisionDetailPanel({
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-gray-800">
         <div className="flex items-center gap-3">
-          <h3 className="text-lg font-semibold text-white">Decision Detail</h3>
+          <h3 className="text-lg font-semibold text-white">{t("checkpoints.detail.title")}</h3>
           <StatusBadge variant={hasError ? "error" : "success"} size="sm" dot>
-            {hasError ? "Error" : "Success"}
+            {hasError ? t("checkpoints.detail.error") : t("checkpoints.detail.success")}
           </StatusBadge>
         </div>
         <div className="flex items-center gap-2">
@@ -372,7 +377,7 @@ function DecisionDetailPanel({
             onClick={() => prevDecision && onNavigate(prevDecision)}
             disabled={!prevDecision}
             className="p-2 text-gray-400 hover:text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            title="Previous decision"
+            title={t("checkpoints.detail.previous")}
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -380,7 +385,7 @@ function DecisionDetailPanel({
             onClick={() => nextDecision && onNavigate(nextDecision)}
             disabled={!nextDecision}
             className="p-2 text-gray-400 hover:text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            title="Next decision"
+            title={t("checkpoints.detail.next")}
           >
             <ChevronRight className="w-4 h-4" />
           </button>
@@ -398,22 +403,22 @@ function DecisionDetailPanel({
         {/* Meta info */}
         <div className="grid grid-cols-2 gap-4 text-sm">
           <div>
-            <span className="text-gray-500">Timestamp:</span>
+            <span className="text-gray-500">{t("checkpoints.detail.timestamp")}:</span>
             <span className="ml-2 font-mono">{formatTimestamp(decision.timestamp)}</span>
           </div>
           <div>
-            <span className="text-gray-500">Duration:</span>
+            <span className="text-gray-500">{t("checkpoints.detail.duration")}:</span>
             <span className="ml-2">{formatDuration(decision.duration_ms)}</span>
           </div>
           <div>
-            <span className="text-gray-500">Tokens:</span>
+            <span className="text-gray-500">{t("checkpoints.detail.tokens")}:</span>
             <span className="ml-2 font-mono">
-              {decision.tokens_input}↗ + {decision.tokens_output}↙ = {decision.tokens_input + decision.tokens_output}
+              {t("checkpoints.detail.token_split", { input: decision.tokens_input, output: decision.tokens_output, total: decision.tokens_input + decision.tokens_output })}
             </span>
           </div>
           <div>
-            <span className="text-gray-500">Tools:</span>
-            <span className="ml-2">{toolCount} executed</span>
+            <span className="text-gray-500">{t("checkpoints.detail.tools")}:</span>
+            <span className="ml-2">{t("checkpoints.detail.tools_executed", { count: toolCount })}</span>
           </div>
         </div>
 
@@ -421,10 +426,10 @@ function DecisionDetailPanel({
         <div>
           <h4 className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
             <MessageSquare className="w-4 h-4 text-primary" />
-            User Prompt
+            {t("checkpoints.detail.user_prompt")}
           </h4>
           <div className="bg-gray-900 rounded-lg p-3 text-sm text-gray-200">
-            {decision.user_prompt || "No prompt"}
+            {decision.user_prompt || t("checkpoints.detail.no_prompt")}
           </div>
         </div>
 
@@ -433,7 +438,7 @@ function DecisionDetailPanel({
           <div>
             <h4 className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
               <Brain className="w-4 h-4 text-accent" />
-              AI Thinking Process
+              {t("checkpoints.detail.ai_thinking")}
             </h4>
             <div className="bg-gray-900 rounded-lg p-3 max-h-[300px] overflow-y-auto">
               <MarkdownRenderer content={decision.thinking_content} />
@@ -446,7 +451,7 @@ function DecisionDetailPanel({
           <div>
             <h4 className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
               <Terminal className="w-4 h-4 text-primary" />
-              Tool Execution Timeline
+              {t("checkpoints.detail.tool_execution_timeline")}
             </h4>
             <ToolCallGantt tools={decision.tool_calls || []} />
           </div>
@@ -457,7 +462,7 @@ function DecisionDetailPanel({
           <div>
             <h4 className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
               <Bot className="w-4 h-4 text-primary" />
-              AI Response
+              {t("checkpoints.detail.ai_response")}
             </h4>
             <div className="bg-gray-900 rounded-lg p-3 max-h-[400px] overflow-y-auto">
               <MarkdownRenderer content={decision.agent_response} />
@@ -470,7 +475,7 @@ function DecisionDetailPanel({
           <div>
             <h4 className="text-sm font-semibold text-gray-300 mb-2 flex items-center gap-2">
               <GitBranch className="w-4 h-4 text-primary" />
-              Code Changes
+              {t("checkpoints.detail.code_changes")}
             </h4>
             <DiffViewer files={diffFiles} />
           </div>
@@ -494,6 +499,7 @@ function DecisionDetailPanel({
 // ─── Main Page ───────────────────────────────────────
 
 export default function Checkpoints() {
+  const { t } = useTranslation();
   const { decisions: storeDecisions } = useAppStore();
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [allDecisions, setAllDecisions] = useState<DecisionLog[]>([]);
@@ -727,17 +733,13 @@ export default function Checkpoints() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-white">
-            AI Decision History & Safety Checkpoints
-          </h2>
-          <p className="text-sm text-gray-500 mt-1">
-            AI reasoning process with attached safety snapshots
-          </p>
+          <h2 className="text-lg font-semibold text-white">{t("checkpoints.title")}</h2>
+          <p className="text-sm text-gray-500 mt-1">{t("checkpoints.subtitle")}</p>
         </div>
         <div className="text-sm text-gray-400 text-right">
-          <div>{decisionStats.total} decision{decisionStats.total !== 1 ? "s" : ""}</div>
+          <div>{t("checkpoints.stats.decisions", { count: decisionStats.total })}</div>
           <div className="text-xs text-accent">
-            {decisionStats.withCheckpoints} with checkpoint{decisionStats.withCheckpoints !== 1 ? "s" : ""}
+            {t("checkpoints.stats.with_checkpoints", { count: decisionStats.withCheckpoints })}
           </div>
         </div>
       </div>
@@ -749,8 +751,8 @@ export default function Checkpoints() {
           onSearch={setSearchQuery}
           activeStatus={statusFilter}
           onStatusChange={setStatusFilter}
-          statusOptions={STATUS_OPTIONS}
-          placeholder="Search prompts, responses, tools..."
+          statusOptions={STATUS_OPTIONS.map((option) => ({ value: option.value, label: t(option.labelKey) }))}
+          placeholder={t("checkpoints.search_placeholder")}
         />
         {knownProjects.length > 1 && (
           <div className="flex items-center gap-2">
@@ -760,7 +762,7 @@ export default function Checkpoints() {
               onChange={(e) => setProjectFilter(e.target.value)}
               className="bg-gray-900 border border-gray-700 rounded px-2.5 py-1 text-xs text-gray-300 focus:outline-none focus:border-primary/50"
             >
-              <option value="all">All Projects</option>
+              <option value="all">{t("checkpoints.projects.all")}</option>
               {knownProjects.map((p) => (
                 <option key={p} value={p}>
                   {p.split("/").pop() || p}
@@ -778,7 +780,7 @@ export default function Checkpoints() {
           >
             {TRIGGER_TYPE_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>
-                {opt.label}
+                {t(opt.labelKey)}
               </option>
             ))}
           </select>
@@ -791,11 +793,11 @@ export default function Checkpoints() {
           <Brain className="w-12 h-12 text-gray-600 mx-auto mb-4" />
           <p className="text-gray-400">
             {searchQuery || statusFilter !== "all" || projectFilter !== "all" || triggerTypeFilter !== "all"
-              ? "No decisions match your filters"
-              : "No AI decisions recorded yet"}
+              ? t("checkpoints.empty.no_match")
+              : t("checkpoints.empty.no_decisions")}
           </p>
           <p className="text-gray-600 text-sm mt-1">
-            Start a conversation with Alice to see AI reasoning and decision history.
+            {t("checkpoints.empty.hint")}
           </p>
         </div>
       ) : (
@@ -828,7 +830,7 @@ export default function Checkpoints() {
                 ) : (
                   <BarChart3 className="w-4 h-4" />
                 )}
-                {loadingMore ? "Loading..." : "Load More"}
+                {loadingMore ? t("common.loading") : t("checkpoints.actions.load_more")}
               </button>
             </div>
           )}
@@ -848,9 +850,9 @@ export default function Checkpoints() {
       {/* Restore confirmation dialog */}
       <ConfirmDialog
         open={!!restoreTarget}
-        title="Restore Checkpoint"
-        message={`This will restore the project to "${restoreTarget?.description || "this checkpoint"}". Uncommitted changes may be lost.`}
-        confirmLabel={restoring ? "Restoring..." : "Restore"}
+        title={t("checkpoints.restore.title")}
+        message={t("checkpoints.restore.message", { description: restoreTarget?.description || t("checkpoints.restore.this_checkpoint") })}
+        confirmLabel={restoring ? t("checkpoints.restore.restoring") : t("checkpoints.restore.restore")}
         variant="danger"
         onConfirm={confirmRestore}
         onCancel={() => setRestoreTarget(null)}

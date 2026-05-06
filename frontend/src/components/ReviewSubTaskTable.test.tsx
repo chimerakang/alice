@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import i18n from "@/i18n";
 import ReviewSubTaskTable from "./ReviewSubTaskTable";
 
 afterEach(() => {
@@ -8,6 +9,10 @@ afterEach(() => {
 });
 
 let expandedSubTaskIds: string[] | null = null;
+
+beforeAll(async () => {
+  await i18n.changeLanguage("zh-TW");
+});
 
 vi.mock("react", async () => {
   const actual = await vi.importActual<typeof import("react")>("react");

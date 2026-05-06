@@ -26,7 +26,19 @@
     "refresh": "重新整理",
     "save": "儲存",
     "cancel": "取消",
-    "submit": "送出"
+    "submit": "送出",
+    "unknown": "未知"
+  },
+  "date_range": {
+    "presets": {
+      "1h": "1 小時",
+      "6h": "6 小時",
+      "24h": "24 小時",
+      "7d": "7 天",
+      "30d": "30 天",
+      "all": "全部"
+    },
+    "reset": "重設篩選條件"
   },
   "dashboard": {
     "stats": {
@@ -40,10 +52,15 @@
     },
     "git_status": {
       "title": "Git 狀態",
+      "no_info": "沒有 Git 資訊可用",
+      "dirty": "Dirty",
       "clean": "Clean",
+      "project": "專案",
       "branch": "分支",
       "commit": "Commit",
-      "remote": "Remote"
+      "remote": "Remote",
+      "modified": "已修改",
+      "modified_files": "{{count}} 個檔案"
     },
     "system_status": {
       "title": "系統狀態",
@@ -58,27 +75,150 @@
     "tool_execution": {
       "title": "工具執行",
       "success_rate": "工具成功率",
+      "no_data": "沒有工具執行資料",
       "ok": "成功",
       "err": "失敗"
+    },
+    "execution_state": {
+      "title": "代理執行",
+      "no_recent_agents": "沒有最近的代理",
+      "unknown_project": "未知",
+      "active": "啟用中",
+      "inactive": "未啟用",
+      "states": {
+        "starting": "啟動中",
+        "streaming": "串流中",
+        "retrying": "重試中",
+        "cancelling": "取消中",
+        "succeeded": "已成功",
+        "failed": "已失敗",
+        "cancelled": "已取消",
+        "idle": "閒置"
+      }
+    },
+    "recent_decisions": {
+      "title": "最近 AI 決策",
+      "view_all": "查看全部",
+      "no_decisions_yet": "目前還沒有決策",
+      "no_prompt": "沒有提示",
+      "tools_count": "{{count}} 個工具",
+      "duration_seconds": "{{seconds}} 秒"
+    },
+    "recent_tools": {
+      "title": "最近的工具執行",
+      "waiting": "正在等待工具執行資料...",
+      "duration_ms": "{{duration}} 毫秒"
     },
     "panels": {
       "activity": "活動 (24h)",
       "token_usage": "Token 使用量 (7d)",
       "no_token_data": "過去 7 天沒有 token 資料",
+      "no_activity_data": "過去 24 小時沒有活動資料",
       "source_distribution": "來源分佈",
       "source_performance": "來源效能",
       "average_duration_ms": "平均耗時 (ms)",
       "success_rate_pct": "成功率 (%)",
+      "total_decisions": "決策數",
       "unknown_source": "未知",
-      "model_distribution": "模型分佈"
+      "model_distribution": "模型分佈",
+      "cost_trend": "成本趨勢",
+      "smart_routing_savings": "智慧路由節省",
+      "actual_vs_default_model": "實際成本 vs 預設模型",
+      "period": "期間：{{label}}",
+      "savings_period": "過去 {{hours}} 小時（{{start}} - {{end}}）",
+      "saved_percent": "已節省（{{percent}}%）",
+      "actual_cost": "實際成本",
+      "default_model_cost": "若使用 Sonnet（預設）",
+      "expected_cost": "預期成本",
+      "savings": "節省",
+      "total_requests": "總請求數",
+      "cost_per_request": "每次請求成本",
+      "models_used": "使用的模型",
+      "efficiency": "效率",
+      "no_decision_data": "沒有決策資料",
+      "no_source_data": "沒有來源資料",
+      "no_performance_data": "沒有效能資料",
+      "no_cost_data": "沒有成本資料",
+      "calls": "呼叫次數",
+      "cost": "成本",
+      "calls_count": "{{count}} 次呼叫",
+      "total_requests_short": "{{count}} 個請求"
+    },
+    "chart_series": {
+      "input": "輸入",
+      "output": "輸出"
+    },
+    "sources": {
+      "terminal": "終端機",
+      "vscode": "VS Code",
+      "telegram": "Telegram",
+      "unknown": "未知"
+    },
+    "models": {
+      "haiku": "Haiku（快速）",
+      "sonnet": "Sonnet（標準）",
+      "opus": "Opus（深度）"
+    }
+  },
+  "performance": {
+    "title": "效能分析",
+    "last_updated": "最後更新：{{time}}",
+    "summary": {
+      "total_operations": "總操作數",
+      "avg_response_time": "平均回應時間",
+      "error_rate": "錯誤率",
+      "throughput": "吞吐量"
+    },
+    "charts": {
+      "api_response_time_trend": "API 回應時間趨勢",
+      "cost_trend": "成本趨勢（USD）",
+      "token_usage_over_time": "Token 使用量趨勢",
+      "cache_hit_rate": "快取命中率",
+      "memory_usage": "記憶體使用量（MB）"
+    },
+    "chart_series": {
+      "cost": "成本",
+      "cache_hit": "快取命中",
+      "memory": "記憶體",
+      "avg_time": "平均時間",
+      "count": "數量"
+    },
+    "cache_breakdown": {
+      "title": "快取分解",
+      "provider": "提供者",
+      "model": "模型",
+      "group": "群組",
+      "calls": "呼叫次數",
+      "input_hit": "輸入命中",
+      "total_hit": "總命中",
+      "cache_read": "快取讀取",
+      "tokens": "Token 數",
+      "cost": "成本"
+    },
+    "tool_distribution": {
+      "title": "工具執行時間分佈"
+    },
+    "recommendations": {
+      "title": "效能最佳化建議",
+      "priority": {
+        "high": "高優先級",
+        "medium": "中優先級",
+        "low": "低優先級"
+      }
+    },
+    "empty": {
+      "no_metrics": "目前尚無效能指標。",
+      "no_metrics_hint": "系統開始處理請求後，圖表會自動顯示。"
     }
   },
   "reviews": {
     "panel_title": "Review 面板",
     "summary_title": "Review 摘要",
     "recent": "最近的 Review",
-    "verdict_distribution": "Verdict 分佈",
-    "top_issue_tags": "最常出現的 Issue Tag",
+    "verdict_distribution": "判定分佈",
+    "top_issue_tags": "最常出現的問題標籤",
+    "no_verdict_data": "沒有判定資料",
+    "no_issue_tags": "尚未記錄問題標籤",
     "metric_reviews": "REVIEW 數",
     "metric_pass_rate": "通過率",
     "metric_avg_score": "平均分數",
@@ -89,22 +229,457 @@
     "search_placeholder": "搜尋 goal 或 feedback_text",
     "column_time": "時間",
     "column_goal_summary": "goal 摘要",
+    "columns": {
+      "project": "專案",
+      "verdict": "判定",
+      "score": "分數",
+      "reviewer_model": "評審模型",
+      "tags": "標籤"
+    },
+    "filters": {
+      "verdict": "判定",
+      "project": "專案",
+      "reviewer_model": "評審模型"
+    },
+    "verdicts": {
+      "allow": "允許",
+      "pass": "通過",
+      "partial": "部分通過",
+      "fail": "失敗",
+      "block": "阻擋"
+    },
+    "reviewer_fallback": "評審者",
+    "loading_reviews": "載入 review 中...",
+    "filtered_summary": "{{visible}} / {{total}} 筆 review",
     "empty_no_reviews": "目前還沒有 review 結果",
     "empty_no_match": "沒有符合條件的 review",
     "filter_hint": "可調整 verdict、project、時間範圍或搜尋條件來縮小結果。",
     "footer_hint": "預設依時間由新到舊排序。點列會跳到 Timeline 並展開對應 decision。",
-    "advisory_retry_default": "建議重新檢視",
-    "advisory_no_retry": "暫無需重跑",
+    "retry_note": {
+      "no_retry": "暫無需重跑",
+      "manual_review": "建議人工評估後再決定是否重跑"
+    },
+    "run_source": {
+      "retry": "重跑"
+    },
     "review_count": "{{count}} 筆 review",
     "subtask_section_title": "Sub-task 評分",
+    "subtask_col_index": "#",
     "subtask_col_desc": "描述（前 60 字）",
-    "subtask_col_score": "分數"
+    "subtask_col_score": "分數",
+    "subtask_feedback": "回饋",
+    "subtask_issue_tags": "Issue 標籤",
+    "subtask_no_issue_tags": "沒有 issue tag"
+  },
+  "timeline": {
+    "title": "AI 決策時間軸",
+    "header": {
+      "decisions_count": "{{count}} 個決策"
+    },
+    "search_placeholder": "搜尋提示詞、回應、工具...",
+    "filters": {
+      "success": "成功",
+      "has_errors": "有錯誤"
+    },
+    "sources": {
+      "all": "全部來源",
+      "telegram": "Telegram",
+      "terminal": "Terminal",
+      "vscode": "VS Code",
+      "all_projects": "全部專案"
+    },
+    "empty": {
+      "no_decisions": "尚無決策",
+      "no_decisions_hint": "AI 代理處理任務時，決策會顯示在這裡。",
+      "no_match": "沒有符合篩選條件的決策",
+      "no_match_hint": "請調整搜尋或篩選條件。"
+    },
+    "status": {
+      "done": "完成",
+      "failed": "失敗"
+    },
+    "actions": {
+      "load_more": "載入更多"
+    },
+    "pagination": {
+      "summary": "{{count}} 個決策 · 第 {{page}} / {{totalPages}} 頁"
+    },
+    "detail": {
+      "title": "決策詳情",
+      "previous": "上一筆決策",
+      "next": "下一筆決策",
+      "success": "成功",
+      "has_errors": "有錯誤",
+      "time": "時間",
+      "duration": "耗時",
+      "tokens": "Tokens",
+      "tools": "工具",
+      "input_tokens": "輸入：{{count}} tokens",
+      "output_tokens": "輸出：{{count}} tokens",
+      "user_prompt": "使用者提示",
+      "no_prompt": "沒有提示",
+      "ai_thinking": "AI 思考",
+      "ai_response": "AI 回應",
+      "no_response": "尚未記錄回應",
+      "sub_tasks": "子任務 ({{count}})",
+      "no_description": "沒有描述",
+      "pending": "待處理",
+      "model": "模型",
+      "tokens_colon": "Tokens：",
+      "route": "路由",
+      "artifacts": "產物",
+      "review": "review",
+      "reviewer": "reviewer",
+      "reviews": "Reviews ({{count}})",
+      "tool_execution_timeline": "工具執行時間軸",
+      "tool_calls": "工具呼叫 ({{count}})",
+      "ok": "OK",
+      "error": "錯誤",
+      "loading_diff": "載入 diff...",
+      "git_changes": "Git 變更",
+      "git_state": "Git 狀態",
+      "branch": "分支",
+      "commit": "提交",
+      "working_tree_dirty": "工作樹有未提交變更",
+      "modified_files": "已修改檔案：",
+      "session": "Session",
+      "project": "專案",
+      "id": "ID",
+      "no_feedback": "沒有回饋"
+    },
+    "entry": {
+      "no_prompt": "沒有提示",
+      "tools_count": "{{success}}/{{total}} 個工具",
+      "no_tools": "沒有工具",
+      "error": "錯誤",
+      "success": "成功",
+      "detail": "詳情",
+      "safety_checkpoint": "安全檢查點",
+      "untitled_checkpoint": "未命名檢查點",
+      "restore": "還原"
+    }
+  },
+  "quality": {
+    "title": "品質分析",
+    "subtitle": "拆解品質、Review 結果與規則式洞察。",
+    "stats": {
+      "avg_sub_tasks": "平均子任務數",
+      "avg_sub_tasks_detail": "在 {{count}} 個任務中，標準差 ±{{stddev}}",
+      "pass_rate": "通過率",
+      "pass_rate_detail": "{{count}} 筆 review",
+      "avg_score": "平均分數",
+      "avg_score_detail": "子任務平均 {{score}}",
+      "partial_rate": "部分通過率",
+      "partial_rate_detail": "最佳粒度 {{granularity}}"
+    },
+  "sections": {
+    "decomposition_effect": "拆解效果",
+    "review_scoreboard": "Review 看板",
+    "alice_insights": "Alice 洞察"
+  },
+  "time_windows": {
+    "7d": "7 天",
+    "30d": "30 天",
+    "90d": "90 天"
+  },
+  "charts": {
+    "granularity_distribution": "粒度分佈",
+    "granularity_vs_score": "粒度與分數",
+    "weekly_sub_task_trend": "每週子任務趨勢",
+      "description_length_vs_fail_rate": "描述長度 vs 失敗率",
+      "pass_partial_fail_trend": "通過 / 部分 / 失敗 趨勢",
+      "verdict_distribution": "Verdict 分佈",
+      "top_issue_tags": "常見 Issue Tag",
+      "low_scoring_sub_tasks": "低分子任務",
+      "sub_tasks": "子任務",
+      "score": "分數"
+    },
+    "verdicts": {
+      "pass": "通過",
+      "partial": "部分通過",
+      "fail": "失敗"
+    },
+    "empty": {
+      "no_issue_tags": "這段時間沒有 issue tag。",
+      "no_low_scoring_sub_tasks": "這段時間沒有低分子任務。",
+      "no_active_insights": "這段時間沒有活躍洞察。"
+    }
+  },
+  "checkpoints": {
+    "title": "AI 決策歷史與安全檢查點",
+    "subtitle": "附帶安全快照的 AI 推理流程",
+    "stats": {
+      "decisions": "{{count}} 筆決策",
+      "with_checkpoints": "{{count}} 筆含檢查點"
+    },
+    "search_placeholder": "搜尋提示詞、回應、工具...",
+    "projects": {
+      "all": "全部專案"
+    },
+    "filters": {
+      "success": "成功",
+      "has_errors": "有錯誤",
+      "with_checkpoint": "有檢查點"
+    },
+    "trigger": {
+      "manual": "手動",
+      "auto": "自動",
+      "pre_danger": "事前高風險",
+      "unknown": "未知"
+    },
+    "entry": {
+      "no_prompt": "沒有提示",
+      "tools_count": "{{success}}/{{total}} 個工具",
+      "no_tools": "沒有工具",
+      "error": "錯誤",
+      "success": "成功",
+      "detail": "詳情",
+      "safety_checkpoint": "安全檢查點",
+      "untitled_checkpoint": "未命名檢查點",
+      "restore": "還原"
+    },
+    "detail": {
+      "title": "決策詳情",
+      "error": "錯誤",
+      "success": "成功",
+      "previous": "上一筆決策",
+      "next": "下一筆決策",
+      "timestamp": "時間戳",
+      "duration": "耗時",
+      "tokens": "Tokens",
+      "token_split": "{{input}}↗ + {{output}}↙ = {{total}}",
+      "tools": "工具",
+      "tools_executed": "{{count}} 個",
+      "user_prompt": "使用者提示",
+      "no_prompt": "沒有提示",
+      "ai_thinking": "AI 思考流程",
+      "tool_execution_timeline": "工具執行時間軸",
+      "ai_response": "AI 回應",
+      "code_changes": "程式碼變更"
+    },
+    "restore": {
+      "title": "還原檢查點",
+      "this_checkpoint": "這個檢查點",
+      "message": "這會將專案還原到「{{description}}」。未提交的變更可能會遺失。",
+      "restoring": "還原中...",
+      "restore": "還原"
+    },
+    "actions": {
+      "load_more": "載入更多"
+    },
+    "empty": {
+      "no_match": "沒有符合條件的決策",
+      "no_decisions": "尚未記錄任何 AI 決策",
+      "hint": "開始和 Alice 對話即可看到 AI 推理與決策歷史。"
+    }
+  },
+  "runtime": {
+    "title": "Runtime 事件",
+    "subtitle": "保留的 runtime 決策，用於復原、Hermes 品質閘門、聊天路由防護與 Codex session 更新。",
+    "event_types": {
+      "recovery": "復原",
+      "issue_gate": "Issue 閘門",
+      "plan_gate": "規劃閘門",
+      "hermes_gate": "Hermes 閘門",
+      "codex": "Codex"
+    },
+    "actions": {
+      "allow": "允許",
+      "skip": "略過",
+      "replan": "重新規劃",
+      "retry": "重試",
+      "session_update": "Session 更新",
+      "block_until_choice": "阻擋直到選擇",
+      "normal_bypass": "旁路",
+      "fail": "失敗"
+    },
+    "filters": {
+      "title": "篩選"
+    },
+    "empty": {
+      "loading": "載入 runtime 事件",
+      "no_events": "找不到 runtime 事件"
+    },
+    "error": {
+      "load_failed": "無法載入 runtime 事件"
+    },
+    "row": {
+      "task": "task {{id}}",
+      "issue": "issue #{{issue}}",
+      "chat": "chat {{chat}}",
+      "attempt": "attempt {{attempt}}/{{maxAttempts}}{{nextAttempt}}",
+      "checklist": "checklist {{checked}}/{{checklistTotal}}{{unchecked}}",
+      "open_count": "，{{count}} 個未開啟",
+      "completed": "completed {{completionDone}}/{{completionTotal}}",
+      "comments": "{{count}} 則留言",
+      "planned_tasks": "{{count}} 個規劃任務",
+      "event_type": "事件類型：{{value}}",
+      "item_type": "項目類型：{{value}}",
+      "tokens": "tokens {{tokensInput}}{{cachedInput}} / {{tokensOutput}}",
+      "cached": " + {{count}} 已快取",
+      "subtask": "subtask {{subTaskNum}}{{subTaskTotal}}"
+    }
+  },
+  "security": {
+    "title": "安全與隱私",
+    "actions": {
+      "export_audit_log": "匯出稽核紀錄"
+    },
+    "summary": {
+      "total_events": "總事件數",
+      "blocked": "已阻擋",
+      "pii_detections": "PII 偵測",
+      "threat_level": "威脅等級"
+    },
+    "charts": {
+      "severity_distribution": "安全事件嚴重度分佈",
+      "events_trend": "安全事件趨勢（{{range}}）",
+      "recent_pii_records": "最近的 PII 偵測紀錄"
+    },
+    "table": {
+      "timestamp": "時間戳",
+      "pii_type": "PII 類型",
+      "location": "位置",
+      "source": "來源",
+      "matches": "命中",
+      "preview": "預覽",
+      "events": "{{count}} 筆事件",
+      "chat": "Chat {{chat}}",
+      "unknown": "未知",
+      "matches_found": "{{count}} 個命中",
+      "redacted": "[已隱藏]",
+      "na": "N/A",
+      "no_description": "沒有描述",
+      "type": "類型",
+      "severity": "嚴重度",
+      "description": "描述"
+    },
+    "search_placeholder": "搜尋事件...",
+    "severity": {
+      "all": "全部嚴重度",
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "critical": "嚴重"
+    },
+    "source": {
+      "telegram": "Telegram",
+      "http": "HTTP",
+      "system": "系統"
+    },
+    "location": {
+      "telegram_message": "Telegram 訊息",
+      "telegram_photo": "Telegram 照片",
+      "voice_message": "語音訊息",
+      "batch_photos": "批次照片",
+      "agent_logs": "Agent 日誌"
+    },
+    "empty": {
+      "no_pii": "尚未記錄 PII 偵測。",
+      "no_events": "找不到安全事件。"
+    },
+    "modal": {
+      "title": "安全事件詳情",
+      "timestamp": "時間戳",
+      "event_type": "事件類型",
+      "severity": "嚴重度",
+      "description": "描述",
+      "affected_chat_user": "受影響的 Chat/User",
+      "chat_id": "Chat ID",
+      "user_id": "User ID",
+      "message_type": "訊息類型",
+      "project": "專案",
+      "message_info": "訊息資訊",
+      "message_id": "Message ID",
+      "redacted_preview_title": "遮罩後內容預覽（已過濾敏感資料）",
+      "redacted_preview_hint": "要看完整對話，請查看上方列出的原始 Telegram chat ID。",
+      "pii_matches_found": "找到 PII 命中",
+      "instances": "{{count}} 個實例",
+      "pii_pattern_detected": "偵測到 PII 模式"
+    },
+    "time_ranges": {
+      "last_12_hours": "過去 12 小時",
+      "last_1_hour": "過去 1 小時",
+      "last_6_hours": "過去 6 小時",
+      "last_24_hours": "過去 24 小時",
+      "last_7_days": "過去 7 天",
+      "last_30_days": "過去 30 天"
+    },
+    "csv": {
+      "timestamp": "時間戳",
+      "type": "類型",
+      "severity": "嚴重度",
+      "description": "描述",
+      "source_ip": "來源 IP"
+    }
   },
   "savings": {
     "no_routing_data": "本週還沒有路由數據",
-    "load_failed": "無法載入節省數據"
+    "load_failed": "無法載入節省數據",
+    "error": {
+      "fetch_failed": "無法取得節省數據",
+      "unknown": "未知錯誤"
+    }
   },
   "memory": {
+    "title": "記憶體",
+    "subtitle": "Resolver 區段、scope、budget 與提示預覽。",
+    "actions": {
+      "preview": "預覽"
+    },
+    "errors": {
+      "chat_id_required": "chat_id 為必填。",
+      "load_failed": "無法載入記憶體預覽。"
+    },
+    "form": {
+      "chat_id": "聊天 ID",
+      "thread_id": "執行緒 ID",
+      "issue": "Issue 編號",
+      "budget": "預算",
+      "project_dir": "專案目錄",
+      "mode": "模式",
+      "message": "訊息"
+    },
+    "placeholders": {
+      "chat_id": "42",
+      "thread_id": "0",
+      "issue": "143",
+      "budget": "6000",
+      "project_dir": "/Volumes/eclipse/projects/alice"
+    },
+    "mode": {
+      "preview": "預覽",
+      "hermes": "Hermes",
+      "direct_resume_fallback": "直接恢復備援",
+      "document": "文件",
+      "photo": "照片",
+      "voice": "語音"
+    },
+    "sources": {
+      "issue_task": "Issue 任務",
+      "hermes_task": "Hermes 任務",
+      "general_task": "一般任務",
+      "recent_messages": "近期訊息",
+      "unknown": "未知"
+    },
+    "section": {
+      "priority": "優先級 {{priority}}",
+      "chars": "{{count}} 字元"
+    },
+    "stats": {
+      "sections": "區段",
+      "rendered_size": "渲染大小",
+      "sources": "來源"
+    },
+    "sections": {
+      "title": "區段",
+      "rendered_bundle": "渲染結果"
+    },
+    "empty": {
+      "no_preview": "目前沒有預覽內容。",
+      "no_sections": "尚未載入記憶體區段。",
+      "no_rendered_preview": "尚未載入渲染後預覽。"
+    },
     "continue_placeholder": "繼續處理 #143"
   }
 }

@@ -51,20 +51,25 @@ function parsePositiveInt(value: string): number | undefined {
 }
 
 function SectionRow({ section }: { section: MemoryPreviewSection }) {
+  const { t } = useTranslation();
   return (
     <article className="card p-4 space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <span className={`px-2 py-1 rounded-md border text-xs font-mono ${sourceTone(section.source)}`}>
-          {section.source}
+          {t(`memory.sources.${section.source}`, { defaultValue: section.source })}
         </span>
         <span className="px-2 py-1 rounded-md bg-gray-800 text-gray-300 text-xs font-mono">
           {section.scope}
         </span>
-        <span className="text-xs text-gray-500 font-mono">priority {section.priority}</span>
-        <span className="text-xs text-gray-500 font-mono">{formatNumber(section.size)} chars</span>
+        <span className="text-xs text-gray-500 font-mono">
+          {t("memory.section.priority", { priority: section.priority })}
+        </span>
+        <span className="text-xs text-gray-500 font-mono">
+          {t("memory.section.chars", { count: formatNumber(section.size) })}
+        </span>
       </div>
       <pre className="text-xs leading-relaxed whitespace-pre-wrap break-words text-gray-300 bg-black/30 border border-gray-800 rounded-md p-3 max-h-64 overflow-auto">
-        {section.preview || "No preview available."}
+        {section.preview || t("memory.empty.no_preview")}
       </pre>
     </article>
   );
@@ -79,11 +84,12 @@ export default function Memory() {
 
   const sectionStats = useMemo(() => {
     const sections = preview?.sections || [];
+    const sourceLabels = sections.map((section) => t(`memory.sources.${section.source}`, { defaultValue: section.source }));
     return {
       count: sections.length,
-      sources: Array.from(new Set(sections.map((section) => section.source))).join(", ") || "none",
+      sources: sourceLabels.length > 0 ? Array.from(new Set(sourceLabels)).join(", ") : t("common.no_data"),
     };
-  }, [preview]);
+  }, [preview, t]);
 
   const updateField = (field: keyof MemoryFormState, value: string) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -92,7 +98,7 @@ export default function Memory() {
   const loadPreview = async () => {
     const chatId = Number.parseInt(form.chatId.trim(), 10);
     if (!Number.isFinite(chatId) || chatId === 0) {
-      setError("chat_id is required.");
+      setError(t("memory.errors.chat_id_required"));
       setPreview(null);
       return;
     }
@@ -111,7 +117,7 @@ export default function Memory() {
       });
       setPreview(result);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load memory preview.");
+      setError(err instanceof Error ? err.message : t("memory.errors.load_failed"));
       setPreview(null);
     } finally {
       setLoading(false);
@@ -124,9 +130,9 @@ export default function Memory() {
         <div>
           <h2 className="text-lg font-semibold text-white flex items-center gap-2">
             <BrainCircuit className="w-5 h-5 text-primary" />
-            Memory
+            {t("memory.title")}
           </h2>
-          <p className="text-sm text-gray-500 mt-1">Resolver sections, scopes, budgets, and prompt previews.</p>
+          <p className="text-sm text-gray-500 mt-1">{t("memory.subtitle")}</p>
         </div>
         <button
           onClick={loadPreview}
@@ -134,74 +140,74 @@ export default function Memory() {
           className="inline-flex items-center justify-center gap-2 px-3 py-2 text-sm bg-primary hover:bg-primary-light disabled:opacity-60 disabled:cursor-not-allowed text-white rounded-md transition-colors"
         >
           {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-          Preview
+          {t("memory.actions.preview")}
         </button>
       </div>
 
       <section className="card p-5">
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
           <label className="space-y-1">
-            <span className="text-xs font-medium text-gray-400">Chat ID</span>
+            <span className="text-xs font-medium text-gray-400">{t("memory.form.chat_id")}</span>
             <input
               value={form.chatId}
               onChange={(event) => updateField("chatId", event.target.value)}
               className="w-full bg-gray-900 border border-gray-700 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-primary"
-              placeholder="42"
+              placeholder={t("memory.placeholders.chat_id")}
             />
           </label>
           <label className="space-y-1">
-            <span className="text-xs font-medium text-gray-400">Thread ID</span>
+            <span className="text-xs font-medium text-gray-400">{t("memory.form.thread_id")}</span>
             <input
               value={form.threadId}
               onChange={(event) => updateField("threadId", event.target.value)}
               className="w-full bg-gray-900 border border-gray-700 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-primary"
-              placeholder="0"
+              placeholder={t("memory.placeholders.thread_id")}
             />
           </label>
           <label className="space-y-1">
-            <span className="text-xs font-medium text-gray-400">Issue</span>
+            <span className="text-xs font-medium text-gray-400">{t("memory.form.issue")}</span>
             <input
               value={form.issue}
               onChange={(event) => updateField("issue", event.target.value)}
               className="w-full bg-gray-900 border border-gray-700 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-primary"
-              placeholder="143"
+              placeholder={t("memory.placeholders.issue")}
             />
           </label>
           <label className="space-y-1">
-            <span className="text-xs font-medium text-gray-400">Budget</span>
+            <span className="text-xs font-medium text-gray-400">{t("memory.form.budget")}</span>
             <input
               value={form.budget}
               onChange={(event) => updateField("budget", event.target.value)}
               className="w-full bg-gray-900 border border-gray-700 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-primary"
-              placeholder="6000"
+              placeholder={t("memory.placeholders.budget")}
             />
           </label>
           <label className="space-y-1 md:col-span-2">
-            <span className="text-xs font-medium text-gray-400">Project Directory</span>
+            <span className="text-xs font-medium text-gray-400">{t("memory.form.project_dir")}</span>
             <input
               value={form.projectDir}
               onChange={(event) => updateField("projectDir", event.target.value)}
               className="w-full bg-gray-900 border border-gray-700 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-primary"
-              placeholder="/Volumes/eclipse/projects/alice"
+              placeholder={t("memory.placeholders.project_dir")}
             />
           </label>
           <label className="space-y-1">
-            <span className="text-xs font-medium text-gray-400">Mode</span>
+            <span className="text-xs font-medium text-gray-400">{t("memory.form.mode")}</span>
             <select
               value={form.mode}
               onChange={(event) => updateField("mode", event.target.value)}
               className="w-full bg-gray-900 border border-gray-700 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-primary"
             >
-              <option value="preview">preview</option>
-              <option value="hermes">hermes</option>
-              <option value="direct_resume_fallback">direct_resume_fallback</option>
-              <option value="document">document</option>
-              <option value="photo">photo</option>
-              <option value="voice">voice</option>
+              <option value="preview">{t("memory.mode.preview")}</option>
+              <option value="hermes">{t("memory.mode.hermes")}</option>
+              <option value="direct_resume_fallback">{t("memory.mode.direct_resume_fallback")}</option>
+              <option value="document">{t("memory.mode.document")}</option>
+              <option value="photo">{t("memory.mode.photo")}</option>
+              <option value="voice">{t("memory.mode.voice")}</option>
             </select>
           </label>
           <label className="space-y-1 md:col-span-2 xl:col-span-1">
-            <span className="text-xs font-medium text-gray-400">Message</span>
+            <span className="text-xs font-medium text-gray-400">{t("memory.form.message")}</span>
             <input
               value={form.message}
               onChange={(event) => updateField("message", event.target.value)}
@@ -221,21 +227,21 @@ export default function Memory() {
         <div className="card p-5">
           <div className="flex items-center gap-2 text-sm text-gray-400 mb-2">
             <Layers3 className="w-4 h-4 text-primary" />
-            Sections
+            {t("memory.stats.sections")}
           </div>
           <div className="text-2xl font-bold font-mono text-white">{sectionStats.count}</div>
         </div>
         <div className="card p-5">
           <div className="flex items-center gap-2 text-sm text-gray-400 mb-2">
             <FileText className="w-4 h-4 text-success" />
-            Rendered Size
+            {t("memory.stats.rendered_size")}
           </div>
           <div className="text-2xl font-bold font-mono text-white">{formatNumber(preview?.rendered_size || 0)}</div>
         </div>
         <div className="card p-5">
           <div className="flex items-center gap-2 text-sm text-gray-400 mb-2">
             <Database className="w-4 h-4 text-warning" />
-            Sources
+            {t("memory.stats.sources")}
           </div>
           <div className="text-sm font-mono text-white break-words">{sectionStats.sources}</div>
         </div>
@@ -243,19 +249,19 @@ export default function Memory() {
 
       <section className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="space-y-4">
-          <h3 className="text-sm font-semibold text-gray-300">Sections</h3>
+          <h3 className="text-sm font-semibold text-gray-300">{t("memory.sections.title")}</h3>
           {preview?.sections?.length ? (
             preview.sections.map((section, index) => (
               <SectionRow key={`${section.source}-${section.scope}-${index}`} section={section} />
             ))
           ) : (
-            <div className="card p-6 text-sm text-gray-500">No memory sections loaded.</div>
+            <div className="card p-6 text-sm text-gray-500">{t("memory.empty.no_sections")}</div>
           )}
         </div>
         <div className="space-y-4">
-          <h3 className="text-sm font-semibold text-gray-300">Rendered Bundle</h3>
+          <h3 className="text-sm font-semibold text-gray-300">{t("memory.sections.rendered_bundle")}</h3>
           <pre className="card p-4 text-xs leading-relaxed whitespace-pre-wrap break-words text-gray-300 min-h-64 max-h-[36rem] overflow-auto">
-            {preview?.rendered_preview || "No rendered preview loaded."}
+            {preview?.rendered_preview || t("memory.empty.no_rendered_preview")}
           </pre>
         </div>
       </section>

@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useCallback, type ComponentType } from "react";
+import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/appStore";
@@ -11,7 +12,6 @@ import type {
 import DateRangeFilter from "@/components/DateRangeFilter";
 import type { DateRange } from "@/components/DateRangeFilter";
 import StatusBadge from "@/components/StatusBadge";
-import ReviewSummaryPanel from "@/components/ReviewSummaryPanel";
 import {
   Activity,
   Cpu,
@@ -31,7 +31,6 @@ import {
   AlertTriangle,
   Loader2,
   TrendingDown,
-  MessageSquareText,
 } from "lucide-react";
 import {
   AreaChart,
@@ -52,13 +51,6 @@ import SourcePerformanceChart from "@/components/SourcePerformanceChart";
 import { SavingsBanner } from "@/components/SavingsBanner";
 import { ModelDistributionChart } from "@/components/ModelDistributionChart";
 import { CostTrendChart } from "@/components/CostTrendChart";
-import ReviewSubTaskTable from "@/components/ReviewSubTaskTable";
-import {
-  type ReviewFeedItem,
-  normalizeLiveReview,
-  normalizeStoredReview,
-  mergeReviewItems,
-} from "@/lib/reviews";
 
 // ─── Storage Stats Type ──────────────────────────────
 interface StorageStats {
@@ -112,6 +104,7 @@ function EmptyChart({ label }: { label: string }) {
 
 // ─── Git Status Card (multi-project) ─────────────────
 function GitStatusCard({ projectGitStates }: { projectGitStates: Map<string, GitState> }) {
+  const { t } = useTranslation();
   const [selected, setSelected] = useState(0);
 
   const entries = useMemo(() => Array.from(projectGitStates.entries()), [projectGitStates]);
@@ -121,9 +114,9 @@ function GitStatusCard({ projectGitStates }: { projectGitStates: Map<string, Git
       <div className="card p-5">
         <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
           <GitBranch className="w-4 h-4 text-info" />
-          Git Status
+          {t("dashboard.git_status.title")}
         </h3>
-        <p className="text-sm text-gray-500">No git information available</p>
+        <p className="text-sm text-gray-500">{t("dashboard.git_status.no_info")}</p>
       </div>
     );
   }
@@ -136,10 +129,10 @@ function GitStatusCard({ projectGitStates }: { projectGitStates: Map<string, Git
     <div className="card p-5">
       <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
         <GitBranch className="w-4 h-4 text-info" />
-        Git Status
+        {t("dashboard.git_status.title")}
         {gitState && (
           <StatusBadge variant={gitState.is_dirty ? "warning" : "success"} size="sm" dot>
-            {gitState.is_dirty ? "Dirty" : "Clean"}
+            {gitState.is_dirty ? t("dashboard.git_status.dirty") : t("dashboard.git_status.clean")}
           </StatusBadge>
         )}
       </h3>
@@ -167,21 +160,21 @@ function GitStatusCard({ projectGitStates }: { projectGitStates: Map<string, Git
         <div className="space-y-2 text-sm">
           {entries.length <= 1 && (
             <div className="flex items-center justify-between">
-              <span className="text-gray-500">Project</span>
+              <span className="text-gray-500">{t("dashboard.git_status.project")}</span>
               <span className="text-gray-300 text-xs">{projectName}</span>
             </div>
           )}
           <div className="flex items-center justify-between">
-            <span className="text-gray-500">Branch</span>
+            <span className="text-gray-500">{t("dashboard.git_status.branch")}</span>
             <span className="font-mono text-primary-light">{gitState.branch}</span>
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-gray-500">Commit</span>
+            <span className="text-gray-500">{t("dashboard.git_status.commit")}</span>
             <span className="font-mono text-gray-300">{gitState.commit_hash?.slice(0, 8)}</span>
           </div>
           {gitState.remote_url && (
             <div className="flex items-center justify-between">
-              <span className="text-gray-500">Remote</span>
+              <span className="text-gray-500">{t("dashboard.git_status.remote")}</span>
               <span className="text-gray-400 text-xs truncate max-w-[200px]">
                 {gitState.remote_url.replace(/^https?:\/\//, "").replace(/\.git$/, "")}
               </span>
@@ -189,13 +182,15 @@ function GitStatusCard({ projectGitStates }: { projectGitStates: Map<string, Git
           )}
           {modifiedCount > 0 && (
             <div className="flex items-center justify-between">
-              <span className="text-gray-500">Modified</span>
-              <span className="text-warning font-mono">{modifiedCount} files</span>
+              <span className="text-gray-500">{t("dashboard.git_status.modified")}</span>
+              <span className="text-warning font-mono">
+                {t("dashboard.git_status.modified_files", { count: modifiedCount })}
+              </span>
             </div>
           )}
         </div>
       ) : (
-        <p className="text-sm text-gray-500">Loading...</p>
+        <p className="text-sm text-gray-500">{t("common.loading")}</p>
       )}
     </div>
   );
@@ -211,6 +206,7 @@ function SystemStatusCard({
   stats: StatsResponse | null;
   storageStats: StorageStats | null;
 }) {
+  const { t } = useTranslation();
   const uptimeStr = useMemo(() => {
     if (!stats?.uptime_seconds) return "—";
     const s = stats.uptime_seconds;
@@ -231,36 +227,36 @@ function SystemStatusCard({
     <div className="card p-5">
       <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
         <Activity className="w-4 h-4 text-success" />
-        System Status
+        {t("dashboard.system_status.title")}
       </h3>
       <div className="space-y-2.5">
         <div className="flex items-center justify-between text-sm">
           <span className="text-gray-500 flex items-center gap-1.5">
             {wsConnected ? <Wifi className="w-3 h-3 text-success" /> : <WifiOff className="w-3 h-3 text-error" />}
-            WebSocket
+            {t("dashboard.system_status.websocket")}
           </span>
           <span className={wsConnected ? "text-success" : "text-error"}>
-            {wsConnected ? "Connected" : "Disconnected"}
+            {wsConnected ? t("common.connected") : t("common.disconnected")}
           </span>
         </div>
         <div className="flex items-center justify-between text-sm">
           <span className="text-gray-500 flex items-center gap-1.5">
             <Bot className="w-3 h-3" />
-            Telegram
+            {t("dashboard.system_status.telegram")}
           </span>
-          <span className="text-success">Active</span>
+          <span className="text-success">{t("dashboard.system_status.active")}</span>
         </div>
         <div className="flex items-center justify-between text-sm">
           <span className="text-gray-500 flex items-center gap-1.5">
             <Clock className="w-3 h-3" />
-            Uptime
+            {t("dashboard.system_status.uptime")}
           </span>
           <span className="text-gray-300 font-mono">{uptimeStr}</span>
         </div>
         <div className="flex items-center justify-between text-sm">
           <span className="text-gray-500 flex items-center gap-1.5">
             <Database className="w-3 h-3" />
-            Storage
+            {t("dashboard.system_status.storage")}
           </span>
           <span className="text-gray-300 font-mono">{dbSize}</span>
         </div>
@@ -270,13 +266,13 @@ function SystemStatusCard({
               <div className="text-lg font-bold font-mono text-white">
                 {storageStats.database_stats?.decision_logs_count ?? 0}
               </div>
-              <div className="text-[10px] text-gray-500 uppercase">Decisions</div>
+              <div className="text-[10px] text-gray-500 uppercase">{t("dashboard.system_status.decisions")}</div>
             </div>
             <div className="text-center">
               <div className="text-lg font-bold font-mono text-white">
                 {storageStats.database_stats?.security_events_count ?? 0}
               </div>
-              <div className="text-[10px] text-gray-500 uppercase">Sec Events</div>
+              <div className="text-[10px] text-gray-500 uppercase">{t("dashboard.system_status.sec_events")}</div>
             </div>
           </div>
         )}
@@ -303,37 +299,62 @@ function executionVariant(state: string): "success" | "error" | "warning" | "inf
   }
 }
 
-function formatRelativeTime(value?: string) {
+function formatRelativeTime(value?: string, locale = "en") {
   if (!value) return "—";
   const ts = new Date(value).getTime();
   if (Number.isNaN(ts)) return "—";
 
   const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+  if (seconds < 60) return rtf.format(-seconds, "second");
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
+  if (minutes < 60) return rtf.format(-minutes, "minute");
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  if (hours < 24) return rtf.format(-hours, "hour");
+  return rtf.format(-Math.floor(hours / 24), "day");
 }
 
 function ExecutionStateCard({ agents }: { agents: AgentInfo[] }) {
+  const { t, i18n } = useTranslation();
   const recentAgents = agents.slice(0, 5);
+
+  const translateState = (state: string) => {
+    switch (state) {
+      case "starting":
+        return t("dashboard.execution_state.states.starting");
+      case "streaming":
+        return t("dashboard.execution_state.states.streaming");
+      case "retrying":
+        return t("dashboard.execution_state.states.retrying");
+      case "cancelling":
+        return t("dashboard.execution_state.states.cancelling");
+      case "succeeded":
+        return t("dashboard.execution_state.states.succeeded");
+      case "failed":
+        return t("dashboard.execution_state.states.failed");
+      case "cancelled":
+        return t("dashboard.execution_state.states.cancelled");
+      case "idle":
+        return t("dashboard.execution_state.states.idle");
+      default:
+        return state;
+    }
+  };
 
   return (
     <div className="card p-5">
       <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
         <Bot className="w-4 h-4 text-info" />
-        Agent Execution
+        {t("dashboard.execution_state.title")}
       </h3>
       {recentAgents.length === 0 ? (
-        <p className="text-sm text-gray-500">No recent agents</p>
+        <p className="text-sm text-gray-500">{t("dashboard.execution_state.no_recent_agents")}</p>
       ) : (
         <div className="space-y-3">
           {recentAgents.map((agent) => {
-            const projectName = agent.project_dir.split("/").filter(Boolean).pop() || "unknown";
+            const projectName = agent.project_dir.split("/").filter(Boolean).pop() || t("dashboard.execution_state.unknown_project");
             const state = agent.execution_state || agent.execution?.state || agent.status || "idle";
-            const detail = agent.execution?.reason || (agent.is_active ? "active" : "inactive");
+            const detail = agent.execution?.reason || (agent.is_active ? t("dashboard.execution_state.active") : t("dashboard.execution_state.inactive"));
 
             return (
               <div
@@ -346,10 +367,10 @@ function ExecutionStateCard({ agents }: { agents: AgentInfo[] }) {
                 </div>
                 <div className="shrink-0 text-right space-y-1">
                   <StatusBadge variant={executionVariant(state)} size="sm" dot>
-                    {state}
+                    {translateState(state)}
                   </StatusBadge>
                   <div className="text-[10px] text-gray-600 font-mono">
-                    {formatRelativeTime(agent.last_activity)}
+                    {formatRelativeTime(agent.last_activity, i18n.language)}
                   </div>
                 </div>
               </div>
@@ -363,6 +384,7 @@ function ExecutionStateCard({ agents }: { agents: AgentInfo[] }) {
 
 // ─── Recent Decisions Card ───────────────────────────
 function RecentDecisionsCard({ decisions }: { decisions: DecisionLog[] }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
 
   return (
@@ -370,17 +392,17 @@ function RecentDecisionsCard({ decisions }: { decisions: DecisionLog[] }) {
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-semibold text-gray-400 flex items-center gap-2">
           <Zap className="w-4 h-4 text-accent" />
-          Recent AI Decisions
+          {t("dashboard.recent_decisions.title")}
         </h3>
         <button
           onClick={() => navigate("/timeline")}
           className="text-xs text-primary hover:text-primary-light flex items-center gap-1 transition-colors"
         >
-          View all <ArrowRight className="w-3 h-3" />
+          {t("dashboard.recent_decisions.view_all")} <ArrowRight className="w-3 h-3" />
         </button>
       </div>
       {decisions.length === 0 ? (
-        <p className="text-sm text-gray-500">No decisions yet</p>
+        <p className="text-sm text-gray-500">{t("dashboard.recent_decisions.no_decisions_yet")}</p>
       ) : (
         <div className="space-y-3">
           {decisions.slice(0, 5).map((d) => {
@@ -404,12 +426,18 @@ function RecentDecisionsCard({ decisions }: { decisions: DecisionLog[] }) {
                   )}
                   <div className="min-w-0 flex-1">
                     <p className="text-sm text-gray-200 leading-snug truncate group-hover:text-white transition-colors">
-                      {promptPreview || "No prompt"}
+                      {promptPreview || t("dashboard.recent_decisions.no_prompt")}
                     </p>
                     <div className="flex items-center gap-3 mt-1 text-xs text-gray-500">
-                      <span>{d.task_type || "general"}</span>
-                      <span>{toolCount} tools</span>
-                      {d.duration_ms > 0 && <span>{(d.duration_ms / 1000).toFixed(1)}s</span>}
+                      <span>{d.task_type || t("sources.general_task")}</span>
+                      <span>{t("dashboard.recent_decisions.tools_count", { count: toolCount })}</span>
+                      {d.duration_ms > 0 && (
+                        <span>
+                          {t("dashboard.recent_decisions.duration_seconds", {
+                            seconds: (d.duration_ms / 1000).toFixed(1),
+                          })}
+                        </span>
+                      )}
                       {d.project_path && (
                         <span className="text-gray-600 truncate max-w-[120px]">
                           {d.project_path.split("/").pop()}
@@ -429,6 +457,8 @@ function RecentDecisionsCard({ decisions }: { decisions: DecisionLog[] }) {
 
 // ─── Chart: Activity Timeline (Area) ─────────────────
 function ActivityChart({ decisions }: { decisions: DecisionLog[] }) {
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language;
   const chartData = useMemo(() => {
     if (decisions.length === 0) return [];
 
@@ -437,7 +467,7 @@ function ActivityChart({ decisions }: { decisions: DecisionLog[] }) {
 
     for (let i = 23; i >= 0; i--) {
       const ts = new Date(now - i * 3600000);
-      const key = ts.toLocaleTimeString("en", { hour: "2-digit", hour12: false });
+      const key = ts.toLocaleTimeString(locale, { hour: "2-digit", hour12: false });
       buckets[key] = { total: 0, success: 0, error: 0 };
     }
 
@@ -447,7 +477,7 @@ function ActivityChart({ decisions }: { decisions: DecisionLog[] }) {
         : new Date((d.timestamp as unknown as { seconds: number }).seconds * 1000);
       if (now - ts.getTime() > 24 * 3600000) continue;
 
-      const key = ts.toLocaleTimeString("en", { hour: "2-digit", hour12: false });
+      const key = ts.toLocaleTimeString(locale, { hour: "2-digit", hour12: false });
       if (buckets[key]) {
         buckets[key].total++;
         if (d.outcome?.success) buckets[key].success++;
@@ -459,10 +489,10 @@ function ActivityChart({ decisions }: { decisions: DecisionLog[] }) {
       hour,
       ...v,
     }));
-  }, [decisions]);
+  }, [decisions, locale]);
 
   if (chartData.length === 0) {
-    return <EmptyChart label="No activity data in the last 24h" />;
+    return <EmptyChart label={t("dashboard.panels.no_activity_data")} />;
   }
 
   return (
@@ -489,6 +519,8 @@ function ActivityChart({ decisions }: { decisions: DecisionLog[] }) {
 
 // ─── Chart: Token Usage (Bar) ────────────────────────
 function TokenChart({ decisions }: { decisions: DecisionLog[] }) {
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language;
   const chartData = useMemo(() => {
     if (decisions.length === 0) return [];
 
@@ -497,7 +529,7 @@ function TokenChart({ decisions }: { decisions: DecisionLog[] }) {
 
     for (let i = 6; i >= 0; i--) {
       const ts = new Date(now - i * 86400000);
-      const key = ts.toLocaleDateString("en", { month: "short", day: "numeric" });
+      const key = ts.toLocaleDateString(locale, { month: "short", day: "numeric" });
       buckets[key] = { input: 0, output: 0 };
     }
 
@@ -507,7 +539,7 @@ function TokenChart({ decisions }: { decisions: DecisionLog[] }) {
         : new Date((d.timestamp as unknown as { seconds: number }).seconds * 1000);
       if (now - ts.getTime() > 7 * 86400000) continue;
 
-      const key = ts.toLocaleDateString("en", { month: "short", day: "numeric" });
+      const key = ts.toLocaleDateString(locale, { month: "short", day: "numeric" });
       if (buckets[key]) {
         buckets[key].input += d.tokens_input || 0;
         buckets[key].output += d.tokens_output || 0;
@@ -518,10 +550,10 @@ function TokenChart({ decisions }: { decisions: DecisionLog[] }) {
       day,
       ...v,
     }));
-  }, [decisions]);
+  }, [decisions, locale]);
 
   if (chartData.length === 0) {
-    return <EmptyChart label="No token data in the last 7 days" />;
+    return <EmptyChart label={t("dashboard.panels.no_token_data")} />;
   }
 
   return (
@@ -534,8 +566,8 @@ function TokenChart({ decisions }: { decisions: DecisionLog[] }) {
           contentStyle={{ backgroundColor: "#111827", border: "1px solid #374151", borderRadius: "0.5rem", fontSize: 12 }}
           labelStyle={{ color: "#9ca3af" }}
         />
-        <Bar dataKey="input" fill="#6366f1" radius={[3, 3, 0, 0]} name="Input" />
-        <Bar dataKey="output" fill="#22d3ee" radius={[3, 3, 0, 0]} name="Output" />
+        <Bar dataKey="input" fill="#6366f1" radius={[3, 3, 0, 0]} name={t("dashboard.chart_series.input")} />
+        <Bar dataKey="output" fill="#22d3ee" radius={[3, 3, 0, 0]} name={t("dashboard.chart_series.output")} />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -543,6 +575,7 @@ function TokenChart({ decisions }: { decisions: DecisionLog[] }) {
 
 // ─── Chart: Tool Success Rate (Pie) ──────────────────
 function ToolSuccessChart({ toolExecutions, decisions }: { toolExecutions: any[]; decisions: DecisionLog[] }) {
+  const { t } = useTranslation();
   const data = useMemo(() => {
     let success = 0;
     let error = 0;
@@ -572,13 +605,13 @@ function ToolSuccessChart({ toolExecutions, decisions }: { toolExecutions: any[]
 
     if (success + error === 0) return [];
     return [
-      { name: "Success", value: success, color: "#22c55e" },
-      { name: "Error", value: error, color: "#ef4444" },
+      { name: t("dashboard.tool_execution.ok"), value: success, color: "#22c55e" },
+      { name: t("dashboard.tool_execution.err"), value: error, color: "#ef4444" },
     ];
-  }, [toolExecutions, decisions]);
+  }, [toolExecutions, decisions, t]);
 
   if (data.length === 0) {
-    return <EmptyChart label="No tool execution data" />;
+    return <EmptyChart label={t("dashboard.tool_execution.no_data")} />;
   }
 
   const total = data.reduce((s, d) => s + d.value, 0);
@@ -605,156 +638,23 @@ function ToolSuccessChart({ toolExecutions, decisions }: { toolExecutions: any[]
       </ResponsiveContainer>
       <div className="space-y-1">
         <div className="text-2xl font-bold font-mono text-white">{rate}%</div>
-        <div className="text-xs text-gray-500">Tool success rate</div>
+        <div className="text-xs text-gray-500">{t("dashboard.tool_execution.success_rate")}</div>
         <div className="flex items-center gap-3 text-xs">
           <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-success" /> {data[0].value} ok
+            <span className="w-2 h-2 rounded-full bg-success" /> {data[0].value} {t("dashboard.tool_execution.ok")}
           </span>
           <span className="flex items-center gap-1">
-            <span className="w-2 h-2 rounded-full bg-error" /> {data[1]?.value || 0} err
+            <span className="w-2 h-2 rounded-full bg-error" /> {data[1]?.value || 0} {t("dashboard.tool_execution.err")}
           </span>
         </div>
       </div>
-    </div>
-  );
-}
-
-export function ReviewPanel({
-  reviews,
-  liveConnected,
-}: {
-  reviews: ReviewFeedItem[];
-  liveConnected: boolean;
-}) {
-  const recentReviews = reviews.slice(0, 5);
-
-  return (
-    <div className="card p-5">
-      <div className="flex items-center justify-between gap-3 mb-4">
-        <div className="flex items-center gap-2">
-          <MessageSquareText className="w-4 h-4 text-accent" />
-          <h3 className="text-sm font-semibold text-gray-400">Review Panel</h3>
-        </div>
-        <div className="flex items-center gap-2">
-          <StatusBadge variant={liveConnected ? "success" : "neutral"} size="sm" dot>
-            {liveConnected ? "Live" : "Historical"}
-          </StatusBadge>
-          <span className="text-xs text-gray-500 font-mono">
-            {reviews.length} reviews
-          </span>
-        </div>
-      </div>
-
-      {reviews.length === 0 ? (
-        <div className="flex items-center justify-center h-40 text-sm text-gray-500">
-          No review results yet
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <ReviewSummaryPanel reviews={reviews} liveConnected={liveConnected} />
-
-          <div className="card p-4">
-            <h4 className="text-xs font-semibold text-gray-400 mb-3">Recent Reviews</h4>
-            <div className="space-y-2 max-h-[240px] overflow-y-auto pr-1">
-              {recentReviews.map((review) => {
-                const verdictVariant =
-                  review.verdict === "pass" ? "success" : review.verdict === "fail" ? "error" : "warning";
-                return (
-                  <div key={review.key} className="rounded-lg border border-gray-800/60 bg-black/20 p-3">
-                    <div className="flex items-center gap-2 mb-2">
-                      <StatusBadge variant={verdictVariant} size="sm">
-                        {review.verdict}
-                      </StatusBadge>
-                      <span className="text-[10px] text-gray-500 font-mono">
-                        {review.overall_score}/100
-                      </span>
-                      <span className="ml-auto text-[10px] text-gray-500 uppercase">
-                        {review.source}
-                      </span>
-                    </div>
-                    <div className="text-xs text-gray-300 line-clamp-2">
-                      {review.goal || review.feedback_text || "—"}
-                    </div>
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {(review.issue_tags || []).slice(0, 4).map((tag) => (
-                        <span key={tag} className="px-1.5 py-0.5 rounded bg-gray-800 text-[10px] text-gray-400">
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            {recentReviews.map((review) => (
-              <div key={`${review.key}-detail`} className="rounded-lg border border-gray-800/60 bg-black/20 p-4">
-                <div className="flex flex-wrap items-center gap-2 mb-3">
-                  <StatusBadge
-                    variant={review.verdict === "pass" ? "success" : review.verdict === "fail" ? "error" : "warning"}
-                    size="sm"
-                  >
-                    {review.verdict}
-                  </StatusBadge>
-                  <span className="text-xs text-gray-400">{review.reviewer_model || "reviewer"}</span>
-                  <span className="text-xs text-gray-500 font-mono">{review.overall_score}/100</span>
-                  <span className="text-[10px] text-gray-500 uppercase ml-auto">
-                    {review.source}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-3">
-                  <div className="space-y-3">
-                    <div>
-                      <div className="text-xs text-gray-500 uppercase mb-1">Goal</div>
-                      <div className="text-sm text-gray-200 whitespace-pre-wrap">
-                        {review.goal || "—"}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-xs text-gray-500 uppercase mb-1">Feedback</div>
-                      <div className="text-sm text-gray-300 whitespace-pre-wrap">
-                        {review.feedback_text || review.retry_note || "—"}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="flex flex-wrap gap-1">
-                      {(review.issue_tags || []).length > 0 ? (
-                        review.issue_tags.map((tag) => (
-                          <span key={tag} className="px-2 py-1 rounded bg-gray-800 text-[10px] text-gray-300">
-                            {tag}
-                          </span>
-                        ))
-                      ) : (
-                        <span className="text-xs text-gray-500">No issue tags</span>
-                      )}
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      <span className="font-mono">{review.task_id}</span>
-                      {review.project_path ? <span className="ml-2">{review.project_path}</span> : null}
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      {review.advisory_retry ? review.retry_note || "Manual review suggested" : "No retry needed"}
-                    </div>
-                  </div>
-                </div>
-
-                <ReviewSubTaskTable subTaskResults={review.sub_task_results || []} />
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
 
 // ─── Main Dashboard ──────────────────────────────────
 export default function Dashboard() {
+  const { t } = useTranslation();
   const {
     stats,
     setStats,
@@ -762,7 +662,6 @@ export default function Dashboard() {
     wsConnected,
     toolExecutions,
     setToolExecutions,
-    reviewEvents,
   } = useAppStore();
   const [loading, setLoading] = useState(true);
   const [projectGitStates, setProjectGitStates] = useState<Map<string, GitState>>(new Map());
@@ -870,17 +769,6 @@ export default function Dashboard() {
     return merged;
   }, [decisions, recentDecisions]);
 
-  const reviewItems = useMemo(() => {
-    const decisionById = new Map(allDecisions.map((decision) => [decision.id, decision] as const));
-    const storedReviews = allDecisions.flatMap((decision) =>
-      (decision.unified_task?.reviews || []).map((review) => normalizeStoredReview(review, decision))
-    );
-    const liveReviews = reviewEvents.map((review) =>
-      normalizeLiveReview(review, decisionById.get(review.task_id))
-    );
-    return mergeReviewItems([...storedReviews, ...liveReviews]);
-  }, [allDecisions, reviewEvents]);
-
   // Discover project paths from decisions (normalize trailing slashes)
   const projectPaths = useMemo(() => {
     const paths = new Set<string>();
@@ -969,38 +857,38 @@ export default function Dashboard() {
       {/* ── Row 1: Metric Cards ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <MetricCard
-          label="Sessions"
+          label={t("dashboard.stats.sessions")}
           value={filteredStats.sessions}
-          sub={`${filteredStats.sessions} total`}
+          sub={t("dashboard.stats.sessions_total", { count: filteredStats.sessions })}
           icon={Cpu}
           color="text-success"
         />
         <MetricCard
-          label="Tools"
+          label={t("dashboard.stats.tools")}
           value={filteredStats.tools}
           icon={Terminal}
           color="text-primary"
         />
         <MetricCard
-          label="Decisions"
+          label={t("dashboard.stats.decisions")}
           value={filteredStats.decisions}
           icon={Zap}
           color="text-accent"
         />
         <MetricCard
-          label="Success"
+          label={t("dashboard.stats.success")}
           value={`${filteredStats.successRate.toFixed(0)}%`}
           icon={Activity}
           color="text-success"
         />
         <MetricCard
-          label="Tokens"
+          label={t("dashboard.stats.tokens")}
           value={filteredStats.totalTokens > 1000 ? `${(filteredStats.totalTokens / 1000).toFixed(1)}k` : filteredStats.totalTokens}
           icon={FileCode2}
           color="text-warning"
         />
         <MetricCard
-          label="Cost"
+          label={t("dashboard.stats.cost")}
           value={`$${filteredStats.totalCost.toFixed(2)}`}
           icon={HardDrive}
           color="text-primary-light"
@@ -1019,7 +907,7 @@ export default function Dashboard() {
         <div className="card p-5">
           <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-success" />
-            Tool Execution
+            {t("dashboard.tool_execution.title")}
           </h3>
           <ToolSuccessChart toolExecutions={toolExecutions} decisions={allDecisions} />
         </div>
@@ -1030,28 +918,28 @@ export default function Dashboard() {
         <div className="card p-5">
           <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
             <Activity className="w-4 h-4 text-primary" />
-            Activity (24h)
+            {t("dashboard.panels.activity")}
           </h3>
           <ActivityChart decisions={allDecisions} />
         </div>
         <div className="card p-5">
           <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
             <Zap className="w-4 h-4 text-warning" />
-            Token Usage (7d)
+            {t("dashboard.panels.token_usage")}
           </h3>
           <TokenChart decisions={tokenChartDecisions} />
         </div>
         <div className="card p-5">
           <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
             <Bot className="w-4 h-4 text-cyan-400" />
-            Source Distribution
+            {t("dashboard.panels.source_distribution")}
           </h3>
           <SourceDistributionChart decisions={allDecisions} />
         </div>
         <div className="card p-5">
           <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
             <Cpu className="w-4 h-4 text-purple-400" />
-            Source Performance
+            {t("dashboard.panels.source_performance")}
           </h3>
           <SourcePerformanceChart decisions={allDecisions} />
         </div>
@@ -1065,14 +953,14 @@ export default function Dashboard() {
           <div className="card p-5">
             <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
               <Zap className="w-4 h-4 text-warning" />
-              Model Distribution
+              {t("dashboard.panels.model_distribution")}
             </h3>
             <ModelDistributionChart hours={chartHours} />
           </div>
           <div className="card p-5">
             <h3 className="text-sm font-semibold text-gray-400 mb-3 flex items-center gap-2">
               <TrendingDown className="w-4 h-4 text-success" />
-              Cost Trend
+              {t("dashboard.panels.cost_trend")}
             </h3>
             <CostTrendChart hours={chartHours} />
           </div>
@@ -1086,28 +974,28 @@ export default function Dashboard() {
         <div className="card p-5">
           <h3 className="text-sm font-semibold text-gray-400 mb-4 flex items-center gap-2">
             <Terminal className="w-4 h-4 text-primary" />
-            Recent Tool Executions
+            {t("dashboard.recent_tools.title")}
             {wsConnected && (
               <span className="status-dot status-dot-success ml-auto" />
             )}
           </h3>
           {toolExecutions.length === 0 ? (
             <p className="text-sm text-gray-500">
-              Waiting for tool executions...
+              {t("dashboard.recent_tools.waiting")}
             </p>
           ) : (
             <div className="space-y-2 max-h-[280px] overflow-y-auto">
-              {toolExecutions.slice(0, 10).map((t, i) => {
-                const ts = String(t.status);
+              {toolExecutions.slice(0, 10).map((execution, i) => {
+                const ts = String(execution.status);
                 const isOk = ts === "STATUS_SUCCESS" || ts === "3" || ts === "executed" || ts === "success";
                 const isErr = ts === "STATUS_ERROR" || ts === "4" || ts === "error";
                 return (
                   <div
-                    key={t.id || i}
+                    key={execution.id || i}
                     className="flex items-center justify-between text-sm py-1.5 border-b border-gray-800/60 last:border-0"
                   >
                     <span className="font-mono text-primary-light text-xs">
-                      {t.tool_name}
+                      {execution.tool_name}
                     </span>
                     <div className="flex items-center gap-2">
                       {isErr && <AlertTriangle className="w-3 h-3 text-error" />}
@@ -1116,7 +1004,7 @@ export default function Dashboard() {
                           isOk ? "text-success" : isErr ? "text-error" : "text-warning"
                         }`}
                       >
-                        {t.duration_ms}ms
+                        {t("dashboard.recent_tools.duration_ms", { duration: execution.duration_ms })}
                       </span>
                     </div>
                   </div>

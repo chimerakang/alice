@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import i18n from "@/i18n";
 import { DecisionDetail, findFocusedDecision } from "./Timeline";
 import type { DecisionLog, UnifiedReview } from "@/types/alice";
 
@@ -27,6 +28,10 @@ vi.mock("@/components/DiffViewer", () => ({
 vi.mock("@/components/ToolCallGantt", () => ({
   default: () => null,
 }));
+
+beforeAll(async () => {
+  await i18n.changeLanguage("zh-TW");
+});
 
 function buildDecision(reviews: UnifiedReview[]): DecisionLog {
   return {

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import i18n from "@/i18n";
 import ReviewSummaryPanel from "./ReviewSummaryPanel";
 
 vi.mock("@/components/StatusBadge", () => ({
@@ -27,11 +28,15 @@ vi.mock("recharts", () => {
   };
 });
 
+beforeAll(async () => {
+  await i18n.changeLanguage("zh-TW");
+});
+
 describe("ReviewSummaryPanel", () => {
   it("renders empty state when there are no reviews", () => {
     const html = renderToStaticMarkup(<ReviewSummaryPanel reviews={[]} />);
 
-    expect(html).toContain("Review Summary");
+    expect(html).toContain("Review 摘要");
     expect(html).toContain("目前還沒有 review 結果");
   });
 
@@ -55,7 +60,7 @@ describe("ReviewSummaryPanel", () => {
             source: "stored",
             run_source: "initial",
             advisory_retry: false,
-            retry_note: "暫無需重跑",
+            retry_note: "no_retry",
             failing_subtasks: 0,
           },
           {
@@ -73,22 +78,22 @@ describe("ReviewSummaryPanel", () => {
             source: "live",
             run_source: "initial",
             advisory_retry: true,
-            retry_note: "建議人工評估後再決定是否重跑",
+            retry_note: "manual_review",
             failing_subtasks: 1,
           },
         ]}
       />
     );
 
-    expect(html).toContain("Reviews");
+    expect(html).toContain("REVIEW 數");
     expect(html).toContain("2");
-    expect(html).toContain("Pass Rate");
+    expect(html).toContain("通過率");
     expect(html).toContain("50%");
-    expect(html).toContain("Avg Score");
+    expect(html).toContain("平均分數");
     expect(html).toContain("80.0");
-    expect(html).toContain("Live");
-    expect(html).toContain("Verdict Distribution");
-    expect(html).toContain("Top Issue Tags");
+    expect(html).toContain("即時");
+    expect(html).toContain("判定分佈");
+    expect(html).toContain("最常出現的問題標籤");
     expect(html).toContain("tag-a");
     expect(html).toContain("tag-e");
     expect(html).not.toContain("tag-f");

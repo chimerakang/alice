@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import i18n from "@/i18n";
 import { createRoot } from "react-dom/client";
 import type { ReviewFeedItem } from "@/lib/reviews";
 import { ReviewsPageView } from "./Reviews";
@@ -25,6 +26,8 @@ vi.mock("@/components/StatusBadge", () => ({
   default: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
 }));
 
+void i18n.changeLanguage("zh-TW");
+
 function review(overrides: Partial<ReviewFeedItem>): ReviewFeedItem {
   return {
     key: "task-1|gpt-5.5|pass|90",
@@ -41,7 +44,7 @@ function review(overrides: Partial<ReviewFeedItem>): ReviewFeedItem {
     source: "stored",
     run_source: "initial",
     advisory_retry: false,
-    retry_note: "暫無需重跑",
+    retry_note: "no_retry",
     failing_subtasks: 0,
     ...overrides,
   };
@@ -120,7 +123,7 @@ describe("ReviewsPageView interactions", () => {
     const onSortChange = vi.fn();
     return renderReviewPage(vi.fn(), onSortChange).then(({ container, root }) => {
       const scoreButton = Array.from(container.querySelectorAll("button")).find(
-        (button) => button.textContent?.includes("score"),
+        (button) => button.textContent?.includes("分數"),
       );
       expect(scoreButton).toBeDefined();
 

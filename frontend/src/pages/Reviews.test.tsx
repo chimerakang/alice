@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
+import i18n from "@/i18n";
 import { ReviewsPageView, buildTimelineFocusPath, filterAndSortReviews } from "./Reviews";
 import type { ReviewFeedItem } from "@/lib/reviews";
 
@@ -27,8 +28,16 @@ vi.mock("@/components/SearchFilter", () => ({
 }));
 
 vi.mock("@/components/StatusBadge", () => ({
-  default: ({ children }: { children?: ReactNode }) => <span data-testid="status-badge">{children}</span>,
+  default: ({ children, title }: { children?: ReactNode; title?: string }) => (
+    <span data-testid="status-badge" title={title}>
+      {children}
+    </span>
+  ),
 }));
+
+beforeAll(async () => {
+  await i18n.changeLanguage("zh-TW");
+});
 
 function review(overrides: Partial<ReviewFeedItem>): ReviewFeedItem {
   return {
@@ -46,7 +55,7 @@ function review(overrides: Partial<ReviewFeedItem>): ReviewFeedItem {
     source: "stored",
     run_source: "initial",
     advisory_retry: false,
-    retry_note: "暫無需重跑",
+    retry_note: "no_retry",
     failing_subtasks: 0,
     ...overrides,
   };
@@ -219,7 +228,47 @@ describe("ReviewsPageView", () => {
     );
 
     expect(html).toContain("目前還沒有 review 結果");
-    expect(html).toContain("Review History");
+    expect(html).toContain("Review 紀錄");
+  });
+
+  it("renders translated retry note labels from retry_note codes", () => {
+    const html = renderToStaticMarkup(
+      <ReviewsPageView
+        reviews={[
+          review({
+            key: "retry",
+            task_id: "retry",
+            run_source: "retry",
+            advisory_retry: true,
+            retry_note: "manual_review",
+            goal: "需要重跑的 review",
+          }),
+        ]}
+        loading={false}
+        liveConnected={false}
+        filters={{
+          verdict: "all",
+          projectPath: "all",
+          reviewerModel: "all",
+          search: "",
+          timeRange: {},
+        }}
+        projectOptions={["/repo-a"]}
+        reviewerOptions={["gpt-5.5"]}
+        sortKey="timestamp"
+        sortDirection="desc"
+        onVerdictChange={() => {}}
+        onProjectChange={() => {}}
+        onReviewerModelChange={() => {}}
+        onSearchChange={() => {}}
+        onTimeRangeChange={() => {}}
+        onSortChange={() => {}}
+        onRowClick={() => {}}
+      />
+    );
+
+    expect(html).toContain("建議人工評估後再決定是否重跑");
+    expect(html).toContain("重跑");
   });
 
   it("renders filtered rows in timestamp order", () => {

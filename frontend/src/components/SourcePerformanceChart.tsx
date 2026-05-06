@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Monitor, Code2, Send } from "lucide-react";
 import type { DecisionLog } from "@/types/alice";
@@ -17,30 +18,26 @@ interface PerformanceData {
   color: string;
 }
 
-const SOURCE_CONFIG: Record<string, { label: string; icon: React.ComponentType<{ className?: string }>; color: string }> = {
+const SOURCE_CONFIG: Record<string, { icon: React.ComponentType<{ className?: string }>; color: string }> = {
   terminal: {
-    label: "Terminal",
     icon: Monitor,
     color: "#6b7280"
   },
   vscode: {
-    label: "VS Code",
     icon: Code2,
     color: "#8b5cf6"
   },
   telegram: {
-    label: "Telegram",
     icon: Send,
     color: "#06b6d4"
   },
   unknown: {
-    label: "Unknown",
     icon: Monitor,
     color: "#64748b"
   }
 };
 
-function CustomTooltip({ active, payload }: any) {
+function CustomTooltip({ active, payload, t }: any) {
   if (!active || !payload || !payload.length) return null;
 
   const data = payload[0].payload as PerformanceData;
@@ -55,15 +52,16 @@ function CustomTooltip({ active, payload }: any) {
         <span className="text-sm font-medium text-white">{data.label}</span>
       </div>
       <div className="space-y-1 text-xs text-gray-300">
-        <div>Avg Duration: {(data.avgDuration ?? 0).toFixed(0)}ms</div>
-        <div>Success Rate: {(data.successRate ?? 0).toFixed(1)}%</div>
-        <div>Total Decisions: {data.totalDecisions ?? 0}</div>
+        <div>{t("dashboard.panels.average_duration_ms")}: {(data.avgDuration ?? 0).toFixed(0)}ms</div>
+        <div>{t("dashboard.panels.success_rate_pct")}: {(data.successRate ?? 0).toFixed(1)}%</div>
+        <div>{t("dashboard.panels.total_decisions")}: {data.totalDecisions ?? 0}</div>
       </div>
     </div>
   );
 }
 
 export default function SourcePerformanceChart({ decisions }: SourcePerformanceChartProps) {
+  const { t } = useTranslation();
   const chartData = useMemo(() => {
     if (decisions.length === 0) return [];
 
@@ -71,18 +69,16 @@ export default function SourcePerformanceChart({ decisions }: SourcePerformanceC
     const sourceGroups: Record<string, DecisionLog[]> = {};
 
     decisions.forEach(decision => {
-      const source = decision.source || 'telegram'; // Default to telegram for legacy data
+      const source = decision.source || "telegram";
       if (!sourceGroups[source]) {
         sourceGroups[source] = [];
       }
       sourceGroups[source].push(decision);
     });
 
-    // Calculate performance metrics for each source
     const performanceData: PerformanceData[] = Object.entries(sourceGroups).map(([source, sourceDecisions]) => {
       const config = SOURCE_CONFIG[source] || SOURCE_CONFIG.unknown;
 
-      // Calculate average duration
       const durations = sourceDecisions
         .filter(d => d.duration_ms && d.duration_ms > 0)
         .map(d => d.duration_ms!);
@@ -90,7 +86,6 @@ export default function SourcePerformanceChart({ decisions }: SourcePerformanceC
         ? durations.reduce((sum, duration) => sum + duration, 0) / durations.length
         : 0;
 
-      // Calculate success rate
       const successfulDecisions = sourceDecisions.filter(d =>
         d.outcome?.success !== false &&
         (!d.tool_calls || d.tool_calls.every(tc =>
@@ -103,7 +98,7 @@ export default function SourcePerformanceChart({ decisions }: SourcePerformanceC
 
       return {
         source,
-        label: config.label,
+        label: t(`dashboard.sources.${source}`, { defaultValue: t("dashboard.sources.unknown") }),
         icon: config.icon,
         avgDuration,
         successRate,
@@ -112,14 +107,13 @@ export default function SourcePerformanceChart({ decisions }: SourcePerformanceC
       };
     });
 
-    // Sort by total decisions descending
     return performanceData.sort((a, b) => b.totalDecisions - a.totalDecisions);
-  }, [decisions]);
+  }, [decisions, t]);
 
   if (decisions.length === 0) {
     return (
       <div className="flex items-center justify-center h-[200px] text-sm text-gray-600">
-        No decision data available
+        {t("dashboard.panels.no_decision_data")}
       </div>
     );
   }
@@ -127,7 +121,7 @@ export default function SourcePerformanceChart({ decisions }: SourcePerformanceC
   if (chartData.length === 0) {
     return (
       <div className="flex items-center justify-center h-[200px] text-sm text-gray-600">
-        No performance data available
+        {t("dashboard.panels.no_performance_data")}
       </div>
     );
   }
@@ -136,7 +130,7 @@ export default function SourcePerformanceChart({ decisions }: SourcePerformanceC
     <div className="space-y-4">
       {/* Duration Chart */}
       <div>
-        <h4 className="text-xs text-gray-500 mb-2">Average Duration (ms)</h4>
+        <h4 className="text-xs text-gray-500 mb-2">{t("dashboard.panels.average_duration_ms")}</h4>
         <ResponsiveContainer width="100%" height={120}>
           <BarChart data={chartData} margin={{ top: 5, right: 5, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
@@ -151,7 +145,7 @@ export default function SourcePerformanceChart({ decisions }: SourcePerformanceC
               tickLine={false}
               axisLine={false}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={(props) => <CustomTooltip {...props} t={t} />} />
             <Bar
               dataKey="avgDuration"
               fill="#6366f1"
@@ -164,7 +158,7 @@ export default function SourcePerformanceChart({ decisions }: SourcePerformanceC
 
       {/* Success Rate Chart */}
       <div>
-        <h4 className="text-xs text-gray-500 mb-2">Success Rate (%)</h4>
+        <h4 className="text-xs text-gray-500 mb-2">{t("dashboard.panels.success_rate_pct")}</h4>
         <ResponsiveContainer width="100%" height={120}>
           <BarChart data={chartData} margin={{ top: 5, right: 5, left: -10, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" />
@@ -180,7 +174,7 @@ export default function SourcePerformanceChart({ decisions }: SourcePerformanceC
               tickLine={false}
               axisLine={false}
             />
-            <Tooltip content={<CustomTooltip />} />
+            <Tooltip content={(props) => <CustomTooltip {...props} t={t} />} />
             <Bar
               dataKey="successRate"
               fill="#10b981"
