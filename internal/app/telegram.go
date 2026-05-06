@@ -225,6 +225,7 @@ type hermesCoord struct {
 	executorSessionTier string        // tier that produced executorSessionID
 	continueCh          chan struct{} // non-nil when coordinator is paused on a budget warning
 	oneShot             bool          // true when launched via /hermes #N or /ghermes #N; disable on done
+	stopMessageID       int           // task-start message carrying the Stop button
 
 	// failureDecisionCh is non-nil when the engine is paused on a sub-task
 	// failure waiting for the operator's retry/skip/abort decision. Buffered
@@ -290,6 +291,7 @@ func (t *TelegramBot) abortActiveTask(key chatKey, messageID int64) abortTaskRes
 		markChatInterrupting(t.getChatContext(key, ""), "hermes_interrupt")
 		if interrupter, ok := coord.(interruptibleCoordinator); ok {
 			interrupter.InterruptWith(messageID)
+			t.clearHermesStopMessage(key, t.getLocalizedMessage(key.chatID, "execution_aborted", nil))
 			return abortTaskAborted
 		}
 		return abortTaskFinished
@@ -304,6 +306,33 @@ func (t *TelegramBot) abortActiveTask(key chatKey, messageID int64) abortTaskRes
 		return abortTaskAborted
 	}
 	return abortTaskFinished
+}
+
+func (t *TelegramBot) sendHermesStopMessage(key chatKey, text string) {
+	msgID, err := t.sendMessageWithStopButton(key, text)
+	if err != nil {
+		log.Printf("[hermes] send stop button failed chat=%d thread=%d: %v", key.chatID, key.threadID, err)
+		t.send(key, text)
+		return
+	}
+	t.hermesMu.Lock()
+	if hc := t.hermesCoords[key]; hc != nil {
+		hc.stopMessageID = msgID
+	}
+	t.hermesMu.Unlock()
+}
+
+func (t *TelegramBot) clearHermesStopMessage(key chatKey, text string) {
+	t.hermesMu.Lock()
+	msgID := 0
+	if hc := t.hermesCoords[key]; hc != nil {
+		msgID = hc.stopMessageID
+		hc.stopMessageID = 0
+	}
+	t.hermesMu.Unlock()
+	if msgID != 0 {
+		t.editMessageRemoveStopButton(key, msgID, text)
+	}
 }
 
 func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
@@ -4100,6 +4129,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, p
 	onDoneHook := t.buildHermesOnDoneHook(key, goal)
 	oneShot := issueNumber > 0
 	onDone := func(doneCtx context.Context, state hermes.TaskState) {
+		t.clearHermesStopMessage(key, t.getLocalizedMessage(key.chatID, "execution_completed", nil))
 		t.recordPlannerSession(key, tier, state.PlannerSessionID)
 		if !cfg.WalkingAgentEnabled {
 			if sess := t.getChatContext(key, projectDir).Session(appengine.BackendKindForModel(executorModel)); sess != "" {
@@ -4200,10 +4230,11 @@ func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, p
 		taskID := strings.TrimSpace(resumeTask.ID)
 		log.Printf("[hermes] chat %d resuming task %s", key.chatID, taskID)
 		displayTaskID := shortHermesTaskID(taskID)
-		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_task_id_label", map[string]string{"taskID": displayTaskID}))
+		t.sendHermesStopMessage(key, t.getLocalizedMessage(key.chatID, "hermes_task_id_label", map[string]string{"taskID": displayTaskID}))
 		go t.runTrackedJob("hermes.resume", func() {
 			if _, err := coord.RunFromState(ctx, *resumeTask, agent.chatContext, nil); err != nil {
 				log.Printf("[hermes] resume task %s failed: %v", taskID, err)
+				t.clearHermesStopMessage(key, t.getLocalizedMessage(key.chatID, "execution_error", nil))
 				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_start_failed", map[string]string{"error": err.Error()}))
 			}
 		})
@@ -4220,7 +4251,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, p
 	if len(displayTaskID) > 8 {
 		displayTaskID = displayTaskID[:8]
 	}
-	t.send(key, t.getLocalizedMessage(key.chatID, "hermes_task_id_label", map[string]string{"taskID": displayTaskID}))
+	t.sendHermesStopMessage(key, t.getLocalizedMessage(key.chatID, "hermes_task_id_label", map[string]string{"taskID": displayTaskID}))
 }
 
 // buildTaskSyncHook returns a post-completion hook that refreshes MASTER_TASKS.md
@@ -6585,6 +6616,9 @@ func (t *TelegramBot) answerCallbackQuery(queryID, text string) {
 
 // sendMessageWithStopButton sends a message with a stop button for ongoing operations
 func (t *TelegramBot) sendMessageWithStopButton(key chatKey, text string) (int, error) {
+	if t == nil || t.config == nil || t.rateLimiter == nil {
+		return 0, fmt.Errorf("telegram sync sender unavailable")
+	}
 	// Clean invalid UTF-8 characters to prevent API errors
 	cleanText := sanitizeUTF8(text)
 

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -605,16 +606,40 @@ func (t *TelegramBot) retryAttemptTimeout() time.Duration {
 	return time.Duration(minutes*2+5) * time.Minute
 }
 
-func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *SQLiteStorage, selection retrySelection) (retryOutcome, error) {
+func (t *TelegramBot) runSubTaskRetry(ctx context.Context, key chatKey, store *SQLiteStorage, selection retrySelection) (outcome retryOutcome, runErr error) {
 	start := time.Now()
 	description := truncateForTelegram(selection.SubTask.Description, 80)
-	t.send(key, fmt.Sprintf(
+	statusText := fmt.Sprintf(
 		"🔄 Retrying sub-task #%d：「%s」\n（原分數 %d/100，%d 個 issue tag）\n\n⏳ 執行中...",
 		selection.DisplaySubTaskIdx,
 		description,
 		selection.SubTaskReview.Score,
 		len(selection.SubTaskReview.IssueTags),
-	))
+	)
+	statusMessageID := 0
+	if msgID, msgErr := t.sendMessageWithStopButton(key, statusText); msgErr == nil {
+		statusMessageID = msgID
+	} else {
+		log.Printf("[retry] send stop button failed chat=%d thread=%d: %v", key.chatID, key.threadID, msgErr)
+		t.send(key, statusText)
+	}
+	defer func() {
+		if statusMessageID == 0 {
+			return
+		}
+		finalText := t.getLocalizedMessage(key.chatID, "execution_completed", nil)
+		if runErr != nil {
+			switch {
+			case errors.Is(runErr, context.Canceled), strings.Contains(runErr.Error(), "agent aborted by user"):
+				finalText = t.getLocalizedMessage(key.chatID, "execution_aborted", nil)
+			case outcome.Result.Text != "":
+				finalText = t.getLocalizedMessage(key.chatID, "execution_partial", nil)
+			default:
+				finalText = t.getLocalizedMessage(key.chatID, "execution_error", nil)
+			}
+		}
+		t.editMessageRemoveStopButton(key, statusMessageID, finalText)
+	}()
 
 	prompt := composeRetryPrompt(
 		selection.SubTask.Description,

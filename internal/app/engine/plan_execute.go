@@ -1000,25 +1000,80 @@ func (e *PlanExecuteEngine) onSubTaskDone(ctx context.Context, idx, total int, t
 			IssueNumber: issueNum,
 			SubTasks:    tasks,
 		})
-		if err != nil || (syncResult.Recovery != nil && syncResult.Recovery.State == hermes.IssueStateBlocked) {
-			if syncResult.Recovery != nil {
-				log.Printf("[plan_execute] GitHub sync checklist blocked issue #%d: %s (retry=%s, err=%s)", issueNum, syncResult.Recovery.Message, syncResult.Recovery.RetryAction, syncResult.Recovery.Error)
-				e.emitRuntimeEvent(ctx, IssueFSMTransitionEvent(issueNum, time.Now(), IssueFSMTransitionPayload{
-					From:                   syncResult.Guard.IssueState,
-					Event:                  hermes.IssueEventSyncFailed,
-					To:                     hermes.IssueStateBlocked,
-					Reason:                 syncResult.Recovery.Error,
-					Source:                 "engine.sync_checklist",
-					ChecklistTotal:         len(tasks),
-					RetryAction:            syncResult.Recovery.RetryAction,
-					ChecklistSynced:        false,
-					WouldWrite:             syncResult.WouldWrite,
-					NeedsHumanConfirmation: syncResult.Guard.NeedsHumanConfirmation,
-				}))
-			} else {
-				log.Printf("[plan_execute] GitHub sync checklist idx=%d: %v", idx, err)
-			}
+		e.recordChecklistSyncOutcome(ctx, issueNum, idx, len(tasks), syncResult, err)
+	}
+}
+
+// recordChecklistSyncOutcome always logs and emits a runtime FSM event for
+// every SyncChecklist attempt — including silent guard rejections — so that
+// missed checklist updates surface in observability instead of being swallowed.
+func (e *PlanExecuteEngine) recordChecklistSyncOutcome(ctx context.Context, issueNum, idx, total int, res issueops.SyncChecklistResult, callErr error) {
+	outcome := res.Outcome
+	if outcome == issueops.SyncOutcomeUnknown && callErr != nil {
+		outcome = issueops.SyncOutcomeFailed
+	}
+	reason := strings.TrimSpace(res.Reason)
+	if reason == "" && callErr != nil {
+		reason = callErr.Error()
+	}
+	log.Printf("[plan_execute] checklist sync issue #%d idx=%d outcome=%s wrote=%t would_write=%t needs_human=%t reason=%s",
+		issueNum, idx, outcome, res.Wrote, res.WouldWrite, res.Guard.NeedsHumanConfirmation, reason)
+
+	event, to, ok := mapChecklistSyncEvent(outcome, res)
+	if !ok {
+		return
+	}
+	from := res.Guard.IssueState
+	if res.Issue != nil && from == "" {
+		from = hermes.IssueStateFromGitHub(res.Issue.State)
+	}
+	retryAction := ""
+	if res.Recovery != nil {
+		retryAction = res.Recovery.RetryAction
+	}
+	e.emitRuntimeEvent(ctx, IssueFSMTransitionEvent(issueNum, time.Now(), IssueFSMTransitionPayload{
+		From:                   from,
+		Event:                  event,
+		To:                     to,
+		Reason:                 reason,
+		Source:                 "engine.sync_checklist",
+		ChecklistTotal:         total,
+		RetryAction:            retryAction,
+		ChecklistSynced:        res.Wrote,
+		HasBodyChange:          res.Guard.HasBodyChange,
+		HasBlockingLabel:       res.Guard.HasBlockingLabel,
+		WouldWrite:             res.WouldWrite,
+		Wrote:                  res.Wrote,
+		DryRun:                 res.DryRun,
+		NeedsHumanConfirmation: res.Guard.NeedsHumanConfirmation,
+	}))
+}
+
+// mapChecklistSyncEvent translates a sync outcome into the FSM event/target
+// pair to emit. Returns ok=false when the outcome is purely informational and
+// no transition should be recorded (e.g. issue already closed/blocked, or
+// body already in sync).
+func mapChecklistSyncEvent(outcome issueops.SyncOutcome, res issueops.SyncChecklistResult) (hermes.IssueEvent, hermes.IssueState, bool) {
+	switch outcome {
+	case issueops.SyncOutcomeWrote:
+		return hermes.IssueEventChecklistSynced, hermes.IssueStateChecklistSynced, true
+	case issueops.SyncOutcomeDryRun:
+		return hermes.IssueEventChecklistSyncRequested, hermes.IssueStateChecklistUnsynced, true
+	case issueops.SyncOutcomeNoMatch:
+		return hermes.IssueEventChecklistMismatchDetected, hermes.IssueStateChecklistUnsynced, true
+	case issueops.SyncOutcomeNeedsHuman:
+		return hermes.IssueEventHumanDecisionRequired, hermes.IssueStateBlocked, true
+	case issueops.SyncOutcomeFailed, issueops.SyncOutcomeLoadFailed:
+		return hermes.IssueEventSyncFailed, hermes.IssueStateBlocked, true
+	case issueops.SyncOutcomeIssueState:
+		if res.State == hermes.IssueStateBlocked || res.Guard.HasBlockingLabel {
+			return hermes.IssueEventHumanDecisionRequired, hermes.IssueStateBlocked, true
 		}
+		return "", "", false
+	case issueops.SyncOutcomeNoChange, issueops.SyncOutcomeUnknown:
+		return "", "", false
+	default:
+		return "", "", false
 	}
 }
 

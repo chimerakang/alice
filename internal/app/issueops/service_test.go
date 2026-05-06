@@ -336,6 +336,38 @@ func TestSyncChecklist_GuardBlocksHumanConfirmation(t *testing.T) {
 	}
 }
 
+func TestSyncChecklist_GuardBlocksIssueState(t *testing.T) {
+	projectDir := t.TempDir()
+	ghDir := t.TempDir()
+	issueJSON := `{"title":"IssueOps blocked","body":"Intro\n- [ ] Sync checklist mapping with review\n","state":"open","labels":[{"name":"blocked"}],"comments":[]}`
+	writeExecutableScript(t, ghDir, "gh", "#!/bin/sh\nset -eu\ncase \"$*\" in\n  \"issue view 20 --json title,body,state,labels,comments\")\n    cat <<'JSON'\n"+issueJSON+"\nJSON\n    exit 0\n    ;;\n  issue\\ edit\\ *)\n    printf 'unexpected write: %s\\n' \"$*\" >&2\n    exit 1\n    ;;\nesac\nprintf 'unexpected args: %s\\n' \"$*\" >&2\nexit 1\n")
+	t.Setenv("PATH", ghDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	svc := New()
+	got, err := svc.SyncChecklist(context.Background(), SyncChecklistRequest{
+		ProjectDir:  projectDir,
+		IssueNumber: 20,
+		SubTasks: []hermes.SubTask{
+			{ID: "s1", Description: "Sync checklist mapping with review", Status: hermes.SubTaskDone},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SyncChecklist() error = %v", err)
+	}
+	if got.Wrote {
+		t.Fatal("blocked issue sync should not write to GitHub")
+	}
+	if got.State != hermes.IssueStateBlocked {
+		t.Fatalf("State = %q, want %q", got.State, hermes.IssueStateBlocked)
+	}
+	if got.Outcome != SyncOutcomeIssueState || got.Reason != "issue is blocked" {
+		t.Fatalf("outcome/reason = %q/%q, want issue_state/issue is blocked", got.Outcome, got.Reason)
+	}
+	if !got.Guard.HasBlockingLabel {
+		t.Fatalf("expected blocking label in guard: %+v", got.Guard)
+	}
+}
+
 func TestSyncChecklist_GhFailureReturnsBlockedRecovery(t *testing.T) {
 	projectDir := t.TempDir()
 	ghDir := t.TempDir()

@@ -35,6 +35,14 @@ const (
 // Verdict is kept as a compatibility alias for older callers.
 type Verdict = ReviewVerdict
 
+// Sub-task score thresholds used for both UI markers and retry-eligibility.
+// Keeping these aligned ensures users who see ⚠️ in the review message also
+// get a corresponding "retry low-score" button.
+const (
+	SubTaskScoreFailingThreshold = 80 // < 80 → ⚠️/❌ marker, counts as failing for retry UI
+	SubTaskScoreCriticalThreshold = 60 // < 60 → ❌ marker
+)
+
 // ReviewPhase evaluates a completed execution and returns advisory feedback.
 type ReviewPhase interface {
 	Review(ctx context.Context, req ReviewRequest) (ReviewResult, error)
@@ -355,7 +363,7 @@ func BuildReviewNotification(taskID string, review ReviewResult) ReviewNotificat
 	failingSubTasks := 0
 	subTaskResults := make([]ReviewNotificationSubTaskResult, 0, len(review.SubTaskResults))
 	for idx, subTask := range review.SubTaskResults {
-		if subTask.Score < 70 {
+		if subTask.Score < SubTaskScoreFailingThreshold {
 			failingSubTasks++
 		}
 		subTaskResults = append(subTaskResults, ReviewNotificationSubTaskResult{
@@ -408,9 +416,9 @@ func (n ReviewNotification) TelegramText() string {
 		b.WriteString("\n子任務：\n")
 		for _, subTask := range n.SubTaskResults {
 			marker := "✅"
-			if subTask.Score < 60 {
+			if subTask.Score < SubTaskScoreCriticalThreshold {
 				marker = "❌"
-			} else if subTask.Score < 80 {
+			} else if subTask.Score < SubTaskScoreFailingThreshold {
 				marker = "⚠️"
 			}
 			id := strings.TrimSpace(subTask.SubTaskID)

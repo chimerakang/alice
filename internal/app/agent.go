@@ -1540,7 +1540,9 @@ func (a *Agent) ClearSession() {
 }
 
 func (a *Agent) ClearSessionForModel(model string) {
-	a.current().ctx.ClearSession(BackendKindForModel(model))
+	ps := a.current()
+	ps.ctx.ClearSession(BackendKindForModel(model))
+	ps.ctx.RecentMsgs = nil
 }
 
 // PrepareManualModelSwitch clears native session/context state when the user

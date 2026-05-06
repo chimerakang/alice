@@ -125,6 +125,22 @@ func (g ChecklistSyncGuard) CanWrite() bool {
 		!g.NeedsHumanConfirmation
 }
 
+// SyncOutcome classifies the terminal outcome of a checklist sync attempt so
+// callers can emit consistent FSM events without re-deriving the reason.
+type SyncOutcome string
+
+const (
+	SyncOutcomeUnknown    SyncOutcome = ""
+	SyncOutcomeWrote      SyncOutcome = "wrote"
+	SyncOutcomeDryRun     SyncOutcome = "dry_run"
+	SyncOutcomeNoMatch    SyncOutcome = "no_match"
+	SyncOutcomeNoChange   SyncOutcome = "no_change"
+	SyncOutcomeNeedsHuman SyncOutcome = "needs_human"
+	SyncOutcomeIssueState SyncOutcome = "issue_state"
+	SyncOutcomeFailed     SyncOutcome = "failed"
+	SyncOutcomeLoadFailed SyncOutcome = "load_failed"
+)
+
 // SyncChecklistResult describes the checklist synchronization preview and outcome.
 type SyncChecklistResult struct {
 	Issue      *hermes.IssueContext
@@ -134,6 +150,8 @@ type SyncChecklistResult struct {
 	Preview    hermes.ChecklistSyncPreview
 	WouldWrite bool
 	Wrote      bool
+	Outcome    SyncOutcome
+	Reason     string
 	Notes      []string
 	Recovery   *IssueOperationRecovery
 }
@@ -269,6 +287,8 @@ func (s *Service) SyncChecklist(ctx context.Context, req SyncChecklistRequest) (
 		return SyncChecklistResult{
 			DryRun:   req.DryRun,
 			State:    hermes.IssueStateBlocked,
+			Outcome:  SyncOutcomeLoadFailed,
+			Reason:   fmt.Sprintf("failed to load issue: %v", err),
 			Recovery: blockedRecovery("sync-checklist", "retry-sync-checklist", err),
 			Notes:    []string{fmt.Sprintf("failed to load issue: %v", err)},
 		}, err
@@ -295,6 +315,8 @@ func (s *Service) SyncChecklist(ctx context.Context, req SyncChecklistRequest) (
 		Notes:      make([]string, 0, 4),
 	}
 	if len(preview.CompletedDescriptions) == 0 {
+		result.Outcome = SyncOutcomeNoMatch
+		result.Reason = "no completed checklist items match sub-tasks"
 		result.Notes = append(result.Notes, "no completed checklist items to sync")
 		return result, nil
 	}
@@ -305,32 +327,44 @@ func (s *Service) SyncChecklist(ctx context.Context, req SyncChecklistRequest) (
 		result.Notes = append(result.Notes, "checklist mapping requires human confirmation")
 	}
 	if !result.Guard.CanWrite() {
-		if result.Guard.NeedsHumanConfirmation {
+		switch {
+		case result.Guard.NeedsHumanConfirmation:
 			result.State = hermes.IssueStateBlocked
-		}
-		if result.Guard.IssueState == hermes.IssueStateClosed {
+			result.Outcome = SyncOutcomeNeedsHuman
+			result.Reason = "checklist mapping requires human confirmation"
+		case result.Guard.IssueState == hermes.IssueStateClosed:
+			result.Outcome = SyncOutcomeIssueState
+			result.Reason = "issue is closed"
 			result.Notes = append(result.Notes, "issue is closed")
-		}
-		if result.Guard.IssueState == hermes.IssueStateBlocked || result.Guard.HasBlockingLabel {
+		case result.Guard.IssueState == hermes.IssueStateBlocked || result.Guard.HasBlockingLabel:
+			result.State = hermes.IssueStateBlocked
+			result.Outcome = SyncOutcomeIssueState
+			result.Reason = "issue is blocked"
 			result.Notes = append(result.Notes, "issue is blocked")
-		}
-		if !result.Guard.HasBodyChange {
+		case !result.Guard.HasBodyChange:
+			result.Outcome = SyncOutcomeNoChange
+			result.Reason = "checklist body already matches completed sub-tasks"
 			result.Notes = append(result.Notes, "checklist body already matches completed sub-tasks")
 		}
 		return result, nil
 	}
 	if req.DryRun {
 		result.State = hermes.IssueStateChecklistSynced
+		result.Outcome = SyncOutcomeDryRun
+		result.Reason = "dry-run: no GitHub write performed"
 		result.Notes = append(result.Notes, "dry-run: no GitHub write performed")
 		return result, nil
 	}
 	if err := hermes.UpdateIssueBody(ctx, req.ProjectDir, req.IssueNumber, preview.BodyAfter); err != nil {
 		result.State = hermes.IssueStateBlocked
+		result.Outcome = SyncOutcomeFailed
+		result.Reason = fmt.Sprintf("GitHub checklist sync failed: %v", err)
 		result.Recovery = blockedRecovery("sync-checklist", "retry-sync-checklist", err)
 		result.Notes = append(result.Notes, fmt.Sprintf("GitHub checklist sync failed: %v", err))
 		return result, err
 	}
 	result.State = hermes.IssueStateChecklistSynced
+	result.Outcome = SyncOutcomeWrote
 	result.Wrote = true
 	return result, nil
 }

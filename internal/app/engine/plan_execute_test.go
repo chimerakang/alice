@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"claude-tg-agent/internal/app/hermes"
+	"claude-tg-agent/internal/app/issueops"
 )
 
 type planExecuteRunner struct {
@@ -271,6 +272,23 @@ func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 	}
 	if reviewNotifier.calls != 1 || reviewNotifier.lastSummary.TaskID != taskID || reviewNotifier.lastSummary.AdvisoryRetry {
 		t.Fatalf("review notifier = %+v", reviewNotifier)
+	}
+}
+
+func TestMapChecklistSyncEventBlockedIssueState(t *testing.T) {
+	res := issueops.SyncChecklistResult{
+		State: hermes.IssueStateBlocked,
+		Guard: issueops.ChecklistSyncGuard{
+			IssueState:       hermes.IssueStateInProgress,
+			HasBlockingLabel: true,
+		},
+	}
+	event, to, ok := mapChecklistSyncEvent(issueops.SyncOutcomeIssueState, res)
+	if !ok {
+		t.Fatal("mapChecklistSyncEvent ok = false, want true")
+	}
+	if event != hermes.IssueEventHumanDecisionRequired || to != hermes.IssueStateBlocked {
+		t.Fatalf("event/to = %q/%q, want %q/%q", event, to, hermes.IssueEventHumanDecisionRequired, hermes.IssueStateBlocked)
 	}
 }
 
