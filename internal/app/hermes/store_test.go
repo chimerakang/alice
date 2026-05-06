@@ -91,6 +91,169 @@ func TestGetTask_NotFound(t *testing.T) {
 	}
 }
 
+// ── Snapshots ────────────────────────────────────────────────────────────────
+
+func TestSQLiteTaskStoreSnapshotSchema(t *testing.T) {
+	store := newTestStore(t)
+
+	rows, err := store.db.Query(`PRAGMA table_info(hermes_snapshots)`)
+	if err != nil {
+		t.Fatalf("table_info: %v", err)
+	}
+	defer rows.Close()
+
+	columns := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			t.Fatalf("scan column: %v", err)
+		}
+		columns[name] = true
+	}
+	for _, name := range []string{
+		"id", "task_id", "chat_id", "thread_id", "step", "state_json",
+		"next_step", "source_node", "writes_json", "metadata_json",
+		"parent_snapshot_id", "channel_versions_json", "created_at",
+	} {
+		if !columns[name] {
+			t.Fatalf("hermes_snapshots missing column %q", name)
+		}
+	}
+
+	var uniqueIndexes int
+	if err := store.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM sqlite_master
+		WHERE type = 'index' AND name = 'idx_hermes_snapshots_task_step'`).
+		Scan(&uniqueIndexes); err != nil {
+		t.Fatalf("count unique index: %v", err)
+	}
+	if uniqueIndexes != 1 {
+		t.Fatalf("idx_hermes_snapshots_task_step count = %d, want 1", uniqueIndexes)
+	}
+}
+
+func TestCreateAndReadSnapshotHistory(t *testing.T) {
+	store := newTestStore(t)
+	task, err := store.CreateTask(makeTask("task-snapshot", 42))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	task.ThreadID = 7
+	state := HermesStateFromTaskState(task)
+	status := TaskStatusExecuting
+
+	first, err := store.CreateSnapshot(Snapshot{
+		TaskID:   task.ID,
+		ChatID:   task.ChatID,
+		ThreadID: task.ThreadID,
+		Step:     1,
+		State:    state,
+		NextStep: RuntimeStepExecutor,
+		Writes: StateUpdate{
+			Status: &status,
+		},
+		Metadata: SnapshotMetadata{
+			Source: "test",
+			Reason: "plan_ready",
+		},
+		ChannelVersions: map[string]int64{"status": 1},
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot first: %v", err)
+	}
+	if first.ID == "" || first.CreatedAt.IsZero() {
+		t.Fatalf("snapshot identity not populated: %+v", first)
+	}
+
+	latestState := state
+	latestState.Status = TaskStatusExecuting
+	second, err := store.CreateSnapshot(Snapshot{
+		TaskID:           task.ID,
+		ChatID:           task.ChatID,
+		ThreadID:         task.ThreadID,
+		Step:             2,
+		State:            latestState,
+		NextStep:         RuntimeStepReviewer,
+		SourceNode:       RuntimeStepExecutor,
+		ParentSnapshotID: first.ID,
+	})
+	if err != nil {
+		t.Fatalf("CreateSnapshot second: %v", err)
+	}
+
+	latest, err := store.GetLatestSnapshot(task.ID)
+	if err != nil {
+		t.Fatalf("GetLatestSnapshot: %v", err)
+	}
+	if latest.ID != second.ID || latest.Step != 2 || latest.NextStep != RuntimeStepReviewer {
+		t.Fatalf("latest = %+v, want second snapshot", latest)
+	}
+	if latest.ChannelVersions == nil || len(latest.ChannelVersions) != 0 {
+		t.Fatalf("nil channel versions should round-trip as empty map: %+v", latest.ChannelVersions)
+	}
+
+	byThread, err := store.GetLatestSnapshotForThread(42, 7)
+	if err != nil {
+		t.Fatalf("GetLatestSnapshotForThread: %v", err)
+	}
+	if byThread.ID != second.ID {
+		t.Fatalf("latest by thread = %s, want %s", byThread.ID, second.ID)
+	}
+
+	history, err := store.ListSnapshotHistory(task.ID)
+	if err != nil {
+		t.Fatalf("ListSnapshotHistory: %v", err)
+	}
+	if len(history) != 2 || history[0].Step != 1 || history[1].Step != 2 {
+		t.Fatalf("history steps = %+v, want [1 2]", history)
+	}
+	if history[0].Writes.Status == nil || *history[0].Writes.Status != TaskStatusExecuting {
+		t.Fatalf("writes did not round-trip: %+v", history[0].Writes)
+	}
+	if history[0].Metadata.Source != "test" || history[0].ChannelVersions["status"] != 1 {
+		t.Fatalf("metadata/channel versions did not round-trip: %+v %+v", history[0].Metadata, history[0].ChannelVersions)
+	}
+}
+
+func TestCreateSnapshotRejectsDuplicateTaskStep(t *testing.T) {
+	store := newTestStore(t)
+	task, err := store.CreateTask(makeTask("task-snapshot-dup", 42))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	snapshot := Snapshot{
+		TaskID:   task.ID,
+		ChatID:   task.ChatID,
+		Step:     1,
+		State:    HermesStateFromTaskState(task),
+		NextStep: RuntimeStepExecutor,
+	}
+	if _, err := store.CreateSnapshot(snapshot); err != nil {
+		t.Fatalf("CreateSnapshot first: %v", err)
+	}
+	if _, err := store.CreateSnapshot(snapshot); err == nil {
+		t.Fatal("CreateSnapshot duplicate step error = nil, want unique constraint error")
+	}
+}
+
+func TestSnapshotNotFound(t *testing.T) {
+	store := newTestStore(t)
+	if _, err := store.GetLatestSnapshot("missing"); err != ErrNoTask {
+		t.Fatalf("GetLatestSnapshot missing error = %v, want ErrNoTask", err)
+	}
+	if _, err := store.GetLatestSnapshotForThread(404, 0); err != ErrNoTask {
+		t.Fatalf("GetLatestSnapshotForThread missing error = %v, want ErrNoTask", err)
+	}
+	if _, err := store.ListSnapshotHistory("missing"); err != ErrNoTask {
+		t.Fatalf("ListSnapshotHistory missing error = %v, want ErrNoTask", err)
+	}
+}
+
 // ── GetActiveTaskForChat ───────────────────────────────────────────────────────
 
 func TestGetActiveTaskForChat(t *testing.T) {

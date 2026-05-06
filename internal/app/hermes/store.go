@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	_ "modernc.org/sqlite"
 )
 
@@ -95,6 +96,8 @@ type SQLiteTaskStore struct {
 	onUnifiedTaskUpdate func(taskID string)
 }
 
+var _ SnapshotStore = (*SQLiteTaskStore)(nil)
+
 // NewSQLiteTaskStore creates and migrates the hermes SQLite tables.
 // db must be an open *sql.DB (typically shared with the main SQLiteStorage).
 func NewSQLiteTaskStore(db *sql.DB) (*SQLiteTaskStore, error) {
@@ -155,6 +158,27 @@ func (s *SQLiteTaskStore) migrate() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_hermes_artifacts_task
 			ON hermes_task_artifacts(task_id)`,
+		`CREATE TABLE IF NOT EXISTS hermes_snapshots (
+			id                    TEXT PRIMARY KEY,
+			task_id               TEXT NOT NULL REFERENCES hermes_task_states(id),
+			chat_id               INTEGER NOT NULL DEFAULT 0,
+			thread_id             INTEGER NOT NULL DEFAULT 0,
+			step                  INTEGER NOT NULL,
+			state_json            TEXT NOT NULL,
+			next_step             TEXT NOT NULL DEFAULT '',
+			source_node           TEXT NOT NULL DEFAULT '',
+			writes_json           TEXT NOT NULL DEFAULT '{}',
+			metadata_json         TEXT NOT NULL DEFAULT '{}',
+			parent_snapshot_id    TEXT NOT NULL DEFAULT '',
+			channel_versions_json TEXT NOT NULL DEFAULT '{}',
+			created_at            TEXT NOT NULL
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_hermes_snapshots_task_step
+			ON hermes_snapshots(task_id, step)`,
+		`CREATE INDEX IF NOT EXISTS idx_hermes_snapshots_task_created
+			ON hermes_snapshots(task_id, created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_hermes_snapshots_thread_created
+			ON hermes_snapshots(chat_id, thread_id, created_at)`,
 		`CREATE TABLE IF NOT EXISTS tasks (
 			id                  TEXT PRIMARY KEY,
 			chat_id             INTEGER NOT NULL DEFAULT 0,
@@ -298,6 +322,120 @@ func (s *SQLiteTaskStore) CreateTask(task TaskState) (TaskState, error) {
 		s.broadcastUnifiedTask(task.ID)
 		return nil
 	})
+}
+
+// CreateSnapshot persists one durable Hermes runtime checkpoint. The caller is
+// responsible for choosing a monotonic per-task Step; the database enforces
+// uniqueness on (task_id, step).
+func (s *SQLiteTaskStore) CreateSnapshot(snapshot Snapshot) (Snapshot, error) {
+	if strings.TrimSpace(snapshot.TaskID) == "" {
+		return snapshot, fmt.Errorf("snapshot task_id is required")
+	}
+	if snapshot.ID == "" {
+		snapshot.ID = uuid.NewString()
+	}
+	if snapshot.CreatedAt.IsZero() {
+		snapshot.CreatedAt = time.Now()
+	}
+	if snapshot.State.TaskID == "" {
+		snapshot.State.TaskID = snapshot.TaskID
+	}
+	if snapshot.ChatID == 0 {
+		snapshot.ChatID = snapshot.State.ChatID
+	}
+	if snapshot.ThreadID == 0 {
+		snapshot.ThreadID = snapshot.State.ThreadID
+	}
+	if snapshot.ChannelVersions == nil {
+		snapshot.ChannelVersions = map[string]int64{}
+	}
+
+	stateJSON, err := json.Marshal(snapshot.State)
+	if err != nil {
+		return snapshot, fmt.Errorf("marshal snapshot state: %w", err)
+	}
+	writesJSON, err := json.Marshal(snapshot.Writes)
+	if err != nil {
+		return snapshot, fmt.Errorf("marshal snapshot writes: %w", err)
+	}
+	metadataJSON, err := json.Marshal(snapshot.Metadata)
+	if err != nil {
+		return snapshot, fmt.Errorf("marshal snapshot metadata: %w", err)
+	}
+	channelVersionsJSON, err := json.Marshal(snapshot.ChannelVersions)
+	if err != nil {
+		return snapshot, fmt.Errorf("marshal snapshot channel versions: %w", err)
+	}
+
+	return snapshot, s.execWithRetry(func() error {
+		_, err := s.db.Exec(`
+			INSERT INTO hermes_snapshots
+				(id, task_id, chat_id, thread_id, step, state_json, next_step, source_node,
+				 writes_json, metadata_json, parent_snapshot_id, channel_versions_json, created_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			snapshot.ID, snapshot.TaskID, snapshot.ChatID, snapshot.ThreadID, snapshot.Step,
+			string(stateJSON), string(snapshot.NextStep), string(snapshot.SourceNode),
+			string(writesJSON), string(metadataJSON), snapshot.ParentSnapshotID,
+			string(channelVersionsJSON), snapshot.CreatedAt.Format(time.RFC3339),
+		)
+		return err
+	})
+}
+
+// GetLatestSnapshot returns the latest committed snapshot for taskID.
+func (s *SQLiteTaskStore) GetLatestSnapshot(taskID string) (Snapshot, error) {
+	row := s.db.QueryRow(`
+		SELECT id, task_id, chat_id, thread_id, step, state_json, next_step, source_node,
+		       writes_json, metadata_json, parent_snapshot_id, channel_versions_json, created_at
+		FROM hermes_snapshots
+		WHERE task_id = ?
+		ORDER BY step DESC, created_at DESC
+		LIMIT 1`, taskID)
+	return scanSnapshot(row)
+}
+
+// GetLatestSnapshotForThread returns the most recent snapshot for a Telegram
+// chat/thread pair regardless of task id.
+func (s *SQLiteTaskStore) GetLatestSnapshotForThread(chatID int64, threadID int) (Snapshot, error) {
+	row := s.db.QueryRow(`
+		SELECT id, task_id, chat_id, thread_id, step, state_json, next_step, source_node,
+		       writes_json, metadata_json, parent_snapshot_id, channel_versions_json, created_at
+		FROM hermes_snapshots
+		WHERE chat_id = ? AND thread_id = ?
+		ORDER BY created_at DESC, step DESC
+		LIMIT 1`, chatID, threadID)
+	return scanSnapshot(row)
+}
+
+// ListSnapshotHistory returns all snapshots for taskID in chronological step
+// order. This is the read side needed for audit/debug timelines.
+func (s *SQLiteTaskStore) ListSnapshotHistory(taskID string) ([]Snapshot, error) {
+	rows, err := s.db.Query(`
+		SELECT id, task_id, chat_id, thread_id, step, state_json, next_step, source_node,
+		       writes_json, metadata_json, parent_snapshot_id, channel_versions_json, created_at
+		FROM hermes_snapshots
+		WHERE task_id = ?
+		ORDER BY step ASC, created_at ASC`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var snapshots []Snapshot
+	for rows.Next() {
+		snapshot, err := scanSnapshot(rows)
+		if err != nil {
+			return nil, err
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(snapshots) == 0 {
+		return nil, ErrNoTask
+	}
+	return snapshots, nil
 }
 
 func (s *SQLiteTaskStore) GetTask(id string) (TaskState, error) {
@@ -747,6 +885,52 @@ func (s *SQLiteTaskStore) ListTasksForChat(chatID int64, limit int) ([]TaskState
 
 type rowScanner interface {
 	Scan(dest ...any) error
+}
+
+func scanSnapshot(row rowScanner) (Snapshot, error) {
+	var snapshot Snapshot
+	var stateJSON, writesJSON, metadataJSON, channelVersionsJSON string
+	var nextStep, sourceNode string
+	var createdStr string
+
+	err := row.Scan(
+		&snapshot.ID, &snapshot.TaskID, &snapshot.ChatID, &snapshot.ThreadID, &snapshot.Step,
+		&stateJSON, &nextStep, &sourceNode, &writesJSON, &metadataJSON,
+		&snapshot.ParentSnapshotID, &channelVersionsJSON, &createdStr,
+	)
+	if err == sql.ErrNoRows {
+		return snapshot, ErrNoTask
+	}
+	if err != nil {
+		return snapshot, err
+	}
+	if err := json.Unmarshal([]byte(stateJSON), &snapshot.State); err != nil {
+		return snapshot, fmt.Errorf("unmarshal snapshot state: %w", err)
+	}
+	if strings.TrimSpace(writesJSON) != "" {
+		if err := json.Unmarshal([]byte(writesJSON), &snapshot.Writes); err != nil {
+			return snapshot, fmt.Errorf("unmarshal snapshot writes: %w", err)
+		}
+	}
+	if strings.TrimSpace(metadataJSON) != "" {
+		if err := json.Unmarshal([]byte(metadataJSON), &snapshot.Metadata); err != nil {
+			return snapshot, fmt.Errorf("unmarshal snapshot metadata: %w", err)
+		}
+	}
+	if strings.TrimSpace(channelVersionsJSON) != "" {
+		if err := json.Unmarshal([]byte(channelVersionsJSON), &snapshot.ChannelVersions); err != nil {
+			return snapshot, fmt.Errorf("unmarshal snapshot channel versions: %w", err)
+		}
+	}
+	if snapshot.ChannelVersions == nil {
+		snapshot.ChannelVersions = map[string]int64{}
+	}
+	snapshot.NextStep = RuntimeStep(nextStep)
+	snapshot.SourceNode = RuntimeStep(sourceNode)
+	if snapshot.CreatedAt, err = time.Parse(time.RFC3339, createdStr); err != nil {
+		return snapshot, err
+	}
+	return snapshot, nil
 }
 
 func (s *SQLiteTaskStore) scanTask(row rowScanner) (TaskState, error) {
