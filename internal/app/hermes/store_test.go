@@ -254,6 +254,98 @@ func TestSnapshotNotFound(t *testing.T) {
 	}
 }
 
+func TestCommitRuntimeStepWritesLegacyAndSnapshot(t *testing.T) {
+	store := newTestStore(t)
+	task, err := store.CreateTask(makeTask("task-runtime-commit", 42))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	status := TaskStatusExecuting
+	currentIdx := 1
+	plan := []SubTask{
+		{ID: "s1", Description: "done", Status: SubTaskDone, Result: "ok", TokensUsed: 7, Attempts: 1},
+	}
+	accumulated := "ok"
+
+	snapshot, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     task.ID,
+		Updates:    []StateUpdate{{Status: &status, CurrentIdx: &currentIdx, Plan: plan, Accumulated: &accumulated}},
+		NextStep:   RuntimeStepExecutor,
+		SourceNode: RuntimeStepExecutor,
+		Metadata:   SnapshotMetadata{Source: "test", Reason: "subtask_done"},
+	})
+	if err != nil {
+		t.Fatalf("CommitRuntimeStep: %v", err)
+	}
+	if snapshot.Step != 1 || snapshot.NextStep != RuntimeStepExecutor || snapshot.Metadata.Reason != "subtask_done" {
+		t.Fatalf("snapshot mismatch: %+v", snapshot)
+	}
+
+	got, err := store.GetTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != TaskStatusExecuting || got.CurrentIdx != 1 || got.Accumulated != "ok" {
+		t.Fatalf("legacy task not updated atomically: %+v", got)
+	}
+	if len(got.Plan) != 1 || got.Plan[0].Status != SubTaskDone || got.Plan[0].TokensUsed != 7 {
+		t.Fatalf("legacy plan not updated: %+v", got.Plan)
+	}
+
+	history, err := store.ListSnapshotHistory(task.ID)
+	if err != nil {
+		t.Fatalf("ListSnapshotHistory: %v", err)
+	}
+	if len(history) != 1 || history[0].State.Accumulated != "ok" {
+		t.Fatalf("history mismatch: %+v", history)
+	}
+}
+
+func TestCommitRuntimeStepSnapshotFailureRollsBackLegacy(t *testing.T) {
+	store := newTestStore(t)
+	task, err := store.CreateTask(makeTask("task-runtime-rollback", 42))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	status := TaskStatusExecuting
+	idxOne := 1
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     task.ID,
+		SnapshotID: "fixed-snapshot",
+		Updates:    []StateUpdate{{Status: &status, CurrentIdx: &idxOne}},
+		NextStep:   RuntimeStepExecutor,
+		SourceNode: RuntimeStepPlanner,
+	}); err != nil {
+		t.Fatalf("CommitRuntimeStep first: %v", err)
+	}
+
+	idxTwo := 2
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     task.ID,
+		SnapshotID: "fixed-snapshot",
+		Updates:    []StateUpdate{{CurrentIdx: &idxTwo}},
+		NextStep:   RuntimeStepExecutor,
+		SourceNode: RuntimeStepExecutor,
+	}); err == nil {
+		t.Fatal("CommitRuntimeStep duplicate snapshot id error = nil, want insert failure")
+	}
+
+	got, err := store.GetTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.CurrentIdx != 1 {
+		t.Fatalf("legacy current_idx advanced despite snapshot failure: got %d, want 1", got.CurrentIdx)
+	}
+	history, err := store.ListSnapshotHistory(task.ID)
+	if err != nil {
+		t.Fatalf("ListSnapshotHistory: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history length = %d, want 1", len(history))
+	}
+}
+
 // ── GetActiveTaskForChat ───────────────────────────────────────────────────────
 
 func TestGetActiveTaskForChat(t *testing.T) {

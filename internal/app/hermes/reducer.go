@@ -115,6 +115,48 @@ func StateUpdateForSubTaskResult(subTask SubTask, idx int) StateUpdate {
 	}
 }
 
+func collapseStateUpdates(updates []StateUpdate) StateUpdate {
+	var collapsed StateUpdate
+	for _, update := range updates {
+		if update.Status != nil {
+			status := *update.Status
+			collapsed.Status = &status
+		}
+		if update.CurrentIdx != nil {
+			currentIdx := *update.CurrentIdx
+			collapsed.CurrentIdx = &currentIdx
+		}
+		if update.Plan != nil {
+			collapsed.Plan = append([]SubTask(nil), update.Plan...)
+		}
+		if update.Accumulated != nil {
+			accumulated := *update.Accumulated
+			collapsed.Accumulated = &accumulated
+		}
+		if update.AccumulatedDelta != "" {
+			collapsed.AccumulatedDelta = appendAccumulatedDelta(collapsed.AccumulatedDelta, update.AccumulatedDelta)
+		}
+		collapsed.Artifacts = append(collapsed.Artifacts, update.Artifacts...)
+		collapsed.ModelUsages = append(collapsed.ModelUsages, update.ModelUsages...)
+		collapsed.PhaseUsages = append(collapsed.PhaseUsages, update.PhaseUsages...)
+		collapsed.SubTaskResults = append(collapsed.SubTaskResults, update.SubTaskResults...)
+		if update.ClearInterrupt {
+			collapsed.ClearInterrupt = true
+			collapsed.Interrupt = nil
+		}
+		if update.Interrupt != nil {
+			collapsed.Interrupt = cloneHermesInterrupt(update.Interrupt)
+			collapsed.ClearInterrupt = false
+		}
+		collapsed.Errors = append(collapsed.Errors, update.Errors...)
+		if update.GithubIssueNumber != nil {
+			issueNumber := *update.GithubIssueNumber
+			collapsed.GithubIssueNumber = &issueNumber
+		}
+	}
+	return collapsed
+}
+
 func appendAccumulatedDelta(current string, delta string) string {
 	if current == "" {
 		return delta

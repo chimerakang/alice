@@ -9,12 +9,16 @@ import (
 // MemoryTaskStore is an in-process TaskStateStore used by tests and transient
 // single-run engines that do not need SQLite persistence.
 type MemoryTaskStore struct {
-	mu    sync.Mutex
-	tasks map[string]TaskState
+	mu        sync.Mutex
+	tasks     map[string]TaskState
+	snapshots map[string][]Snapshot
 }
 
 func NewMemoryTaskStore() *MemoryTaskStore {
-	return &MemoryTaskStore{tasks: make(map[string]TaskState)}
+	return &MemoryTaskStore{
+		tasks:     make(map[string]TaskState),
+		snapshots: make(map[string][]Snapshot),
+	}
 }
 
 func (s *MemoryTaskStore) CreateTask(task TaskState) (TaskState, error) {
@@ -193,6 +197,126 @@ func (s *MemoryTaskStore) ListTasksForChat(chatID int64, limit int) ([]TaskState
 	return out, nil
 }
 
+func (s *MemoryTaskStore) CreateSnapshot(snapshot Snapshot) (Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if snapshot.TaskID == "" {
+		return snapshot, fmt.Errorf("snapshot task_id is required")
+	}
+	if snapshot.ID == "" {
+		snapshot.ID = fmt.Sprintf("%s:%d", snapshot.TaskID, len(s.snapshots[snapshot.TaskID])+1)
+	}
+	if snapshot.CreatedAt.IsZero() {
+		snapshot.CreatedAt = time.Now()
+	}
+	if snapshot.ChannelVersions == nil {
+		snapshot.ChannelVersions = map[string]int64{}
+	}
+	for _, existing := range s.snapshots[snapshot.TaskID] {
+		if existing.Step == snapshot.Step || existing.ID == snapshot.ID {
+			return snapshot, fmt.Errorf("snapshot duplicate id or step")
+		}
+	}
+	s.snapshots[snapshot.TaskID] = append(s.snapshots[snapshot.TaskID], snapshot)
+	return snapshot, nil
+}
+
+func (s *MemoryTaskStore) GetLatestSnapshot(taskID string) (Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	history := s.snapshots[taskID]
+	if len(history) == 0 {
+		return Snapshot{}, ErrNoTask
+	}
+	return history[len(history)-1], nil
+}
+
+func (s *MemoryTaskStore) GetLatestSnapshotForThread(chatID int64, threadID int) (Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latest Snapshot
+	found := false
+	for _, history := range s.snapshots {
+		for _, snapshot := range history {
+			if snapshot.ChatID != chatID || snapshot.ThreadID != threadID {
+				continue
+			}
+			if !found || snapshot.CreatedAt.After(latest.CreatedAt) {
+				latest = snapshot
+				found = true
+			}
+		}
+	}
+	if !found {
+		return Snapshot{}, ErrNoTask
+	}
+	return latest, nil
+}
+
+func (s *MemoryTaskStore) ListSnapshotHistory(taskID string) ([]Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	history := s.snapshots[taskID]
+	if len(history) == 0 {
+		return nil, ErrNoTask
+	}
+	return append([]Snapshot(nil), history...), nil
+}
+
+func (s *MemoryTaskStore) CommitRuntimeStep(commit RuntimeCommit) (Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	task, ok := s.tasks[commit.TaskID]
+	if !ok {
+		return Snapshot{}, ErrNoTask
+	}
+	nextState, err := ApplyStateUpdates(HermesStateFromTaskState(task), commit.Updates)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	if commit.CreatedAt.IsZero() {
+		commit.CreatedAt = time.Now()
+	}
+	if commit.ChannelVersions == nil {
+		commit.ChannelVersions = map[string]int64{}
+	}
+	history := s.snapshots[commit.TaskID]
+	step := len(history) + 1
+	parentID := commit.ParentSnapshotID
+	if parentID == "" && len(history) > 0 {
+		parentID = history[len(history)-1].ID
+	}
+	snapshotID := commit.SnapshotID
+	if snapshotID == "" {
+		snapshotID = fmt.Sprintf("%s:%d", commit.TaskID, step)
+	}
+	for _, existing := range history {
+		if existing.ID == snapshotID || existing.Step == step {
+			return Snapshot{}, fmt.Errorf("snapshot duplicate id or step")
+		}
+	}
+	snapshot := Snapshot{
+		ID:               snapshotID,
+		TaskID:           commit.TaskID,
+		ChatID:           nextState.ChatID,
+		ThreadID:         nextState.ThreadID,
+		Step:             step,
+		State:            nextState,
+		NextStep:         commit.NextStep,
+		SourceNode:       commit.SourceNode,
+		Writes:           collapseStateUpdates(commit.Updates),
+		Metadata:         commit.Metadata,
+		ParentSnapshotID: parentID,
+		ChannelVersions:  commit.ChannelVersions,
+		CreatedAt:        commit.CreatedAt,
+	}
+	task = hermesStateToTaskState(task, nextState)
+	task.UpdatedAt = commit.CreatedAt
+	s.tasks[commit.TaskID] = task
+	s.snapshots[commit.TaskID] = append(history, snapshot)
+	return snapshot, nil
+}
+
 func (s *MemoryTaskStore) update(taskID string, fn func(*TaskState)) error {
 	return s.updateErr(taskID, func(task *TaskState) error {
 		fn(task)
@@ -219,5 +343,6 @@ func cloneTaskState(task TaskState) TaskState {
 	task.Plan = append([]SubTask(nil), task.Plan...)
 	task.Artifacts = append([]Artifact(nil), task.Artifacts...)
 	task.ModelUsages = append([]ModelUsage(nil), task.ModelUsages...)
+	task.PhaseUsages = append([]PhaseUsage(nil), task.PhaseUsages...)
 	return task
 }

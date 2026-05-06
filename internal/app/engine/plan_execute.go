@@ -132,6 +132,7 @@ type PlanExecuteEngine struct {
 	planner  *hermes.PlannerSession
 	direct   *DirectEngine
 	store    hermes.TaskStateStore
+	runtime  hermes.RuntimeStepStore
 	reporter hermes.ProgressReporter
 	issueOps issueops.IssueOps
 
@@ -153,6 +154,11 @@ func (e *PlanExecuteEngine) issueOpsService() issueops.IssueOps {
 	return issueops.New()
 }
 
+func runtimeStepStore(store hermes.TaskStateStore) hermes.RuntimeStepStore {
+	runtime, _ := store.(hermes.RuntimeStepStore)
+	return runtime
+}
+
 func NewPlanExecuteEngine(
 	cfg PlanExecuteConfig,
 	planFn hermes.CallPlanFunc,
@@ -172,6 +178,7 @@ func NewPlanExecuteEngine(
 		planner:  planner,
 		direct:   direct,
 		store:    store,
+		runtime:  runtimeStepStore(store),
 		reporter: reporter,
 		issueOps: issueops.New(),
 	}
@@ -346,7 +353,7 @@ func (e *PlanExecuteEngine) RunFromState(ctx context.Context, state hermes.TaskS
 	}()
 
 	if decision.Reason == "plan_complete_mark_done" {
-		_ = e.store.MarkStatus(state.ID, hermes.TaskStatusDone)
+		_ = e.commitTerminalBoundary(state.ID, hermes.RuntimeStepExecutor, 0, "resume_plan_complete_mark_done")
 		updated, _ := e.store.GetTask(state.ID)
 		e.reporter.OnDone(updated)
 		if e.cfg.OnDone != nil {
@@ -359,8 +366,22 @@ func (e *PlanExecuteEngine) RunFromState(ctx context.Context, state hermes.TaskS
 	}
 
 	tasks := append([]hermes.SubTask(nil), state.Plan...)
-	if err := e.store.MarkStatus(state.ID, hermes.TaskStatusExecuting); err != nil {
-		return Result{Duration: time.Since(start)}, err
+	if e.runtime == nil {
+		if err := e.store.MarkStatus(state.ID, hermes.TaskStatusExecuting); err != nil {
+			return Result{Duration: time.Since(start)}, err
+		}
+	} else {
+		status := hermes.TaskStatusExecuting
+		currentIdx := decision.FromIdx
+		if _, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+			TaskID:     state.ID,
+			Updates:    []hermes.StateUpdate{{Status: &status, CurrentIdx: &currentIdx}},
+			NextStep:   hermes.RuntimeStepExecutor,
+			SourceNode: hermes.RuntimeStepPlanner,
+			Metadata:   hermes.SnapshotMetadata{Source: "plan_execute", Reason: "resume_start"},
+		}); err != nil {
+			return Result{Duration: time.Since(start)}, err
+		}
 	}
 	e.reporter.OnPlanReady(tasks)
 	e.onPlanReady(runCtx, state, tasks)
@@ -396,22 +417,28 @@ func (e *PlanExecuteEngine) RunFromState(ctx context.Context, state hermes.TaskS
 			continue
 		}
 		finalStatus, finalText, finalTokens, success, _ := e.executeSubTask(runCtx, state.ID, state.Goal, latest, tasks, idx, subTask, cc, reviewMode, strictCfg, "")
-		tasks[idx].Status = finalStatus
-		tasks[idx].Result = finalText
+		e.applySubTaskOutcome(state.ID, tasks, idx, finalStatus, finalText, finalTokens)
 		e.reporter.OnSubTaskDone(idx, len(tasks), subTask, success, finalText)
 		e.onSubTaskDone(runCtx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
+		var accumulated *string
 		if success {
 			completed++
 			latest, _ = e.store.GetTask(state.ID)
 			updated, _ := hermes.AppendResult(latest.Accumulated, finalText, completed)
-			_ = e.store.UpdateAccumulated(state.ID, updated)
+			accumulated = &updated
 		}
-		if err := e.store.AdvanceTask(state.ID, idx+1, hermes.TaskStatusExecuting); err != nil {
-			log.Printf("[plan_execute] RunFromState AdvanceTask idx=%d: %v", idx, err)
+		next := hermes.RuntimeStepExecutor
+		if idx+1 >= len(tasks) {
+			next = hermes.RuntimeStepTerminal
+		}
+		if err := e.commitExecutorBoundary(state.ID, tasks, idx, accumulated, hermes.TaskStatusExecuting, next, 0, "resume_subtask_done"); err != nil {
+			return Result{Duration: time.Since(start)}, err
 		}
 	}
 
-	_ = e.store.MarkStatus(state.ID, hermes.TaskStatusDone)
+	if err := e.commitTerminalBoundary(state.ID, hermes.RuntimeStepExecutor, 0, "resume_task_done"); err != nil {
+		return Result{Duration: time.Since(start)}, err
+	}
 	finalState, _ := e.store.GetTask(state.ID)
 	e.reporter.OnDone(finalState)
 	if e.cfg.OnDone != nil {
@@ -480,11 +507,19 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 			partialRetry = buildPartialRetryPlan(prevReview, prevPlan, retryCfg.ScoreThreshold)
 			if len(partialRetry.Preserved) > 0 {
 				currentGoal = buildPartialReplanGoal(goal, prevReview, partialRetry)
-				_ = e.store.UpdateAccumulated(taskID, partialRetry.Accumulated)
+				if err := e.commitAccumulatedBoundary(taskID, partialRetry.Accumulated, attempt, "partial_replan_context"); err != nil {
+					e.reporter.OnError(fmt.Errorf("persist partial replan context: %w", err))
+					_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+					return
+				}
 			} else {
 				currentGoal = buildReplanGoal(goal, prevReview, prevPlan)
 				// Reset accumulated state so the new plan executes from scratch.
-				_ = e.store.UpdateAccumulated(taskID, "")
+				if err := e.commitAccumulatedBoundary(taskID, "", attempt, "full_replan_reset"); err != nil {
+					e.reporter.OnError(fmt.Errorf("persist replan reset: %w", err))
+					_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+					return
+				}
 			}
 		}
 
@@ -517,13 +552,9 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 			_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
 			return
 		}
-		if err := e.store.StorePlan(taskID, tasks); err != nil {
+		if err := e.commitPlanBoundary(taskID, tasks, attempt); err != nil {
 			e.reporter.OnError(fmt.Errorf("persist plan: %w", err))
 			_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
-			return
-		}
-		if err := e.store.MarkStatus(taskID, hermes.TaskStatusExecuting); err != nil {
-			e.reporter.OnError(err)
 			return
 		}
 		e.reporter.OnPlanReady(tasks)
@@ -573,23 +604,45 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 			}
 			if finalStatus == hermes.SubTaskDone {
 				completed++
-				tasks[idx].Status = hermes.SubTaskDone
-				tasks[idx].Result = finalText
+				e.applySubTaskOutcome(taskID, tasks, idx, hermes.SubTaskDone, finalText, finalTokens)
 				e.reporter.OnSubTaskDone(idx, len(tasks), subTask, true, finalText)
 				e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
 
 				state, _ = e.store.GetTask(taskID)
 				updated, _ := hermes.AppendResult(state.Accumulated, finalText, completed)
-				_ = e.store.UpdateAccumulated(taskID, updated)
+				next := hermes.RuntimeStepExecutor
+				if idx+1 >= len(tasks) {
+					if reviewMode == ReviewModePerTask {
+						next = hermes.RuntimeStepReviewer
+					} else {
+						next = hermes.RuntimeStepTerminal
+					}
+				}
+				if err := e.commitExecutorBoundary(taskID, tasks, idx, &updated, hermes.TaskStatusExecuting, next, attempt, "subtask_done"); err != nil {
+					e.reporter.OnError(fmt.Errorf("persist subtask result: %w", err))
+					_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+					return
+				}
 			} else if finalStatus == hermes.SubTaskSkipped {
-				tasks[idx].Status = hermes.SubTaskSkipped
-				tasks[idx].Result = finalText
+				e.applySubTaskOutcome(taskID, tasks, idx, hermes.SubTaskSkipped, finalText, finalTokens)
 				e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
 				e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
 
 				state, _ = e.store.GetTask(taskID)
 				updated, _ := hermes.AppendResult(state.Accumulated, finalText, completed)
-				_ = e.store.UpdateAccumulated(taskID, updated)
+				next := hermes.RuntimeStepExecutor
+				if idx+1 >= len(tasks) {
+					if reviewMode == ReviewModePerTask {
+						next = hermes.RuntimeStepReviewer
+					} else {
+						next = hermes.RuntimeStepTerminal
+					}
+				}
+				if err := e.commitExecutorBoundary(taskID, tasks, idx, &updated, hermes.TaskStatusExecuting, next, attempt, "subtask_skipped"); err != nil {
+					e.reporter.OnError(fmt.Errorf("persist skipped subtask: %w", err))
+					_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+					return
+				}
 			} else if !success {
 				// Failure pause: ask the operator whether to retry, skip, or
 				// abort. Without a callback wired, fall through to the legacy
@@ -611,20 +664,28 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 					continue
 				case FailureAbort:
 					log.Printf("[plan_execute] failure pause: abort task=%s at idx=%d", taskID, idx)
-					tasks[idx].Status = hermes.SubTaskFailed
-					tasks[idx].Result = finalText
+					e.applySubTaskOutcome(taskID, tasks, idx, hermes.SubTaskFailed, finalText, finalTokens)
 					e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
 					_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
 					return
 				default: // FailureSkip
-					tasks[idx].Status = hermes.SubTaskFailed
-					tasks[idx].Result = finalText
+					e.applySubTaskOutcome(taskID, tasks, idx, hermes.SubTaskFailed, finalText, finalTokens)
 					e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
 					e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
+					next := hermes.RuntimeStepExecutor
+					if idx+1 >= len(tasks) {
+						if reviewMode == ReviewModePerTask {
+							next = hermes.RuntimeStepReviewer
+						} else {
+							next = hermes.RuntimeStepTerminal
+						}
+					}
+					if err := e.commitExecutorBoundary(taskID, tasks, idx, nil, hermes.TaskStatusExecuting, next, attempt, "subtask_failed_skip"); err != nil {
+						e.reporter.OnError(fmt.Errorf("persist failed subtask: %w", err))
+						_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+						return
+					}
 				}
-			}
-			if err := e.store.AdvanceTask(taskID, idx+1, hermes.TaskStatusExecuting); err != nil {
-				log.Printf("[plan_execute] AdvanceTask idx=%d: %v", idx, err)
 			}
 		}
 
@@ -634,7 +695,11 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 		// Per-subtask strict mode handles its own reviews — task-level
 		// retry only applies to per-task review mode.
 		if reviewMode != ReviewModePerTask {
-			_ = e.store.MarkStatus(taskID, hermes.TaskStatusDone)
+			if err := e.commitTerminalBoundary(taskID, hermes.RuntimeStepExecutor, attempt, "task_done_without_final_review"); err != nil {
+				e.reporter.OnError(fmt.Errorf("persist terminal status: %w", err))
+				_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+				return
+			}
 			break
 		}
 
@@ -670,7 +735,11 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 			continue
 		}
 
-		_ = e.store.MarkStatus(taskID, hermes.TaskStatusDone)
+		if err := e.commitTerminalBoundary(taskID, hermes.RuntimeStepReviewer, attempt, "task_done_after_review"); err != nil {
+			e.reporter.OnError(fmt.Errorf("persist terminal status: %w", err))
+			_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+			return
+		}
 		finalState, _ = e.store.GetTask(taskID)
 
 		// Final attempt — surface whichever outcome the reviewer produced.
@@ -713,6 +782,127 @@ func (e *PlanExecuteEngine) plan(ctx context.Context, goal string) ([]hermes.Sub
 	}
 	tasks, inT, outT, costUSD, err := e.planner.Plan(ctx, goal, e.cfg.ProjectDir)
 	return tasks, inT, outT, costUSD, false, err
+}
+
+func (e *PlanExecuteEngine) commitPlanBoundary(taskID string, tasks []hermes.SubTask, attempt int) error {
+	status := hermes.TaskStatusExecuting
+	currentIdx := 0
+	if e.runtime == nil {
+		if err := e.store.StorePlan(taskID, tasks); err != nil {
+			return err
+		}
+		return e.store.MarkStatus(taskID, status)
+	}
+	reason := "plan_ready"
+	if attempt > 0 {
+		reason = "replan_ready"
+	}
+	_, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID: taskID,
+		Updates: []hermes.StateUpdate{
+			{Plan: tasks, Status: &status, CurrentIdx: &currentIdx},
+		},
+		NextStep:   hermes.RuntimeStepExecutor,
+		SourceNode: hermes.RuntimeStepPlanner,
+		Metadata: hermes.SnapshotMetadata{
+			Source:  "plan_execute",
+			Reason:  reason,
+			Attempt: attempt,
+		},
+	})
+	return err
+}
+
+func (e *PlanExecuteEngine) commitAccumulatedBoundary(taskID string, accumulated string, attempt int, reason string) error {
+	if e.runtime == nil {
+		return e.store.UpdateAccumulated(taskID, accumulated)
+	}
+	_, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID: taskID,
+		Updates: []hermes.StateUpdate{
+			{Accumulated: &accumulated},
+		},
+		NextStep:   hermes.RuntimeStepPlanner,
+		SourceNode: hermes.RuntimeStepReviewer,
+		Metadata: hermes.SnapshotMetadata{
+			Source:  "plan_execute",
+			Reason:  reason,
+			Attempt: attempt,
+		},
+	})
+	return err
+}
+
+func (e *PlanExecuteEngine) commitExecutorBoundary(taskID string, tasks []hermes.SubTask, idx int, accumulated *string, status hermes.TaskStatus, next hermes.RuntimeStep, attempt int, reason string) error {
+	nextIdx := idx + 1
+	if e.runtime == nil {
+		if idx >= 0 && idx < len(tasks) {
+			st := tasks[idx]
+			if err := e.store.UpdateSubTask(taskID, idx, st.Status, st.Result, st.TokensUsed); err != nil {
+				return err
+			}
+		}
+		if accumulated != nil {
+			if err := e.store.UpdateAccumulated(taskID, *accumulated); err != nil {
+				return err
+			}
+		}
+		return e.store.AdvanceTask(taskID, nextIdx, status)
+	}
+	updates := []hermes.StateUpdate{{Plan: tasks, CurrentIdx: &nextIdx, Status: &status}}
+	if idx >= 0 && idx < len(tasks) {
+		updates = append(updates, hermes.StateUpdateForSubTaskResult(tasks[idx], idx))
+	}
+	if accumulated != nil {
+		updates = append(updates, hermes.StateUpdate{Accumulated: accumulated})
+	}
+	_, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    updates,
+		NextStep:   next,
+		SourceNode: hermes.RuntimeStepExecutor,
+		Metadata: hermes.SnapshotMetadata{
+			Source:  "plan_execute",
+			Reason:  reason,
+			Attempt: attempt,
+		},
+	})
+	return err
+}
+
+func (e *PlanExecuteEngine) commitTerminalBoundary(taskID string, source hermes.RuntimeStep, attempt int, reason string) error {
+	status := hermes.TaskStatusDone
+	if e.runtime == nil {
+		return e.store.MarkStatus(taskID, status)
+	}
+	_, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    []hermes.StateUpdate{{Status: &status}},
+		NextStep:   hermes.RuntimeStepTerminal,
+		SourceNode: source,
+		Metadata: hermes.SnapshotMetadata{
+			Source:  "plan_execute",
+			Reason:  reason,
+			Attempt: attempt,
+		},
+	})
+	return err
+}
+
+func (e *PlanExecuteEngine) applySubTaskOutcome(taskID string, tasks []hermes.SubTask, idx int, status hermes.SubTaskStatus, result string, tokens int) {
+	if idx < 0 || idx >= len(tasks) {
+		return
+	}
+	attempts := tasks[idx].Attempts
+	tokensUsed := tasks[idx].TokensUsed
+	if latest, err := e.store.GetTask(taskID); err == nil && idx < len(latest.Plan) {
+		attempts = latest.Plan[idx].Attempts
+		tokensUsed = latest.Plan[idx].TokensUsed
+	}
+	tasks[idx].Status = status
+	tasks[idx].Result = result
+	tasks[idx].TokensUsed = tokensUsed + tokens
+	tasks[idx].Attempts = attempts + 1
 }
 
 func (e *PlanExecuteEngine) handlePlanningError(ctx context.Context, taskID string, err error) {
@@ -1216,9 +1406,6 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 			if kind := hermes.ClassifyFailure(execErr.Error()); kind == hermes.FailureEnv {
 				log.Printf("[plan_execute] env-class failure idx=%d task=%s: %v", idx, taskID, execErr)
 			}
-			if err := e.store.UpdateSubTask(taskID, idx, hermes.SubTaskFailed, execErr.Error(), 0); err != nil {
-				log.Printf("[plan_execute] UpdateSubTask(failed) idx=%d: %v", idx, err)
-			}
 			tokensUsed := result.TokenVolume()
 			if result.Model != "" && tokensUsed > 0 {
 				usage := tokenUsageBreakdownFromResult(result)
@@ -1286,9 +1473,6 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 
 		if metrics.blockedOnce && finalStatus == hermes.SubTaskDone {
 			metrics.autoFixed = true
-		}
-		if err := e.store.UpdateSubTask(taskID, idx, finalStatus, finalText, tokensUsed); err != nil {
-			log.Printf("[plan_execute] UpdateSubTask(%s) idx=%d: %v", finalStatus, idx, err)
 		}
 		return finalStatus, finalText, tokensUsed, finalStatus == hermes.SubTaskDone, metrics
 	}

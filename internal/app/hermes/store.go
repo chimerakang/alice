@@ -97,6 +97,7 @@ type SQLiteTaskStore struct {
 }
 
 var _ SnapshotStore = (*SQLiteTaskStore)(nil)
+var _ RuntimeStepStore = (*SQLiteTaskStore)(nil)
 
 // NewSQLiteTaskStore creates and migrates the hermes SQLite tables.
 // db must be an open *sql.DB (typically shared with the main SQLiteStorage).
@@ -380,6 +381,148 @@ func (s *SQLiteTaskStore) CreateSnapshot(snapshot Snapshot) (Snapshot, error) {
 		)
 		return err
 	})
+}
+
+// CommitRuntimeStep atomically applies reducer updates, refreshes the legacy
+// task/sub-task views, and writes one durable snapshot.
+func (s *SQLiteTaskStore) CommitRuntimeStep(commit RuntimeCommit) (Snapshot, error) {
+	if strings.TrimSpace(commit.TaskID) == "" {
+		return Snapshot{}, fmt.Errorf("runtime commit task_id is required")
+	}
+	currentTask, err := s.GetTask(commit.TaskID)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	current := HermesStateFromTaskState(currentTask)
+	nextState, err := ApplyStateUpdates(current, commit.Updates)
+	if err != nil {
+		return Snapshot{}, err
+	}
+
+	var latest Snapshot
+	var parentSnapshotID string
+	nextStepNumber := 1
+	if latest, err = s.GetLatestSnapshot(commit.TaskID); err == nil {
+		parentSnapshotID = latest.ID
+		nextStepNumber = latest.Step + 1
+	} else if err != ErrNoTask {
+		return Snapshot{}, err
+	}
+	if commit.ParentSnapshotID != "" {
+		parentSnapshotID = commit.ParentSnapshotID
+	}
+	if commit.ChannelVersions == nil {
+		commit.ChannelVersions = map[string]int64{}
+	}
+	if commit.CreatedAt.IsZero() {
+		commit.CreatedAt = time.Now()
+	}
+	snapshot := Snapshot{
+		ID:               commit.SnapshotID,
+		TaskID:           commit.TaskID,
+		ChatID:           nextState.ChatID,
+		ThreadID:         nextState.ThreadID,
+		Step:             nextStepNumber,
+		State:            nextState,
+		NextStep:         commit.NextStep,
+		SourceNode:       commit.SourceNode,
+		Writes:           collapseStateUpdates(commit.Updates),
+		Metadata:         commit.Metadata,
+		ParentSnapshotID: parentSnapshotID,
+		ChannelVersions:  commit.ChannelVersions,
+		CreatedAt:        commit.CreatedAt,
+	}
+	if snapshot.ID == "" {
+		snapshot.ID = uuid.NewString()
+	}
+
+	planJSON, err := json.Marshal(nextState.Plan)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("marshal runtime plan: %w", err)
+	}
+	modelUsagesJSON, err := json.Marshal(nextState.ModelUsages)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("marshal runtime model usages: %w", err)
+	}
+	phaseUsagesJSON, err := json.Marshal(nextState.PhaseUsages)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("marshal runtime phase usages: %w", err)
+	}
+	stateJSON, err := json.Marshal(snapshot.State)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("marshal runtime snapshot state: %w", err)
+	}
+	writesJSON, err := json.Marshal(snapshot.Writes)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("marshal runtime snapshot writes: %w", err)
+	}
+	metadataJSON, err := json.Marshal(snapshot.Metadata)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("marshal runtime snapshot metadata: %w", err)
+	}
+	channelVersionsJSON, err := json.Marshal(snapshot.ChannelVersions)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("marshal runtime channel versions: %w", err)
+	}
+
+	err = s.execWithRetry(func() error {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = tx.Rollback()
+			}
+		}()
+
+		var interruptedBy any
+		if nextState.Interrupt != nil && nextState.Interrupt.MessageID != 0 {
+			interruptedBy = nextState.Interrupt.MessageID
+		}
+		now := commit.CreatedAt.Format(time.RFC3339)
+		if _, err := tx.Exec(`
+			UPDATE hermes_task_states
+			SET current_idx = ?, accumulated = ?, status = ?, interrupted_by = ?,
+			    plan_json = ?, github_issue_number = ?, model_usages = ?, phase_usages = ?,
+			    updated_at = ?
+			WHERE id = ?`,
+			nextState.CurrentIdx, nextState.Accumulated, string(nextState.Status), interruptedBy,
+			string(planJSON), nextState.GithubIssueNumber, string(modelUsagesJSON),
+			string(phaseUsagesJSON), now, commit.TaskID,
+		); err != nil {
+			return err
+		}
+		if err := replaceUnifiedSubTasksTx(tx, commit.TaskID, nextState.Plan); err != nil {
+			return err
+		}
+		if err := upsertUnifiedTaskTx(tx, hermesStateToTaskState(currentTask, nextState), terminalEndedAt(nextState.Status, commit.CreatedAt)); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`
+			INSERT INTO hermes_snapshots
+				(id, task_id, chat_id, thread_id, step, state_json, next_step, source_node,
+				 writes_json, metadata_json, parent_snapshot_id, channel_versions_json, created_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			snapshot.ID, snapshot.TaskID, snapshot.ChatID, snapshot.ThreadID, snapshot.Step,
+			string(stateJSON), string(snapshot.NextStep), string(snapshot.SourceNode),
+			string(writesJSON), string(metadataJSON), snapshot.ParentSnapshotID,
+			string(channelVersionsJSON), snapshot.CreatedAt.Format(time.RFC3339),
+		); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		committed = true
+		return nil
+	})
+	if err != nil {
+		return Snapshot{}, err
+	}
+	s.broadcastUnifiedTask(commit.TaskID)
+	return snapshot, nil
 }
 
 // GetLatestSnapshot returns the latest committed snapshot for taskID.
@@ -1098,12 +1241,59 @@ func (s *SQLiteTaskStore) upsertUnifiedTask(task TaskState, endedAt *time.Time) 
 	return err
 }
 
+func upsertUnifiedTaskTx(tx *sql.Tx, task TaskState, endedAt *time.Time) error {
+	startedAt := task.CreatedAt
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	totalIn, totalOut := totalModelUsage(task.ModelUsages)
+	_, err := tx.Exec(`
+		INSERT INTO tasks
+			(id, chat_id, thread_id, project_dir, github_issue_number, goal, engine, backend, status,
+			 started_at, ended_at, total_input_tokens, total_output_tokens, total_cost_usd)
+		VALUES (?, ?, ?, ?, ?, ?, 'plan-execute', '', ?, ?, ?, ?, ?, 0)
+		ON CONFLICT(id) DO UPDATE SET
+			chat_id = excluded.chat_id,
+			thread_id = excluded.thread_id,
+			project_dir = CASE
+				WHEN excluded.project_dir != '' THEN excluded.project_dir
+				ELSE tasks.project_dir
+			END,
+			github_issue_number = CASE
+				WHEN excluded.github_issue_number > 0 THEN excluded.github_issue_number
+				ELSE tasks.github_issue_number
+			END,
+			goal = excluded.goal,
+			engine = excluded.engine,
+			status = excluded.status,
+			started_at = excluded.started_at,
+			ended_at = excluded.ended_at,
+			total_input_tokens = excluded.total_input_tokens,
+			total_output_tokens = excluded.total_output_tokens`,
+		task.ID, task.ChatID, task.ThreadID, task.ProjectDir, task.GithubIssueNumber, task.Goal, string(task.Status),
+		startedAt.Format(time.RFC3339Nano), formatUnifiedTime(endedAt), totalIn, totalOut,
+	)
+	return err
+}
+
 func (s *SQLiteTaskStore) replaceUnifiedSubTasks(taskID string, plan []SubTask) error {
 	if _, err := s.db.Exec(`DELETE FROM sub_tasks WHERE task_id = ?`, taskID); err != nil {
 		return err
 	}
 	for idx, subTask := range plan {
 		if err := s.upsertUnifiedSubTask(taskID, idx, subTask); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func replaceUnifiedSubTasksTx(tx *sql.Tx, taskID string, plan []SubTask) error {
+	if _, err := tx.Exec(`DELETE FROM sub_tasks WHERE task_id = ?`, taskID); err != nil {
+		return err
+	}
+	for idx, subTask := range plan {
+		if err := upsertUnifiedSubTaskTx(tx, taskID, idx, subTask); err != nil {
 			return err
 		}
 	}
@@ -1130,6 +1320,32 @@ func (s *SQLiteTaskStore) upsertUnifiedSubTask(taskID string, idx int, subTask S
 		endedAt = &now
 	}
 	_, err := s.db.Exec(`
+		INSERT INTO sub_tasks
+			(id, task_id, idx, description, model, status, result_text, input_tokens,
+			 output_tokens, cost_usd, started_at, ended_at, routing_reason, routing_latency_ms)
+		VALUES (?, ?, ?, ?, '', ?, ?, ?, 0, 0, ?, ?, '', 0)
+		ON CONFLICT(id) DO UPDATE SET
+			idx = excluded.idx,
+			description = excluded.description,
+			status = excluded.status,
+			result_text = excluded.result_text,
+			input_tokens = excluded.input_tokens,
+			ended_at = excluded.ended_at`,
+		subTaskID, taskID, idx, subTask.Description, string(subTask.Status),
+		subTask.Result, subTask.TokensUsed, now.Format(time.RFC3339Nano),
+		formatUnifiedTime(endedAt),
+	)
+	return err
+}
+
+func upsertUnifiedSubTaskTx(tx *sql.Tx, taskID string, idx int, subTask SubTask) error {
+	subTaskID := UnifiedSubTaskID(taskID, idx, subTask.ID)
+	now := time.Now()
+	var endedAt *time.Time
+	if isTerminalSubTask(subTask.Status) {
+		endedAt = &now
+	}
+	_, err := tx.Exec(`
 		INSERT INTO sub_tasks
 			(id, task_id, idx, description, model, status, result_text, input_tokens,
 			 output_tokens, cost_usd, started_at, ended_at, routing_reason, routing_latency_ms)
@@ -1210,6 +1426,42 @@ func isTerminalSubTask(status SubTaskStatus) bool {
 	default:
 		return false
 	}
+}
+
+func terminalEndedAt(status TaskStatus, t time.Time) *time.Time {
+	if !isTerminalTask(status) {
+		return nil
+	}
+	if t.IsZero() {
+		t = time.Now()
+	}
+	return &t
+}
+
+func hermesStateToTaskState(base TaskState, state HermesState) TaskState {
+	base.ID = state.TaskID
+	base.ChatID = state.ChatID
+	base.ThreadID = state.ThreadID
+	base.PlannerSessionID = state.PlannerSessionID
+	base.ExecutorSessionID = state.ExecutorSessionID
+	base.ProjectDir = state.ProjectDir
+	base.Goal = state.Goal
+	base.Plan = append([]SubTask(nil), state.Plan...)
+	base.CurrentIdx = state.CurrentIdx
+	base.Accumulated = state.Accumulated
+	base.Artifacts = append([]Artifact(nil), state.Artifacts...)
+	base.Status = state.Status
+	base.TokenBudget = state.TokenBudget
+	base.GithubIssueNumber = state.GithubIssueNumber
+	base.ModelUsages = append([]ModelUsage(nil), state.ModelUsages...)
+	base.PhaseUsages = append([]PhaseUsage(nil), state.PhaseUsages...)
+	if state.Interrupt != nil && state.Interrupt.MessageID != 0 {
+		messageID := state.Interrupt.MessageID
+		base.InterruptedBy = &messageID
+	} else {
+		base.InterruptedBy = nil
+	}
+	return base
 }
 
 func formatUnifiedTime(t *time.Time) any {

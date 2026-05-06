@@ -149,6 +149,20 @@ type Snapshot struct {
 	CreatedAt        time.Time        `json:"created_at"`
 }
 
+// RuntimeCommit is one durable execution boundary:
+// current state + batched node writes -> reduced state + legacy view + snapshot.
+type RuntimeCommit struct {
+	TaskID           string
+	Updates          []StateUpdate
+	NextStep         RuntimeStep
+	SourceNode       RuntimeStep
+	Metadata         SnapshotMetadata
+	SnapshotID       string
+	ParentSnapshotID string
+	ChannelVersions  map[string]int64
+	CreatedAt        time.Time
+}
+
 // SnapshotStore defines durable checkpoint operations. It is separate from
 // TaskStateStore so Phase 1 does not widen every existing task-store test stub.
 type SnapshotStore interface {
@@ -156,4 +170,9 @@ type SnapshotStore interface {
 	GetLatestSnapshot(taskID string) (Snapshot, error)
 	GetLatestSnapshotForThread(chatID int64, threadID int) (Snapshot, error)
 	ListSnapshotHistory(taskID string) ([]Snapshot, error)
+}
+
+// RuntimeStepStore commits reducer output and the legacy task view atomically.
+type RuntimeStepStore interface {
+	CommitRuntimeStep(commit RuntimeCommit) (Snapshot, error)
 }

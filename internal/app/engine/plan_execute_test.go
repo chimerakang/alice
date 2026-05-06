@@ -191,6 +191,16 @@ func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
 	if state.Status != hermes.TaskStatusDone {
 		t.Fatalf("status = %s, want done", state.Status)
 	}
+	history, err := store.ListSnapshotHistory(taskID)
+	if err != nil {
+		t.Fatalf("ListSnapshotHistory: %v", err)
+	}
+	if len(history) < 4 {
+		t.Fatalf("snapshot history length = %d, want at least plan, sub-tasks, terminal", len(history))
+	}
+	if history[0].SourceNode != hermes.RuntimeStepPlanner || history[len(history)-1].NextStep != hermes.RuntimeStepTerminal {
+		t.Fatalf("snapshot boundary mismatch: first=%+v last=%+v", history[0], history[len(history)-1])
+	}
 	if len(state.Plan) != 2 {
 		t.Fatalf("plan length = %d, want 2", len(state.Plan))
 	}
