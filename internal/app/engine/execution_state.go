@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -26,6 +27,7 @@ type ExecutionSnapshot struct {
 }
 
 type ExecutionLifecycle struct {
+	mu     sync.Mutex
 	state  ExecutionState
 	since  time.Time
 	reason string
@@ -42,6 +44,8 @@ func (l *ExecutionLifecycle) Transition(to ExecutionState, reason string) error 
 	if l == nil {
 		return nil
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	from := l.state
 	if from == "" {
 		from = ExecutionStateIdle
@@ -61,6 +65,8 @@ func (l *ExecutionLifecycle) Snapshot() ExecutionSnapshot {
 	if l == nil {
 		return ExecutionSnapshot{State: ExecutionStateIdle, Terminal: true, Reason: "nil_lifecycle"}
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	state := l.state
 	if state == "" {
 		state = ExecutionStateIdle

@@ -23,6 +23,7 @@ import (
 
 	appengine "claude-tg-agent/internal/app/engine"
 	"claude-tg-agent/internal/app/hermes"
+	"claude-tg-agent/internal/app/issueops"
 	"claude-tg-agent/internal/app/security"
 	"claude-tg-agent/internal/app/task"
 )
@@ -127,6 +128,9 @@ type TelegramBot struct {
 	hermesCoords map[chatKey]*hermesCoord
 	hermesMu     sync.RWMutex
 
+	// IssueOps service drives post-run issue reconciliation.
+	issueOps issueops.IssueOps
+
 	// In-flight /retry registry. Stop() iterates these on shutdown so users
 	// don't see /retry calls vanish silently when the process is killed
 	// mid-flight (was a recurring "did /retry break?" symptom).
@@ -136,6 +140,13 @@ type TelegramBot struct {
 	// Unified task graph — single TaskService instance shared across /retry,
 	// Hermes coordinator, and dashboard read paths for a consistent view.
 	taskSvc *task.Service
+}
+
+func (t *TelegramBot) issueOpsService() issueops.IssueOps {
+	if t != nil && t.issueOps != nil {
+		return t.issueOps
+	}
+	return issueops.New()
 }
 
 // retryInflightEntry tracks one running /retry attempt so Stop() can notify
@@ -365,6 +376,7 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 
 		// Hermes coordinators
 		hermesCoords:  make(map[chatKey]*hermesCoord),
+		issueOps:      issueops.New(),
 		retryInflight: make(map[string]*retryInflightEntry),
 
 		// Unified task graph — initialized here so all read paths share one store.
@@ -2438,6 +2450,10 @@ func (t *TelegramBot) startHermesFromIssueMode(key chatKey, issueNumber int, pro
 				return
 			case hermesSimilarCompleted:
 				if unchecked := countUncheckedIssueChecklistItems(issue); unchecked > 0 {
+					if t.shouldDeferIssueContinuationToIssueOps(ctx, projectDir, issueNumber) {
+						t.sendHermesIssueReconciliation(ctx, key, task)
+						return
+					}
 					t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_continue_unchecked", map[string]string{
 						"issueNum": fmt.Sprintf("%d", issueNumber),
 						"taskID":   shortHermesTaskID(task.ID),
@@ -4102,7 +4118,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, p
 		}
 	}
 	onReview := func(_ context.Context, state hermes.TaskState, review appengine.ReviewResult, notification appengine.ReviewNotification) {
-		t.send(key, notification.TelegramText())
+		t.sendReviewNotification(key, notification)
 		if globalWebSocketHub != nil {
 			BroadcastReviewEvent(notification)
 		}
@@ -4265,42 +4281,196 @@ func (t *TelegramBot) sendHermesIssueReconciliation(ctx context.Context, key cha
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	issue, err := hermesFetchIssue(ctx, state.ProjectDir, state.GithubIssueNumber)
+	ops := t.issueOpsService()
+	requiredCloseLabel := ""
+	if t.config != nil {
+		requiredCloseLabel = t.config.Hermes.GithubIntegration.AutoCloseLabel
+	}
+	readiness, err := ops.AssessCloseReadiness(ctx, issueops.AssessCloseReadinessRequest{
+		ProjectDir:         state.ProjectDir,
+		IssueNumber:        state.GithubIssueNumber,
+		RequiredCloseLabel: requiredCloseLabel,
+		ReviewAccepted:     true,
+		ValidationPassed:   true,
+	})
 	if err != nil {
 		log.Printf("[hermes] post-run issue reconciliation failed for #%d: %v", state.GithubIssueNumber, err)
+		if readiness.Recovery != nil {
+			t.sendIssueOpsRecoveryMessage(key, state.GithubIssueNumber, readiness.Recovery, readiness.Notes)
+		}
 		return
 	}
-	rec := hermes.ReconcileIssueCompletion(issue)
-	text := formatHermesIssueReconciliationMessage(rec)
+	if readiness.Issue != nil {
+		fromState := hermes.IssueStateFromGitHub(readiness.Issue.State)
+		recordIssueFSMTransition(ctx, key, readiness.Issue.Number, appengine.IssueFSMTransitionPayload{
+			From:                   fromState,
+			Event:                  hermes.IssueEventForState(readiness.State),
+			To:                     readiness.State,
+			Reason:                 strings.TrimSpace(strings.Join(readiness.Notes, "\n")),
+			Source:                 "telegram.reconcile",
+			ChecklistTotal:         readiness.Reconciliation.ChecklistTotal,
+			CheckedCount:           readiness.Reconciliation.CheckedCount,
+			UncheckedCount:         len(readiness.Reconciliation.Unchecked),
+			HasBlockingLabel:       readiness.Guard.HasBlockingLabel,
+			HasRequiredLabel:       readiness.HasRequiredLabel,
+			ReviewAccepted:         readiness.Guard.ReviewAccepted,
+			ValidationPassed:       readiness.Guard.ValidationPassed,
+			ChecklistSynced:        readiness.Guard.ChecklistSynced,
+			CanAutoClose:           readiness.CanAutoClose,
+			NeedsHumanConfirmation: readiness.State == hermes.IssueStateBlocked,
+		})
+	}
+	text := formatIssueOpsReconciliationMessage(readiness)
 	if strings.TrimSpace(text) == "" {
 		return
 	}
-	if rec.HasUnchecked() {
-		t.sendHermesCandidateActions(key, text, state)
+	switch readiness.State {
+	case hermes.IssueStateChecklistUnsynced, hermes.IssueStateReadyToClose, hermes.IssueStateBlocked:
+		t.sendIssueOpsActions(key, readiness, text)
 		return
 	}
 	t.send(key, text)
 }
 
-func formatHermesIssueReconciliationMessage(rec hermes.IssueReconciliation) string {
+func (t *TelegramBot) shouldDeferIssueContinuationToIssueOps(ctx context.Context, projectDir string, issueNumber int) bool {
+	if issueNumber <= 0 {
+		return false
+	}
+	ops := t.issueOpsService()
+	readiness, err := ops.AssessCloseReadiness(ctx, issueops.AssessCloseReadinessRequest{
+		ProjectDir:       projectDir,
+		IssueNumber:      issueNumber,
+		ReviewAccepted:   true,
+		ValidationPassed: true,
+	})
+	if err != nil {
+		return false
+	}
+	return readiness.State == hermes.IssueStateChecklistUnsynced
+}
+
+func formatIssueOpsReconciliationMessage(readiness issueops.CloseReadinessResult) string {
 	issueLabel := "Issue"
-	if rec.IssueNumber > 0 {
-		issueLabel = fmt.Sprintf("Issue #%d", rec.IssueNumber)
+	if readiness.Issue != nil && readiness.Issue.Number > 0 {
+		issueLabel = fmt.Sprintf("Issue #%d", readiness.Issue.Number)
 	}
-	switch {
-	case rec.ChecklistTotal == 0:
-		return fmt.Sprintf("ℹ️ Hermes 本輪已完成；%s 沒有 checklist 可核對。", issueLabel)
-	case rec.HasUnchecked():
-		var sb strings.Builder
-		fmt.Fprintf(&sb, "⚠️ Hermes 本輪已完成，但 %s 尚未完成。\n\n剩餘 checklist（%d/%d checked）：", issueLabel, rec.CheckedCount, rec.ChecklistTotal)
-		for _, item := range rec.Unchecked {
-			fmt.Fprintf(&sb, "\n- %s", item.Text)
-		}
-		sb.WriteString("\n\n可以選擇繼續處理、重新規劃，或停止。")
-		return sb.String()
+	switch readiness.State {
+	case hermes.IssueStateChecklistUnsynced:
+		return fmt.Sprintf("⚠️ IssueOps 判定 %s 目前是 checklist_unsynced。\n\n%s\n\n下一步先同步 GitHub checklist，再決定是否重新驗證、重新規劃剩餘項，或關閉 issue。", issueLabel, strings.TrimSpace(strings.Join(readiness.Notes, "\n")))
+	case hermes.IssueStateReadyToClose:
+		return fmt.Sprintf("✅ IssueOps 判定 %s 已達 ready_to_close。\n\n%s\n\n可以直接關閉 issue，或先確認是否要補最後的驗證。", issueLabel, strings.TrimSpace(strings.Join(readiness.Notes, "\n")))
+	case hermes.IssueStateBlocked:
+		return fmt.Sprintf("⛔ IssueOps 判定 %s 目前 blocked。\n\n%s\n\n需要人工決策後才能繼續。", issueLabel, strings.TrimSpace(strings.Join(readiness.Notes, "\n")))
+	case hermes.IssueStateChecklistSynced:
+		return fmt.Sprintf("ℹ️ IssueOps 判定 %s checklist 已同步。\n\n%s", issueLabel, strings.TrimSpace(strings.Join(readiness.Notes, "\n")))
 	default:
-		return fmt.Sprintf("✅ Hermes 本輪已完成，%s checklist 也已全部完成（%d/%d checked）。", issueLabel, rec.CheckedCount, rec.ChecklistTotal)
+		if readiness.CanAutoClose {
+			return fmt.Sprintf("✅ IssueOps 判定 %s 可自動關閉。\n\n%s", issueLabel, strings.TrimSpace(strings.Join(readiness.Notes, "\n")))
+		}
+		if len(readiness.Notes) > 0 {
+			return fmt.Sprintf("ℹ️ IssueOps 判定 %s 目前是 %s。\n\n%s", issueLabel, readiness.State, strings.TrimSpace(strings.Join(readiness.Notes, "\n")))
+		}
+		return fmt.Sprintf("ℹ️ IssueOps 判定 %s 目前是 %s。", issueLabel, readiness.State)
 	}
+}
+
+func (t *TelegramBot) sendIssueOpsActions(key chatKey, readiness issueops.CloseReadinessResult, text string) {
+	issueNum := 0
+	if readiness.Issue != nil {
+		issueNum = readiness.Issue.Number
+	}
+	rows := make([][]map[string]interface{}, 0, 3)
+	switch readiness.State {
+	case hermes.IssueStateChecklistUnsynced:
+		rows = append(rows, []map[string]interface{}{
+			{"text": "同步 checklist", "callback_data": fmt.Sprintf("issueops:sync-checklist:%d", issueNum)},
+			{"text": "重新驗證", "callback_data": fmt.Sprintf("issueops:revalidate:%d", issueNum)},
+		})
+		rows = append(rows, []map[string]interface{}{
+			{"text": "重新規劃剩餘項", "callback_data": fmt.Sprintf("issueops:replan:%d", issueNum)},
+			{"text": "關閉 issue", "callback_data": fmt.Sprintf("issueops:close:%d", issueNum)},
+		})
+	case hermes.IssueStateReadyToClose:
+		rows = append(rows, []map[string]interface{}{
+			{"text": "關閉 issue", "callback_data": fmt.Sprintf("issueops:close:%d", issueNum)},
+			{"text": "重新驗證", "callback_data": fmt.Sprintf("issueops:revalidate:%d", issueNum)},
+		})
+		rows = append(rows, []map[string]interface{}{
+			{"text": "重新規劃剩餘項", "callback_data": fmt.Sprintf("issueops:replan:%d", issueNum)},
+		})
+	case hermes.IssueStateBlocked:
+		rows = append(rows, []map[string]interface{}{
+			{"text": "重試 blocked", "callback_data": fmt.Sprintf("issueops:retry-blocked:%d", issueNum)},
+			{"text": "重新驗證", "callback_data": fmt.Sprintf("issueops:revalidate:%d", issueNum)},
+		})
+		rows = append(rows, []map[string]interface{}{
+			{"text": "重新規劃剩餘項", "callback_data": fmt.Sprintf("issueops:replan:%d", issueNum)},
+			{"text": "關閉 issue", "callback_data": fmt.Sprintf("issueops:close:%d", issueNum)},
+		})
+	}
+	rows = append(rows, []map[string]interface{}{
+		{"text": "取消", "callback_data": "issueops:cancel"},
+	})
+	keyboard := map[string]interface{}{
+		"inline_keyboard": rows,
+	}
+	params := map[string]interface{}{
+		"chat_id":      strconv.FormatInt(key.chatID, 10),
+		"text":         sanitizeUTF8(text),
+		"reply_markup": keyboard,
+	}
+	if key.threadID != 0 {
+		params["message_thread_id"] = strconv.Itoa(key.threadID)
+	}
+	t.queueMessage("sendMessage", params)
+}
+
+func issueOpsRetryButtonLabel(action string) string {
+	switch action {
+	case "retry-sync-checklist":
+		return "重試同步"
+	case "retry-close":
+		return "重試關閉"
+	default:
+		return "重試 blocked"
+	}
+}
+
+func (t *TelegramBot) sendIssueOpsRecoveryMessage(key chatKey, issueNumber int, recovery *issueops.IssueOperationRecovery, notes []string) {
+	if recovery == nil {
+		return
+	}
+	lines := make([]string, 0, len(notes)+2)
+	if strings.TrimSpace(recovery.Message) != "" {
+		lines = append(lines, strings.TrimSpace(recovery.Message))
+	}
+	if strings.TrimSpace(recovery.Error) != "" {
+		lines = append(lines, fmt.Sprintf("錯誤：%s", strings.TrimSpace(recovery.Error)))
+	}
+	lines = append(lines, notes...)
+	body := fmt.Sprintf("⛔ IssueOps 在 %s 時進入 blocked。\n\n%s", strings.TrimSpace(recovery.Operation), strings.TrimSpace(strings.Join(lines, "\n")))
+	rows := [][]map[string]interface{}{
+		{
+			{"text": issueOpsRetryButtonLabel(recovery.RetryAction), "callback_data": fmt.Sprintf("issueops:%s:%d", strings.TrimSpace(recovery.RetryAction), issueNumber)},
+			{"text": "重新驗證", "callback_data": fmt.Sprintf("issueops:revalidate:%d", issueNumber)},
+		},
+		{
+			{"text": "重新規劃剩餘項", "callback_data": fmt.Sprintf("issueops:replan:%d", issueNumber)},
+			{"text": "取消", "callback_data": "issueops:cancel"},
+		},
+	}
+	keyboard := map[string]interface{}{
+		"inline_keyboard": rows,
+	}
+	params := map[string]interface{}{
+		"chat_id":      strconv.FormatInt(key.chatID, 10),
+		"text":         sanitizeUTF8(body),
+		"reply_markup": keyboard,
+	}
+	if key.threadID != 0 {
+		params["message_thread_id"] = strconv.Itoa(key.threadID)
+	}
+	t.queueMessage("sendMessage", params)
 }
 
 func (t *TelegramBot) handleStrictCommand(key chatKey, parts []string) {
@@ -5383,6 +5553,8 @@ func (t *TelegramBot) handleCallbackQuery(key chatKey, userID int64, queryID, da
 		t.handleRetryCallback(key, queryID, data)
 	case strings.HasPrefix(data, "model:"):
 		t.handleModelCallback(key, queryID, data)
+	case strings.HasPrefix(data, "issueops:"):
+		t.handleIssueOpsCallback(key, queryID, data)
 	case strings.HasPrefix(data, "hermes:"):
 		t.handleHermesCallback(key, queryID, data)
 	case strings.HasPrefix(data, "stop_agent_"):
@@ -5647,6 +5819,34 @@ func (t *TelegramBot) sendRetryMenu(key chatKey) {
 	t.sendMenuMessage(key, text, rows)
 }
 
+func (t *TelegramBot) sendReviewNotification(key chatKey, notification appengine.ReviewNotification) {
+	text := notification.TelegramText()
+	rows := reviewNotificationActionRows(key, t, notification)
+	if len(rows) == 0 {
+		t.send(key, text)
+		return
+	}
+	t.sendMenuMessage(key, text, rows)
+}
+
+func reviewNotificationActionRows(key chatKey, t *TelegramBot, notification appengine.ReviewNotification) [][]map[string]interface{} {
+	taskID := strings.TrimSpace(notification.TaskID)
+	if taskID == "" || !notification.AdvisoryRetry {
+		return nil
+	}
+	rows := make([][]map[string]interface{}, 0, 2)
+	if notification.FailingSubTasks > 0 {
+		rows = append(rows, []map[string]interface{}{
+			{"text": t.getLocalizedMessage(key.chatID, "menu_retry_all_failed", nil), "callback_data": "retry:confirm:all:" + taskID},
+			{"text": t.getLocalizedMessage(key.chatID, "menu_retry_lowest", nil), "callback_data": "retry:confirm:lowest:" + taskID},
+		})
+	}
+	rows = append(rows, []map[string]interface{}{
+		{"text": t.getLocalizedMessage(key.chatID, "menu_retry_title_short", nil), "callback_data": "retry:task:" + taskID},
+	})
+	return rows
+}
+
 func retryCandidateButtonText(candidate retryTaskCandidate) string {
 	prefix := shortHermesTaskID(candidate.ID)
 	if candidate.GithubIssueNumber > 0 {
@@ -5783,6 +5983,140 @@ func (t *TelegramBot) handleRetryCallback(key chatKey, queryID, data string) {
 		t.handleRetryRunCallback(key, queryID, data)
 	default:
 		t.answerCallbackQuery(queryID, "無法辨識 retry 操作")
+	}
+}
+
+func parseIssueOpsCallbackData(data string) (action string, issueNumber int, ok bool) {
+	if data == "issueops:cancel" {
+		return "cancel", 0, true
+	}
+	if !strings.HasPrefix(data, "issueops:") {
+		return "", 0, false
+	}
+	rest := strings.TrimPrefix(data, "issueops:")
+	parts := strings.SplitN(rest, ":", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil || n <= 0 {
+		return "", 0, false
+	}
+	return parts[0], n, true
+}
+
+func (t *TelegramBot) handleIssueOpsCallback(key chatKey, queryID, data string) {
+	action, issueNumber, ok := parseIssueOpsCallbackData(data)
+	if !ok {
+		t.answerCallbackQuery(queryID, "❌ 無效的 IssueOps 操作")
+		return
+	}
+	if action == "cancel" {
+		t.answerCallbackQuery(queryID, "已取消")
+		return
+	}
+
+	ctx := context.Background()
+	projectDir := t.getAgent(key).ProjectDir()
+
+	ops := t.issueOpsService()
+
+	switch action {
+	case "sync-checklist", "retry-sync-checklist":
+		task, _, found := t.resolveHermesIssueTask(key, projectDir, issueNumber)
+		if found && strings.TrimSpace(task.ProjectDir) != "" {
+			projectDir = task.ProjectDir
+		}
+		if !found || len(task.Plan) == 0 {
+			t.answerCallbackQuery(queryID, "❌ 找不到可同步的 Hermes task")
+			return
+		}
+		result, err := ops.SyncChecklist(ctx, issueops.SyncChecklistRequest{
+			ProjectDir:  projectDir,
+			IssueNumber: issueNumber,
+			SubTasks:    task.Plan,
+		})
+		if err != nil || (result.Recovery != nil && result.Recovery.State == hermes.IssueStateBlocked) {
+			t.answerCallbackQuery(queryID, "⛔ 同步 checklist 失敗，已轉入 blocked")
+			if result.Recovery != nil {
+				t.sendIssueOpsRecoveryMessage(key, issueNumber, result.Recovery, result.Notes)
+			} else {
+				t.send(key, fmt.Sprintf("⚠️ Issue #%d checklist 同步失敗：%v", issueNumber, err))
+			}
+			return
+		}
+		if action == "retry-sync-checklist" {
+			t.answerCallbackQuery(queryID, "🔁 已重試同步 checklist")
+		} else {
+			t.answerCallbackQuery(queryID, "✅ 已同步 checklist")
+		}
+		if len(result.Notes) > 0 {
+			t.send(key, strings.Join(result.Notes, "\n"))
+		}
+		t.sendHermesIssueReconciliation(ctx, key, hermes.TaskState{
+			ProjectDir:        projectDir,
+			GithubIssueNumber: issueNumber,
+		})
+	case "revalidate", "retry-blocked":
+		ack := "✅ 已重新驗證"
+		if action == "retry-blocked" {
+			ack = "🔁 已重試 blocked 狀態"
+		}
+		t.answerCallbackQuery(queryID, ack)
+		t.sendHermesIssueReconciliation(ctx, key, hermes.TaskState{
+			ProjectDir:        projectDir,
+			GithubIssueNumber: issueNumber,
+		})
+	case "replan":
+		issue, err := ops.LoadIssue(ctx, projectDir, issueNumber)
+		if err != nil {
+			t.answerCallbackQuery(queryID, "❌ 無法重新讀取 issue")
+			return
+		}
+		goal := hermes.BuildGoalFromIssue(issue)
+		ghCfg := GithubIntegrationConfig{}
+		if t.config != nil {
+			ghCfg = t.config.Hermes.GithubIntegration
+		}
+		t.answerCallbackQuery(queryID, "🔄 已開始重新規劃")
+		go t.startHermesTaskWithIssueTier(key, goal, projectDir, issueNumber, HermesBudgetConfig{}, ghCfg, t.hermesTierFor(key))
+	case "close", "retry-close":
+		readiness, err := ops.CloseIssue(ctx, issueops.CloseIssueRequest{
+			AssessCloseReadinessRequest: issueops.AssessCloseReadinessRequest{
+				ProjectDir:  projectDir,
+				IssueNumber: issueNumber,
+				RequiredCloseLabel: func() string {
+					if t.config != nil {
+						return t.config.Hermes.GithubIntegration.AutoCloseLabel
+					}
+					return ""
+				}(),
+				ReviewAccepted:   true,
+				ValidationPassed: true,
+			},
+		})
+		if err != nil || (readiness.Recovery != nil && readiness.Recovery.State == hermes.IssueStateBlocked) {
+			t.answerCallbackQuery(queryID, "⛔ 關閉 issue 失敗，已轉入 blocked")
+			if readiness.Recovery != nil {
+				t.sendIssueOpsRecoveryMessage(key, issueNumber, readiness.Recovery, readiness.Notes)
+			} else {
+				t.send(key, fmt.Sprintf("⚠️ Issue #%d 關閉失敗：%v", issueNumber, err))
+			}
+			return
+		}
+		if action == "retry-close" {
+			t.answerCallbackQuery(queryID, "🔁 已重試關閉 issue")
+		} else if readiness.Closed {
+			t.answerCallbackQuery(queryID, "✅ 已關閉 issue")
+		} else {
+			t.answerCallbackQuery(queryID, "ℹ️ 尚未符合自動關閉條件")
+		}
+		t.sendHermesIssueReconciliation(ctx, key, hermes.TaskState{
+			ProjectDir:        projectDir,
+			GithubIssueNumber: issueNumber,
+		})
+	default:
+		t.answerCallbackQuery(queryID, "❌ 未知的 IssueOps 操作")
 	}
 }
 
@@ -9471,4 +9805,3 @@ func (t *TelegramBot) handleBackendHealth(key chatKey) {
 
 	t.send(key, msg)
 }
-

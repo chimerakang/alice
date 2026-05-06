@@ -321,6 +321,8 @@ func TestBuildIssueStateSnapshotIncludesRecentHermesSignals(t *testing.T) {
 		"Add prize_pct",
 		"Recent Hermes/comment signals",
 		"Latest Hermes status: complete (1/1 SubTasks",
+		"IssueOps state: checklist_unsynced",
+		"do not continue implementation work",
 		"全部 PASS",
 		"可關閉 issue",
 	} {
@@ -438,6 +440,54 @@ exit 1
 	}
 	if !strings.Contains(got, "issue edit 101 --body") {
 		t.Fatalf("expected issue edit body update, got:\n%s", got)
+	}
+}
+
+func TestSyncChecklist_PreservesManualBodyContent(t *testing.T) {
+	tmp := t.TempDir()
+	bodyPath := filepath.Join(tmp, "body.txt")
+	script := `#!/bin/sh
+set -eu
+log="$FAKE_GH_LOG"
+printf '%s\n' "$*" >>"$log"
+case "$*" in
+  "issue view 102 --json body")
+    cat <<'JSON'
+{"body":"Intro\n- [ ] Step A\nUser note: keep this block.\n## Appendix\nManual content stays.\n"}
+JSON
+    exit 0
+    ;;
+  issue\ edit\ 102\ --body\ *)
+    printf '%s' "$5" >"$BODY_FILE"
+    exit 0
+    ;;
+esac
+printf '%s\n' "unexpected: $*" >>"$log"
+exit 1
+`
+	writeExecutableScript(t, tmp, "gh", script)
+	t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
+	logFile := filepath.Join(tmp, "gh.log")
+	t.Setenv("FAKE_GH_LOG", logFile)
+	t.Setenv("BODY_FILE", bodyPath)
+
+	if err := SyncChecklist(context.Background(), "", 102, []SubTask{{Description: "Step A", Status: SubTaskDone}}); err != nil {
+		t.Fatalf("SyncChecklist: %v", err)
+	}
+
+	body, err := os.ReadFile(bodyPath)
+	if err != nil {
+		t.Fatalf("ReadFile body: %v", err)
+	}
+	text := string(body)
+	if !strings.Contains(text, "User note: keep this block.") {
+		t.Fatalf("manual note was lost:\n%s", text)
+	}
+	if !strings.Contains(text, "Manual content stays.") {
+		t.Fatalf("appendix content was lost:\n%s", text)
+	}
+	if !strings.Contains(text, "- [x] Step A") {
+		t.Fatalf("checked checklist item missing:\n%s", text)
 	}
 }
 

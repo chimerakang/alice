@@ -6,6 +6,7 @@ import (
 	"time"
 
 	appengine "claude-tg-agent/internal/app/engine"
+	"claude-tg-agent/internal/app/hermes"
 )
 
 func TestRuntimeEventStorageRoundTrip(t *testing.T) {
@@ -101,5 +102,47 @@ func TestRecordHermesInteractionGatePersistsRuntimeEvent(t *testing.T) {
 	}
 	if got.Payload["subtask_idx"] != float64(2) || got.Payload["subtask_num"] != float64(3) || got.Payload["total"] != float64(5) {
 		t.Fatalf("numeric payload = %+v", got.Payload)
+	}
+}
+
+func TestRecordIssueFSMTransitionPersistsRuntimeEvent(t *testing.T) {
+	prev := globalStorage
+	s := newTestSQLiteStorage(t)
+	globalStorage = s
+	t.Cleanup(func() { globalStorage = prev })
+
+	recordIssueFSMTransition(context.Background(), chatKey{chatID: 42, threadID: 7}, 153, appengine.IssueFSMTransitionPayload{
+		From:                   hermes.IssueStateChecklistUnsynced,
+		Event:                  hermes.IssueEventChecklistSynced,
+		To:                     hermes.IssueStateChecklistSynced,
+		Reason:                 "issue checklist synced after evidence review",
+		Source:                 "telegram.reconcile",
+		ChecklistTotal:         5,
+		CheckedCount:           4,
+		UncheckedCount:         1,
+		ReviewAccepted:         true,
+		ValidationPassed:       true,
+		ChecklistSynced:        true,
+		NeedsHumanConfirmation: false,
+		DryRun:                 false,
+		WouldWrite:             true,
+	})
+
+	events, err := s.GetRuntimeEventsByType("IssueFSMTransition", 10)
+	if err != nil {
+		t.Fatalf("GetRuntimeEventsByType: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events = %d, want 1", len(events))
+	}
+	got := events[0]
+	if got.Type != "IssueFSMTransition" || got.ChatID != 42 || got.ThreadID != 7 || got.Issue != 153 {
+		t.Fatalf("event metadata = %+v", got)
+	}
+	if got.Payload["from"] != "checklist_unsynced" || got.Payload["event"] != "ChecklistSynced" || got.Payload["to"] != "checklist_synced" {
+		t.Fatalf("payload transitions = %+v", got.Payload)
+	}
+	if got.Payload["source"] != "telegram.reconcile" || got.Payload["checklist_total"] != float64(5) || got.Payload["unchecked_count"] != float64(1) {
+		t.Fatalf("payload details = %+v", got.Payload)
 	}
 }

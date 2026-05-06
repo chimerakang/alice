@@ -12,6 +12,7 @@ import (
 
 	appengine "claude-tg-agent/internal/app/engine"
 	"claude-tg-agent/internal/app/hermes"
+	"claude-tg-agent/internal/app/issueops"
 	tasksvc "claude-tg-agent/internal/app/task"
 )
 
@@ -1069,6 +1070,30 @@ func TestParseHermesCallbackData(t *testing.T) {
 	}
 }
 
+func TestParseIssueOpsCallbackData(t *testing.T) {
+	tests := []struct {
+		name       string
+		data       string
+		wantAction string
+		wantIssue  int
+		wantOK     bool
+	}{
+		{name: "sync-checklist", data: "issueops:sync-checklist:153", wantAction: "sync-checklist", wantIssue: 153, wantOK: true},
+		{name: "retry-blocked", data: "issueops:retry-blocked:153", wantAction: "retry-blocked", wantIssue: 153, wantOK: true},
+		{name: "cancel", data: "issueops:cancel", wantAction: "cancel", wantOK: true},
+		{name: "missing issue", data: "issueops:close:", wantOK: false},
+		{name: "bad prefix", data: "hermes:continue:153", wantOK: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotAction, gotIssue, gotOK := parseIssueOpsCallbackData(tt.data)
+			if gotAction != tt.wantAction || gotIssue != tt.wantIssue || gotOK != tt.wantOK {
+				t.Fatalf("parseIssueOpsCallbackData(%q) = (%q, %d, %v), want (%q, %d, %v)", tt.data, gotAction, gotIssue, gotOK, tt.wantAction, tt.wantIssue, tt.wantOK)
+			}
+		})
+	}
+}
+
 func TestSendHermesRecentCompletedIssueActionsQueuesRestartAndReplan(t *testing.T) {
 	key := chatKey{chatID: 42, threadID: 7}
 	bot := &TelegramBot{
@@ -1124,65 +1149,359 @@ func TestCountUncheckedIssueChecklistItems(t *testing.T) {
 	}
 }
 
-func TestFormatHermesIssueReconciliationMessage(t *testing.T) {
-	rec := hermes.ReconcileIssueCompletion(&hermes.IssueContext{
-		Number: 153,
-		Checklist: []hermes.ChecklistItem{
-			{Text: "done", Checked: true},
-			{Text: "remaining", Checked: false},
-		},
-	})
-	text := formatHermesIssueReconciliationMessage(rec)
-	if !strings.Contains(text, "本輪已完成") || !strings.Contains(text, "Issue #153 尚未完成") || !strings.Contains(text, "remaining") {
+func TestFormatIssueOpsReconciliationMessage(t *testing.T) {
+	readiness := issueops.CloseReadinessResult{
+		Issue: &hermes.IssueContext{Number: 153},
+		State: hermes.IssueStateChecklistUnsynced,
+		Notes: []string{"issue evidence indicates checklist is unsynced"},
+	}
+	text := formatIssueOpsReconciliationMessage(readiness)
+	if !strings.Contains(text, "checklist_unsynced") || !strings.Contains(text, "同步 GitHub checklist") {
 		t.Fatalf("unexpected reconciliation text:\n%s", text)
 	}
 }
 
-func TestSendHermesIssueReconciliationQueuesActionsWhenUnchecked(t *testing.T) {
-	oldFetch := hermesFetchIssue
-	defer func() { hermesFetchIssue = oldFetch }()
-	hermesFetchIssue = func(ctx context.Context, projectDir string, issueNumber int) (*hermes.IssueContext, error) {
-		if projectDir != "/repo" || issueNumber != 153 {
-			t.Fatalf("unexpected fetch args: %q #%d", projectDir, issueNumber)
-		}
-		return &hermes.IssueContext{
-			Number: 153,
-			Checklist: []hermes.ChecklistItem{
-				{Text: "done", Checked: true},
-				{Text: "remaining", Checked: false},
+type fakeIssueOps struct {
+	readiness issueops.CloseReadinessResult
+}
+
+func (f *fakeIssueOps) LoadIssue(ctx context.Context, projectDir string, issueNumber int) (*hermes.IssueContext, error) {
+	return nil, nil
+}
+
+func (f *fakeIssueOps) LoadIssueChecklistMapping(ctx context.Context, projectDir string, issueNumber int, subtasks []hermes.SubTask) (issueops.ChecklistMappingResult, error) {
+	return issueops.ChecklistMappingResult{}, nil
+}
+
+func (f *fakeIssueOps) CommentDone(ctx context.Context, projectDir string, issueNumber int, finalState hermes.TaskState, notes string) error {
+	return nil
+}
+
+func (f *fakeIssueOps) CommentBudgetExceeded(ctx context.Context, projectDir string, issueNumber int, used, max int) error {
+	return nil
+}
+
+func (f *fakeIssueOps) ApplyLabel(ctx context.Context, projectDir string, issueNumber int, label string) error {
+	return nil
+}
+
+func (f *fakeIssueOps) PlanIssue(ctx context.Context, req issueops.PlanIssueRequest) error {
+	return nil
+}
+
+func (f *fakeIssueOps) RecordEvidence(ctx context.Context, req issueops.RecordEvidenceRequest) error {
+	return nil
+}
+
+func (f *fakeIssueOps) SyncChecklist(ctx context.Context, req issueops.SyncChecklistRequest) (issueops.SyncChecklistResult, error) {
+	return issueops.SyncChecklistResult{}, nil
+}
+
+func (f *fakeIssueOps) AssessCloseReadiness(ctx context.Context, req issueops.AssessCloseReadinessRequest) (issueops.CloseReadinessResult, error) {
+	return f.readiness, nil
+}
+
+func (f *fakeIssueOps) CloseIssue(ctx context.Context, req issueops.CloseIssueRequest) (issueops.CloseReadinessResult, error) {
+	return f.readiness, nil
+}
+
+func TestSendHermesIssueReconciliationUsesIssueOpsState(t *testing.T) {
+	tests := []struct {
+		name        string
+		readiness   issueops.CloseReadinessResult
+		wantText    []string
+		wantButtons [][]string
+	}{
+		{
+			name: "checklist_unsynced",
+			readiness: issueops.CloseReadinessResult{
+				Issue: &hermes.IssueContext{Number: 153},
+				State: hermes.IssueStateChecklistUnsynced,
+				Notes: []string{"issue evidence indicates checklist is unsynced"},
 			},
-		}, nil
+			wantText: []string{"checklist_unsynced", "同步 GitHub checklist"},
+			wantButtons: [][]string{
+				{"issueops:sync-checklist:153", "issueops:revalidate:153"},
+				{"issueops:replan:153", "issueops:close:153"},
+				{"issueops:cancel"},
+			},
+		},
+		{
+			name: "ready_to_close",
+			readiness: issueops.CloseReadinessResult{
+				Issue:            &hermes.IssueContext{Number: 153},
+				State:            hermes.IssueStateReadyToClose,
+				CanAutoClose:     true,
+				HasRequiredLabel: true,
+				Guard:            hermes.IssueCloseReadiness{State: hermes.IssueStateReadyToClose, ChecklistSynced: true, ReviewAccepted: true, ValidationPassed: true},
+				Notes:            []string{"all guards passed"},
+			},
+			wantText: []string{"ready_to_close", "可以直接關閉 issue"},
+			wantButtons: [][]string{
+				{"issueops:close:153", "issueops:revalidate:153"},
+				{"issueops:replan:153"},
+				{"issueops:cancel"},
+			},
+		},
+		{
+			name: "blocked",
+			readiness: issueops.CloseReadinessResult{
+				Issue:        &hermes.IssueContext{Number: 153},
+				State:        hermes.IssueStateBlocked,
+				Notes:        []string{"manual decision required"},
+				CanAutoClose: false,
+				Guard:        hermes.IssueCloseReadiness{State: hermes.IssueStateBlocked, ChecklistSynced: true, ReviewAccepted: false, ValidationPassed: false},
+			},
+			wantText: []string{"blocked", "需要人工決策"},
+			wantButtons: [][]string{
+				{"issueops:retry-blocked:153", "issueops:revalidate:153"},
+				{"issueops:replan:153", "issueops:close:153"},
+				{"issueops:cancel"},
+			},
+		},
 	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key := chatKey{chatID: 42, threadID: 7}
+			bot := &TelegramBot{
+				messageQueue: make(chan *TelegramMessage, 1),
+				issueOps: &fakeIssueOps{
+					readiness: tt.readiness,
+				},
+			}
+			bot.sendHermesIssueReconciliation(context.Background(), key, hermes.TaskState{
+				ID:                "6b1960ba-1111-2222-3333-444444444444",
+				ProjectDir:        "/repo",
+				GithubIssueNumber: 153,
+			})
+
+			select {
+			case msg := <-bot.messageQueue:
+				if msg.Method != "sendMessage" {
+					t.Fatalf("unexpected method: %s", msg.Method)
+				}
+				text := fmt.Sprint(msg.Params["text"])
+				for _, want := range tt.wantText {
+					if !strings.Contains(text, want) {
+						t.Fatalf("text missing %q:\n%s", want, text)
+					}
+				}
+				markup, ok := msg.Params["reply_markup"].(map[string]interface{})
+				if !ok {
+					t.Fatalf("reply_markup missing: %#v", msg.Params["reply_markup"])
+				}
+				rows, ok := markup["inline_keyboard"].([][]map[string]interface{})
+				if !ok || len(rows) < len(tt.wantButtons) {
+					t.Fatalf("inline_keyboard missing or too small: %#v", markup["inline_keyboard"])
+				}
+				for rowIdx, wantRow := range tt.wantButtons {
+					if len(rows[rowIdx]) < len(wantRow) {
+						t.Fatalf("row %d too small: %#v", rowIdx, rows[rowIdx])
+					}
+					for colIdx, want := range wantRow {
+						if got := fmt.Sprint(rows[rowIdx][colIdx]["callback_data"]); got != want {
+							t.Fatalf("row %d col %d callback_data = %q, want %q", rowIdx, colIdx, got, want)
+						}
+					}
+				}
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for reconciliation actions message")
+			}
+		})
+	}
+}
+
+func TestSendHermesIssueReconciliationRecordsIssueFSMTransition(t *testing.T) {
+	tests := []struct {
+		name          string
+		readiness     issueops.CloseReadinessResult
+		wantFrom      string
+		wantEvent     string
+		wantTo        string
+		wantAutoClose bool
+		wantHuman     bool
+	}{
+		{
+			name: "checklist_unsynced",
+			readiness: issueops.CloseReadinessResult{
+				Issue:            &hermes.IssueContext{Number: 153, State: "open"},
+				State:            hermes.IssueStateChecklistUnsynced,
+				Reconciliation:   hermes.IssueReconciliation{ChecklistTotal: 4, CheckedCount: 3, Unchecked: []hermes.ChecklistItem{{Text: "todo"}}},
+				Guard:            hermes.IssueCloseReadiness{ChecklistSynced: false, ReviewAccepted: true, ValidationPassed: true},
+				HasRequiredLabel: true,
+				CanAutoClose:     false,
+				Notes:            []string{"checklist still needs sync"},
+			},
+			wantFrom:      "drafted",
+			wantEvent:     "ChecklistMismatchDetected",
+			wantTo:        "checklist_unsynced",
+			wantAutoClose: false,
+			wantHuman:     false,
+		},
+		{
+			name: "ready_to_close",
+			readiness: issueops.CloseReadinessResult{
+				Issue:            &hermes.IssueContext{Number: 154, State: "open"},
+				State:            hermes.IssueStateReadyToClose,
+				Guard:            hermes.IssueCloseReadiness{State: hermes.IssueStateReadyToClose, ChecklistSynced: true, ReviewAccepted: true, ValidationPassed: true},
+				HasRequiredLabel: true,
+				CanAutoClose:     true,
+				Notes:            []string{"ready for close"},
+			},
+			wantFrom:      "drafted",
+			wantEvent:     "CloseRequested",
+			wantTo:        "ready_to_close",
+			wantAutoClose: true,
+			wantHuman:     false,
+		},
+		{
+			name: "blocked",
+			readiness: issueops.CloseReadinessResult{
+				Issue:            &hermes.IssueContext{Number: 155, State: "blocked"},
+				State:            hermes.IssueStateBlocked,
+				Guard:            hermes.IssueCloseReadiness{State: hermes.IssueStateBlocked, ChecklistSynced: true, ReviewAccepted: false, ValidationPassed: false},
+				HasRequiredLabel: true,
+				CanAutoClose:     false,
+				Notes:            []string{"manual decision required"},
+			},
+			wantFrom:      "blocked",
+			wantEvent:     "HumanDecisionRequired",
+			wantTo:        "blocked",
+			wantAutoClose: false,
+			wantHuman:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prev := globalStorage
+			s := newTestSQLiteStorage(t)
+			globalStorage = s
+			t.Cleanup(func() { globalStorage = prev })
+
+			key := chatKey{chatID: 42, threadID: 7}
+			bot := &TelegramBot{
+				messageQueue: make(chan *TelegramMessage, 1),
+				issueOps: &fakeIssueOps{
+					readiness: tt.readiness,
+				},
+			}
+			bot.sendHermesIssueReconciliation(context.Background(), key, hermes.TaskState{
+				ProjectDir:        "/repo",
+				GithubIssueNumber: tt.readiness.Issue.Number,
+			})
+
+			events, err := s.GetRuntimeEventsByType("IssueFSMTransition", 10)
+			if err != nil {
+				t.Fatalf("GetRuntimeEventsByType: %v", err)
+			}
+			if len(events) != 1 {
+				t.Fatalf("events = %d, want 1", len(events))
+			}
+			got := events[0]
+			if got.ChatID != 42 || got.ThreadID != 7 || got.Issue != tt.readiness.Issue.Number {
+				t.Fatalf("event metadata = %+v", got)
+			}
+			if got.Payload["source"] != "telegram.reconcile" || got.Payload["from"] != tt.wantFrom || got.Payload["event"] != tt.wantEvent || got.Payload["to"] != tt.wantTo {
+				t.Fatalf("payload = %+v", got.Payload)
+			}
+			if tt.wantAutoClose {
+				if got.Payload["can_auto_close"] != true {
+					t.Fatalf("can_auto_close missing or false: %+v", got.Payload)
+				}
+			} else if _, ok := got.Payload["can_auto_close"]; ok {
+				t.Fatalf("can_auto_close should be omitted when false: %+v", got.Payload)
+			}
+			if tt.wantHuman {
+				if got.Payload["needs_human_confirmation"] != true {
+					t.Fatalf("needs_human_confirmation missing or false: %+v", got.Payload)
+				}
+			} else if _, ok := got.Payload["needs_human_confirmation"]; ok {
+				t.Fatalf("needs_human_confirmation should be omitted when false: %+v", got.Payload)
+			}
+		})
+	}
+}
+
+func TestHandleIssueOpsCallbackRetryBlockedQueuesReconciliation(t *testing.T) {
 	key := chatKey{chatID: 42, threadID: 7}
 	bot := &TelegramBot{
-		messageQueue: make(chan *TelegramMessage, 1),
+		config:       &Config{DefaultProjectDir: "/repo"},
+		agents:       map[chatKey]*Agent{},
+		chatContexts: map[chatKey]*ChatContext{},
+		issueOps: &fakeIssueOps{
+			readiness: issueops.CloseReadinessResult{
+				Issue: &hermes.IssueContext{Number: 153},
+				State: hermes.IssueStateBlocked,
+				Notes: []string{"manual decision required"},
+			},
+		},
+		messageQueue: make(chan *TelegramMessage, 2),
 	}
-	bot.sendHermesIssueReconciliation(context.Background(), key, hermes.TaskState{
-		ID:                "6b1960ba-1111-2222-3333-444444444444",
-		ProjectDir:        "/repo",
-		GithubIssueNumber: 153,
-	})
-	select {
-	case msg := <-bot.messageQueue:
-		if msg.Method != "sendMessage" {
-			t.Fatalf("unexpected method: %s", msg.Method)
+
+	bot.handleIssueOpsCallback(key, "q-1", "issueops:retry-blocked:153")
+
+	var gotSend *TelegramMessage
+	timeout := time.After(time.Second)
+	for gotSend == nil {
+		select {
+		case msg := <-bot.messageQueue:
+			if msg.Method == "sendMessage" {
+				gotSend = msg
+			}
+		case <-timeout:
+			t.Fatal("timed out waiting for blocked reconciliation message")
 		}
-		if !strings.Contains(fmt.Sprint(msg.Params["text"]), "Issue #153 尚未完成") {
-			t.Fatalf("unexpected text: %#v", msg.Params["text"])
-		}
-		markup, ok := msg.Params["reply_markup"].(map[string]interface{})
-		if !ok {
-			t.Fatalf("reply_markup missing: %#v", msg.Params["reply_markup"])
-		}
-		rows, ok := markup["inline_keyboard"].([][]map[string]interface{})
-		if !ok || len(rows) < 2 {
-			t.Fatalf("inline_keyboard missing or too small: %#v", markup["inline_keyboard"])
-		}
-		if rows[0][0]["callback_data"] != "hermes:continue:6b1960ba-1111-2222-3333-444444444444" {
-			t.Fatalf("unexpected continue button: %#v", rows[0][0])
-		}
-	case <-time.After(time.Second):
-		t.Fatal("timed out waiting for reconciliation actions message")
+	}
+	if !strings.Contains(fmt.Sprint(gotSend.Params["text"]), "blocked") {
+		t.Fatalf("unexpected text: %#v", gotSend.Params["text"])
+	}
+	markup, ok := gotSend.Params["reply_markup"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("reply_markup missing: %#v", gotSend.Params["reply_markup"])
+	}
+	rows, ok := markup["inline_keyboard"].([][]map[string]interface{})
+	if !ok || len(rows) < 2 {
+		t.Fatalf("inline_keyboard missing or too small: %#v", markup["inline_keyboard"])
+	}
+	if rows[0][0]["callback_data"] != "issueops:retry-blocked:153" {
+		t.Fatalf("unexpected retry-blocked button: %#v", rows[0][0])
+	}
+}
+
+func TestShouldDeferIssueContinuationToIssueOps(t *testing.T) {
+	tests := []struct {
+		name      string
+		readiness issueops.CloseReadinessResult
+		want      bool
+	}{
+		{
+			name:      "checklist_unsynced",
+			readiness: issueops.CloseReadinessResult{State: hermes.IssueStateChecklistUnsynced},
+			want:      true,
+		},
+		{
+			name:      "ready_to_close",
+			readiness: issueops.CloseReadinessResult{State: hermes.IssueStateReadyToClose},
+			want:      false,
+		},
+		{
+			name:      "blocked",
+			readiness: issueops.CloseReadinessResult{State: hermes.IssueStateBlocked},
+			want:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			bot := &TelegramBot{
+				issueOps: &fakeIssueOps{readiness: tt.readiness},
+			}
+			if got := bot.shouldDeferIssueContinuationToIssueOps(context.Background(), "/repo", 153); got != tt.want {
+				t.Fatalf("shouldDeferIssueContinuationToIssueOps() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

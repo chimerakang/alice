@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 
 	"claude-tg-agent/internal/app/hermes"
+	"claude-tg-agent/internal/app/issueops"
 )
 
 // PlanExecuteConfig holds the runtime configuration for a Hermes-style
@@ -132,6 +133,7 @@ type PlanExecuteEngine struct {
 	direct   *DirectEngine
 	store    hermes.TaskStateStore
 	reporter hermes.ProgressReporter
+	issueOps issueops.IssueOps
 
 	mu          sync.Mutex
 	taskID      string
@@ -142,6 +144,13 @@ type PlanExecuteEngine struct {
 	// start. Only used when cfg.WalkingAgentEnabled.
 	walkingExecutorModel string // model used by previous executor sub-task this task
 	walkingTokensSeen    int    // cumulative input tokens (uncached + cache_read + cache_write) since last fresh session
+}
+
+func (e *PlanExecuteEngine) issueOpsService() issueops.IssueOps {
+	if e != nil && e.issueOps != nil {
+		return e.issueOps
+	}
+	return issueops.New()
 }
 
 func NewPlanExecuteEngine(
@@ -164,6 +173,7 @@ func NewPlanExecuteEngine(
 		direct:   direct,
 		store:    store,
 		reporter: reporter,
+		issueOps: issueops.New(),
 	}
 	planner.SetRecoveryDecider(func(req hermes.PlannerRecoveryRequest) hermes.PlannerRecoveryDecision {
 		recoveryReq := RecoveryRequest{
@@ -759,16 +769,18 @@ func (e *PlanExecuteEngine) onPlanReady(ctx context.Context, state hermes.TaskSt
 	if issueNum <= 0 || !ghCfg.Enabled {
 		return
 	}
-	if ghCfg.ShouldComment("start") {
-		body := hermes.CommentStarted(e.cfg.PlannerModel, "direct")
-		if err := hermes.PostComment(ctx, e.cfg.ProjectDir, issueNum, body); err != nil {
-			log.Printf("[plan_execute] GitHub comment start: %v", err)
-		}
-	}
-	if ghCfg.SyncChecklist {
-		if err := hermes.WritePlanToIssue(ctx, e.cfg.ProjectDir, issueNum, state.Goal, tasks); err != nil {
-			log.Printf("[plan_execute] GitHub write plan: %v", err)
-		}
+	ops := e.issueOpsService()
+	if err := ops.PlanIssue(ctx, issueops.PlanIssueRequest{
+		ProjectDir:    e.cfg.ProjectDir,
+		IssueNumber:   issueNum,
+		PlannerModel:  e.cfg.PlannerModel,
+		ExecutorModel: "direct",
+		Goal:          state.Goal,
+		Tasks:         tasks,
+		CommentStart:  ghCfg.ShouldComment("start"),
+		WritePlan:     ghCfg.SyncChecklist,
+	}); err != nil {
+		log.Printf("[plan_execute] GitHub plan issue: %v", err)
 	}
 }
 
@@ -778,15 +790,44 @@ func (e *PlanExecuteEngine) onSubTaskDone(ctx context.Context, idx, total int, t
 	if issueNum <= 0 || !ghCfg.Enabled {
 		return
 	}
-	if ghCfg.SyncChecklist {
-		if err := hermes.SyncChecklist(ctx, e.cfg.ProjectDir, issueNum, tasks); err != nil {
-			log.Printf("[plan_execute] GitHub sync checklist idx=%d: %v", idx, err)
-		}
+	ops := e.issueOpsService()
+	if err := ops.RecordEvidence(ctx, issueops.RecordEvidenceRequest{
+		ProjectDir:  e.cfg.ProjectDir,
+		IssueNumber: issueNum,
+		Index:       idx,
+		Total:       total,
+		SubTask:     subTask,
+		Result:      result,
+		Tokens:      tokens,
+		Completed:   completed,
+		Comment:     ghCfg.ShouldComment("complete"),
+	}); err != nil {
+		log.Printf("[plan_execute] GitHub record evidence idx=%d: %v", idx, err)
 	}
-	if ghCfg.ShouldComment("complete") {
-		body := hermes.CommentSubTaskProgress(idx, total, subTask, result, tokens, completed)
-		if err := hermes.PostComment(ctx, e.cfg.ProjectDir, issueNum, body); err != nil {
-			log.Printf("[plan_execute] GitHub comment subtask progress idx=%d: %v", idx, err)
+	if ghCfg.SyncChecklist {
+		syncResult, err := ops.SyncChecklist(ctx, issueops.SyncChecklistRequest{
+			ProjectDir:  e.cfg.ProjectDir,
+			IssueNumber: issueNum,
+			SubTasks:    tasks,
+		})
+		if err != nil || (syncResult.Recovery != nil && syncResult.Recovery.State == hermes.IssueStateBlocked) {
+			if syncResult.Recovery != nil {
+				log.Printf("[plan_execute] GitHub sync checklist blocked issue #%d: %s (retry=%s, err=%s)", issueNum, syncResult.Recovery.Message, syncResult.Recovery.RetryAction, syncResult.Recovery.Error)
+				e.emitRuntimeEvent(ctx, IssueFSMTransitionEvent(issueNum, time.Now(), IssueFSMTransitionPayload{
+					From:                   syncResult.Guard.IssueState,
+					Event:                  hermes.IssueEventSyncFailed,
+					To:                     hermes.IssueStateBlocked,
+					Reason:                 syncResult.Recovery.Error,
+					Source:                 "engine.sync_checklist",
+					ChecklistTotal:         len(tasks),
+					RetryAction:            syncResult.Recovery.RetryAction,
+					ChecklistSynced:        false,
+					WouldWrite:             syncResult.WouldWrite,
+					NeedsHumanConfirmation: syncResult.Guard.NeedsHumanConfirmation,
+				}))
+			} else {
+				log.Printf("[plan_execute] GitHub sync checklist idx=%d: %v", idx, err)
+			}
 		}
 	}
 }
@@ -798,36 +839,104 @@ func (e *PlanExecuteEngine) onDone(ctx context.Context, finalState hermes.TaskSt
 		return
 	}
 	var notes []string
-	issue, fetchErr := hermes.FetchIssue(ctx, e.cfg.ProjectDir, issueNum)
-	if fetchErr != nil {
-		log.Printf("[plan_execute] GitHub post-run reconciliation skipped issue #%d: fetch issue: %v", issueNum, fetchErr)
+	ops := e.issueOpsService()
+	readiness, err := ops.AssessCloseReadiness(ctx, issueops.AssessCloseReadinessRequest{
+		ProjectDir:         e.cfg.ProjectDir,
+		IssueNumber:        issueNum,
+		RequiredCloseLabel: ghCfg.AutoCloseLabel,
+		ReviewAccepted:     true,
+		ValidationPassed:   true,
+	})
+	if err != nil {
+		log.Printf("[plan_execute] GitHub post-run reconciliation skipped issue #%d: assess readiness: %v", issueNum, err)
 		if ghCfg.AutoCloseLabel != "" {
 			notes = append(notes, fmt.Sprintf("Issue was not auto-closed because Alice could not re-fetch the issue to verify the `%s` label.", ghCfg.AutoCloseLabel))
 		}
 	} else {
-		reconciliation := hermes.ReconcileIssueCompletion(issue)
-		notes = append(notes, reconciliation.CommentNote())
-		if reconciliation.HasUnchecked() {
-			log.Printf("[plan_execute] GitHub issue #%d still has %d unchecked checklist items after Hermes done", issueNum, len(reconciliation.Unchecked))
+		notes = append(notes, readiness.Notes...)
+		if readiness.Issue != nil {
+			e.emitRuntimeEvent(ctx, IssueFSMTransitionEvent(issueNum, time.Now(), IssueFSMTransitionPayload{
+				From:                   hermes.IssueStateFromGitHub(readiness.Issue.State),
+				Event:                  hermes.IssueEventForState(readiness.State),
+				To:                     readiness.State,
+				Reason:                 strings.TrimSpace(strings.Join(readiness.Notes, "\n")),
+				Source:                 "engine.on_done",
+				ChecklistTotal:         readiness.Reconciliation.ChecklistTotal,
+				CheckedCount:           readiness.Reconciliation.CheckedCount,
+				UncheckedCount:         len(readiness.Reconciliation.Unchecked),
+				HasBlockingLabel:       readiness.Guard.HasBlockingLabel,
+				HasRequiredLabel:       readiness.HasRequiredLabel,
+				ReviewAccepted:         readiness.Guard.ReviewAccepted,
+				ValidationPassed:       readiness.Guard.ValidationPassed,
+				ChecklistSynced:        readiness.Guard.ChecklistSynced,
+				CanAutoClose:           readiness.CanAutoClose,
+				NeedsHumanConfirmation: readiness.State == hermes.IssueStateBlocked,
+			}))
+		}
+		if readiness.Reconciliation.HasUnchecked() {
+			log.Printf("[plan_execute] GitHub issue #%d still has %d unchecked checklist items after Hermes done", issueNum, len(readiness.Reconciliation.Unchecked))
 		}
 		if completed == total && ghCfg.AutoCloseLabel != "" {
-			switch {
-			case reconciliation.HasUnchecked():
-				notes = append(notes, fmt.Sprintf("Issue was not auto-closed because %d checklist item(s) remain unchecked.", len(reconciliation.Unchecked)))
-				log.Printf("[plan_execute] GitHub auto-close skipped issue #%d: unchecked checklist remains", issueNum)
-			case hermes.HasLabel(issue, ghCfg.AutoCloseLabel):
-				if err := hermes.CloseIssue(ctx, e.cfg.ProjectDir, issueNum); err != nil {
-					log.Printf("[plan_execute] GitHub close issue: %v", err)
+			if readiness.CanAutoClose {
+				closeResult, closeErr := ops.CloseIssue(ctx, issueops.CloseIssueRequest{
+					AssessCloseReadinessRequest: issueops.AssessCloseReadinessRequest{
+						ProjectDir:         e.cfg.ProjectDir,
+						IssueNumber:        issueNum,
+						RequiredCloseLabel: ghCfg.AutoCloseLabel,
+						ReviewAccepted:     true,
+						ValidationPassed:   true,
+					},
+				})
+				if closeErr != nil {
+					log.Printf("[plan_execute] GitHub close issue: %v", closeErr)
+					if closeResult.Recovery != nil {
+						notes = append(notes, fmt.Sprintf("Issue close blocked: %s", closeResult.Recovery.Error))
+					}
+					if closeResult.Recovery != nil {
+						e.emitRuntimeEvent(ctx, IssueFSMTransitionEvent(issueNum, time.Now(), IssueFSMTransitionPayload{
+							From:             readiness.State,
+							Event:            hermes.IssueEventSyncFailed,
+							To:               hermes.IssueStateBlocked,
+							Reason:           closeResult.Recovery.Error,
+							Source:           "engine.close_issue",
+							CanAutoClose:     readiness.CanAutoClose,
+							HasRequiredLabel: readiness.HasRequiredLabel,
+							ChecklistSynced:  readiness.Guard.ChecklistSynced,
+							ReviewAccepted:   readiness.Guard.ReviewAccepted,
+							ValidationPassed: readiness.Guard.ValidationPassed,
+						}))
+					}
 				}
-			default:
+				if closeResult.Closed {
+					notes = append(notes, fmt.Sprintf("Issue #%d auto-closed by IssueOps.", issueNum))
+					if closeResult.Issue != nil {
+						e.emitRuntimeEvent(ctx, IssueFSMTransitionEvent(issueNum, time.Now(), IssueFSMTransitionPayload{
+							From:             readiness.State,
+							Event:            hermes.IssueEventIssueClosed,
+							To:               hermes.IssueStateClosed,
+							Reason:           "auto_close",
+							Source:           "engine.on_done.close",
+							CanAutoClose:     readiness.CanAutoClose,
+							HasRequiredLabel: readiness.HasRequiredLabel,
+							ChecklistSynced:  readiness.Guard.ChecklistSynced,
+							ReviewAccepted:   readiness.Guard.ReviewAccepted,
+							ValidationPassed: readiness.Guard.ValidationPassed,
+						}))
+					}
+				}
+			} else if readiness.Reconciliation.HasUnchecked() {
+				notes = append(notes, fmt.Sprintf("Issue was not auto-closed because %d checklist item(s) remain unchecked.", len(readiness.Reconciliation.Unchecked)))
+				log.Printf("[plan_execute] GitHub auto-close skipped issue #%d: unchecked checklist remains", issueNum)
+			} else if !readiness.HasRequiredLabel && ghCfg.AutoCloseLabel != "" {
 				notes = append(notes, fmt.Sprintf("Issue was not auto-closed because it does not have the `%s` label.", ghCfg.AutoCloseLabel))
 				log.Printf("[plan_execute] GitHub auto-close skipped issue #%d: missing label %q", issueNum, ghCfg.AutoCloseLabel)
+			} else {
+				notes = append(notes, "Issue was not auto-closed because close readiness guard did not pass.")
 			}
 		}
 	}
 	if ghCfg.ShouldComment("complete") {
-		body := hermes.CommentDoneWithNote(finalState, strings.Join(notes, "\n\n"))
-		if err := hermes.PostComment(ctx, e.cfg.ProjectDir, issueNum, body); err != nil {
+		if err := ops.CommentDone(ctx, e.cfg.ProjectDir, issueNum, finalState, strings.Join(notes, "\n\n")); err != nil {
 			log.Printf("[plan_execute] GitHub comment done: %v", err)
 		}
 	}
@@ -839,14 +948,14 @@ func (e *PlanExecuteEngine) onBudgetExceeded(ctx context.Context, state hermes.T
 	if issueNum <= 0 || !ghCfg.Enabled {
 		return
 	}
+	ops := e.issueOpsService()
 	if ghCfg.ShouldComment("budget_exceeded") {
-		body := hermes.CommentBudgetExceeded(state.TokenBudget.UsedTokens, state.TokenBudget.MaxTotalTokens)
-		if err := hermes.PostComment(ctx, e.cfg.ProjectDir, issueNum, body); err != nil {
+		if err := ops.CommentBudgetExceeded(ctx, e.cfg.ProjectDir, issueNum, state.TokenBudget.UsedTokens, state.TokenBudget.MaxTotalTokens); err != nil {
 			log.Printf("[plan_execute] GitHub comment budget: %v", err)
 		}
 	}
 	if ghCfg.FailureLabel != "" {
-		if err := hermes.ApplyLabel(ctx, e.cfg.ProjectDir, issueNum, ghCfg.FailureLabel); err != nil {
+		if err := ops.ApplyLabel(ctx, e.cfg.ProjectDir, issueNum, ghCfg.FailureLabel); err != nil {
 			log.Printf("[plan_execute] GitHub apply failure label on budget: %v", err)
 		}
 	}

@@ -427,6 +427,10 @@ func BuildIssueStateSnapshot(issue *IssueContext) string {
 			fmt.Fprintf(&sb, ", %s", signal.CreatedAt.Format(time.RFC3339))
 		}
 		sb.WriteString(")\n")
+		if len(unchecked) > 0 {
+			sb.WriteString("- IssueOps state: checklist_unsynced\n")
+			sb.WriteString("- Planner instruction: treat the unchecked checklist as stale until GitHub checklist is synced; do not continue implementation work, and prefer IssueOps actions to sync checklist, revalidate evidence, replan remaining items, or ask for human decision.\n")
+		}
 	}
 	fmt.Fprintf(&sb, "- Checklist: %d unchecked, %d checked\n", len(unchecked), len(checked))
 	if len(unchecked) > 0 {
@@ -622,6 +626,22 @@ func stripChecklistLines(body string) string {
 	return strings.TrimSpace(strings.Join(kept, "\n"))
 }
 
+func matchesChecklistItem(itemText, desc string) bool {
+	itemText = strings.TrimSpace(itemText)
+	desc = strings.TrimSpace(desc)
+	if itemText == "" || desc == "" {
+		return false
+	}
+	if strings.EqualFold(itemText, desc) {
+		return true
+	}
+	descRunes := []rune(desc)
+	if len(descRunes) > 16 {
+		desc = string(descRunes[:16])
+	}
+	return strings.HasPrefix(strings.ToLower(itemText), strings.ToLower(desc))
+}
+
 // UpdateChecklistInBody replaces `- [ ] <text>` with `- [x] <text>` for each
 // completedDesc entry (case-insensitive prefix match).
 func UpdateChecklistInBody(body string, completedDescs []string) string {
@@ -632,8 +652,7 @@ func UpdateChecklistInBody(body string, completedDescs []string) string {
 		}
 		itemText := strings.TrimSpace(m[2])
 		for _, desc := range completedDescs {
-			if strings.EqualFold(itemText, strings.TrimSpace(desc)) ||
-				strings.HasPrefix(strings.ToLower(itemText), strings.ToLower(strings.TrimSpace(desc))[:min16(len(desc))]) {
+			if matchesChecklistItem(itemText, desc) {
 				return "- [x] " + m[2]
 			}
 		}
@@ -641,11 +660,69 @@ func UpdateChecklistInBody(body string, completedDescs []string) string {
 	})
 }
 
-func min16(n int) int {
-	if n > 16 {
-		return 16
+// ChecklistSyncPreview captures the checklist body patch derived from a
+// completed-subtask list.
+type ChecklistSyncPreview struct {
+	CompletedDescriptions []string
+	UpdatedChecklistItems []string
+	BodyBefore            string
+	BodyAfter             string
+	Changed               bool
+}
+
+// BuildChecklistSyncPreview computes the checklist body patch without mutating
+// remote state.
+func BuildChecklistSyncPreview(body string, subtasks []SubTask) ChecklistSyncPreview {
+	completed := make([]string, 0, len(subtasks))
+	updatedItems := make([]string, 0, len(subtasks))
+	for _, st := range subtasks {
+		if st.Status != SubTaskDone {
+			continue
+		}
+		completed = append(completed, st.Description)
 	}
-	return n
+	if len(completed) == 0 {
+		return ChecklistSyncPreview{
+			CompletedDescriptions: completed,
+			BodyBefore:            body,
+			BodyAfter:             body,
+		}
+	}
+
+	updatedBody := UpdateChecklistInBody(body, completed)
+	if updatedBody != body {
+		for _, line := range strings.Split(body, "\n") {
+			m := checklistRe.FindStringSubmatch(line)
+			if len(m) < 3 || strings.ToLower(m[1]) == "x" {
+				continue
+			}
+			for _, desc := range completed {
+				if matchesChecklistItem(m[2], desc) {
+					updatedItems = append(updatedItems, strings.TrimSpace(m[2]))
+					break
+				}
+			}
+		}
+	}
+
+	return ChecklistSyncPreview{
+		CompletedDescriptions: completed,
+		UpdatedChecklistItems: updatedItems,
+		BodyBefore:            body,
+		BodyAfter:             updatedBody,
+		Changed:               updatedBody != body,
+	}
+}
+
+// UpdateIssueBody writes the supplied body to GitHub issue state.
+func UpdateIssueBody(ctx context.Context, projectDir string, number int, body string) error {
+	if out, err := ghCombinedOutput(ctx, projectDir, ghTimeoutShort, "issue", "edit",
+		fmt.Sprintf("%d", number),
+		"--body", body,
+	); err != nil {
+		return fmt.Errorf("gh issue edit body %d: %w (output: %s)", number, err, out)
+	}
+	return nil
 }
 
 // PostComment posts a comment to the given Issue via `gh issue comment`.
@@ -677,28 +754,15 @@ func SyncChecklist(ctx context.Context, projectDir string, number int, subtasks 
 		return fmt.Errorf("parse body JSON: %w", err)
 	}
 
-	var completed []string
-	for _, st := range subtasks {
-		if st.Status == SubTaskDone {
-			completed = append(completed, st.Description)
-		}
-	}
-	if len(completed) == 0 {
+	preview := BuildChecklistSyncPreview(raw.Body, subtasks)
+	if len(preview.CompletedDescriptions) == 0 {
 		return nil
 	}
-
-	updatedBody := UpdateChecklistInBody(raw.Body, completed)
-	if updatedBody == raw.Body {
+	if !preview.Changed {
 		return nil // nothing changed
 	}
 
-	if out, err := ghCombinedOutput(ctx, projectDir, ghTimeoutShort, "issue", "edit",
-		fmt.Sprintf("%d", number),
-		"--body", updatedBody,
-	); err != nil {
-		return fmt.Errorf("gh issue edit checklist: %w (output: %s)", err, out)
-	}
-	return nil
+	return UpdateIssueBody(ctx, projectDir, number, preview.BodyAfter)
 }
 
 // ApplyLabel adds a label to the Issue (creates if needed via gh's built-in behaviour).

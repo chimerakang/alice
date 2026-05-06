@@ -8,6 +8,7 @@ import (
 	"time"
 
 	appengine "claude-tg-agent/internal/app/engine"
+	"claude-tg-agent/internal/app/hermes"
 )
 
 type RuntimeEventRecord struct {
@@ -93,4 +94,20 @@ func recordHermesInteractionGate(ctx context.Context, key chatKey, action, reaso
 			SubTask:    strings.TrimSpace(subTask),
 		},
 	})
+}
+
+func recordIssueFSMTransition(ctx context.Context, key chatKey, issue int, payload appengine.IssueFSMTransitionPayload) {
+	event := appengine.IssueFSMTransitionEvent(issue, time.Now(), payload)
+	event.ChatID = key.chatID
+	event.ThreadID = key.threadID
+	recordRuntimeEvent(ctx, event)
+}
+
+func issueFSMTransitionPayload(from hermes.IssueState, event hermes.IssueEvent, to hermes.IssueState, source string) appengine.IssueFSMTransitionPayload {
+	return appengine.IssueFSMTransitionPayload{
+		From:   from,
+		Event:  event,
+		To:     to,
+		Source: strings.TrimSpace(source),
+	}
 }
