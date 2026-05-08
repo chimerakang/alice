@@ -441,3 +441,51 @@ func TestService_Integration_ConcurrentTransition(t *testing.T) {
 	}
 	_ = allowed
 }
+
+// ── LatestSnapshot accessor (#169 β1) ──────────────────────────────────────
+
+func TestService_LatestSnapshot_ReturnsInterruptOnPause(t *testing.T) {
+	svc, store := newIntegrationService(t)
+	created, err := svc.CreateTask(makeIntegrationTask("task-snap-pause", 200))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	executing := hermes.TaskStatusExecuting
+	idx := 0
+	interrupt := &hermes.HermesInterrupt{
+		ID:         "iv-test",
+		Reason:     "subtask_failure_pause",
+		SourceStep: hermes.RuntimeStepExecutor,
+		ResumeStep: hermes.RuntimeStepExecutor,
+		CreatedAt:  time.Now(),
+	}
+	if _, err := store.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     created.ID,
+		Updates:    []hermes.StateUpdate{{Status: &executing, CurrentIdx: &idx, Interrupt: interrupt}},
+		NextStep:   hermes.RuntimeStepApproval,
+		SourceNode: hermes.RuntimeStepExecutor,
+		Metadata:   hermes.SnapshotMetadata{Source: "test", Reason: "subtask_failure_pause"},
+	}); err != nil {
+		t.Fatalf("CommitRuntimeStep: %v", err)
+	}
+
+	snap, ok := svc.LatestSnapshot(created.ID)
+	if !ok {
+		t.Fatal("LatestSnapshot returned ok=false; expected snapshot store available")
+	}
+	if snap.State.Interrupt == nil || snap.State.Interrupt.ID != "iv-test" {
+		t.Errorf("interrupt mismatch: %+v", snap.State.Interrupt)
+	}
+}
+
+func TestService_LatestSnapshot_NoSnapshotForFreshTask(t *testing.T) {
+	svc, _ := newIntegrationService(t)
+	created, err := svc.CreateTask(makeIntegrationTask("task-fresh", 201))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	_, ok := svc.LatestSnapshot(created.ID)
+	if ok {
+		t.Errorf("LatestSnapshot returned ok=true for fresh task without commits")
+	}
+}

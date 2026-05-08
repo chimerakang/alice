@@ -98,6 +98,22 @@ func (svc *Service) GetTask(id string) (hermes.TaskState, error) {
 	return svc.store.GetTask(id)
 }
 
+// LatestSnapshot returns the latest committed snapshot for the task, or
+// (Snapshot{}, false) when the underlying store does not implement
+// SnapshotStore. Used by cold-restart resume paths (#169 β1) to inspect
+// the durable Interrupt before reconstructing a Hermes coordinator.
+func (svc *Service) LatestSnapshot(taskID string) (hermes.Snapshot, bool) {
+	store, ok := svc.store.(hermes.SnapshotStore)
+	if !ok {
+		return hermes.Snapshot{}, false
+	}
+	snap, err := store.GetLatestSnapshot(taskID)
+	if err != nil {
+		return hermes.Snapshot{}, false
+	}
+	return snap, true
+}
+
 // GetActiveForChat returns the most recent non-terminal task for a chat.
 // Returns hermes.ErrNoTask if no active task exists.
 func (svc *Service) GetActiveForChat(chatID int64) (hermes.TaskState, error) {

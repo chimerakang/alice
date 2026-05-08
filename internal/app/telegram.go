@@ -4042,7 +4042,14 @@ func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir
 	t.startHermesTaskWithIssueTierFromState(key, goal, projectDir, issueNumber, budgetOverride, ghIntegration, tier, nil)
 }
 
-func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, projectDir string, issueNumber int, budgetOverride HermesBudgetConfig, ghIntegration GithubIntegrationConfig, tier string, resumeTask *hermes.TaskState) {
+// startHermesTaskWithIssueTierFromState builds and launches a Hermes
+// coordinator. When resumeTask is non-nil the coord runs RunFromState on
+// the existing task (recovering from a saved snapshot) instead of creating
+// a fresh one. Callers pass initialFailureChoice (#169 slice β1) to
+// pre-load the failure-pause decision channel so a cold-restart click
+// flows through the freshly built engine without the operator having to
+// click again.
+func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, projectDir string, issueNumber int, budgetOverride HermesBudgetConfig, ghIntegration GithubIntegrationConfig, tier string, resumeTask *hermes.TaskState, initialFailureChoice ...appengine.FailurePauseChoice) {
 	ctx := context.Background()
 	worktreeChanges, worktreeErr := checkHermesCleanWorktree(ctx, projectDir)
 	if worktreeErr != nil {
@@ -4173,6 +4180,14 @@ func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, p
 
 	continueCh := make(chan struct{}, 1)
 	failureDecisionCh := make(chan appengine.FailurePauseChoice, 1)
+	// Pre-load the failure-pause channel for cold-restart resume (#169 β1):
+	// when a paused task's coord is reconstructed because the operator clicked
+	// the inline button after alice restarted, the click's decision is
+	// injected here so RunFromState's first interrupt encounter consumes it
+	// without re-prompting the user.
+	if len(initialFailureChoice) > 0 {
+		failureDecisionCh <- initialFailureChoice[0]
+	}
 	agent := t.getAgent(key)
 	if cfg.WalkingAgentEnabled {
 		// Walking-agent sessions are per Hermes task. Start from a clean
@@ -6378,6 +6393,77 @@ func (t *TelegramBot) makeHermesFailureDecisionCallback(key chatKey, ch chan app
 	}
 }
 
+// tryColdRestartFailureResume reconstructs a Hermes coordinator and
+// resumes a paused task when the operator clicked the inline retry /
+// skip / abort button after alice restarted. Returns true when a resume
+// goroutine was launched (the click is "handled" — caller should not
+// fall through to the normal "task not waiting" answer).
+//
+// Constraints:
+//   - "adjust" path is not supported (needs hint-text exchange flow).
+//   - Resume only proceeds when the task's latest snapshot carries an
+//     Interrupt — otherwise the task is not actually paused and we
+//     decline rather than risk re-running an already-finished task.
+//   - The chatKey from the click must match the task's recorded
+//     chat_id / thread_id. Cross-chat resume is not supported.
+func (t *TelegramBot) tryColdRestartFailureResume(key chatKey, queryID, action, taskIDStr, idxStr string) bool {
+	if action == "adjust" {
+		return false
+	}
+	if t.taskSvc == nil {
+		return false
+	}
+	state, err := t.taskSvc.GetTask(taskIDStr)
+	if err != nil || state.IsTerminal() {
+		return false
+	}
+	if state.ChatID != key.chatID || state.ThreadID != key.threadID {
+		return false
+	}
+	snap, ok := t.taskSvc.LatestSnapshot(taskIDStr)
+	if !ok || snap.State.Interrupt == nil {
+		return false
+	}
+
+	var decision appengine.FailureDecision
+	var ack string
+	switch action {
+	case "retry":
+		decision = appengine.FailureRetry
+		ack = "🔁 alice 重啟後 resume — 重試中"
+	case "skip":
+		decision = appengine.FailureSkip
+		ack = "⏭ alice 重啟後 resume — 將跳過"
+	case "abort":
+		decision = appengine.FailureAbort
+		ack = "🛑 alice 重啟後 resume — 中止任務"
+	default:
+		return false
+	}
+
+	log.Printf("[hermes.resume] cold-restart failure resume task=%s action=%s chat=%d thread=%d",
+		taskIDStr, action, state.ChatID, state.ThreadID)
+	t.answerCallbackQuery(queryID, ack)
+	t.send(key, fmt.Sprintf("♻️ 偵測到 alice 重啟後仍在等待的暫停 (任務 %s)，重新建立 Hermes 協調器並套用您的選擇 (%s)。", shortHermesTaskID(taskIDStr), action))
+
+	initialChoice := appengine.FailurePauseChoice{Decision: decision}
+	resumeState := state
+	go t.runTrackedJob("hermes.cold_resume", func() {
+		t.startHermesTaskWithIssueTierFromState(
+			key,
+			resumeState.Goal,
+			resumeState.ProjectDir,
+			resumeState.GithubIssueNumber,
+			HermesBudgetConfig{},
+			t.config.Hermes.GithubIntegration,
+			t.hermesTierFor(key),
+			&resumeState,
+			initialChoice,
+		)
+	})
+	return true
+}
+
 func formatHermesFailurePauseDetail(errText string) string {
 	errText = strings.TrimSpace(errText)
 	if errText == "" {
@@ -6464,6 +6550,15 @@ func (t *TelegramBot) handleHermesFailureDecisionCallback(key chatKey, queryID, 
 	hc, ok := t.hermesCoords[key]
 	t.hermesMu.Unlock()
 	if !ok || hc == nil || hc.failureDecisionCh == nil {
+		// Cold-restart resume (#169 β1): no live coord because alice was
+		// restarted while the task was paused. If the latest snapshot
+		// still carries a HermesInterrupt, reconstruct the Hermes coord
+		// with the operator's choice pre-loaded into the failure
+		// decision channel so RunFromState consumes it on the first
+		// pause encounter.
+		if t.tryColdRestartFailureResume(key, queryID, action, taskID, idxStr) {
+			return true
+		}
 		t.answerCallbackQuery(queryID, "❌ 任務不在等待狀態")
 		return true
 	}
