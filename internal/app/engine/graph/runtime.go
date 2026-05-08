@@ -130,6 +130,41 @@ var ErrUnregisteredStep = errors.New("graph: no handler registered for runtime s
 // ErrMaxStepsExceeded means Walker.Run hit its iteration cap.
 var ErrMaxStepsExceeded = errors.New("graph: max walker steps exceeded")
 
+// ErrNodePanic means a Node implementation panicked during Handle.
+// Walker.Run recovers the panic, commits a terminal snapshot marking the
+// task Failed (with the panic message recorded in state.Errors), and
+// returns this error wrapped so callers can distinguish "node bug" from
+// regular error returns. The committed snapshot's Metadata.Reason is
+// "node_panic" so dashboards can filter for it.
+var ErrNodePanic = errors.New("graph: node panic")
+
+// NodePanicError carries the panic value + node name so callers can
+// inspect what failed without losing the original cause. Wraps
+// ErrNodePanic via Unwrap so errors.Is(err, ErrNodePanic) works.
+type NodePanicError struct {
+	Step  hermes.RuntimeStep
+	Value any
+}
+
+func (e *NodePanicError) Error() string {
+	return fmt.Sprintf("graph: node %q panic: %v", e.Step, e.Value)
+}
+
+func (e *NodePanicError) Unwrap() error { return ErrNodePanic }
+
+// safeHandle wraps node.Handle with a panic recover so a buggy Node
+// cannot leak its panic past the Walker. The recovered value is
+// returned as a *NodePanicError; output is the zero value in that case.
+func safeHandle(ctx context.Context, node Node, state hermes.HermesState) (output NodeOutput, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = &NodePanicError{Step: node.Name(), Value: r}
+			output = NodeOutput{}
+		}
+	}()
+	return node.Handle(ctx, state)
+}
+
 // Run dispatches Nodes for taskID until a terminal NextStep is reached,
 // a halt is requested, or MaxSteps is exceeded. Each iteration:
 //  1. loads the latest snapshot to read the canonical state
@@ -168,8 +203,22 @@ func (w *Walker) Run(ctx context.Context, taskID string) (hermes.Snapshot, error
 			return snap, fmt.Errorf("%w: %q", ErrUnregisteredStep, snap.NextStep)
 		}
 
-		output, err := node.Handle(ctx, snap.State)
+		output, err := safeHandle(ctx, node, snap.State)
 		if err != nil {
+			var panicErr *NodePanicError
+			if errors.As(err, &panicErr) {
+				// Persist a terminal snapshot so future Walker passes
+				// don't redispatch the panicking node. Commit failure here
+				// is reported alongside the panic but cannot itself stop
+				// us from returning — the panic is the load-bearing
+				// signal.
+				if committed, commitErr := w.commitPanicTerminal(taskID, snap, panicErr); commitErr == nil {
+					lastSnapshot = committed
+				} else {
+					log.Printf("[graph] panic terminal commit failed task=%s step=%s: %v", taskID, snap.NextStep, commitErr)
+				}
+				return lastSnapshot, panicErr
+			}
 			return snap, fmt.Errorf("graph: node %q failed: %w", snap.NextStep, err)
 		}
 		reason := output.Reason
@@ -199,6 +248,42 @@ func (w *Walker) Run(ctx context.Context, taskID string) (hermes.Snapshot, error
 			return committed, nil
 		}
 	}
+}
+
+// commitPanicTerminal commits a terminal snapshot after a node panic.
+// The committed StateUpdate marks the task Failed (when not already
+// terminal), records the panic message in state.Errors, and tags the
+// snapshot Metadata so dashboards can filter for "node_panic" hops.
+func (w *Walker) commitPanicTerminal(taskID string, last hermes.Snapshot, panicErr *NodePanicError) (hermes.Snapshot, error) {
+	failed := hermes.TaskStatusFailed
+	update := hermes.StateUpdate{
+		Errors: []hermes.HermesStateError{{
+			Step:      panicErr.Step,
+			Message:   panicErr.Error(),
+			Retryable: false,
+			CreatedAt: time.Now(),
+		}},
+	}
+	// Only inject a Status write when the current state can transition
+	// to Failed — the reducer rejects illegal transitions, and a task
+	// already in a terminal state should keep its status.
+	switch last.State.Status {
+	case hermes.TaskStatusDone, hermes.TaskStatusFailed, hermes.TaskStatusInterrupted:
+		// already terminal — keep status, only record the error
+	default:
+		update.Status = &failed
+	}
+	return w.store.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    []hermes.StateUpdate{update},
+		NextStep:   hermes.RuntimeStepTerminal,
+		SourceNode: panicErr.Step,
+		Metadata: hermes.SnapshotMetadata{
+			Source: "graph_walker",
+			Reason: "node_panic",
+		},
+		CreatedAt: time.Now(),
+	})
 }
 
 // LogDispatch is a small helper Nodes can use to emit a uniform log line
