@@ -7,11 +7,12 @@ import "time"
 type RuntimeStep string
 
 const (
-	RuntimeStepPlanner  RuntimeStep = "planner"
-	RuntimeStepExecutor RuntimeStep = "executor"
-	RuntimeStepReviewer RuntimeStep = "reviewer"
-	RuntimeStepApproval RuntimeStep = "approval"
-	RuntimeStepTerminal RuntimeStep = "terminal"
+	RuntimeStepPlanner      RuntimeStep = "planner"
+	RuntimeStepExecutor     RuntimeStep = "executor"
+	RuntimeStepReviewer     RuntimeStep = "reviewer"
+	RuntimeStepStrictReview RuntimeStep = "strict_review" // per-sub-task review (γ3c)
+	RuntimeStepApproval     RuntimeStep = "approval"
+	RuntimeStepTerminal     RuntimeStep = "terminal"
 )
 
 // HermesState is the canonical durable runtime state stored in snapshots.

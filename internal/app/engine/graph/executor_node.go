@@ -88,6 +88,12 @@ type ExecutorNode struct {
 	// just marks the sub-task Failed and advances — matching the
 	// engine's pre-γ4 silent-skip behaviour.
 	FailurePauseEnabled bool
+	// StrictReviewEnabled (γ3c) routes successful sub-task runs to
+	// RuntimeStepStrictReview instead of advancing. The sub-task's
+	// status stays InProgress until the StrictReviewNode finalises it
+	// (Done / Skipped / Failed). When false, the Node finalises the
+	// sub-task itself as before.
+	StrictReviewEnabled bool
 }
 
 // Name implements Node.
@@ -142,6 +148,33 @@ func (n *ExecutorNode) Handle(ctx context.Context, state hermes.HermesState) (No
 
 	if pauseForApproval {
 		return n.outputForApprovalPause(state, idx, finalText, tokens, res), nil
+	}
+
+	// Strict per-sub-task review path: store the candidate result on
+	// the plan but keep status InProgress; StrictReviewNode finalises
+	// the sub-task after running the reviewer. Failure path skipped
+	// here (it has already been handled above by either pause-for-
+	// approval or finalStatus=Failed).
+	if n.StrictReviewEnabled && runErr == nil {
+		plan := append([]hermes.SubTask(nil), state.Plan...)
+		plan[idx].Result = finalText
+		plan[idx].TokensUsed += tokens
+		plan[idx].Attempts++
+		// StrictRetryFeedback is consumed (cleared) on the runner side
+		// once it has been used for the prompt; clear here to avoid
+		// stale feedback if StrictReviewNode accepts on first retry.
+		plan[idx].StrictRetryFeedback = ""
+		update := hermes.StateUpdate{Plan: plan}
+		if res.Model != "" && tokens > 0 {
+			update.ModelUsages = []hermes.ModelUsage{n.executorModelUsage(res)}
+			update.PhaseUsages = []hermes.PhaseUsage{n.executorPhaseUsage(res)}
+			update.TokenUsageDelta = tokens
+		}
+		return NodeOutput{
+			Updates:  []hermes.StateUpdate{update},
+			NextStep: hermes.RuntimeStepStrictReview,
+			Reason:   "subtask_candidate_for_strict_review",
+		}, nil
 	}
 
 	plan := append([]hermes.SubTask(nil), state.Plan...)
@@ -299,6 +332,36 @@ func (n *ExecutorNode) nextStepAfter(nextIdx, total int) hermes.RuntimeStep {
 		return hermes.RuntimeStepReviewer
 	}
 	return hermes.RuntimeStepTerminal
+}
+
+// executorModelUsage builds the ModelUsage record for telemetry from a
+// SubTaskRunResult. Extracted so the strict-review handoff path and
+// the standard finalise path produce identical telemetry shapes.
+func (n *ExecutorNode) executorModelUsage(res SubTaskRunResult) hermes.ModelUsage {
+	return hermes.ModelUsage{
+		Model:                    res.Model,
+		InputTokens:              res.InputTokens,
+		UncachedInputTokens:      res.UncachedInputTokens,
+		CacheReadInputTokens:     res.CacheReadInputTokens,
+		CacheCreationInputTokens: res.CacheCreationInputTokens,
+		OutputTokens:             res.OutputTokens,
+		CostUSD:                  res.CostUSD,
+	}
+}
+
+// executorPhaseUsage mirrors executorModelUsage but for the per-phase
+// telemetry record under phase="executor".
+func (n *ExecutorNode) executorPhaseUsage(res SubTaskRunResult) hermes.PhaseUsage {
+	return hermes.PhaseUsage{
+		Phase:                    "executor",
+		Model:                    res.Model,
+		InputTokens:              res.InputTokens,
+		UncachedInputTokens:      res.UncachedInputTokens,
+		CacheReadInputTokens:     res.CacheReadInputTokens,
+		CacheCreationInputTokens: res.CacheCreationInputTokens,
+		OutputTokens:             res.OutputTokens,
+		CostUSD:                  res.CostUSD,
+	}
 }
 
 // completedCount returns the running tally of Done sub-tasks in plan,

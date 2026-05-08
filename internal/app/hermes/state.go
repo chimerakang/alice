@@ -199,6 +199,12 @@ type SubTask struct {
 	// Legacy plans saved before this field existed read as nil and trigger
 	// fuzzy-match fallback in issueops.SyncChecklist.
 	ChecklistItemIDs []string `json:"checklist_item_ids,omitempty"`
+	// StrictRetryFeedback holds the reviewer's feedback when the strict
+	// per-sub-task review (#169 γ3c) sends the sub-task back for a retry.
+	// The Executor's runner picks it up on the next dispatch to prepend
+	// the feedback to its prompt. Cleared when the sub-task is finalised
+	// (Done or Skipped). Empty for sub-tasks that have not been blocked.
+	StrictRetryFeedback string `json:"strict_retry_feedback,omitempty"`
 }
 
 // Artifact records a file that was modified or created during task execution.
