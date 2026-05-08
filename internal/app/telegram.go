@@ -4917,30 +4917,55 @@ func (t *TelegramBot) sendLongMarkdown(key chatKey, text string) {
 // --- Markdown → Telegram HTML conversion ---
 
 var (
-	reTGInlineCode = regexp.MustCompile("`([^`\n]+)`")
-	reTGBold       = regexp.MustCompile(`\*\*([^*\n]+)\*\*`)
-	reTGBoldUnder  = regexp.MustCompile(`__([^_\n]+)__`)
-	reTGStrike     = regexp.MustCompile(`~~([^~\n]+)~~`)
-	reTGLink       = regexp.MustCompile(`\[([^\]\n]+)\]\((https?://[^)\n ]+)\)`)
+	reTGInlineCode    = regexp.MustCompile("`([^`\n]+)`")
+	reTGBold          = regexp.MustCompile(`\*\*([^*\n]+)\*\*`)
+	reTGBoldUnder     = regexp.MustCompile(`__([^_\n]+)__`)
+	reTGItalic        = regexp.MustCompile(`\*([^*\n]+)\*`)
+	reTGItalicUnder   = regexp.MustCompile(`_([^_\n]+)_`)
+	reTGStrike        = regexp.MustCompile(`~~([^~\n]+)~~`)
+	reTGLink          = regexp.MustCompile(`\[([^\]\n]+)\]\((https?://[^)\n ]+)\)`)
+	reTGUnorderedList = regexp.MustCompile(`^[-*+]\s+`)
+	reTGOrderedList   = regexp.MustCompile(`^\d+\.\s+`)
+	reTGBlockquote    = regexp.MustCompile(`^>\s?`)
 )
 
 // markdownToTelegramHTML converts Claude's markdown output to Telegram HTML.
-// Supports: code blocks, inline code, **bold**, ## headers, links, ~~strike~~, ---, tables
+// Supports: code blocks, inline code, **bold**, *italic*, ## headers, links,
+// ~~strike~~, ---, tables, blockquotes, ordered/unordered lists.
 func markdownToTelegramHTML(text string) string {
 	var sb strings.Builder
 	inCode := false
 	var codeLines []string
+	var bqLines []string
+
+	flushBlockquote := func() {
+		if len(bqLines) == 0 {
+			return
+		}
+		inner := strings.Join(bqLines, "\n")
+		sb.WriteString("<blockquote>" + tgMarkdownInline(inner) + "</blockquote>\n")
+		bqLines = nil
+	}
 
 	lines := strings.Split(text, "\n")
 	for i := 0; i < len(lines); {
 		line := lines[i]
 		if !inCode {
 			if strings.HasPrefix(strings.TrimRight(line, " \t"), "```") {
+				flushBlockquote()
 				inCode = true
 				codeLines = nil
 				i++
 				continue
 			}
+			// Blockquote lines: group consecutive > lines
+			if strings.HasPrefix(strings.TrimSpace(line), ">") {
+				content := reTGBlockquote.ReplaceAllString(strings.TrimSpace(line), "")
+				bqLines = append(bqLines, content)
+				i++
+				continue
+			}
+			flushBlockquote()
 			// Detect markdown table (lines starting with |)
 			if strings.HasPrefix(strings.TrimSpace(line), "|") {
 				j := i
@@ -4969,6 +4994,7 @@ func markdownToTelegramHTML(text string) string {
 		}
 		i++
 	}
+	flushBlockquote()
 	// Flush unclosed code block
 	if inCode && len(codeLines) > 0 {
 		sb.WriteString("<pre><code>")
@@ -5110,6 +5136,17 @@ func tgMarkdownLine(line string) string {
 			return "<b>" + tgMarkdownInline(inner) + "</b>"
 		}
 	}
+	// Unordered list items (-, *, +)
+	if reTGUnorderedList.MatchString(s) {
+		content := reTGUnorderedList.ReplaceAllString(s, "")
+		return "• " + tgMarkdownInline(content)
+	}
+	// Ordered list items (1. 2. ...)
+	if reTGOrderedList.MatchString(s) {
+		match := reTGOrderedList.FindString(s)
+		content := strings.TrimPrefix(s, match)
+		return tgHTMLEscape(match) + tgMarkdownInline(content)
+	}
 	return tgMarkdownInline(line)
 }
 
@@ -5138,9 +5175,11 @@ func tgMarkdownInline(text string) string {
 	// 3. HTML-escape remaining text
 	out = tgHTMLEscape(out)
 
-	// 4. Apply formatting (bold before strike)
+	// 4. Apply formatting: bold → italic → strike (order matters for nested markers)
 	out = reTGBold.ReplaceAllString(out, "<b>$1</b>")
 	out = reTGBoldUnder.ReplaceAllString(out, "<b>$1</b>")
+	out = reTGItalic.ReplaceAllString(out, "<i>$1</i>")
+	out = reTGItalicUnder.ReplaceAllString(out, "<i>$1</i>")
 	out = reTGStrike.ReplaceAllString(out, "<s>$1</s>")
 
 	// 5. Restore placeholders
@@ -5157,6 +5196,7 @@ func tgHTMLEscape(s string) string {
 	s = strings.ReplaceAll(s, "&", "&amp;")
 	s = strings.ReplaceAll(s, "<", "&lt;")
 	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, `"`, "&quot;")
 	return s
 }
 
@@ -6389,6 +6429,9 @@ func (t *TelegramBot) handleHermesFailureDecisionCallback(key chatKey, queryID, 
 		t.answerCallbackQuery(queryID, "❌ 此暫停已失效")
 		return true
 	}
+	idx := hc.failureCtx.idx
+	total := hc.failureCtx.total
+	subDesc := strings.TrimSpace(hc.failureCtx.subDesc)
 
 	// "adjust" parks the pause in awaiting-hint mode and waits for the next
 	// text message in this chat. The choice is not sent to the channel yet;
@@ -6405,24 +6448,32 @@ func (t *TelegramBot) handleHermesFailureDecisionCallback(key chatKey, queryID, 
 
 	var decision appengine.FailureDecision
 	var ack string
+	var visible string
 	switch action {
 	case "retry":
 		decision = appengine.FailureRetry
 		ack = "🔁 重試中"
+		visible = fmt.Sprintf("🔁 已收到，正在重新執行子任務 %d/%d。", idx+1, total)
 	case "skip":
 		decision = appengine.FailureSkip
 		ack = "⏭ 跳過"
+		visible = fmt.Sprintf("⏭ 已收到，將跳過子任務 %d/%d 並繼續後續流程。", idx+1, total)
 	case "abort":
 		decision = appengine.FailureAbort
 		ack = "🛑 已中止"
+		visible = fmt.Sprintf("🛑 已收到，正在中止 Hermes 任務（停在子任務 %d/%d）。", idx+1, total)
 	default:
 		t.answerCallbackQuery(queryID, "❌ 未知操作")
 		return true
+	}
+	if subDesc != "" {
+		visible += "\n• " + truncateRunesText(subDesc, 180)
 	}
 
 	select {
 	case hc.failureDecisionCh <- appengine.FailurePauseChoice{Decision: decision}:
 		t.answerCallbackQuery(queryID, ack)
+		t.send(key, visible)
 	default:
 		// Channel full means a decision was already sent; ignore this click.
 		t.answerCallbackQuery(queryID, "（已收到上一次選擇）")

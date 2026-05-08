@@ -2565,6 +2565,59 @@ func TestHandleMessageChatBypassDoesNotBecomeHermesFailureHint(t *testing.T) {
 	}
 }
 
+func TestHermesFailureRetryButtonSendsVisibleAcknowledgement(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	failureCh := make(chan appengine.FailurePauseChoice, 1)
+	bot := &TelegramBot{
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {
+				enabled:           true,
+				failureDecisionCh: failureCh,
+				failureCtx: &failurePauseCtx{
+					taskID:  "ecd58b36-dbb4-442f-9e96-3ef844f5ac9b",
+					idx:     9,
+					total:   10,
+					subDesc: "Real runtime smoke test",
+				},
+			},
+		},
+		messageQueue: make(chan *TelegramMessage, 4),
+	}
+
+	if !bot.handleHermesFailureDecisionCallback(key, "query-1", "hermes:fail:retry:ecd58b36-dbb4-442f-9e96-3ef844f5ac9b:9") {
+		t.Fatal("expected Hermes failure callback to be handled")
+	}
+
+	select {
+	case choice := <-failureCh:
+		if choice.Decision != appengine.FailureRetry {
+			t.Fatalf("decision = %+v, want retry", choice)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for retry choice")
+	}
+
+	var sawCallbackAck, sawVisibleAck bool
+	deadline := time.After(time.Second)
+	for !sawCallbackAck || !sawVisibleAck {
+		select {
+		case msg := <-bot.messageQueue:
+			switch msg.Method {
+			case "answerCallbackQuery":
+				if text, _ := msg.Params["text"].(string); strings.Contains(text, "重試中") {
+					sawCallbackAck = true
+				}
+			case "sendMessage":
+				if text, _ := msg.Params["text"].(string); strings.Contains(text, "正在重新執行子任務 10/10") && strings.Contains(text, "Real runtime smoke test") {
+					sawVisibleAck = true
+				}
+			}
+		case <-deadline:
+			t.Fatalf("missing ack messages: callback=%v visible=%v", sawCallbackAck, sawVisibleAck)
+		}
+	}
+}
+
 func TestClearHermesFailurePauseRequiresMatchingTaskAndIndex(t *testing.T) {
 	key := chatKey{chatID: 42, threadID: 7}
 	bot := &TelegramBot{
@@ -2824,10 +2877,10 @@ func TestCheckHermesCleanWorktreeReturnsDirtyPorcelainLines(t *testing.T) {
 	}
 }
 
-func TestFormatHermesDirtyWorktreeWarningTreatsChangesAsBaseline(t *testing.T) {
+func TestFormatHermesDirtyWorktreeWarningShowsExistingChangesPlainly(t *testing.T) {
 	msg := formatHermesDirtyWorktreeWarning(296, []string{" M apps/cm-web/example.tsx"})
 	if !strings.Contains(msg, "Issue #296") ||
-		!strings.Contains(msg, "啟動 baseline") ||
+		!strings.Contains(msg, "啟動前已有") ||
 		!strings.Contains(msg, " M apps/cm-web/example.tsx") {
 		t.Fatalf("unexpected warning message: %q", msg)
 	}
@@ -3623,5 +3676,189 @@ func TestAbortActiveTaskMarksAgentInterrupting(t *testing.T) {
 	}
 	if got := agent.current().ctx.StateSnapshot().State; got != string(appengine.ChatStateInterrupting) {
 		t.Fatalf("chat state = %q, want %q", got, appengine.ChatStateInterrupting)
+	}
+}
+
+func TestMarkdownToTelegramHTML(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		contains    []string
+		notContains []string
+	}{
+		{
+			name:     "heading becomes bold",
+			input:    "# Title",
+			contains: []string{"<b>Title</b>"},
+		},
+		{
+			name:     "bold text",
+			input:    "**bold**",
+			contains: []string{"<b>bold</b>"},
+		},
+		{
+			name:     "italic asterisk",
+			input:    "*italic*",
+			contains: []string{"<i>italic</i>"},
+		},
+		{
+			name:     "italic underscore",
+			input:    "_italic_",
+			contains: []string{"<i>italic</i>"},
+		},
+		{
+			name:     "inline code",
+			input:    "`code`",
+			contains: []string{"<code>code</code>"},
+		},
+		{
+			name:     "link",
+			input:    "[text](https://example.com)",
+			contains: []string{`<a href="https://example.com">text</a>`},
+		},
+		{
+			name:     "strikethrough",
+			input:    "~~strike~~",
+			contains: []string{"<s>strike</s>"},
+		},
+		{
+			name:     "unordered list dash",
+			input:    "- item one\n- item two",
+			contains: []string{"• item one", "• item two"},
+		},
+		{
+			name:     "ordered list",
+			input:    "1. first\n2. second",
+			contains: []string{"1. first", "2. second"},
+		},
+		{
+			name:     "blockquote single line",
+			input:    "> quoted text",
+			contains: []string{"<blockquote>quoted text</blockquote>"},
+		},
+		{
+			name:     "blockquote multiple lines grouped",
+			input:    "> line one\n> line two",
+			contains: []string{"<blockquote>line one\nline two</blockquote>"},
+		},
+		{
+			name:     "code fence",
+			input:    "```\nfmt.Println(\"hello\")\n```",
+			contains: []string{"<pre><code>", "fmt.Println(", "</code></pre>"},
+		},
+		{
+			name:        "horizontal rule is removed",
+			input:       "before\n---\nafter",
+			contains:    []string{"before", "after"},
+			notContains: []string{"---"},
+		},
+		{
+			name: "complex composite: heading list blockquote code inline link",
+			input: "# Title\n\n**bold** and *italic* with [link](https://x.com)\n\n" +
+				"- list item\n\n> quote\n\n```\ncode block\n```",
+			contains: []string{
+				"<b>Title</b>",
+				"<b>bold</b>",
+				"<i>italic</i>",
+				`<a href="https://x.com">link</a>`,
+				"• list item",
+				"<blockquote>quote</blockquote>",
+				"<pre><code>",
+				"code block",
+			},
+		},
+		{
+			name:        "script tag is HTML-escaped",
+			input:       "<script>alert('xss')</script> normal text",
+			contains:    []string{"&lt;script&gt;", "&lt;/script&gt;", "normal text"},
+			notContains: []string{"<script>", "</script>"},
+		},
+		{
+			name:        "img tag is HTML-escaped",
+			input:       `<img src="x" onerror="alert(1)">`,
+			contains:    []string{"&lt;img"},
+			notContains: []string{"<img"},
+		},
+		{
+			name:        "div tag is HTML-escaped",
+			input:       "<div>content</div>",
+			notContains: []string{"<div>", "</div>"},
+		},
+		{
+			name:        "h1 tag is HTML-escaped",
+			input:       "<h1>heading</h1>",
+			notContains: []string{"<h1>", "</h1>"},
+		},
+		{
+			name:     "ampersand is escaped",
+			input:    "A & B",
+			contains: []string{"A &amp; B"},
+		},
+		{
+			name:     "inline code protects content from bold regex",
+			input:    "`**not bold**`",
+			contains: []string{"<code>**not bold**</code>"},
+		},
+		{
+			name:        "code fence protects content from inline regex",
+			input:       "```\n**not bold**\n_not italic_\n```",
+			contains:    []string{"**not bold**", "_not italic_"},
+			notContains: []string{"<b>not bold</b>", "<i>not italic</i>"},
+		},
+		{
+			name:     "double quote in text is escaped",
+			input:    `say "hello"`,
+			contains: []string{"say &quot;hello&quot;"},
+		},
+		{
+			name:     "link with URL safe chars produces valid href attribute",
+			input:    "[site](https://example.com/path?a=1&b=2)",
+			contains: []string{`href="https://example.com/path?a=1&amp;b=2"`},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := markdownToTelegramHTML(tc.input)
+			for _, want := range tc.contains {
+				if !strings.Contains(got, want) {
+					t.Errorf("markdownToTelegramHTML(%q):\ngot:     %q\nmissing: %q", tc.input, got, want)
+				}
+			}
+			for _, ban := range tc.notContains {
+				if strings.Contains(got, ban) {
+					t.Errorf("markdownToTelegramHTML(%q):\ngot:              %q\nforbidden string: %q", tc.input, got, ban)
+				}
+			}
+		})
+	}
+}
+
+func TestSplitMessageProducesBalancedHTMLTags(t *testing.T) {
+	var sb strings.Builder
+	for i := 0; i < 20; i++ {
+		sb.WriteString(fmt.Sprintf("## Section %d\n\nParagraph %d with **bold** and *italic* text.\n\n", i+1, i+1))
+	}
+	long := sb.String()
+
+	chunks := splitMessage(long, 500)
+	if len(chunks) < 2 {
+		t.Fatalf("expected multiple chunks for long input, got %d", len(chunks))
+	}
+
+	for i, chunk := range chunks {
+		html := markdownToTelegramHTML(chunk)
+		for _, tag := range []string{"b", "i", "code", "pre"} {
+			opens := strings.Count(html, "<"+tag+">") + strings.Count(html, "<"+tag+" ")
+			closes := strings.Count(html, "</"+tag+">")
+			if opens != closes {
+				t.Errorf("chunk %d: unbalanced <%s> (opens=%d closes=%d)\nhtml: %q", i, tag, opens, closes, html)
+			}
+		}
+		for _, bad := range []string{"<script", "<img", "<div", "<span", "<h1", "<h2"} {
+			if strings.Contains(html, bad) {
+				t.Errorf("chunk %d: forbidden tag %q leaked into rendered HTML", i, bad)
+			}
+		}
 	}
 }
