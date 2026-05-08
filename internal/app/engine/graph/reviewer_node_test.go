@@ -137,7 +137,7 @@ func TestReviewerNode_FailMarksStatusFailed(t *testing.T) {
 	}
 }
 
-func TestReviewerNode_BlockWithReplanRoutesPlanner(t *testing.T) {
+func TestReviewerNode_BlockWithReplanRoutesReplanSetup(t *testing.T) {
 	rev := &fakeTaskReviewer{result: TaskReviewResult{
 		Verdict:      "block",
 		Replan:       true,
@@ -151,8 +151,8 @@ func TestReviewerNode_BlockWithReplanRoutesPlanner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handle: %v", err)
 	}
-	if out.NextStep != hermes.RuntimeStepPlanner {
-		t.Errorf("NextStep = %q, want planner", out.NextStep)
+	if out.NextStep != hermes.RuntimeStepReplanSetup {
+		t.Errorf("NextStep = %q, want replan_setup", out.NextStep)
 	}
 	if out.Reason != "reviewer_block_replan" {
 		t.Errorf("Reason = %q", out.Reason)

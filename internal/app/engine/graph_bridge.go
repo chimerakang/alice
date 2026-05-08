@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -45,6 +46,7 @@ func (e *PlanExecuteEngine) BuildGraphRegistry(cc *ChatContext) *graph.Registry 
 	strictCfg := e.strictMode()
 	reviewMode := e.reviewMode()
 	reviewIsPerTask := reviewMode == ReviewModePerTask
+	replanCoord := newReplanCoordinator(e)
 
 	registry.Register(&graph.PlannerNode{
 		Planner:      e.planner,
@@ -52,10 +54,10 @@ func (e *PlanExecuteEngine) BuildGraphRegistry(cc *ChatContext) *graph.Registry 
 		MaxSubTasks:  15,
 	})
 	registry.Register(&graph.ExecutorNode{
-		Runner:               &executorSubTaskRunner{engine: e, cc: cc},
-		ReviewModeIsPerTask:  reviewIsPerTask,
-		FailurePauseEnabled:  e.cfg.OnSubTaskFailurePause != nil,
-		StrictReviewEnabled:  strictCfg.Enabled && reviewMode == ReviewModePerSubTask,
+		Runner:              &executorSubTaskRunner{engine: e, cc: cc},
+		ReviewModeIsPerTask: reviewIsPerTask,
+		FailurePauseEnabled: e.cfg.OnSubTaskFailurePause != nil,
+		StrictReviewEnabled: strictCfg.Enabled && reviewMode == ReviewModePerSubTask,
 	})
 	registry.Register(&graph.StrictReviewNode{
 		Reviewer:            &subTaskReviewerAdapter{engine: e, strictCfg: strictCfg},
@@ -63,10 +65,85 @@ func (e *PlanExecuteEngine) BuildGraphRegistry(cc *ChatContext) *graph.Registry 
 		ReviewModeIsPerTask: reviewIsPerTask,
 	})
 	registry.Register(&graph.ReviewerNode{
-		Reviewer: &taskReviewerAdapter{engine: e},
+		Reviewer: &taskReviewerAdapter{engine: e, replan: replanCoord},
+	})
+	registry.Register(&graph.ReplanSetupNode{
+		Decider: &replanDeciderAdapter{engine: e, replan: replanCoord},
 	})
 	registry.Register(&graph.ApprovalNode{})
 	return registry
+}
+
+// replanCoordinator is the in-process bridge between taskReviewerAdapter
+// (which has the just-finished review) and replanDeciderAdapter (which
+// needs that review to decide partial vs full retry on the next attempt).
+//
+// The legacy Run() shared this state via stack-local prevReview / prevPlan
+// vars on a single goroutine; the graph path crosses Walker hops, so the
+// state lives on a small struct that both adapters reference. Process-local
+// only — restart loses replan context, matching Run()'s behaviour.
+type replanCoordinator struct {
+	engine *PlanExecuteEngine
+
+	mu        sync.Mutex
+	perTask   map[string]*replanState
+}
+
+type replanState struct {
+	lastReview  ReviewResult
+	lastPlan    []hermes.SubTask
+	attemptIdx  int // 0 = initial run completed; 1+ = replan attempt index
+	maxAttempts int
+}
+
+func newReplanCoordinator(engine *PlanExecuteEngine) *replanCoordinator {
+	return &replanCoordinator{
+		engine:  engine,
+		perTask: make(map[string]*replanState),
+	}
+}
+
+func (c *replanCoordinator) recordReview(taskID string, review ReviewResult, plan []hermes.SubTask, maxAttempts int) {
+	if c == nil || taskID == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	st, ok := c.perTask[taskID]
+	if !ok {
+		st = &replanState{}
+		c.perTask[taskID] = st
+	}
+	st.lastReview = review
+	st.lastPlan = append([]hermes.SubTask(nil), plan...)
+	st.maxAttempts = maxAttempts
+}
+
+func (c *replanCoordinator) currentAttempt(taskID string) int {
+	if c == nil || taskID == "" {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	st, ok := c.perTask[taskID]
+	if !ok {
+		return 0
+	}
+	return st.attemptIdx
+}
+
+func (c *replanCoordinator) consumeForReplan(taskID string) (ReviewResult, []hermes.SubTask, int) {
+	if c == nil || taskID == "" {
+		return ReviewResult{}, nil, 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	st, ok := c.perTask[taskID]
+	if !ok {
+		return ReviewResult{}, nil, 0
+	}
+	st.attemptIdx++
+	return st.lastReview, append([]hermes.SubTask(nil), st.lastPlan...), st.attemptIdx
 }
 
 // RunViaGraph is the alternate Walker-driven entry point. Today its
@@ -266,13 +343,17 @@ func (a *subTaskReviewerAdapter) ReviewSubTask(ctx context.Context, state hermes
 	}, nil
 }
 
-// taskReviewerAdapter wraps the per-task review call. Replan is left
-// false — the recovery/replan loop stays in plan_execute's outer Run()
-// for now. ReviewerNode therefore terminates on block instead of
-// routing back to the planner; this matches the dead-code-in-production
-// posture of γ6.
+// taskReviewerAdapter wraps the per-task review call. After running
+// the reviewer it consults DecideRecovery to decide whether to ask the
+// graph for a replan — when DecideRecovery says retry within budget,
+// the adapter sets Replan=true so ReviewerNode routes to ReplanSetup;
+// otherwise it falls through to terminal as before. The just-finished
+// review + plan are stashed on the shared replanCoordinator so the
+// downstream replanDeciderAdapter can pick the partial-vs-full branch
+// without re-running the reviewer.
 type taskReviewerAdapter struct {
 	engine *PlanExecuteEngine
+	replan *replanCoordinator
 }
 
 func (a *taskReviewerAdapter) ReviewTask(ctx context.Context, state hermes.HermesState) (graph.TaskReviewResult, error) {
@@ -287,14 +368,92 @@ func (a *taskReviewerAdapter) ReviewTask(ctx context.Context, state hermes.Herme
 	if err != nil {
 		return graph.TaskReviewResult{}, err
 	}
+
+	retryCfg := a.engine.cfg.TaskRetry
+	if retryCfg.Enabled {
+		retryCfg = retryCfg.WithDefaults()
+	}
+	maxAttempts := 0
+	if retryCfg.Enabled {
+		maxAttempts = retryCfg.MaxTaskRetries
+	}
+	attempt := 0
+	if a.replan != nil {
+		attempt = a.replan.currentAttempt(state.TaskID)
+	}
+	decision := DecideRecovery(RecoveryRequest{
+		Mode:        "task_review",
+		Attempt:     attempt,
+		MaxAttempts: maxAttempts,
+		Review:      review,
+		TaskRetry:   retryCfg,
+	})
+	wantReplan := decision.Action == RecoveryActionRetry && retryCfg.Enabled && attempt < maxAttempts
+	if wantReplan && a.replan != nil {
+		a.replan.recordReview(state.TaskID, review, append([]hermes.SubTask(nil), state.Plan...), maxAttempts)
+	}
+
 	return graph.TaskReviewResult{
 		Verdict:      string(review.Verdict),
-		Replan:       false,
+		Replan:       wantReplan,
 		Feedback:     review.Feedback,
 		OverallScore: review.OverallScore,
 		Model:        review.ReviewerModel,
 		InputTokens:  review.InputTokens,
 		OutputTokens: review.OutputTokens,
 		CostUSD:      review.CostUSD,
+	}, nil
+}
+
+// replanDeciderAdapter is the engine-side ReplanDecider. It pulls the
+// last review + plan from the shared replanCoordinator (stashed by
+// taskReviewerAdapter at the end of the prior attempt), then runs the
+// existing buildPartialRetryPlan / buildPartialReplanGoal /
+// buildReplanGoal helpers to produce a ReplanDecision the graph can
+// install on the next state. Score threshold and goal text generation
+// are unchanged from the legacy Run() — this adapter is just relocating
+// the call sites.
+type replanDeciderAdapter struct {
+	engine *PlanExecuteEngine
+	replan *replanCoordinator
+}
+
+func (a *replanDeciderAdapter) DecideReplan(_ context.Context, state hermes.HermesState) (graph.ReplanDecision, error) {
+	if a == nil || a.engine == nil {
+		return graph.ReplanDecision{}, errors.New("engine: replanDeciderAdapter missing engine")
+	}
+	if a.replan == nil {
+		return graph.ReplanDecision{}, nil
+	}
+	prevReview, prevPlan, attemptIdx := a.replan.consumeForReplan(state.TaskID)
+	if attemptIdx == 0 {
+		// Coordinator had nothing to consume — nothing to replan.
+		return graph.ReplanDecision{}, nil
+	}
+
+	retryCfg := a.engine.cfg.TaskRetry.WithDefaults()
+	originalGoal := state.Goal
+	if state.Replan != nil && state.Replan.Goal != "" {
+		// Already replanning; never seen in practice (this node runs
+		// before PlannerNode clears Replan), but keep the original goal
+		// stable across attempts by preferring the unaugmented one.
+		originalGoal = state.Goal
+	}
+
+	partial := buildPartialRetryPlan(prevReview, prevPlan, retryCfg.ScoreThreshold)
+	if len(partial.Preserved) > 0 {
+		return graph.ReplanDecision{
+			Goal:              buildPartialReplanGoal(originalGoal, prevReview, partial),
+			Accumulated:       partial.Accumulated,
+			PreservedSubTasks: append([]hermes.SubTask(nil), partial.Preserved...),
+			AttemptIdx:        attemptIdx,
+			Trigger:           "partial",
+		}, nil
+	}
+	return graph.ReplanDecision{
+		Goal:        buildReplanGoal(originalGoal, prevReview, prevPlan),
+		Accumulated: "",
+		AttemptIdx:  attemptIdx,
+		Trigger:     "full",
 	}, nil
 }

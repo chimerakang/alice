@@ -55,7 +55,8 @@ type TaskReviewResult struct {
 // Routing rules:
 //
 //	verdict == "block" AND Replan
-//	  → route to RuntimeStepPlanner (replan attempt)
+//	  → route to RuntimeStepReplanSetup (decider chooses
+//	    partial vs full retry, then hands off to planner)
 //
 //	verdict == "fail"
 //	  → mark Status=Failed, route terminal
@@ -100,7 +101,7 @@ func (n *ReviewerNode) Handle(ctx context.Context, state hermes.HermesState) (No
 	case "block":
 		if res.Replan {
 			out := NodeOutput{
-				NextStep: hermes.RuntimeStepPlanner,
+				NextStep: hermes.RuntimeStepReplanSetup,
 				Reason:   "reviewer_block_replan",
 			}
 			if hasTelemetry(update) {

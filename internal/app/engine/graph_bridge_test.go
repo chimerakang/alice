@@ -97,6 +97,101 @@ func TestRunViaGraph_DrivesPlannerExecutorTerminal(t *testing.T) {
 	}
 }
 
+func TestRunViaGraph_ReplanLoopFromBlockReviewToPass(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	runner := &planExecuteRunner{}
+	reporter := &planExecuteReporter{}
+
+	plannerCalls := 0
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		plannerCalls++
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s1","description":"first attempt","tool_hints":["Read"]},` +
+				`{"id":"s2","description":"verify","tool_hints":["Bash"]}]` +
+				"\n```",
+			SessionID:    "planner-session",
+			InputTokens:  10,
+			OutputTokens: 5,
+		}, nil
+	}
+
+	// First review: block (low score → retry); second review: pass.
+	reviewPhase := &scriptedReviewPhase{
+		results: []ReviewResult{
+			{
+				ReviewerModel: "reviewer-1",
+				Verdict:       VerdictBlock,
+				OverallScore:  20,
+				Feedback:      "missing validation; needs replan",
+				SubTaskResults: []ReviewSubTaskResult{
+					{SubTaskID: "s1", Score: 15, Feedback: "shallow"},
+					{SubTaskID: "s2", Score: 18, Feedback: "incomplete"},
+				},
+				InputTokens: 10, OutputTokens: 5,
+			},
+			{
+				ReviewerModel: "reviewer-1",
+				Verdict:       VerdictPass,
+				OverallScore:  90,
+				Feedback:      "looks good",
+				SubTaskResults: []ReviewSubTaskResult{
+					{SubTaskID: "s1", Score: 92, Feedback: "ok"},
+					{SubTaskID: "s2", Score: 90, Feedback: "ok"},
+				},
+				InputTokens: 10, OutputTokens: 5,
+			},
+		},
+	}
+
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		PlannerModel:          "planner-model",
+		ProjectDir:            "/repo",
+		ChatID:                42,
+		MaxPlannerJSONRetries: 1,
+		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
+		ReviewPhase:           reviewPhase,
+		ReviewMode:            ReviewModePerTask,
+		TaskRetry:             TaskRetryConfig{Enabled: true, MaxTaskRetries: 2, ScoreThreshold: 60},
+	}, planFn, NewDirectEngine(runner), store, reporter)
+
+	cc := NewChatContext(42, 0, "/repo")
+	final, err := engine.RunViaGraph(context.Background(), "ship a small feature", cc)
+	if err != nil {
+		t.Fatalf("RunViaGraph: %v", err)
+	}
+	if final.NextStep != hermes.RuntimeStepTerminal {
+		t.Fatalf("final NextStep = %q, want terminal", final.NextStep)
+	}
+	if plannerCalls != 2 {
+		t.Errorf("planner calls = %d, want 2 (initial + replan)", plannerCalls)
+	}
+	if reviewPhase.calls != 2 {
+		t.Errorf("review calls = %d, want 2 (initial block, replan pass)", reviewPhase.calls)
+	}
+
+	history, err := store.ListSnapshotHistory(final.TaskID)
+	if err != nil {
+		t.Fatalf("ListSnapshotHistory: %v", err)
+	}
+	sawReplanSetup := false
+	plannerHops := 0
+	for _, snap := range history {
+		switch snap.SourceNode {
+		case hermes.RuntimeStepReplanSetup:
+			sawReplanSetup = true
+		case hermes.RuntimeStepPlanner:
+			plannerHops++
+		}
+	}
+	if !sawReplanSetup {
+		t.Errorf("snapshot history never went through replan_setup; SourceNodes: %v", history)
+	}
+	if plannerHops < 2 {
+		t.Errorf("expected at least 2 planner hops in history, got %d", plannerHops)
+	}
+}
+
 func TestRunViaGraph_RegistryHasAllNodes(t *testing.T) {
 	store := hermes.NewMemoryTaskStore()
 	runner := &planExecuteRunner{}
@@ -112,6 +207,7 @@ func TestRunViaGraph_RegistryHasAllNodes(t *testing.T) {
 		hermes.RuntimeStepExecutor,
 		hermes.RuntimeStepStrictReview,
 		hermes.RuntimeStepReviewer,
+		hermes.RuntimeStepReplanSetup,
 		hermes.RuntimeStepApproval,
 	} {
 		if _, ok := registry.Lookup(step); !ok {
