@@ -396,9 +396,9 @@ func LoadConfig() (*Config, error) {
 			CodexDeepModel:        "gpt-5.5",                    // /gdeep: powerful GPT tier (gpt-5.5-pro is API-key-only)
 			UseGPT4oMini:          false,
 			StickySession:         true,
-			SessionIdleTimeoutMin: 5,
+			SessionIdleTimeoutMin: 1440, // 24h, see #170
 			StickyMode:            true,
-			SessionIdleTimeout:    5,
+			SessionIdleTimeout:    1440,
 		},
 	}
 

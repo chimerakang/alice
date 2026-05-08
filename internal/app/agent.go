@@ -468,7 +468,7 @@ func NewAgentWithContext(client Client, chatCtx *ChatContext) *Agent {
 		threadID:           chatCtx.ThreadID,
 		chatContext:        chatCtx,
 		stickySession:      true,
-		sessionIdleTimeout: 5 * time.Minute,
+		sessionIdleTimeout: 24 * time.Hour,
 		execution:          appengine.NewExecutionLifecycle(),
 	}
 }
@@ -597,9 +597,12 @@ func (a *Agent) expireIdleStickySession(ps *projectState, now time.Time) {
 	if ps.ctx.LastActivity.IsZero() || now.Sub(ps.ctx.LastActivity) <= timeout {
 		return
 	}
-	log.Printf("[agent] sticky session expired after %s idle; clearing stale session context", now.Sub(ps.ctx.LastActivity).Round(time.Second))
+	// Clear the backend session ID only — keep RecentMsgs so the memory
+	// bridge can still inject the user's last conversation when the next
+	// message arrives. Session lifecycle and conversation memory are
+	// different concerns and should not expire together (#170).
+	log.Printf("[agent] sticky session expired after %s idle; clearing backend session (memory preserved)", now.Sub(ps.ctx.LastActivity).Round(time.Second))
 	ps.ctx.ClearSession(BackendKindForModel(a.lastUsedModel))
-	ps.ctx.RecentMsgs = nil
 	a.lastUsedModel = ""
 }
 

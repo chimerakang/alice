@@ -34,8 +34,11 @@ func TestModelRoutingConfigUnmarshalKeepsLegacyKeys(t *testing.T) {
 func TestModelRoutingConfigNormalizeUsesConservativeDefaults(t *testing.T) {
 	cfg := ModelRoutingConfig{}
 	cfg.Normalize()
-	if cfg.IdleTimeoutMinutes() != 5 {
-		t.Fatalf("IdleTimeoutMinutes = %d, want 5", cfg.IdleTimeoutMinutes())
+	// Default 24h (1440 min) per #170 — Telegram users routinely pause for
+	// hours/overnight; the previous 5-min default wiped recent context on
+	// normal-life pauses.
+	if cfg.IdleTimeoutMinutes() != 1440 {
+		t.Fatalf("IdleTimeoutMinutes = %d, want 1440 (24h)", cfg.IdleTimeoutMinutes())
 	}
 	if cfg.StickyEnabled() {
 		t.Fatalf("StickyEnabled = true, want false for zero-value config")

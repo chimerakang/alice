@@ -80,8 +80,11 @@ func (c *ModelRoutingConfig) Normalize() {
 	} else if c.SessionIdleTimeoutMin > 0 {
 		c.SessionIdleTimeout = c.SessionIdleTimeoutMin
 	} else {
-		c.SessionIdleTimeout = 5
-		c.SessionIdleTimeoutMin = 5
+		// 24 hours in minutes; matches human chat cadence (lunch / meeting /
+		// overnight gap is normal). See #170 for analysis of the previous
+		// 5-minute default that wiped context on routine pauses.
+		c.SessionIdleTimeout = 1440
+		c.SessionIdleTimeoutMin = 1440
 	}
 	if c.StickyMode || c.StickySession {
 		c.StickyMode = true
@@ -100,7 +103,7 @@ func (c ModelRoutingConfig) IdleTimeoutMinutes() int {
 	if c.SessionIdleTimeoutMin > 0 {
 		return c.SessionIdleTimeoutMin
 	}
-	return 5
+	return 1440 // 24h, see Normalize()
 }
 
 // ModelRoute 單一路由規則
