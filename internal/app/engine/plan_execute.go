@@ -2052,8 +2052,8 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 						e.emitRuntimeEvent(ctx, RecoveryTraceEvent(recoveryReq, recovery, time.Now()))
 						if recovery.Action == RecoveryActionRetry {
 							attempts = recovery.NextAttempt
-							if err := e.store.UpdateSubTask(taskID, idx, hermes.SubTaskInProgress, text, tokensUsed); err != nil {
-								log.Printf("[plan_execute] UpdateSubTask(retry) idx=%d: %v", idx, err)
+							if err := e.commitSubTaskRetryBoundary(taskID, idx, text, tokensUsed, attempts); err != nil {
+								log.Printf("[plan_execute] commitSubTaskRetryBoundary idx=%d: %v", idx, err)
 							}
 							continue
 						}
@@ -2069,6 +2069,37 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 		}
 		return finalStatus, finalText, tokensUsed, finalStatus == hermes.SubTaskDone, metrics
 	}
+}
+
+func (e *PlanExecuteEngine) commitSubTaskRetryBoundary(taskID string, idx int, result string, tokensUsed int, attempt int) error {
+	current, err := e.store.GetTask(taskID)
+	if err != nil {
+		return err
+	}
+	if idx < 0 || idx >= len(current.Plan) {
+		return fmt.Errorf("sub-task index %d out of range", idx)
+	}
+	plan := append([]hermes.SubTask(nil), current.Plan...)
+	plan[idx].Status = hermes.SubTaskInProgress
+	plan[idx].Result = result
+	plan[idx].TokensUsed += tokensUsed
+	plan[idx].Attempts++
+	currentIdx := idx
+	_, err = e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID: taskID,
+		Updates: []hermes.StateUpdate{
+			{Plan: plan, CurrentIdx: &currentIdx},
+			hermes.StateUpdateForSubTaskResult(plan[idx], idx),
+		},
+		NextStep:   hermes.RuntimeStepExecutor,
+		SourceNode: hermes.RuntimeStepReviewer,
+		Metadata: hermes.SnapshotMetadata{
+			Source:  "plan_execute",
+			Reason:  "strict_review_retry",
+			Attempt: attempt,
+		},
+	})
+	return err
 }
 
 func (e *PlanExecuteEngine) buildReviewRequest(state hermes.TaskState, mode ReviewMode, subTaskIdx int, retryFeedback string) ReviewRequest {

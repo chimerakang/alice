@@ -264,6 +264,76 @@ func TestService_Integration_FullLifecycle(t *testing.T) {
 	}
 }
 
+func TestService_UpdateSubTaskSnapshotWritesRuntimeSnapshot(t *testing.T) {
+	svc, store := newIntegrationService(t)
+	ts := makeIntegrationTask("t-snap-subtask", 100)
+	if _, err := store.CreateTask(ts); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	executing := hermes.TaskStatusExecuting
+	currentIdx := 0
+	if _, err := store.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     ts.ID,
+		Updates:    []hermes.StateUpdate{{Status: &executing, CurrentIdx: &currentIdx}},
+		NextStep:   hermes.RuntimeStepExecutor,
+		SourceNode: hermes.RuntimeStepPlanner,
+		Metadata:   hermes.SnapshotMetadata{Source: "test", Reason: "plan_ready"},
+	}); err != nil {
+		t.Fatalf("initial CommitRuntimeStep: %v", err)
+	}
+
+	if err := svc.UpdateSubTaskSnapshot(ts.ID, 0, hermes.SubTaskDone, "retry fixed result", 7, "retry_writeback"); err != nil {
+		t.Fatalf("UpdateSubTaskSnapshot: %v", err)
+	}
+
+	got, err := svc.GetTask(ts.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Plan[0].Status != hermes.SubTaskDone || got.Plan[0].Result != "retry fixed result" || got.Plan[0].TokensUsed != 7 || got.Plan[0].Attempts != 1 {
+		t.Fatalf("snapshot-backed subtask mismatch: %#v", got.Plan[0])
+	}
+	latest, err := store.GetLatestSnapshot(ts.ID)
+	if err != nil {
+		t.Fatalf("GetLatestSnapshot: %v", err)
+	}
+	if latest.Metadata.Reason != "retry_writeback" {
+		t.Fatalf("latest snapshot reason = %q, want retry_writeback", latest.Metadata.Reason)
+	}
+	if latest.Writes.Plan == nil || latest.Writes.Plan[0].Result != "retry fixed result" {
+		t.Fatalf("latest snapshot writes missing retry result: %#v", latest.Writes.Plan)
+	}
+}
+
+func TestService_DelegatesRuntimeStepStore(t *testing.T) {
+	svc, store := newIntegrationService(t)
+	ts := makeIntegrationTask("t-service-runtime", 100)
+	if _, err := store.CreateTask(ts); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	runtime, ok := any(svc).(hermes.RuntimeStepStore)
+	if !ok {
+		t.Fatal("task.Service should implement hermes.RuntimeStepStore")
+	}
+	executing := hermes.TaskStatusExecuting
+	if _, err := runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     ts.ID,
+		Updates:    []hermes.StateUpdate{{Status: &executing}},
+		NextStep:   hermes.RuntimeStepExecutor,
+		SourceNode: hermes.RuntimeStepPlanner,
+		Metadata:   hermes.SnapshotMetadata{Source: "test", Reason: "service_runtime_delegate"},
+	}); err != nil {
+		t.Fatalf("CommitRuntimeStep: %v", err)
+	}
+	latest, err := store.GetLatestSnapshot(ts.ID)
+	if err != nil {
+		t.Fatalf("GetLatestSnapshot: %v", err)
+	}
+	if latest.Metadata.Reason != "service_runtime_delegate" {
+		t.Fatalf("latest snapshot reason = %q", latest.Metadata.Reason)
+	}
+}
+
 func TestService_Integration_GetActiveForChat(t *testing.T) {
 	svc, store := newIntegrationService(t)
 	ts := makeIntegrationTask("t-int-4", 300)

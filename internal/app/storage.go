@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"claude-tg-agent/internal/app/hermes"
 	"claude-tg-agent/internal/app/security"
 
 	_ "modernc.org/sqlite" // Pure Go SQLite driver (no CGO required)
@@ -2035,14 +2036,20 @@ func InitStorage(dbPath string) error {
 		} else if n, _ := res.RowsAffected(); n > 0 {
 			log.Printf("[storage] marked %d dangling tasks as failed (process restart recovery)", n)
 		}
-		if res, err := db.Exec(
-			`UPDATE hermes_task_states SET status='failed', updated_at=? WHERE status IN ('executing','planning','validating')`,
-			now,
-		); err != nil {
+		// After #169 slice 3d the legacy hermes_task_states.status column
+		// is no longer authoritative — read paths derive status from the
+		// latest snapshot's denormalized state_status. Zombie sweep moves
+		// to a snapshot-aware path that writes both the legacy UPDATE
+		// (kept for any read still going through it) and a fresh failure
+		// snapshot via SweepZombieTasks.
+		if hermesStore, err := hermes.NewSQLiteTaskStore(db); err != nil {
+			log.Printf("[storage] zombie sweep init hermes store: %v", err)
+		} else if n, err := hermesStore.SweepZombieTasks("startup_zombie_sweep"); err != nil {
 			log.Printf("[storage] zombie sweep hermes_task_states: %v", err)
-		} else if n, _ := res.RowsAffected(); n > 0 {
-			log.Printf("[storage] marked %d dangling hermes_task_states as failed", n)
+		} else if n > 0 {
+			log.Printf("[storage] marked %d dangling hermes_task_states as failed (snapshot-aware)", n)
 		}
+		_ = now // legacy `tasks` table still uses the timestamp above
 	}
 
 	return nil

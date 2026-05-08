@@ -964,6 +964,22 @@ func TestPlanExecuteEngineRetriesBlockedSubTaskAndContinues(t *testing.T) {
 	if state.Plan[0].Attempts != 2 || state.Plan[1].Attempts != 1 {
 		t.Fatalf("unexpected attempts: %#v", state.Plan)
 	}
+	history, err := store.ListSnapshotHistory(taskID)
+	if err != nil {
+		t.Fatalf("ListSnapshotHistory: %v", err)
+	}
+	foundStrictRetrySnapshot := false
+	for _, snap := range history {
+		if snap.Metadata.Reason == "strict_review_retry" {
+			foundStrictRetrySnapshot = true
+			if snap.Writes.Plan == nil || snap.Writes.Plan[0].Status != hermes.SubTaskInProgress {
+				t.Fatalf("strict retry snapshot did not persist in-progress retry plan: %#v", snap.Writes.Plan)
+			}
+		}
+	}
+	if !foundStrictRetrySnapshot {
+		t.Fatalf("missing strict_review_retry snapshot in history: %#v", history)
+	}
 	if reviewPhase.calls != 3 || reviewStore.calls != 3 {
 		t.Fatalf("review calls = %d store calls = %d, want 3/3", reviewPhase.calls, reviewStore.calls)
 	}
@@ -1352,28 +1368,34 @@ type noRuntimeStore struct {
 	statuses map[string]hermes.TaskStatus
 }
 
-func (s *noRuntimeStore) CreateTask(t hermes.TaskState) (hermes.TaskState, error)              { return t, nil }
-func (s *noRuntimeStore) GetTask(id string) (hermes.TaskState, error)                          { return hermes.TaskState{}, hermes.ErrNoTask }
-func (s *noRuntimeStore) GetActiveTaskForChat(chatID int64) (hermes.TaskState, error)          { return hermes.TaskState{}, hermes.ErrNoTask }
-func (s *noRuntimeStore) StorePlan(taskID string, plan []hermes.SubTask) error                 { return nil }
+func (s *noRuntimeStore) CreateTask(t hermes.TaskState) (hermes.TaskState, error) { return t, nil }
+func (s *noRuntimeStore) GetTask(id string) (hermes.TaskState, error) {
+	return hermes.TaskState{}, hermes.ErrNoTask
+}
+func (s *noRuntimeStore) GetActiveTaskForChat(chatID int64) (hermes.TaskState, error) {
+	return hermes.TaskState{}, hermes.ErrNoTask
+}
+func (s *noRuntimeStore) StorePlan(taskID string, plan []hermes.SubTask) error { return nil }
 func (s *noRuntimeStore) UpdateSubTask(taskID string, idx int, status hermes.SubTaskStatus, result string, tokensUsed int) error {
 	return nil
 }
-func (s *noRuntimeStore) MarkSubTaskStarted(taskID string, idx int) error                      { return nil }
+func (s *noRuntimeStore) MarkSubTaskStarted(taskID string, idx int) error { return nil }
 func (s *noRuntimeStore) AdvanceTask(taskID string, nextIdx int, status hermes.TaskStatus) error {
 	return nil
 }
-func (s *noRuntimeStore) AppendArtifact(taskID string, artifact hermes.Artifact) error         { return nil }
-func (s *noRuntimeStore) UpdateAccumulated(taskID string, accumulated string) error            { return nil }
-func (s *noRuntimeStore) UpdatePlannerSession(taskID, sessionID string) error                  { return nil }
-func (s *noRuntimeStore) MarkInterrupted(taskID string, messageID int64) error                 { return nil }
+func (s *noRuntimeStore) AppendArtifact(taskID string, artifact hermes.Artifact) error { return nil }
+func (s *noRuntimeStore) UpdateAccumulated(taskID string, accumulated string) error    { return nil }
+func (s *noRuntimeStore) UpdatePlannerSession(taskID, sessionID string) error          { return nil }
+func (s *noRuntimeStore) MarkInterrupted(taskID string, messageID int64) error         { return nil }
 func (s *noRuntimeStore) MarkStatus(taskID string, status hermes.TaskStatus) error {
 	s.statuses[taskID] = status
 	return nil
 }
-func (s *noRuntimeStore) ResetBudgetStartedAt(taskID string, t time.Time) error                { return nil }
-func (s *noRuntimeStore) AddTokenUsage(taskID string, delta int) error                         { return nil }
-func (s *noRuntimeStore) AddModelUsage(taskID, model string, in, out int, cost float64) error  { return nil }
+func (s *noRuntimeStore) ResetBudgetStartedAt(taskID string, t time.Time) error { return nil }
+func (s *noRuntimeStore) AddTokenUsage(taskID string, delta int) error          { return nil }
+func (s *noRuntimeStore) AddModelUsage(taskID, model string, in, out int, cost float64) error {
+	return nil
+}
 func (s *noRuntimeStore) AddModelUsageBreakdown(taskID, model string, u hermes.TokenUsageBreakdown) error {
 	return nil
 }

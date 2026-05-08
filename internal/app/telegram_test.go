@@ -2618,6 +2618,35 @@ func TestHermesFailureRetryButtonSendsVisibleAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestFormatHermesFailurePauseDetailPrioritizesReviewerFeedback(t *testing.T) {
+	detail := formatHermesFailurePauseDetail(`PARTIAL
+我做了很多事情，前面有很多執行過程。
+
+---
+
+**結論**：IAMExternal 已改完，測試通過。
+
+**證據**：
+- go test PASS
+
+Reviewer feedback:
+verdict: block
+block_tags: missing_validation
+feedback: 需要補 data 層 super_admin membership 驗證。`)
+
+	if !strings.Contains(detail, "Reviewer 擋下原因") ||
+		!strings.Contains(detail, "需要補 data 層 super_admin membership 驗證") {
+		t.Fatalf("reviewer feedback missing:\n%s", detail)
+	}
+	if !strings.Contains(detail, "Executor 摘要") ||
+		!strings.Contains(detail, "IAMExternal 已改完") {
+		t.Fatalf("executor summary missing:\n%s", detail)
+	}
+	if strings.Contains(detail, "go test PASS") {
+		t.Fatalf("executor evidence should be trimmed from concise summary:\n%s", detail)
+	}
+}
+
 func TestClearHermesFailurePauseRequiresMatchingTaskAndIndex(t *testing.T) {
 	key := chatKey{chatID: 42, threadID: 7}
 	bot := &TelegramBot{

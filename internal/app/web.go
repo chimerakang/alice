@@ -339,7 +339,16 @@ func runtimeStorageHealth() map[string]interface{} {
 	} else {
 		status["active_tasks_error"] = err.Error()
 	}
-	if count, err := countRows(db, `SELECT COUNT(*) FROM hermes_task_states WHERE status IN ('planning','executing','validating')`); err == nil {
+	// After #169 slice 3d the legacy hermes_task_states.status column is no
+	// longer authoritative. Active-task count derives from the latest
+	// snapshot's denormalized state_status, falling back to the legacy
+	// column for tasks created before the first CommitRuntimeStep.
+	if count, err := countRows(db, `
+		SELECT COUNT(*) FROM hermes_task_states AS task
+		WHERE COALESCE((
+			SELECT s.state_status FROM hermes_snapshots s
+			WHERE s.task_id = task.id ORDER BY s.step DESC LIMIT 1
+		), task.status) IN ('planning','executing','validating')`); err == nil {
 		status["active_hermes_tasks"] = count
 	} else {
 		status["active_hermes_tasks_error"] = err.Error()

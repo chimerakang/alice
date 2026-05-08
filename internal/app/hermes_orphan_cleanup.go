@@ -16,10 +16,13 @@ import (
 const staleInterruptCutoff = 24 * time.Hour
 
 // staleInterruptStore is the read surface needed for the orphan-cleanup
-// pass. Implemented by hermes.SQLiteTaskStore.
+// pass. Implemented by hermes.SQLiteTaskStore. After #169 slice 3d uses
+// MarkTaskFailedDurable so the failure also lands in a snapshot — without
+// it the snapshot's state_status (now authoritative) would still report
+// the task as executing.
 type staleInterruptStore interface {
 	ListStaleInterrupts(cutoff time.Time) ([]hermes.StaleInterruptRef, error)
-	MarkStatus(taskID string, status hermes.TaskStatus) error
+	MarkTaskFailedDurable(taskID, reason string) error
 }
 
 // SweepStaleHermesInterrupts marks tasks failed when their latest snapshot
@@ -48,7 +51,7 @@ func SweepStaleHermesInterrupts(ctx context.Context, store staleInterruptStore) 
 		idleFor := time.Since(ref.Interrupt.CreatedAt).Round(time.Second)
 		log.Printf("[hermes.orphan] task=%s chat=%d thread=%d interrupt_id=%s idle=%s reason=%s — marking failed",
 			ref.TaskID, ref.ChatID, ref.ThreadID, ref.Interrupt.ID, idleFor, ref.Interrupt.Reason)
-		if err := store.MarkStatus(ref.TaskID, hermes.TaskStatusFailed); err != nil {
+		if err := store.MarkTaskFailedDurable(ref.TaskID, "stale_interrupt_orphan"); err != nil {
 			log.Printf("[hermes.orphan] mark failed task=%s: %v", ref.TaskID, err)
 			continue
 		}

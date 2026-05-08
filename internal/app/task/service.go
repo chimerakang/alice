@@ -65,6 +65,7 @@
 package task
 
 import (
+	"fmt"
 	"time"
 
 	"claude-tg-agent/internal/app/hermes"
@@ -130,6 +131,47 @@ func (svc *Service) StorePlan(taskID string, plan []hermes.SubTask) error {
 // UpdateSubTask implements hermes.TaskStateStore.
 func (svc *Service) UpdateSubTask(taskID string, idx int, status hermes.SubTaskStatus, result string, tokensUsed int) error {
 	return svc.store.UpdateSubTask(taskID, idx, status, result, tokensUsed)
+}
+
+// UpdateSubTaskSnapshot updates a sub-task through CommitRuntimeStep when the
+// backing store supports runtime snapshots. It preserves the legacy
+// UpdateSubTask merge semantics while keeping snapshot-priority read paths in
+// sync. Stores without RuntimeStepStore support fall back to UpdateSubTask.
+func (svc *Service) UpdateSubTaskSnapshot(taskID string, idx int, status hermes.SubTaskStatus, result string, tokensUsed int, reason string) error {
+	runtime, ok := svc.store.(hermes.RuntimeStepStore)
+	if !ok {
+		return svc.store.UpdateSubTask(taskID, idx, status, result, tokensUsed)
+	}
+	current, err := svc.store.GetTask(taskID)
+	if err != nil {
+		return err
+	}
+	if idx < 0 || idx >= len(current.Plan) {
+		return fmt.Errorf("sub-task index %d out of range", idx)
+	}
+	plan := append([]hermes.SubTask(nil), current.Plan...)
+	plan[idx].Status = status
+	plan[idx].Result = result
+	plan[idx].TokensUsed += tokensUsed
+	plan[idx].Attempts++
+	currentIdx := current.CurrentIdx
+	if reason == "" {
+		reason = "subtask_update"
+	}
+	_, err = runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID: taskID,
+		Updates: []hermes.StateUpdate{
+			{Plan: plan, CurrentIdx: &currentIdx},
+			hermes.StateUpdateForSubTaskResult(plan[idx], idx),
+		},
+		NextStep:   hermes.RuntimeStepExecutor,
+		SourceNode: hermes.RuntimeStepExecutor,
+		Metadata: hermes.SnapshotMetadata{
+			Source: "task_service",
+			Reason: reason,
+		},
+	})
+	return err
 }
 
 // MarkSubTaskStarted implements hermes.TaskStateStore.
@@ -210,6 +252,26 @@ func (svc *Service) AddPhaseUsageBreakdown(taskID, phase, model string, usage he
 // ListTasksForChat implements hermes.TaskStateStore.
 func (svc *Service) ListTasksForChat(chatID int64, limit int) ([]hermes.TaskState, error) {
 	return svc.store.ListTasksForChat(chatID, limit)
+}
+
+// CommitRuntimeStep implements hermes.RuntimeStepStore when the wrapped store
+// supports runtime commits. This keeps callers that pass *Service as their task
+// store on the durable snapshot path.
+func (svc *Service) CommitRuntimeStep(commit hermes.RuntimeCommit) (hermes.Snapshot, error) {
+	runtime, ok := svc.store.(hermes.RuntimeStepStore)
+	if !ok {
+		if commit.CreatedAt.IsZero() {
+			commit.CreatedAt = time.Now()
+		}
+		return hermes.Snapshot{
+			TaskID:     commit.TaskID,
+			NextStep:   commit.NextStep,
+			SourceNode: commit.SourceNode,
+			Metadata:   commit.Metadata,
+			CreatedAt:  commit.CreatedAt,
+		}, nil
+	}
+	return runtime.CommitRuntimeStep(commit)
 }
 
 // IsTerminal reports whether s is a terminal task status (done, failed, or

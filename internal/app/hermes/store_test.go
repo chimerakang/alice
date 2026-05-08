@@ -1423,3 +1423,147 @@ func TestListTasksForChat_AppliesSnapshotOverlay(t *testing.T) {
 		}
 	}
 }
+
+// ── Slice 3d: snapshot is authoritative for active-task filter ─────────────
+
+func TestGetActiveTaskForChat_FiltersOnSnapshotStatus(t *testing.T) {
+	// Even if some path were to set legacy.status='executing' on a task
+	// whose latest snapshot says 'done', the filter must respect the
+	// snapshot. Verifies state_status column is the source of truth.
+	store := newTestStore(t)
+	chatID := int64(80)
+	task, err := store.CreateTask(makeTask("task-3d-active", chatID))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	// First commit: executing
+	executing := TaskStatusExecuting
+	idx := 0
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     task.ID,
+		Updates:    []StateUpdate{{Status: &executing, CurrentIdx: &idx}},
+		NextStep:   RuntimeStepExecutor,
+		SourceNode: RuntimeStepPlanner,
+	}); err != nil {
+		t.Fatalf("commit executing: %v", err)
+	}
+	if got, err := store.GetActiveTaskForChat(chatID); err != nil || got.ID != task.ID {
+		t.Fatalf("active task should be present after executing commit: id=%q err=%v", got.ID, err)
+	}
+
+	// Second commit: done (terminal). Filter must exclude it.
+	done := TaskStatusDone
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     task.ID,
+		Updates:    []StateUpdate{{Status: &done}},
+		NextStep:   RuntimeStepTerminal,
+		SourceNode: RuntimeStepReviewer,
+	}); err != nil {
+		t.Fatalf("commit done: %v", err)
+	}
+	got, err := store.GetActiveTaskForChat(chatID)
+	if err != ErrNoTask {
+		t.Errorf("after terminal snapshot expected ErrNoTask, got id=%q err=%v", got.ID, err)
+	}
+}
+
+func TestGetActiveTaskForChat_FallsBackToLegacyStatusWhenNoSnapshot(t *testing.T) {
+	// CreateTask writes only the legacy row (no snapshot yet). Filter
+	// must still find such a fresh task as active via COALESCE fallback.
+	store := newTestStore(t)
+	chatID := int64(81)
+	task, err := store.CreateTask(makeTask("task-3d-fresh", chatID))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	got, err := store.GetActiveTaskForChat(chatID)
+	if err != nil {
+		t.Fatalf("fresh task should be active via legacy fallback, got err=%v", err)
+	}
+	if got.ID != task.ID {
+		t.Errorf("active task id = %q, want %q", got.ID, task.ID)
+	}
+}
+
+func TestSweepZombieTasks_MarksNonTerminalSnapshotsAsFailed(t *testing.T) {
+	store := newTestStore(t)
+
+	// Three tasks: one executing, one already done, one with no snapshot.
+	executingTask, _ := store.CreateTask(makeTask("zombie-exec", 90))
+	doneTask, _ := store.CreateTask(makeTask("zombie-done", 91))
+	freshTask, _ := store.CreateTask(makeTask("zombie-fresh", 92))
+
+	executing := TaskStatusExecuting
+	idx := 0
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     executingTask.ID,
+		Updates:    []StateUpdate{{Status: &executing, CurrentIdx: &idx}},
+		NextStep:   RuntimeStepExecutor,
+		SourceNode: RuntimeStepPlanner,
+	}); err != nil {
+		t.Fatalf("commit executing: %v", err)
+	}
+	done := TaskStatusDone
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     doneTask.ID,
+		Updates:    []StateUpdate{{Status: &done}},
+		NextStep:   RuntimeStepTerminal,
+		SourceNode: RuntimeStepExecutor,
+	}); err != nil {
+		t.Fatalf("commit done: %v", err)
+	}
+
+	swept, err := store.SweepZombieTasks("test_sweep")
+	if err != nil {
+		t.Fatalf("SweepZombieTasks: %v", err)
+	}
+	// executingTask + freshTask (planning) should be swept; doneTask must not.
+	if swept != 2 {
+		t.Errorf("swept = %d, want 2", swept)
+	}
+
+	// Verify snapshots now have terminal state for the two swept tasks.
+	for _, id := range []string{executingTask.ID, freshTask.ID} {
+		snap, err := store.GetLatestSnapshot(id)
+		if err != nil {
+			t.Errorf("GetLatestSnapshot(%s): %v", id, err)
+			continue
+		}
+		if snap.State.Status != TaskStatusFailed {
+			t.Errorf("task %s: status = %q, want failed", id, snap.State.Status)
+		}
+		if snap.Metadata.Source != "orphan_recovery" || snap.Metadata.Reason != "test_sweep" {
+			t.Errorf("task %s metadata = %+v, want orphan_recovery/test_sweep", id, snap.Metadata)
+		}
+	}
+	// The done task's latest snapshot must remain done (not swept).
+	doneSnap, err := store.GetLatestSnapshot(doneTask.ID)
+	if err != nil {
+		t.Fatalf("GetLatestSnapshot(done): %v", err)
+	}
+	if doneSnap.State.Status != TaskStatusDone {
+		t.Errorf("done task latest status = %q, want done", doneSnap.State.Status)
+	}
+}
+
+func TestMarkTaskFailedDurable_WritesSnapshotWithReason(t *testing.T) {
+	store := newTestStore(t)
+	task, err := store.CreateTask(makeTask("mark-failed", 100))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	if err := store.MarkTaskFailedDurable(task.ID, "stale_interrupt_orphan"); err != nil {
+		t.Fatalf("MarkTaskFailedDurable: %v", err)
+	}
+	snap, err := store.GetLatestSnapshot(task.ID)
+	if err != nil {
+		t.Fatalf("GetLatestSnapshot: %v", err)
+	}
+	if snap.State.Status != TaskStatusFailed {
+		t.Errorf("snapshot status = %q, want failed", snap.State.Status)
+	}
+	if snap.Metadata.Source != "orphan_recovery" || snap.Metadata.Reason != "stale_interrupt_orphan" {
+		t.Errorf("snapshot metadata = %+v", snap.Metadata)
+	}
+}

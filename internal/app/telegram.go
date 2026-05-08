@@ -6334,12 +6334,8 @@ func (t *TelegramBot) makeHermesFailureDecisionCallback(key chatKey, ch chan app
 		if body != "" {
 			header += "\n• " + body
 		}
-		if errText != "" {
-			snippet := errText
-			if rs := []rune(snippet); len(rs) > 600 {
-				snippet = string(rs[:600]) + "…"
-			}
-			header += "\n\n" + snippet
+		if detail := formatHermesFailurePauseDetail(errText); detail != "" {
+			header += "\n\n" + detail
 		}
 		header += "\n\n按鈕無回應 10 分鐘將自動跳過。"
 
@@ -6380,6 +6376,56 @@ func (t *TelegramBot) makeHermesFailureDecisionCallback(key chatKey, ch chan app
 			return appengine.FailurePauseChoice{Decision: appengine.FailureSkip}
 		}
 	}
+}
+
+func formatHermesFailurePauseDetail(errText string) string {
+	errText = strings.TrimSpace(errText)
+	if errText == "" {
+		return ""
+	}
+	if !strings.HasPrefix(errText, "PARTIAL") {
+		return "錯誤摘要：\n" + truncateRunesText(errText, 700)
+	}
+
+	body := strings.TrimSpace(strings.TrimPrefix(errText, "PARTIAL"))
+	executorText := body
+	reviewerText := ""
+	if before, after, ok := strings.Cut(body, "\n\nReviewer feedback:"); ok {
+		executorText = strings.TrimSpace(before)
+		reviewerText = strings.TrimSpace(after)
+	}
+
+	parts := make([]string, 0, 2)
+	if reviewerText != "" {
+		parts = append(parts, "Reviewer 擋下原因：\n"+truncateRunesText(reviewerText, 900))
+	}
+	if executorText != "" {
+		parts = append(parts, "Executor 摘要：\n"+truncateRunesText(extractHermesExecutorSummary(executorText), 500))
+	}
+	if len(parts) == 0 {
+		return "部分完成，但缺少可顯示的 reviewer/executor 摘要。"
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+func extractHermesExecutorSummary(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+
+	for _, marker := range []string{"**結論**", "結論：", "結論:"} {
+		if idx := strings.Index(text, marker); idx >= 0 {
+			summary := strings.TrimSpace(text[idx:])
+			for _, endMarker := range []string{"\n\n**證據**", "\n\n證據：", "\n\n證據:"} {
+				if end := strings.Index(summary, endMarker); end >= 0 {
+					return strings.TrimSpace(summary[:end])
+				}
+			}
+			return summary
+		}
+	}
+	return text
 }
 
 func (t *TelegramBot) clearHermesFailurePause(key chatKey, taskID string, idx int) bool {

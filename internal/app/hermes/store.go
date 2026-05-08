@@ -172,14 +172,24 @@ func (s *SQLiteTaskStore) migrate() error {
 			metadata_json         TEXT NOT NULL DEFAULT '{}',
 			parent_snapshot_id    TEXT NOT NULL DEFAULT '',
 			channel_versions_json TEXT NOT NULL DEFAULT '{}',
+			state_status          TEXT NOT NULL DEFAULT '',
 			created_at            TEXT NOT NULL
 		)`,
+		// Additive migration: pre-existing snapshots tables get the
+		// state_status column. SQLite does not support IF NOT EXISTS on
+		// ALTER TABLE — duplicate-column error is ignored by execIgnore.
+		`ALTER TABLE hermes_snapshots ADD COLUMN state_status TEXT NOT NULL DEFAULT ''`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_hermes_snapshots_task_step
 			ON hermes_snapshots(task_id, step)`,
 		`CREATE INDEX IF NOT EXISTS idx_hermes_snapshots_task_created
 			ON hermes_snapshots(task_id, created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_hermes_snapshots_thread_created
 			ON hermes_snapshots(chat_id, thread_id, created_at)`,
+		// Index covers the slice 3d filter "latest snapshot per task with
+		// non-terminal status" used by GetActiveTaskForChat, web health
+		// check, and the startup zombie sweep.
+		`CREATE INDEX IF NOT EXISTS idx_hermes_snapshots_task_step_status
+			ON hermes_snapshots(task_id, step DESC, state_status)`,
 		`CREATE TABLE IF NOT EXISTS tasks (
 			id                  TEXT PRIMARY KEY,
 			chat_id             INTEGER NOT NULL DEFAULT 0,
@@ -372,12 +382,15 @@ func (s *SQLiteTaskStore) CreateSnapshot(snapshot Snapshot) (Snapshot, error) {
 		_, err := s.db.Exec(`
 			INSERT INTO hermes_snapshots
 				(id, task_id, chat_id, thread_id, step, state_json, next_step, source_node,
-				 writes_json, metadata_json, parent_snapshot_id, channel_versions_json, created_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+				 writes_json, metadata_json, parent_snapshot_id, channel_versions_json,
+				 state_status, created_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			snapshot.ID, snapshot.TaskID, snapshot.ChatID, snapshot.ThreadID, snapshot.Step,
 			string(stateJSON), string(snapshot.NextStep), string(snapshot.SourceNode),
 			string(writesJSON), string(metadataJSON), snapshot.ParentSnapshotID,
-			string(channelVersionsJSON), snapshot.CreatedAt.Format(time.RFC3339),
+			string(channelVersionsJSON),
+			string(snapshot.State.Status),
+			snapshot.CreatedAt.Format(time.RFC3339),
 		)
 		return err
 	})
@@ -486,20 +499,36 @@ func (s *SQLiteTaskStore) CommitRuntimeStep(commit RuntimeCommit) (Snapshot, err
 			interruptedBy = nextState.Interrupt.MessageID
 		}
 		now := commit.CreatedAt.Format(time.RFC3339)
+		// After #169 slice 3d the snapshot is the canonical source for
+		// reducer-managed fields; this UPDATE is the bare minimum needed to
+		// keep two pre-existing legacy paths working:
+		//
+		//   - status: GetActiveTaskForChat / web health / zombie sweep all
+		//     filter via COALESCE(snapshot.state_status, task.status), so
+		//     the legacy column is the fallback for tasks that have no
+		//     snapshot yet (CreateTask without any commit). Keeping it
+		//     fresh costs nothing and avoids edge-case divergence.
+		//   - interrupted_by: dashboard SQL JOINs and a few legacy code
+		//     paths still consume this column directly.
+		//   - updated_at: row-touch timestamp used by ListTasksForChat
+		//     ORDER BY for tie-breaking.
+		//
+		// The bulky JSON columns (plan_json, model_usages, phase_usages,
+		// accumulated, token_budget) and reducer-managed scalars
+		// (current_idx, planner_session, github_issue_number) are no
+		// longer mirrored — the snapshot is read instead.
 		if _, err := tx.Exec(`
 			UPDATE hermes_task_states
-			SET current_idx = ?, accumulated = ?, status = ?, interrupted_by = ?,
-			    plan_json = ?, github_issue_number = ?, model_usages = ?, phase_usages = ?,
-			    token_budget = ?, planner_session = ?,
-			    updated_at = ?
+			SET status = ?, interrupted_by = ?, updated_at = ?
 			WHERE id = ?`,
-			nextState.CurrentIdx, nextState.Accumulated, string(nextState.Status), interruptedBy,
-			string(planJSON), nextState.GithubIssueNumber, string(modelUsagesJSON),
-			string(phaseUsagesJSON), string(tokenBudgetJSON), nextState.PlannerSessionID,
-			now, commit.TaskID,
+			string(nextState.Status), interruptedBy, now, commit.TaskID,
 		); err != nil {
 			return err
 		}
+		_ = planJSON
+		_ = modelUsagesJSON
+		_ = phaseUsagesJSON
+		_ = tokenBudgetJSON
 		if err := replaceUnifiedSubTasksTx(tx, commit.TaskID, nextState.Plan); err != nil {
 			return err
 		}
@@ -509,12 +538,15 @@ func (s *SQLiteTaskStore) CommitRuntimeStep(commit RuntimeCommit) (Snapshot, err
 		if _, err := tx.Exec(`
 			INSERT INTO hermes_snapshots
 				(id, task_id, chat_id, thread_id, step, state_json, next_step, source_node,
-				 writes_json, metadata_json, parent_snapshot_id, channel_versions_json, created_at)
-			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+				 writes_json, metadata_json, parent_snapshot_id, channel_versions_json,
+				 state_status, created_at)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			snapshot.ID, snapshot.TaskID, snapshot.ChatID, snapshot.ThreadID, snapshot.Step,
 			string(stateJSON), string(snapshot.NextStep), string(snapshot.SourceNode),
 			string(writesJSON), string(metadataJSON), snapshot.ParentSnapshotID,
-			string(channelVersionsJSON), snapshot.CreatedAt.Format(time.RFC3339),
+			string(channelVersionsJSON),
+			string(nextState.Status),
+			snapshot.CreatedAt.Format(time.RFC3339),
 		); err != nil {
 			return err
 		}
@@ -676,19 +708,105 @@ func (s *SQLiteTaskStore) GetTask(id string) (TaskState, error) {
 	return s.overlayLatestSnapshot(id, base)
 }
 
+// activeStatusFilter is the SQL fragment used by all "find active task"
+// queries. Uses the latest snapshot's denormalized state_status when one
+// exists; falls back to the legacy table's status column for tasks that
+// were created (CreateTask) but have not yet committed any snapshot.
+//
+// COALESCE prefers snap.state_status (which #169 slice 3d makes the
+// canonical source) and only reads task.status when no snapshot exists.
+const activeStatusFilter = `
+	COALESCE((
+		SELECT s.state_status
+		FROM hermes_snapshots s
+		WHERE s.task_id = task.id
+		ORDER BY s.step DESC
+		LIMIT 1
+	), task.status) NOT IN ('done','failed','interrupted')
+`
+
 func (s *SQLiteTaskStore) GetActiveTaskForChat(chatID int64) (TaskState, error) {
 	row := s.db.QueryRow(`
-		SELECT id, chat_id, thread_id, planner_session, project_dir, goal, current_idx, accumulated,
-		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
-		       github_issue_number, model_usages, phase_usages, created_at, updated_at
-		FROM hermes_task_states
-		WHERE chat_id = ? AND status NOT IN ('done','failed','interrupted')
-		ORDER BY created_at DESC LIMIT 1`, chatID)
+		SELECT task.id, task.chat_id, task.thread_id, task.planner_session, task.project_dir, task.goal,
+		       task.current_idx, task.accumulated,
+		       task.status, task.interrupted_by, task.interrupt_policy, task.token_budget, task.plan_json,
+		       task.github_issue_number, task.model_usages, task.phase_usages, task.created_at, task.updated_at
+		FROM hermes_task_states AS task
+		WHERE task.chat_id = ? AND `+activeStatusFilter+`
+		ORDER BY task.created_at DESC LIMIT 1`, chatID)
 	base, err := s.scanTask(row)
 	if err != nil {
 		return base, err
 	}
 	return s.overlayLatestSnapshot(base.ID, base)
+}
+
+// MarkTaskFailedDurable marks the task as failed at both the legacy
+// status column and the snapshot layer, so post-#169-slice-3d filters
+// (which read state_status from the latest snapshot) see the change.
+//
+// Used by startup orphan-recovery paths (zombie sweep + stale-interrupt
+// sweep) where a task's owning goroutine died with the previous process.
+// The snapshot insert carries metadata.Reason so dashboards can tell
+// the failure came from recovery rather than normal flow.
+func (s *SQLiteTaskStore) MarkTaskFailedDurable(taskID, reason string) error {
+	if strings.TrimSpace(taskID) == "" {
+		return fmt.Errorf("MarkTaskFailedDurable: task_id is required")
+	}
+	if reason == "" {
+		reason = "startup_orphan_failed"
+	}
+	failed := TaskStatusFailed
+	_, err := s.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    []StateUpdate{{Status: &failed}},
+		NextStep:   RuntimeStepTerminal,
+		SourceNode: RuntimeStepExecutor,
+		Metadata: SnapshotMetadata{
+			Source: "orphan_recovery",
+			Reason: reason,
+		},
+	})
+	return err
+}
+
+// SweepZombieTasks marks tasks whose latest snapshot is non-terminal as
+// failed, recording a recovery reason. Returns the count swept. Replaces
+// the legacy startup UPDATE on hermes_task_states.status which after
+// #169 slice 3d is no longer authoritative.
+func (s *SQLiteTaskStore) SweepZombieTasks(reason string) (int, error) {
+	rows, err := s.db.Query(`
+		SELECT task.id FROM hermes_task_states AS task
+		WHERE COALESCE((
+			SELECT s.state_status FROM hermes_snapshots s
+			WHERE s.task_id = task.id ORDER BY s.step DESC LIMIT 1
+		), task.status) IN ('planning','executing','validating')`)
+	if err != nil {
+		return 0, fmt.Errorf("SweepZombieTasks query: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return 0, fmt.Errorf("SweepZombieTasks scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("SweepZombieTasks rows: %w", err)
+	}
+
+	swept := 0
+	for _, id := range ids {
+		if err := s.MarkTaskFailedDurable(id, reason); err != nil {
+			// Best-effort: log via caller (no logger here); skip and continue.
+			continue
+		}
+		swept++
+	}
+	return swept, nil
 }
 
 // overlayLatestSnapshot applies the latest committed snapshot's State to
