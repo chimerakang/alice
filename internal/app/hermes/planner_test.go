@@ -3,6 +3,7 @@ package hermes
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -211,5 +212,64 @@ func TestValidatePlanQualityAllowsVerificationOnlyGoal(t *testing.T) {
 	}}
 	if err := validatePlanQuality("verify issue #57 is already completed", tasks); err != nil {
 		t.Fatalf("verification-only plan should be accepted: %v", err)
+	}
+}
+
+func TestValidateChecklistDeclaration_NoMarkersBypass(t *testing.T) {
+	tasks := []SubTask{{ID: "s1", Description: "do work", ToolHints: []string{"Bash"}}}
+	if err := validateChecklistDeclaration("plain goal without markers", tasks); err != nil {
+		t.Fatalf("legacy goal without [item-N] markers should bypass: %v", err)
+	}
+}
+
+func TestValidateChecklistDeclaration_AllItemsCovered(t *testing.T) {
+	goal := "[GitHub #29] do something\n  - [ ] [item-3] verify build\n  - [ ] [item-5] add tests\n"
+	tasks := []SubTask{
+		{ID: "s1", Description: "fix and verify build", ChecklistItemIDs: []string{"item-3"}},
+		{ID: "s2", Description: "add tests for the fix", ChecklistItemIDs: []string{"item-5"}},
+	}
+	if err := validateChecklistDeclaration(goal, tasks); err != nil {
+		t.Fatalf("full coverage should pass: %v", err)
+	}
+}
+
+func TestValidateChecklistDeclaration_MultipleItemsPerSubTask(t *testing.T) {
+	goal := "[GitHub #80] - [ ] [item-2] X\n - [ ] [item-4] Y\n - [ ] [item-6] Z\n"
+	tasks := []SubTask{
+		{ID: "s1", Description: "do X+Y together", ChecklistItemIDs: []string{"item-2", "item-4"}},
+		{ID: "s2", Description: "do Z", ChecklistItemIDs: []string{"item-6"}},
+	}
+	if err := validateChecklistDeclaration(goal, tasks); err != nil {
+		t.Fatalf("multi-item declaration should pass: %v", err)
+	}
+}
+
+func TestValidateChecklistDeclaration_MissingCoverageRejected(t *testing.T) {
+	// Reproduces #29 / #167 pattern: planner produces fewer sub-tasks than
+	// checklist items has, leaving acceptance items uncovered.
+	goal := "[GitHub #167] - [ ] [item-1] A\n - [ ] [item-2] B\n - [ ] [item-3] C\n - [ ] [item-4] D\n - [ ] [item-5] E\n"
+	tasks := []SubTask{
+		{ID: "s1", Description: "do A", ChecklistItemIDs: []string{"item-1"}},
+		{ID: "s2", Description: "do B+C", ChecklistItemIDs: []string{"item-2", "item-3"}},
+		// items 4 and 5 have no coverage
+	}
+	err := validateChecklistDeclaration(goal, tasks)
+	if err == nil {
+		t.Fatal("missing coverage should reject")
+	}
+	if !strings.Contains(err.Error(), "item-4") || !strings.Contains(err.Error(), "item-5") {
+		t.Errorf("error should name missing items: %v", err)
+	}
+}
+
+func TestValidateChecklistDeclaration_SetupTaskWithEmptyArrayAllowed(t *testing.T) {
+	goal := "[GitHub #123] - [ ] [item-1] A\n - [ ] [item-2] B\n"
+	tasks := []SubTask{
+		{ID: "s0", Description: "scaffold migration (no acceptance item; rationale: prerequisite)", ChecklistItemIDs: []string{}},
+		{ID: "s1", Description: "do A", ChecklistItemIDs: []string{"item-1"}},
+		{ID: "s2", Description: "do B", ChecklistItemIDs: []string{"item-2"}},
+	}
+	if err := validateChecklistDeclaration(goal, tasks); err != nil {
+		t.Fatalf("setup task with empty declaration should not block: %v", err)
 	}
 }

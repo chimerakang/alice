@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -39,6 +40,14 @@ func (r *tokenMetricsRunner) LastCallMetrics() (string, int, int, float64) {
 
 func (r *tokenMetricsRunner) LastCacheMetrics() (int, int) {
 	return r.cacheRead, r.cacheWrite
+}
+
+type staticRunner struct {
+	result string
+}
+
+func (r *staticRunner) Run(userMessage string, onUpdate func(string, bool)) (string, error) {
+	return r.result, nil
 }
 
 type planExecuteReporter struct {
@@ -143,6 +152,66 @@ type statusRecordingStore struct {
 func (s *statusRecordingStore) MarkStatus(taskID string, status hermes.TaskStatus) error {
 	s.statuses = append(s.statuses, status)
 	return s.TaskStateStore.MarkStatus(taskID, status)
+}
+
+type fakeIssueOps struct {
+	mapping      issueops.ChecklistMappingResult
+	mappingErr   error
+	syncResult   issueops.SyncChecklistResult
+	syncErr      error
+	recorded     []issueops.RecordEvidenceRequest
+	syncRequests []issueops.SyncChecklistRequest
+	loadCalls    int
+	callOrder    []string
+}
+
+func (f *fakeIssueOps) LoadIssue(ctx context.Context, projectDir string, issueNumber int) (*hermes.IssueContext, error) {
+	return nil, nil
+}
+
+func (f *fakeIssueOps) LoadIssueChecklistMapping(ctx context.Context, projectDir string, issueNumber int, subtasks []hermes.SubTask) (issueops.ChecklistMappingResult, error) {
+	f.loadCalls++
+	f.callOrder = append(f.callOrder, "load_mapping")
+	if f.mappingErr != nil {
+		return issueops.ChecklistMappingResult{}, f.mappingErr
+	}
+	return f.mapping, nil
+}
+
+func (f *fakeIssueOps) CommentDone(ctx context.Context, projectDir string, issueNumber int, finalState hermes.TaskState, notes string) error {
+	return nil
+}
+
+func (f *fakeIssueOps) CommentBudgetExceeded(ctx context.Context, projectDir string, issueNumber int, used, max int) error {
+	return nil
+}
+
+func (f *fakeIssueOps) ApplyLabel(ctx context.Context, projectDir string, issueNumber int, label string) error {
+	return nil
+}
+
+func (f *fakeIssueOps) PlanIssue(ctx context.Context, req issueops.PlanIssueRequest) error {
+	return nil
+}
+
+func (f *fakeIssueOps) RecordEvidence(ctx context.Context, req issueops.RecordEvidenceRequest) error {
+	f.callOrder = append(f.callOrder, "record_evidence")
+	f.recorded = append(f.recorded, req)
+	return nil
+}
+
+func (f *fakeIssueOps) SyncChecklist(ctx context.Context, req issueops.SyncChecklistRequest) (issueops.SyncChecklistResult, error) {
+	f.callOrder = append(f.callOrder, "sync_checklist")
+	f.syncRequests = append(f.syncRequests, req)
+	return f.syncResult, f.syncErr
+}
+
+func (f *fakeIssueOps) AssessCloseReadiness(ctx context.Context, req issueops.AssessCloseReadinessRequest) (issueops.CloseReadinessResult, error) {
+	return issueops.CloseReadinessResult{}, nil
+}
+
+func (f *fakeIssueOps) CloseIssue(ctx context.Context, req issueops.CloseIssueRequest) (issueops.CloseReadinessResult, error) {
+	return issueops.CloseReadinessResult{}, nil
 }
 
 func TestPlanExecuteEngineRunsPlannedSubTasksThroughDirectEngine(t *testing.T) {
@@ -397,6 +466,149 @@ func TestPlanExecuteEngineTokenUsageIncludesCacheTokens(t *testing.T) {
 	}
 	if executorPhase.UncachedInputTokens != 10 || executorPhase.CacheReadInputTokens != 100 || executorPhase.CacheCreationInputTokens != 20 {
 		t.Fatalf("executor phase cache breakdown = %#v", executorPhase)
+	}
+}
+
+func TestPlanExecuteEngineRecordsMappingEvidenceBeforeChecklistSync(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	result := "**結論**：完成驗證\n\n**證據**：\n- `go test ./internal/app/engine -run TestPlanExecuteEngineRecordsMappingEvidenceBeforeChecklistSync` PASS\n\n**未驗證**：無\n\n**下一步**：無"
+	runner := &staticRunner{result: result}
+	ops := &fakeIssueOps{
+		mapping: issueops.ChecklistMappingResult{
+			State: hermes.IssueStateChecklistSynced,
+			Mappings: []issueops.ChecklistMapping{
+				{
+					SubTaskIndex:       0,
+					SubTaskID:          "s1",
+					SubTaskDescription: "Run validation",
+					ChecklistText:      "Run validation",
+					Confidence:         issueops.ChecklistMappingConfidenceHigh,
+					Score:              100,
+				},
+			},
+		},
+		syncResult: issueops.SyncChecklistResult{
+			Outcome:    issueops.SyncOutcomeDryRun,
+			DryRun:     true,
+			WouldWrite: true,
+			Guard: issueops.ChecklistSyncGuard{
+				IssueState:        hermes.IssueStateInProgress,
+				HasCompletedItems: true,
+				HasBodyChange:     true,
+			},
+		},
+	}
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{
+			Text: "```json\n" + `[{"id":"s1","description":"Run validation","tool_hints":["Bash"]}]` + "\n```",
+		}, nil
+	}
+
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		PlannerModel:          "planner-model",
+		ProjectDir:            "/repo",
+		ChatID:                42,
+		MaxPlannerJSONRetries: 1,
+		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
+		DisableReview:         true,
+		GithubIssueNumber:     17,
+		GithubCfg: hermes.GithubCfg{
+			Enabled:       true,
+			CommentOnDone: true,
+			SyncChecklist: true,
+		},
+	}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
+	engine.issueOps = ops
+
+	taskID, err := engine.Start(context.Background(), "run validation", NewChatContext(42, 0, "/repo"))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitForPlanExecute(t, engine)
+
+	state, err := store.GetTask(taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if state.Status != hermes.TaskStatusDone {
+		t.Fatalf("status = %s, want done", state.Status)
+	}
+	if !reflect.DeepEqual(ops.callOrder, []string{"load_mapping", "record_evidence", "sync_checklist"}) {
+		t.Fatalf("call order = %#v", ops.callOrder)
+	}
+	if ops.loadCalls != 1 {
+		t.Fatalf("load calls = %d, want 1", ops.loadCalls)
+	}
+	if len(ops.recorded) != 1 {
+		t.Fatalf("recorded evidence calls = %d, want 1", len(ops.recorded))
+	}
+	if len(ops.syncRequests) != 1 {
+		t.Fatalf("sync calls = %d, want 1", len(ops.syncRequests))
+	}
+
+	evidenceReq := ops.recorded[0]
+	if evidenceReq.ChecklistMapping == nil || evidenceReq.ChecklistMapping.SubTaskID != "s1" {
+		t.Fatalf("evidence mapping = %#v", evidenceReq.ChecklistMapping)
+	}
+	if evidenceReq.Validation == nil {
+		t.Fatal("validation evidence = nil, want parsed command")
+	}
+	if evidenceReq.Validation.Command != "go test ./internal/app/engine -run TestPlanExecuteEngineRecordsMappingEvidenceBeforeChecklistSync" {
+		t.Fatalf("validation command = %q", evidenceReq.Validation.Command)
+	}
+	if !evidenceReq.Validation.Passed || evidenceReq.Validation.ExitCode != 0 {
+		t.Fatalf("validation evidence = %+v", evidenceReq.Validation)
+	}
+
+	syncReq := ops.syncRequests[0]
+	if syncReq.ChecklistMapping == nil {
+		t.Fatal("sync checklist mapping = nil, want loaded mapping result")
+	}
+	if syncReq.RequireHumanDecision {
+		t.Fatalf("RequireHumanDecision = true, want false: %+v", syncReq)
+	}
+	if len(syncReq.ChecklistMapping.Mappings) != 1 || syncReq.ChecklistMapping.Mappings[0].SubTaskID != "s1" {
+		t.Fatalf("sync mapping = %+v", syncReq.ChecklistMapping)
+	}
+}
+
+func TestPlanExecuteEngineChecklistSyncRequiresHumanDecisionWhenMappingLoadFails(t *testing.T) {
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		ProjectDir:        "/repo",
+		GithubIssueNumber: 17,
+		GithubCfg: hermes.GithubCfg{
+			Enabled:       true,
+			CommentOnDone: true,
+			SyncChecklist: true,
+		},
+	}, nil, NewDirectEngine(&planExecuteRunner{}), hermes.NewMemoryTaskStore(), &planExecuteReporter{})
+	ops := &fakeIssueOps{
+		mappingErr: errors.New("gh issue view failed"),
+		syncResult: issueops.SyncChecklistResult{
+			Outcome: issueops.SyncOutcomeNeedsHuman,
+			Guard: issueops.ChecklistSyncGuard{
+				NeedsHumanConfirmation: true,
+			},
+		},
+	}
+	engine.issueOps = ops
+
+	subTask := hermes.SubTask{ID: "s1", Description: "Run validation"}
+	tasks := []hermes.SubTask{subTask}
+	result := "**結論**：完成驗證\n\n**證據**：\n- `go test ./internal/app/engine -run TestPlanExecuteEngineChecklistSyncRequiresHumanDecisionWhenMappingLoadFails` PASS\n\n**未驗證**：無\n\n**下一步**：無"
+	engine.onSubTaskDone(context.Background(), 0, len(tasks), tasks, subTask, result, 12, 1)
+
+	if !reflect.DeepEqual(ops.callOrder, []string{"load_mapping", "record_evidence", "sync_checklist"}) {
+		t.Fatalf("call order = %#v", ops.callOrder)
+	}
+	if len(ops.syncRequests) != 1 {
+		t.Fatalf("sync calls = %d, want 1", len(ops.syncRequests))
+	}
+	if !ops.syncRequests[0].RequireHumanDecision {
+		t.Fatalf("RequireHumanDecision = false, want true: %+v", ops.syncRequests[0])
+	}
+	if ops.syncRequests[0].ChecklistMapping != nil {
+		t.Fatalf("sync checklist mapping = %+v, want nil on load failure", ops.syncRequests[0].ChecklistMapping)
 	}
 }
 
@@ -807,6 +1019,110 @@ func (r *failingOnceRunner) Run(userMessage string, onUpdate func(string, bool))
 		return "", context.DeadlineExceeded
 	}
 	return "ok", nil
+}
+
+// Regression tests for issue #168 — ensure the patterns observed in
+// production (issues #29, #167, #80, #92, #74) are correctly handled by the
+// new declarative checklist sync.
+
+func TestRegression_Issue29_AllSubTasksWroteButItemsRemain(t *testing.T) {
+	// Pattern: 5 sub-tasks all wrote, but issue had >5 acceptance items so
+	// items remained unchecked. With declarations, the drift guard surfaces
+	// any declared-but-unchecked items at task end.
+	plan := []hermes.SubTask{
+		{ID: "s1", Status: hermes.SubTaskDone, ChecklistItemIDs: []string{"item-1"}},
+		{ID: "s2", Status: hermes.SubTaskDone, ChecklistItemIDs: []string{"item-2"}},
+		{ID: "s3", Status: hermes.SubTaskDone, ChecklistItemIDs: []string{"item-3"}},
+		{ID: "s4", Status: hermes.SubTaskDone, ChecklistItemIDs: []string{"item-4"}},
+		{ID: "s5", Status: hermes.SubTaskDone, ChecklistItemIDs: []string{"item-5"}},
+	}
+	items := []hermes.ChecklistItem{
+		{ID: "item-1", Checked: true},
+		{ID: "item-2", Checked: true},
+		{ID: "item-3", Checked: true},
+		{ID: "item-4", Checked: true},
+		{ID: "item-5", Checked: true},
+		{ID: "item-6", Checked: false}, // not declared by any sub-task → not drift
+	}
+	drift := computeChecklistDeclarationDrift(plan, items)
+	if len(drift) != 0 {
+		t.Errorf("declared items all checked → drift should be empty, got %v", drift)
+	}
+}
+
+func TestRegression_Issue253_FuzzyOverMappingPrevented(t *testing.T) {
+	// Pattern: idx=0 wrote, idx=1..4 returned no_change because fuzzy mapped
+	// every sub-task to the same already-checked item. With declarations,
+	// each sub-task carries its own item ID and ticks the right item.
+	body := "## Acceptance\n" +
+		"- [ ] Refactor parser\n" +
+		"- [ ] Update README\n" +
+		"- [ ] Add unit tests\n" +
+		"- [ ] Add integration test\n"
+	subtasks := []hermes.SubTask{
+		{ID: "s1", Description: "refactor parser", Status: hermes.SubTaskDone, ChecklistItemIDs: []string{"item-1"}},
+		{ID: "s2", Description: "update README", Status: hermes.SubTaskDone, ChecklistItemIDs: []string{"item-2"}},
+		{ID: "s3", Description: "add unit tests", Status: hermes.SubTaskDone, ChecklistItemIDs: []string{"item-3"}},
+		{ID: "s4", Description: "add integration test", Status: hermes.SubTaskDone, ChecklistItemIDs: []string{"item-4"}},
+	}
+	preview := hermes.BuildChecklistSyncPreview(body, subtasks)
+	if !preview.Changed {
+		t.Fatal("expected changes")
+	}
+	for _, want := range []string{"- [x] Refactor parser", "- [x] Update README", "- [x] Add unit tests", "- [x] Add integration test"} {
+		if !strings.Contains(preview.BodyAfter, want) {
+			t.Errorf("expected %q in body:\n%s", want, preview.BodyAfter)
+		}
+	}
+}
+
+func TestRegression_Issue92_PartialFailureLeavesUnsatisfiedItemsUnchecked(t *testing.T) {
+	// Pattern: 1 of N sub-tasks done, others blocked. Declared items for
+	// blocked sub-tasks must NOT be ticked.
+	body := "## Acceptance\n" +
+		"- [ ] Build passes\n" +
+		"- [ ] Integration test passes\n" +
+		"- [ ] Docs updated\n"
+	subtasks := []hermes.SubTask{
+		{ID: "s1", Description: "build", Status: hermes.SubTaskDone, ChecklistItemIDs: []string{"item-1"}},
+		{ID: "s2", Description: "integration", Status: hermes.SubTaskFailed, ChecklistItemIDs: []string{"item-2"}},
+		{ID: "s3", Description: "docs", Status: hermes.SubTaskFailed, ChecklistItemIDs: []string{"item-3"}},
+	}
+	preview := hermes.BuildChecklistSyncPreview(body, subtasks)
+	if !strings.Contains(preview.BodyAfter, "- [x] Build passes") {
+		t.Errorf("done sub-task should tick item-1: %s", preview.BodyAfter)
+	}
+	if strings.Contains(preview.BodyAfter, "- [x] Integration test passes") {
+		t.Errorf("failed sub-task must not tick item-2: %s", preview.BodyAfter)
+	}
+	if strings.Contains(preview.BodyAfter, "- [x] Docs updated") {
+		t.Errorf("failed sub-task must not tick item-3: %s", preview.BodyAfter)
+	}
+}
+
+func TestRegression_Issue74_DeclarationDriftCaughtAtTaskEnd(t *testing.T) {
+	// Pattern: sub-task done with declared items but body sync never
+	// completed (e.g. gh CLI auth blip mid-run). Drift guard surfaces it.
+	plan := []hermes.SubTask{
+		{ID: "s1", Status: hermes.SubTaskDone, ChecklistItemIDs: []string{"item-2", "item-5"}},
+		{ID: "s2", Status: hermes.SubTaskDone, ChecklistItemIDs: []string{"item-7"}},
+	}
+	items := []hermes.ChecklistItem{
+		{ID: "item-2", Checked: true},  // landed
+		{ID: "item-5", Checked: false}, // drift
+		{ID: "item-7", Checked: false}, // drift
+		{ID: "item-9", Checked: false}, // not declared, ignored
+	}
+	drift := computeChecklistDeclarationDrift(plan, items)
+	wantDrift := []string{"item-5", "item-7"}
+	if len(drift) != len(wantDrift) {
+		t.Fatalf("drift = %v, want %v", drift, wantDrift)
+	}
+	for i, id := range wantDrift {
+		if drift[i] != id {
+			t.Errorf("drift[%d] = %q, want %q", i, drift[i], id)
+		}
+	}
 }
 
 func waitForPlanExecute(t *testing.T, engine *PlanExecuteEngine) {

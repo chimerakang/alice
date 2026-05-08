@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -347,7 +348,56 @@ func validatePlanQuality(goal string, tasks []SubTask) error {
 	if err := validateDeliverableTraceability(goal, tasks); err != nil {
 		return err
 	}
+	if err := validateChecklistDeclaration(goal, tasks); err != nil {
+		return err
+	}
 	return nil
+}
+
+// goalChecklistItemRe extracts `[item-N]` markers that BuildGoalFromIssue
+// emits in front of each unchecked checklist item.
+var goalChecklistItemRe = regexp.MustCompile(`\[(item-\d+)\]`)
+
+// validateChecklistDeclaration enforces issue #168: every unchecked
+// acceptance-criteria item advertised in the goal must be claimed by at
+// least one sub-task's ChecklistItemIDs. Plans that leave items uncovered
+// are rejected so the Planner re-decomposes against the actual checklist.
+//
+// Goals without `[item-N]` markers (legacy plans, non-issue goals) bypass
+// this validation entirely — backward compatible.
+func validateChecklistDeclaration(goal string, tasks []SubTask) error {
+	advertised := make(map[string]bool)
+	for _, m := range goalChecklistItemRe.FindAllStringSubmatch(goal, -1) {
+		if len(m) >= 2 {
+			advertised[m[1]] = true
+		}
+	}
+	if len(advertised) == 0 {
+		return nil
+	}
+
+	declared := make(map[string]bool)
+	for _, t := range tasks {
+		for _, id := range t.ChecklistItemIDs {
+			id = strings.TrimSpace(id)
+			if id != "" {
+				declared[id] = true
+			}
+		}
+	}
+
+	var missing []string
+	for id := range advertised {
+		if !declared[id] {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	sort.Strings(missing)
+	return fmt.Errorf("checklist declaration violation: %d acceptance item(s) without coverage — %s. Each unchecked [item-N] in the issue body must be claimed by at least one sub-task's checklist_item_ids field; setup/prerequisite sub-tasks may declare an empty array but real acceptance items must be covered",
+		len(missing), strings.Join(missing, ", "))
 }
 
 func validateImplementationPlan(goal string, tasks []SubTask) error {

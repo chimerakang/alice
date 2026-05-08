@@ -31,9 +31,19 @@ type IssueComment struct {
 
 // ChecklistItem represents one `- [ ]` or `- [x]` line in an Issue body.
 type ChecklistItem struct {
+	// ID is the stable identifier the Planner uses to declare ownership in
+	// `SubTask.ChecklistItemIDs`. The current scheme is `item-<line>` — line
+	// index in the issue body at extraction time. If the body is edited mid
+	// Hermes run, sync rebuilds IDs from the new body; mismatched declarations
+	// degrade to fuzzy-match fallback (issueops.SyncChecklist).
+	ID         string
 	Text       string
 	Checked    bool
 	LineNumber int // 0-indexed line in Issue body, for sync anchoring
+	// Section is the nearest preceding Markdown heading text (e.g.
+	// "Acceptance Criteria"). Empty when the item is above any heading.
+	// Used by IsAcceptanceSection to scope mandatory-coverage validation.
+	Section string
 }
 
 // IssueReconciliation is the post-run view of whether the Hermes job also
@@ -277,22 +287,73 @@ func FetchIssue(ctx context.Context, projectDir string, number int) (*IssueConte
 	}, nil
 }
 
-// ExtractChecklist parses `- [ ]` and `- [x]` items from a Markdown body with line numbers.
+// ExtractChecklist parses `- [ ]` and `- [x]` items from a Markdown body with
+// line numbers. Each item also carries its parent section heading and a stable
+// ID so the Planner can declare per-sub-task ownership (issue #168).
 func ExtractChecklist(body string) []ChecklistItem {
 	lines := strings.Split(body, "\n")
 	items := make([]ChecklistItem, 0)
+	currentSection := ""
 	for lineIdx, line := range lines {
+		if heading := extractHeadingText(line); heading != "" {
+			currentSection = heading
+			continue
+		}
 		m := checklistRe.FindStringSubmatch(line)
 		if len(m) < 3 {
 			continue
 		}
 		items = append(items, ChecklistItem{
+			ID:         fmt.Sprintf("item-%d", lineIdx),
 			Text:       strings.TrimSpace(m[2]),
 			Checked:    strings.ToLower(m[1]) == "x",
 			LineNumber: lineIdx,
+			Section:    currentSection,
 		})
 	}
 	return items
+}
+
+// headingRe matches Markdown ATX headings (e.g. `## Acceptance Criteria`).
+var headingRe = regexp.MustCompile(`^#{1,6}\s+(.+?)\s*#*\s*$`)
+
+func extractHeadingText(line string) string {
+	m := headingRe.FindStringSubmatch(line)
+	if len(m) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(m[1])
+}
+
+// IsAcceptanceSection reports whether a heading marks an acceptance-criteria
+// section whose checklist items must be covered by sub-task declarations.
+// Returns true for empty section (uncategorized items still count) so existing
+// issues with flat checklists keep behaving the same.
+func IsAcceptanceSection(section string) bool {
+	s := strings.ToLower(strings.TrimSpace(section))
+	if s == "" {
+		return true
+	}
+	keys := []string{
+		"acceptance criteria",
+		"acceptance",
+		"definition of done",
+		"done criteria",
+		"completion criteria",
+		"requirements",
+		"驗收條件",
+		"驗收",
+		"完成條件",
+		"成功條件",
+		"驗收清單",
+		"驗收標準",
+	}
+	for _, key := range keys {
+		if strings.Contains(s, key) {
+			return true
+		}
+	}
+	return false
 }
 
 // ReconcileIssueCompletion summarizes the current issue checklist after a
@@ -360,11 +421,14 @@ func BuildGoalFromIssue(issue *IssueContext) string {
 	}
 
 	if len(unchecked) > 0 {
-		sb.WriteString("Remaining unchecked issue task list — plan ONLY these as SubTask descriptions:\n")
+		sb.WriteString("Remaining unchecked issue task list — plan ONLY these as SubTask descriptions.\n")
+		sb.WriteString("Each item is prefixed with [item-N]; copy that ID into the sub-task's `checklist_item_ids` field per CHECKLIST DECLARATION RULE.\n")
 		for _, item := range unchecked {
-			sb.WriteString("  - [ ] ")
-			sb.WriteString(item.Text)
-			sb.WriteString("\n")
+			id := strings.TrimSpace(item.ID)
+			if id == "" {
+				id = fmt.Sprintf("item-%d", item.LineNumber)
+			}
+			fmt.Fprintf(&sb, "  - [ ] [%s] %s\n", id, item.Text)
 		}
 		sb.WriteString("\n")
 		if len(checked) > 0 {
@@ -672,14 +736,34 @@ type ChecklistSyncPreview struct {
 
 // BuildChecklistSyncPreview computes the checklist body patch without mutating
 // remote state.
+//
+// Mode selection (issue #168):
+//   - If any done sub-task carries a non-empty ChecklistItemIDs declaration,
+//     the patch ticks only items whose ID matches a declaration. Items without
+//     a matching declaration stay unchecked even if their text overlaps with
+//     a sub-task description. This is the intended behaviour for plans that
+//     follow the CHECKLIST DECLARATION RULE.
+//   - Otherwise the legacy fuzzy text match is applied for backward
+//     compatibility with plans persisted before the declaration field existed.
 func BuildChecklistSyncPreview(body string, subtasks []SubTask) ChecklistSyncPreview {
 	completed := make([]string, 0, len(subtasks))
-	updatedItems := make([]string, 0, len(subtasks))
+	declaredIDs := make(map[string]bool)
+	hasDeclarations := false
 	for _, st := range subtasks {
 		if st.Status != SubTaskDone {
 			continue
 		}
 		completed = append(completed, st.Description)
+		if len(st.ChecklistItemIDs) > 0 {
+			for _, id := range st.ChecklistItemIDs {
+				id = strings.TrimSpace(id)
+				if id == "" {
+					continue
+				}
+				declaredIDs[id] = true
+				hasDeclarations = true
+			}
+		}
 	}
 	if len(completed) == 0 {
 		return ChecklistSyncPreview{
@@ -689,17 +773,24 @@ func BuildChecklistSyncPreview(body string, subtasks []SubTask) ChecklistSyncPre
 		}
 	}
 
-	updatedBody := UpdateChecklistInBody(body, completed)
-	if updatedBody != body {
-		for _, line := range strings.Split(body, "\n") {
-			m := checklistRe.FindStringSubmatch(line)
-			if len(m) < 3 || strings.ToLower(m[1]) == "x" {
-				continue
-			}
-			for _, desc := range completed {
-				if matchesChecklistItem(m[2], desc) {
-					updatedItems = append(updatedItems, strings.TrimSpace(m[2]))
-					break
+	var updatedBody string
+	var updatedItems []string
+
+	if hasDeclarations {
+		updatedBody, updatedItems = applyDeclaredChecklistTicks(body, declaredIDs)
+	} else {
+		updatedBody = UpdateChecklistInBody(body, completed)
+		if updatedBody != body {
+			for _, line := range strings.Split(body, "\n") {
+				m := checklistRe.FindStringSubmatch(line)
+				if len(m) < 3 || strings.ToLower(m[1]) == "x" {
+					continue
+				}
+				for _, desc := range completed {
+					if matchesChecklistItem(m[2], desc) {
+						updatedItems = append(updatedItems, strings.TrimSpace(m[2]))
+						break
+					}
 				}
 			}
 		}
@@ -712,6 +803,43 @@ func BuildChecklistSyncPreview(body string, subtasks []SubTask) ChecklistSyncPre
 		BodyAfter:             updatedBody,
 		Changed:               updatedBody != body,
 	}
+}
+
+// applyDeclaredChecklistTicks ticks unchecked items in body whose ID appears
+// in declaredIDs. Returns the patched body and the list of item texts that
+// were ticked. Idempotent: items already checked are left untouched.
+func applyDeclaredChecklistTicks(body string, declaredIDs map[string]bool) (string, []string) {
+	if len(declaredIDs) == 0 {
+		return body, nil
+	}
+	items := ExtractChecklist(body)
+	targetByLine := make(map[int]string, len(declaredIDs))
+	for _, item := range items {
+		if item.Checked {
+			continue
+		}
+		if declaredIDs[item.ID] {
+			targetByLine[item.LineNumber] = item.Text
+		}
+	}
+	if len(targetByLine) == 0 {
+		return body, nil
+	}
+	lines := strings.Split(body, "\n")
+	updatedItems := make([]string, 0, len(targetByLine))
+	for lineIdx, line := range lines {
+		text, ok := targetByLine[lineIdx]
+		if !ok {
+			continue
+		}
+		m := checklistRe.FindStringSubmatch(line)
+		if len(m) < 3 || strings.ToLower(m[1]) == "x" {
+			continue
+		}
+		lines[lineIdx] = "- [x] " + m[2]
+		updatedItems = append(updatedItems, text)
+	}
+	return strings.Join(lines, "\n"), updatedItems
 }
 
 // UpdateIssueBody writes the supplied body to GitHub issue state.

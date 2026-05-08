@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -981,27 +982,137 @@ func (e *PlanExecuteEngine) onSubTaskDone(ctx context.Context, idx, total int, t
 		return
 	}
 	ops := e.issueOpsService()
+	var (
+		mappingResult        *issueops.ChecklistMappingResult
+		currentMapping       *issueops.ChecklistMapping
+		requireHumanDecision bool
+	)
+	if ghCfg.ShouldComment("complete") || ghCfg.SyncChecklist {
+		loadedMapping, err := ops.LoadIssueChecklistMapping(ctx, e.cfg.ProjectDir, issueNum, tasks)
+		if err != nil {
+			requireHumanDecision = ghCfg.SyncChecklist
+			log.Printf("[plan_execute] GitHub load checklist mapping idx=%d: %v", idx, err)
+		} else {
+			mappingResult = &loadedMapping
+			currentMapping = findChecklistMappingForSubTask(loadedMapping, idx, subTask)
+		}
+	}
 	if err := ops.RecordEvidence(ctx, issueops.RecordEvidenceRequest{
-		ProjectDir:  e.cfg.ProjectDir,
-		IssueNumber: issueNum,
-		Index:       idx,
-		Total:       total,
-		SubTask:     subTask,
-		Result:      result,
-		Tokens:      tokens,
-		Completed:   completed,
-		Comment:     ghCfg.ShouldComment("complete"),
+		ProjectDir:       e.cfg.ProjectDir,
+		IssueNumber:      issueNum,
+		Index:            idx,
+		Total:            total,
+		SubTask:          subTask,
+		Result:           result,
+		Tokens:           tokens,
+		Completed:        completed,
+		ChecklistMapping: currentMapping,
+		Validation:       buildValidationEvidence(subTask, result),
+		Comment:          ghCfg.ShouldComment("complete"),
 	}); err != nil {
 		log.Printf("[plan_execute] GitHub record evidence idx=%d: %v", idx, err)
 	}
 	if ghCfg.SyncChecklist {
 		syncResult, err := ops.SyncChecklist(ctx, issueops.SyncChecklistRequest{
-			ProjectDir:  e.cfg.ProjectDir,
-			IssueNumber: issueNum,
-			SubTasks:    tasks,
+			ProjectDir:           e.cfg.ProjectDir,
+			IssueNumber:          issueNum,
+			SubTasks:             tasks,
+			ChecklistMapping:     mappingResult,
+			RequireHumanDecision: requireHumanDecision,
 		})
 		e.recordChecklistSyncOutcome(ctx, issueNum, idx, len(tasks), syncResult, err)
 	}
+}
+
+func findChecklistMappingForSubTask(result issueops.ChecklistMappingResult, idx int, subTask hermes.SubTask) *issueops.ChecklistMapping {
+	for i := range result.Mappings {
+		mapping := &result.Mappings[i]
+		switch {
+		case strings.TrimSpace(subTask.ID) != "" && mapping.SubTaskID == strings.TrimSpace(subTask.ID):
+			return mapping
+		case mapping.SubTaskIndex == idx:
+			return mapping
+		case strings.TrimSpace(mapping.SubTaskDescription) != "" && strings.TrimSpace(mapping.SubTaskDescription) == strings.TrimSpace(subTask.Description):
+			return mapping
+		}
+	}
+	return nil
+}
+
+func buildValidationEvidence(subTask hermes.SubTask, result string) *issueops.ValidationEvidence {
+	command, output, passed, ok := extractValidationCommand(result)
+	if !ok {
+		return nil
+	}
+	exitCode := 1
+	if passed {
+		exitCode = 0
+	}
+	reference := "validation:result"
+	if id := strings.TrimSpace(subTask.ID); id != "" {
+		reference = "subtask:" + id + "#validation"
+	}
+	return &issueops.ValidationEvidence{
+		Command:   command,
+		Passed:    passed,
+		ExitCode:  exitCode,
+		Output:    output,
+		Reference: reference,
+		SubTaskID: strings.TrimSpace(subTask.ID),
+	}
+}
+
+func extractValidationCommand(result string) (command, output string, passed, ok bool) {
+	for _, line := range strings.Split(result, "\n") {
+		trimmed := strings.TrimSpace(strings.TrimLeft(line, "-* \t"))
+		if trimmed == "" {
+			continue
+		}
+		candidate := extractCommandCandidate(trimmed)
+		if candidate == "" || !looksLikeValidationCommand(candidate) {
+			continue
+		}
+		return candidate, trimmed, inferValidationPassed(trimmed), true
+	}
+	return "", "", false, false
+}
+
+func extractCommandCandidate(line string) string {
+	if first := strings.Index(line, "`"); first >= 0 {
+		if second := strings.Index(line[first+1:], "`"); second >= 0 {
+			return strings.TrimSpace(line[first+1 : first+1+second])
+		}
+	}
+	return strings.TrimSpace(line)
+}
+
+func looksLikeValidationCommand(line string) bool {
+	lower := strings.ToLower(line)
+	for _, marker := range []string{
+		"go test", "npm test", "pnpm test", "yarn test", "pytest", "cargo test",
+		"bundle exec rspec", "make test", "make lint", "golangci-lint", "typecheck",
+		"lint", "build", "validate", "verification", "verify",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func inferValidationPassed(line string) bool {
+	lower := strings.ToLower(line)
+	for _, fail := range []string{" fail", "failed", "失敗", "error", "exit 1", "exit=1"} {
+		if strings.Contains(lower, fail) {
+			return false
+		}
+	}
+	for _, pass := range []string{" pass", "passed", "ok", "通過", "綠燈", "success"} {
+		if strings.Contains(lower, pass) {
+			return true
+		}
+	}
+	return false
 }
 
 // recordChecklistSyncOutcome always logs and emits a runtime FSM event for
@@ -1077,6 +1188,42 @@ func mapChecklistSyncEvent(outcome issueops.SyncOutcome, res issueops.SyncCheckl
 	}
 }
 
+// computeChecklistDeclarationDrift returns the IDs of checklist items that
+// were declared by at least one done sub-task yet remain unchecked in the
+// current issue body. A non-empty result indicates the SyncChecklist patch
+// failed to land for some declared items (issue #168 validation guard).
+func computeChecklistDeclarationDrift(plan []hermes.SubTask, items []hermes.ChecklistItem) []string {
+	declared := make(map[string]bool)
+	for _, st := range plan {
+		if st.Status != hermes.SubTaskDone {
+			continue
+		}
+		for _, id := range st.ChecklistItemIDs {
+			id = strings.TrimSpace(id)
+			if id != "" {
+				declared[id] = true
+			}
+		}
+	}
+	if len(declared) == 0 {
+		return nil
+	}
+	var drifted []string
+	for _, item := range items {
+		if !declared[item.ID] {
+			continue
+		}
+		if !item.Checked {
+			drifted = append(drifted, item.ID)
+		}
+	}
+	if len(drifted) == 0 {
+		return nil
+	}
+	sort.Strings(drifted)
+	return drifted
+}
+
 func (e *PlanExecuteEngine) onDone(ctx context.Context, finalState hermes.TaskState, completed, total int) {
 	issueNum := e.cfg.GithubIssueNumber
 	ghCfg := e.cfg.GithubCfg
@@ -1120,6 +1267,21 @@ func (e *PlanExecuteEngine) onDone(ctx context.Context, finalState hermes.TaskSt
 		}
 		if readiness.Reconciliation.HasUnchecked() {
 			log.Printf("[plan_execute] GitHub issue #%d still has %d unchecked checklist items after Hermes done", issueNum, len(readiness.Reconciliation.Unchecked))
+		}
+		if readiness.Issue != nil {
+			if drifted := computeChecklistDeclarationDrift(finalState.Plan, readiness.Issue.Checklist); len(drifted) > 0 {
+				log.Printf("[plan_execute] checklist declaration drift issue #%d: %d declared item(s) still unchecked: %v", issueNum, len(drifted), drifted)
+				notes = append(notes, fmt.Sprintf("Checklist declaration drift: %d sub-task-declared item(s) remain unchecked: %s. Hermes will not auto-tick — please verify and tick manually.", len(drifted), strings.Join(drifted, ", ")))
+				e.emitRuntimeEvent(ctx, Event{
+					Type:      "ChecklistDeclarationDrift",
+					Timestamp: time.Now(),
+					Issue:     issueNum,
+					Payload: map[string]any{
+						"drifted_item_ids": drifted,
+						"source":           "engine.on_done",
+					},
+				})
+			}
 		}
 		if completed == total && ghCfg.AutoCloseLabel != "" {
 			if readiness.CanAutoClose {

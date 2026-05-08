@@ -50,6 +50,13 @@
 
    結果：一個 Executor 呼叫、一個 Reviewer 呼叫，token 用量約 ↓70%。
 7. 若 Goal 來自 GitHub issue 且含 checklist，只能把 unchecked / remaining 項目規劃成子任務；checked / completed 項目代表已完成，禁止重做，除非 Goal 明確要求 redo。
+8. **CHECKLIST DECLARATION RULE**（issue 來源任務必填）：
+   - 若 Goal 帶有 issue body checklist，每個子任務必須含 `checklist_item_ids` 欄位，宣告它將完成哪些 checklist item。
+   - ID 取自 prompt 中以 `[item-N]` 標註的 unchecked 項目（N 為原始 issue body line index）。
+   - 一個子任務可宣告多個 ID（涵蓋多項驗收條件）。
+   - 設定 / 前置作業可宣告 `"checklist_item_ids": []`，但**必須在 description 末尾用括號註明** `(no acceptance item; rationale: <原因>)`。
+   - **每個 unchecked 驗收項目至少要被一個子任務宣告涵蓋**，否則 Coordinator 會拒絕 plan 並要求重新規劃。
+   - 不要把 ID 寫進 description；只放在 `checklist_item_ids` 欄位。
 
 ## `emit_plan` 介面
 

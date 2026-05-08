@@ -191,6 +191,14 @@ type SubTask struct {
 	Result      string        `json:"result,omitempty"` // short summary written by Executor
 	Attempts    int           `json:"attempts"`
 	TokensUsed  int           `json:"tokens_used"`
+	// ChecklistItemIDs is the Planner's declaration of which issue body
+	// checklist items this sub-task is responsible for completing (issue
+	// #168). IDs match `ChecklistItem.ID` produced by ExtractChecklist
+	// (currently `item-<line>`). Empty slice means the sub-task does not
+	// claim any acceptance-criterion item (e.g. setup/prerequisite work).
+	// Legacy plans saved before this field existed read as nil and trigger
+	// fuzzy-match fallback in issueops.SyncChecklist.
+	ChecklistItemIDs []string `json:"checklist_item_ids,omitempty"`
 }
 
 // Artifact records a file that was modified or created during task execution.

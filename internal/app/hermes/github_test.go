@@ -69,6 +69,109 @@ func TestExtractChecklist_UppercaseX(t *testing.T) {
 	}
 }
 
+func TestExtractChecklist_StableIDsAndSections(t *testing.T) {
+	body := "intro\n" +
+		"## Acceptance Criteria\n" +
+		"- [ ] Build passes\n" +
+		"- [ ] Tests added\n" +
+		"\n" +
+		"## Notes\n" +
+		"- [ ] Optional follow-up\n"
+	items := ExtractChecklist(body)
+	if len(items) != 3 {
+		t.Fatalf("want 3 items, got %d (%+v)", len(items), items)
+	}
+	if items[0].ID != "item-2" || items[0].Section != "Acceptance Criteria" {
+		t.Errorf("item 0 id/section: got %q/%q", items[0].ID, items[0].Section)
+	}
+	if items[1].ID != "item-3" || items[1].Section != "Acceptance Criteria" {
+		t.Errorf("item 1 id/section: got %q/%q", items[1].ID, items[1].Section)
+	}
+	if items[2].ID != "item-6" || items[2].Section != "Notes" {
+		t.Errorf("item 2 id/section: got %q/%q", items[2].ID, items[2].Section)
+	}
+}
+
+func TestBuildChecklistSyncPreview_DeclaredItemsTicked(t *testing.T) {
+	body := "## Acceptance\n" +
+		"- [ ] Build passes\n" +
+		"- [ ] Tests added\n" +
+		"- [ ] Docs updated\n"
+	subtasks := []SubTask{
+		{ID: "s1", Description: "do build work", Status: SubTaskDone, ChecklistItemIDs: []string{"item-1"}},
+		{ID: "s2", Description: "add tests", Status: SubTaskDone, ChecklistItemIDs: []string{"item-2"}},
+	}
+	preview := BuildChecklistSyncPreview(body, subtasks)
+	if !preview.Changed {
+		t.Fatal("expected changed=true")
+	}
+	if !strings.Contains(preview.BodyAfter, "- [x] Build passes") {
+		t.Errorf("Build passes should be ticked: %s", preview.BodyAfter)
+	}
+	if !strings.Contains(preview.BodyAfter, "- [x] Tests added") {
+		t.Errorf("Tests added should be ticked: %s", preview.BodyAfter)
+	}
+	if !strings.Contains(preview.BodyAfter, "- [ ] Docs updated") {
+		t.Errorf("Docs updated should remain unchecked (no declaration): %s", preview.BodyAfter)
+	}
+	if len(preview.UpdatedChecklistItems) != 2 {
+		t.Errorf("UpdatedChecklistItems = %v, want 2", preview.UpdatedChecklistItems)
+	}
+}
+
+func TestBuildChecklistSyncPreview_DeclaredModeIgnoresFuzzyMatch(t *testing.T) {
+	// Reproduces #253 / #254 pattern: sub-task description happens to match
+	// an item that was NOT declared. In legacy mode that item gets ticked
+	// erroneously; in declarative mode it must stay unchecked.
+	body := "- [ ] Refactor parser\n- [ ] Update README\n"
+	subtasks := []SubTask{
+		{ID: "s1", Description: "Refactor parser and update related tests", Status: SubTaskDone, ChecklistItemIDs: []string{"item-0"}},
+	}
+	preview := BuildChecklistSyncPreview(body, subtasks)
+	if !strings.Contains(preview.BodyAfter, "- [x] Refactor parser") {
+		t.Errorf("declared item should be ticked: %s", preview.BodyAfter)
+	}
+	if !strings.Contains(preview.BodyAfter, "- [ ] Update README") {
+		t.Errorf("undeclared item must stay unchecked: %s", preview.BodyAfter)
+	}
+}
+
+func TestBuildChecklistSyncPreview_LegacyFuzzyFallback(t *testing.T) {
+	// No sub-task has ChecklistItemIDs declarations → legacy fuzzy mode.
+	body := "- [ ] Implement auth\n- [ ] Add tests\n"
+	subtasks := []SubTask{
+		{ID: "s1", Description: "Implement auth", Status: SubTaskDone},
+	}
+	preview := BuildChecklistSyncPreview(body, subtasks)
+	if !preview.Changed {
+		t.Fatal("expected fuzzy fallback to tick the matching item")
+	}
+	if !strings.Contains(preview.BodyAfter, "- [x] Implement auth") {
+		t.Errorf("fuzzy match should tick auth: %s", preview.BodyAfter)
+	}
+}
+
+func TestIsAcceptanceSection(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", true},
+		{"Acceptance Criteria", true},
+		{"## Definition of Done", true},
+		{"驗收條件", true},
+		{"完成條件", true},
+		{"Notes", false},
+		{"Discussion", false},
+		{"Background", false},
+	}
+	for _, c := range cases {
+		if got := IsAcceptanceSection(c.in); got != c.want {
+			t.Errorf("IsAcceptanceSection(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
 // ── UpdateChecklistInBody ─────────────────────────────────────────────────────
 
 func TestUpdateChecklistInBody_ExactMatch(t *testing.T) {
