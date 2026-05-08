@@ -669,7 +669,11 @@ func (s *SQLiteTaskStore) GetTask(id string) (TaskState, error) {
 		       status, interrupted_by, interrupt_policy, token_budget, plan_json,
 		       github_issue_number, model_usages, phase_usages, created_at, updated_at
 		FROM hermes_task_states WHERE id = ?`, id)
-	return s.scanTask(row)
+	base, err := s.scanTask(row)
+	if err != nil {
+		return base, err
+	}
+	return s.overlayLatestSnapshot(id, base)
 }
 
 func (s *SQLiteTaskStore) GetActiveTaskForChat(chatID int64) (TaskState, error) {
@@ -680,7 +684,44 @@ func (s *SQLiteTaskStore) GetActiveTaskForChat(chatID int64) (TaskState, error) 
 		FROM hermes_task_states
 		WHERE chat_id = ? AND status NOT IN ('done','failed','interrupted')
 		ORDER BY created_at DESC LIMIT 1`, chatID)
-	return s.scanTask(row)
+	base, err := s.scanTask(row)
+	if err != nil {
+		return base, err
+	}
+	return s.overlayLatestSnapshot(base.ID, base)
+}
+
+// overlayLatestSnapshot applies the latest committed snapshot's State to
+// the base TaskState loaded from the legacy hermes_task_states row. After
+// #169 slice 3a + 3b every reducer-managed mutation produces a snapshot,
+// so the snapshot is the canonical source for fields it covers (Status,
+// CurrentIdx, Plan, Accumulated, ModelUsages, PhaseUsages, TokenBudget,
+// PlannerSessionID, ExecutorSessionID, Interrupt).
+//
+// Non-reducer fields (CreatedAt, UpdatedAt, InterruptPolicy, ChatID,
+// ProjectDir, Goal) stay from the legacy row. The base's Artifacts are
+// also preserved when the snapshot has none — Artifacts are reducer-aware
+// but AppendArtifact is rarely used in production, so the legacy
+// artifacts table remains the practical truth for now.
+//
+// When no snapshot exists yet (CreateTask just ran, no commit yet) the
+// legacy row is returned unchanged. This keeps reads correct during the
+// transition window before slice 3d removes the legacy UPDATE inside
+// CommitRuntimeStep.
+func (s *SQLiteTaskStore) overlayLatestSnapshot(taskID string, base TaskState) (TaskState, error) {
+	snap, err := s.GetLatestSnapshot(taskID)
+	if err == ErrNoTask {
+		return base, nil
+	}
+	if err != nil {
+		return base, err
+	}
+	legacyArtifacts := base.Artifacts
+	merged := hermesStateToTaskState(base, snap.State)
+	if len(merged.Artifacts) == 0 && len(legacyArtifacts) > 0 {
+		merged.Artifacts = legacyArtifacts
+	}
+	return merged, nil
 }
 
 func (s *SQLiteTaskStore) StorePlan(taskID string, plan []SubTask) error {
@@ -1096,9 +1137,16 @@ func (s *SQLiteTaskStore) ListTasksForChat(chatID int64, limit int) ([]TaskState
 		return nil, err
 	}
 
-	// Now load artifacts for each task with the connection free.
+	// Now load artifacts and overlay the latest snapshot for each task with
+	// the connection free. After #169 slice 3c the snapshot is the canonical
+	// source for reducer-managed fields; the legacy row contributes only
+	// CreatedAt / UpdatedAt / non-reducer columns.
 	for i := range tasks {
 		tasks[i].Artifacts, err = s.loadArtifacts(tasks[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		tasks[i], err = s.overlayLatestSnapshot(tasks[i].ID, tasks[i])
 		if err != nil {
 			return nil, err
 		}

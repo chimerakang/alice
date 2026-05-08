@@ -2,6 +2,7 @@ package hermes
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -1280,5 +1281,145 @@ func TestCommitRuntimeStep_ClearInterruptRemovesFromSnapshot(t *testing.T) {
 	}
 	if latest.State.Interrupt != nil {
 		t.Errorf("interrupt should be cleared, got %+v", latest.State.Interrupt)
+	}
+}
+
+// ── Slice 3c: snapshot-priority read paths ─────────────────────────────────
+
+func TestGetTask_PrefersLatestSnapshotState(t *testing.T) {
+	store := newTestStore(t)
+	task, err := store.CreateTask(makeTask("task-overlay", 7))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	// First snapshot: Plan + status executing + accumulated.
+	executing := TaskStatusExecuting
+	currentIdx := 1
+	plan := []SubTask{
+		{ID: "s1", Description: "first", Status: SubTaskDone, Result: "ok-1", TokensUsed: 10},
+		{ID: "s2", Description: "second", Status: SubTaskInProgress},
+	}
+	accumulated := "first done"
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     task.ID,
+		Updates:    []StateUpdate{{Plan: plan, CurrentIdx: &currentIdx, Status: &executing, Accumulated: &accumulated}},
+		NextStep:   RuntimeStepExecutor,
+		SourceNode: RuntimeStepExecutor,
+	}); err != nil {
+		t.Fatalf("CommitRuntimeStep #1: %v", err)
+	}
+
+	// Read back via GetTask — should match snapshot, not the initial CreateTask state.
+	got, err := store.GetTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != TaskStatusExecuting {
+		t.Errorf("status = %q, want executing", got.Status)
+	}
+	if got.CurrentIdx != 1 {
+		t.Errorf("CurrentIdx = %d, want 1", got.CurrentIdx)
+	}
+	if got.Accumulated != "first done" {
+		t.Errorf("Accumulated = %q, want %q", got.Accumulated, "first done")
+	}
+	if len(got.Plan) != 2 || got.Plan[0].Status != SubTaskDone || got.Plan[1].Status != SubTaskInProgress {
+		t.Errorf("Plan mismatch: %+v", got.Plan)
+	}
+
+	// CreatedAt must come from legacy row (not zero, not from snapshot).
+	if got.CreatedAt.IsZero() {
+		t.Errorf("CreatedAt should be preserved from legacy row, got zero")
+	}
+}
+
+func TestGetTask_FallsBackToLegacyWhenNoSnapshot(t *testing.T) {
+	// A task that was just CreateTask'd has no snapshot yet. GetTask must
+	// still return the legacy row instead of erroring out.
+	store := newTestStore(t)
+	task, err := store.CreateTask(makeTask("task-no-snap", 9))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	got, err := store.GetTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != TaskStatusPlanning {
+		t.Errorf("status = %q, want %q (initial CreateTask state)", got.Status, TaskStatusPlanning)
+	}
+	if got.ChatID != 9 {
+		t.Errorf("ChatID = %d, want 9", got.ChatID)
+	}
+}
+
+func TestGetActiveTaskForChat_UsesSnapshotStatus(t *testing.T) {
+	// If snapshot says the task moved to done, GetActiveTaskForChat must
+	// exclude it — even if some hypothetical test bypassed the legacy
+	// status update, the read path must respect the snapshot's status.
+	store := newTestStore(t)
+	task, err := store.CreateTask(makeTask("task-active", 21))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	executing := TaskStatusExecuting
+	currentIdx := 0
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     task.ID,
+		Updates:    []StateUpdate{{Status: &executing, CurrentIdx: &currentIdx}},
+		NextStep:   RuntimeStepExecutor,
+		SourceNode: RuntimeStepPlanner,
+	}); err != nil {
+		t.Fatalf("CommitRuntimeStep: %v", err)
+	}
+
+	got, err := store.GetActiveTaskForChat(21)
+	if err != nil {
+		t.Fatalf("GetActiveTaskForChat: %v", err)
+	}
+	if got.ID != task.ID || got.Status != TaskStatusExecuting {
+		t.Errorf("active task mismatch: id=%q status=%q", got.ID, got.Status)
+	}
+}
+
+func TestListTasksForChat_AppliesSnapshotOverlay(t *testing.T) {
+	store := newTestStore(t)
+	chatID := int64(50)
+	// Create three tasks, advance each to a different state via CommitRuntimeStep.
+	for i := 1; i <= 3; i++ {
+		base := makeTask(fmt.Sprintf("task-list-%d", i), chatID)
+		if _, err := store.CreateTask(base); err != nil {
+			t.Fatalf("CreateTask %d: %v", i, err)
+		}
+	}
+	executing := TaskStatusExecuting
+	idx := 1
+	for i := 1; i <= 3; i++ {
+		acc := fmt.Sprintf("progress-%d", i)
+		if _, err := store.CommitRuntimeStep(RuntimeCommit{
+			TaskID:     fmt.Sprintf("task-list-%d", i),
+			Updates:    []StateUpdate{{Status: &executing, CurrentIdx: &idx, Accumulated: &acc}},
+			NextStep:   RuntimeStepExecutor,
+			SourceNode: RuntimeStepExecutor,
+		}); err != nil {
+			t.Fatalf("CommitRuntimeStep %d: %v", i, err)
+		}
+	}
+
+	tasks, err := store.ListTasksForChat(chatID, 10)
+	if err != nil {
+		t.Fatalf("ListTasksForChat: %v", err)
+	}
+	if len(tasks) != 3 {
+		t.Fatalf("want 3 tasks, got %d", len(tasks))
+	}
+	for _, tk := range tasks {
+		if tk.Status != TaskStatusExecuting {
+			t.Errorf("task %s status = %q, want executing (from snapshot)", tk.ID, tk.Status)
+		}
+		if !strings.HasPrefix(tk.Accumulated, "progress-") {
+			t.Errorf("task %s accumulated = %q, want progress-*", tk.ID, tk.Accumulated)
+		}
 	}
 }
