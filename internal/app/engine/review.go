@@ -39,7 +39,7 @@ type Verdict = ReviewVerdict
 // Keeping these aligned ensures users who see ⚠️ in the review message also
 // get a corresponding "retry low-score" button.
 const (
-	SubTaskScoreFailingThreshold = 80 // < 80 → ⚠️/❌ marker, counts as failing for retry UI
+	SubTaskScoreFailingThreshold  = 80 // < 80 → ⚠️/❌ marker, counts as failing for retry UI
 	SubTaskScoreCriticalThreshold = 60 // < 60 → ❌ marker
 )
 
@@ -57,6 +57,7 @@ type ReviewResultStore interface {
 type ReviewRequest struct {
 	TaskID         string
 	ProjectDir     string
+	ReviewScope    string
 	Goal           string
 	Accumulated    string
 	Plan           []hermes.SubTask
@@ -510,6 +511,7 @@ func BuildReviewPrompt(req ReviewRequest) string {
 	type reviewPromptPayload struct {
 		TaskID         string                 `json:"task_id,omitempty"`
 		ProjectDir     string                 `json:"project_dir,omitempty"`
+		ReviewScope    string                 `json:"review_scope,omitempty"`
 		Goal           string                 `json:"goal"`
 		Accumulated    string                 `json:"accumulated,omitempty"`
 		Plan           []hermes.SubTask       `json:"plan"`
@@ -520,6 +522,7 @@ func BuildReviewPrompt(req ReviewRequest) string {
 	payload := reviewPromptPayload{
 		TaskID:         strings.TrimSpace(req.TaskID),
 		ProjectDir:     strings.TrimSpace(req.ProjectDir),
+		ReviewScope:    strings.TrimSpace(req.ReviewScope),
 		Goal:           strings.TrimSpace(req.Goal),
 		Accumulated:    strings.TrimSpace(req.Accumulated),
 		Plan:           req.Plan,
@@ -552,6 +555,7 @@ func BuildReviewPrompt(req ReviewRequest) string {
 	b.WriteString("- issue_tags must be JSON arrays of snake_case labels such as ambiguous_goal, missing_context, wrong_tool_hint, underspecified_input, missing_validation, missing_runtime_validation, runtime_packaging_not_verified, scope_creep, incomplete_traceability.\n")
 	b.WriteString("- Give specific feedback tied to the goal, plan, sub-task result quality, and artifacts.\n")
 	b.WriteString("- Mark pass only when the goal appears satisfied and no material risks remain.\n")
+	b.WriteString("- If review_scope is \"subtask\", evaluate only the provided sub-task and its declared checklist responsibility; do not fail or block because later plan items or unrelated issue checklist items remain pending.\n")
 	b.WriteString("- If context is insufficient, say so explicitly and add the relevant issue_tags.\n")
 	b.WriteString("- Do not wrap the JSON in Markdown fences.\n\n")
 	b.WriteString("Execution payload:\n")

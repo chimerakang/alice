@@ -57,6 +57,30 @@ func TestBuildReviewPromptIncludesRequiredSections(t *testing.T) {
 	}
 }
 
+func TestBuildReviewPromptIncludesSubTaskScopeInstruction(t *testing.T) {
+	prompt := BuildReviewPrompt(ReviewRequest{
+		ReviewScope: "subtask",
+		Goal:        "完成 item-117 到 item-128",
+		Plan: []hermes.SubTask{
+			{ID: "s0", Description: "驗證 item-117 與 item-118", Status: hermes.SubTaskDone},
+		},
+		SubTaskResults: []ReviewSubTaskInput{
+			{ID: "s0", Description: "驗證 item-117 與 item-118", Status: "done", Result: "item-117/item-118 PASS"},
+		},
+	})
+
+	checks := []string{
+		`"review_scope": "subtask"`,
+		`evaluate only the provided sub-task`,
+		`do not fail or block because later plan items or unrelated issue checklist items remain pending`,
+	}
+	for _, want := range checks {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q\n%s", want, prompt)
+		}
+	}
+}
+
 func TestReviewInputsFromPlanCopiesPlanState(t *testing.T) {
 	plan := []hermes.SubTask{
 		{
