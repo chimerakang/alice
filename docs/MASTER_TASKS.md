@@ -1,7 +1,7 @@
 # Master Tasks
 
 > Auto-generated from GitHub Issues.
-> Last updated: 2026-05-06
+> Last updated: 2026-05-08
 > Run `/task-sync` to regenerate.
 
 ## Status Legend
@@ -25,9 +25,9 @@
 | P10 - Claude Code Hooks | 攔截所有 Claude Code 互動（Terminal/VSCode/TG） | 100% (1/1) | ✅ |
 | P11 - User Experience | 指令健全性和用戶體驗改善 | 100% (1/1) | ✅ |
 | P12 - Dashboard Analytics | Claude Code Hooks UI 增強：統計圖表 + 用戶指南 | 100% (1/1) | ✅ |
-| P13 - Future Enhancements | 未來功能增強與優化 | 64% (24/37) | 🔄 |
+| P13 - Future Enhancements | 未來功能增強與優化 | 71% (27/38) | 🔄 |
 | P14 - Commercialization Strategy | Alice AI Agent 商業化發展策略與產品定位 | 0% (0/6) | 🔄 |
-| P15 - Hermes Stabilization & Cleanup | Hermes v2 stabilization, memory isolation, token observability, routing cleanup, and execution-engine consolidation. | 50% (5/10) | 🔄 |
+| P15 - Hermes Stabilization & Cleanup | Hermes v2 stabilization, memory isolation, token observability, routing cleanup, and execution-engine consolidation. | 58% (10/17) | 🔄 |
 | P15 - Parallel Subagents & Orchestration | Implementation of parallel subagent execution with isolated contexts, tool-level parallelism, and orchestration | 91% (11/12) | 🔄 |
 | P16 - Multi-Backend Execution | Support for multiple execution backends: Local, Docker, SSH | 100% (1/1) | ✅ |
 | P2 - Monitoring | Web Dashboard + API + 監控系統 | 100% (7/7) | ✅ |
@@ -92,7 +92,7 @@
 | | — 用戶可依照文件快速設置 Claude Code Hooks | | ✅ |
 | | — 設置指南包含完整的故障排除說明 | | ✅ |
 
-## P13 - Future Enhancements (🔄 64%)
+## P13 - Future Enhancements (🔄 71%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
@@ -640,7 +640,7 @@
 | | — 帶入最近對話的 context 摘要到新 session | | ☐ |
 | | — Haiku triage timeout (`signal: killed`): 考慮增加 timeout 或改用更輕量的方式 | | ☐ |
 | | — Voice analysis 空 stderr: 檢查 stdout JSON 中的 error 訊息 | | ☐ |
-| P13.33 | **feat: Claude Design 整合 - UI 原型與設計生成 [等待 API 開放]** | [#91](https://github.com/chimerakang/alice/issues/91) | 🔄 |
+| P13.33 | **feat: Claude Design 整合 - UI 原型與設計生成 [等待 API 開放]** | [#91](https://github.com/chimerakang/alice/issues/91) | ✅ |
 | | — 調查 Claude Design API 文檔和認證方式 | | ☐ |
 | | — 實作 `DesignGenerator` 核心類別 | | ☐ |
 | | — 新增 Telegram `/design` 命令 | | ☐ |
@@ -695,7 +695,7 @@
 | | — 安全限制：prompt 長度、頻率限制（per chat / per user）、**費用告警**（output $30/1M tokens） | | ☐ |
 | | — 加入 quality stats / cost tracking（沿用 [`internal/app/quality_stats.go`](internal/app/quality_stats.go) 模式） | | ☐ |
 | | — 文件：`docs/DEPLOYMENT.md` 增加 image gen 開關說明 | | ☐ |
-| P13.37 | **research: VS Code 上的 Codex CLI 訊息攔截方案** | [#130](https://github.com/chimerakang/alice/issues/130) | 🔄 |
+| P13.37 | **research: VS Code 上的 Codex CLI 訊息攔截方案** | [#130](https://github.com/chimerakang/alice/issues/130) | ✅ |
 | | — 是否有等價於 Claude Code `hooks` 的官方機制？（UserPromptSubmit / Stop / SessionEnd） | | ✅ |
 | | — 是否支援 MCP server？若支援，能否藉由 MCP 觀察到 prompt？（MCP 一般是 tool 層，不一定看得到 user prompt） | | ✅ |
 | | — 設定檔位置與格式（類似 `~/.claude/settings.json` 的東西） | | ✅ |
@@ -706,6 +706,7 @@
 | | — Phase 1 (observe) / Phase 2 (block) 在 Codex 上的可行性（block 是否能像 Claude Code 那樣靠 hook 回 stdout 中斷？） | | ✅ |
 | | — [internal/app/hooks.go](internal/app/hooks.go) 的 `UserPromptSubmitPayload` schema 是否需要擴充以容納 Codex 的欄位差異 | | ✅ |
 | | — 對 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) Hermes GPT tier 段落的更新 | | ✅ |
+| P13.38 | **Implement Codex CLI VS Code interception (Phase 1: JSONL watcher)** | [#150](https://github.com/chimerakang/alice/issues/150) | ✅ |
 
 ## P14 - Commercialization Strategy (🔄 0%)
 
@@ -964,7 +965,7 @@
 | | — 客戶付款延遲：建立付款保障機制 | | ☐ |
 | | — 投資回報不佳：設定止損線 | | ☐ |
 
-## P15 - Hermes Stabilization & Cleanup (🔄 50%)
+## P15 - Hermes Stabilization & Cleanup (🔄 58%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
@@ -1060,48 +1061,113 @@
 | | — 最近任務可看出 phase breakdown，包含 planner / executor / reviewer | | ☐ |
 | | — 針對一個真實 issue retry / continuation，token 使用量比原始 fresh task 明顯下降 | | ☐ |
 | | — 補測試：token aggregation、cache-adjusted 計算、outlier 標記、compact context 選取規則 | | ☐ |
-| P15.9 | **Prevent Hermes no-op continuation loops when GitHub checklist is unsynced** | [#159](https://github.com/chimerakang/alice/issues/159) | 🔄 |
-| | — 在 issue reconciliation 中偵測「Hermes/review 已通過但 GitHub checklist 未勾」的狀態，輸出明確原因：`checklist_unsynced`。 | | ☐ |
-| | — Telegram 完成訊息增加選項： | | ☐ |
-| | — `同步 checklist`：根據 Hermes 執行計劃或已完成 subtask 嘗試勾選 issue body checklist。 | | ☐ |
-| | — `重新驗證`：只跑 final validation，不重新實作。 | | ☐ |
-| | — `重新規劃剩餘項`：只針對仍未被證據覆蓋的 checklist。 | | ☐ |
-| | — 避免 planner 對已驗證完成但 checklist 未勾的 issue 產生 no-op executor task；應改成 checklist sync / validation action。 | | ☐ |
-| | — 在 GitHub issue comment 中明確列出：哪些項目已由證據覆蓋、哪些只是 checklist 未勾、哪些仍缺實作。 | | ☐ |
-| | — 若無法安全自動勾選 checklist，至少提示使用者「目前阻塞點是 GitHub checklist 未同步」。 | | ☐ |
-| | — 補 runtime event，例如 `IssueChecklistUnsynced` 或在既有 `IssueQualityGate` payload 加 `reason=checklist_unsynced`。 | | ☐ |
-| | — 用 #157 類型案例重現時，不會連續產生只回報「已完成」的 no-op Hermes continuation。 | | ☐ |
-| | — Telegram 能清楚顯示：卡住原因是 checklist 未同步，而不是 executor 失敗。 | | ☐ |
-| | — 使用者可透過按鈕或指令選擇同步 checklist、重新驗證或只重規劃真正剩餘工作。 | | ☐ |
-| | — GitHub issue comment / body 更新結果可追蹤，避免誤勾沒有證據的 checklist。 | | ☐ |
-| | — 補測試涵蓋：review passed + unchecked checklist、no-op continuation prevention、checklist sync action rendering。 | | ☐ |
-| P15.10 | **Add IssueOps Agent FSM for GitHub issue lifecycle, checklist sync, and close readiness** | [#160](https://github.com/chimerakang/alice/issues/160) | 🔄 |
-| | — 新增 IssueState / IssueEvent / IssueTransition 型別，沿用或對齊現有 Task FSM pattern。 | | ☐ |
-| | — 實作 `ValidIssueTransition(from, event, to)` 或等價 guard-driven transition helper。 | | ☐ |
-| | — 補 `IsTerminal()` / `NeedsHumanDecision()` 等共通介面。 | | ☐ |
-| | — 加入 transition table 測試，覆蓋 happy path、checklist unsynced、blocked、closed。 | | ☐ |
+| P15.9 | **Prevent Hermes no-op continuation loops when GitHub checklist is unsynced** | [#159](https://github.com/chimerakang/alice/issues/159) | ✅ |
+| | — 在 issue reconciliation 中偵測「Hermes/review 已通過但 GitHub checklist 未勾」的狀態，輸出明確原因：`checklist_unsynced`。 | | ✅ |
+| | — Telegram 完成訊息增加選項： | | ✅ |
+| | — `同步 checklist`：根據 Hermes 執行計劃或已完成 subtask 嘗試勾選 issue body checklist。 | | ✅ |
+| | — `重新驗證`：只跑 final validation，不重新實作。 | | ✅ |
+| | — `重新規劃剩餘項`：只針對仍未被證據覆蓋的 checklist。 | | ✅ |
+| | — 避免 planner 對已驗證完成但 checklist 未勾的 issue 產生 no-op executor task；應改成 checklist sync / validation action。 | | ✅ |
+| | — 在 GitHub issue comment 中明確列出：哪些項目已由證據覆蓋、哪些只是 checklist 未勾、哪些仍缺實作。 | | ✅ |
+| | — 若無法安全自動勾選 checklist，至少提示使用者「目前阻塞點是 GitHub checklist 未同步」。 | | ✅ |
+| | — 補 runtime event，例如 `IssueChecklistUnsynced` 或在既有 `IssueQualityGate` payload 加 `reason=checklist_unsynced`。 | | ✅ |
+| | — 用 #157 類型案例重現時，不會連續產生只回報「已完成」的 no-op Hermes continuation。 | | ✅ |
+| | — Telegram 能清楚顯示：卡住原因是 checklist 未同步，而不是 executor 失敗。 | | ✅ |
+| | — 使用者可透過按鈕或指令選擇同步 checklist、重新驗證或只重規劃真正剩餘工作。 | | ✅ |
+| | — GitHub issue comment / body 更新結果可追蹤，避免誤勾沒有證據的 checklist。 | | ✅ |
+| | — 補測試涵蓋：review passed + unchecked checklist、no-op continuation prevention、checklist sync action rendering。 | | ✅ |
+| P15.10 | **Add IssueOps Agent FSM for GitHub issue lifecycle, checklist sync, and close readiness** | [#160](https://github.com/chimerakang/alice/issues/160) | ✅ |
+| | — 新增 IssueState / IssueEvent / IssueTransition 型別，沿用或對齊現有 Task FSM pattern。 | | ✅ |
+| | — 實作 `ValidIssueTransition(from, event, to)` 或等價 guard-driven transition helper。 | | ✅ |
+| | — 補 `IsTerminal()` / `NeedsHumanDecision()` 等共通介面。 | | ✅ |
+| | — 加入 transition table 測試，覆蓋 happy path、checklist unsynced、blocked、closed。 | | ✅ |
 | | — 建立 IssueOps service / agent，不直接混在 Executor 裡。 | | ✅ |
-| | — 負責讀取 GitHub issue body、解析 checklist、建立 checklist mapping。 | | ☐ |
-| | — 負責收集 Hermes subtask result、review result、validation command 作為 evidence。 | | ☐ |
-| | — 負責產生 issue comment / body patch，但實際寫入前需通過 guard。 | | ☐ |
-| | — 對外提供高階操作：`PlanIssue`、`RecordEvidence`、`SyncChecklist`、`AssessCloseReadiness`、`CloseIssue`。 | | ☐ |
-| | — 將目前 post-run issue reconciliation 改為呼叫 IssueOps FSM，而不是只讀 checklist 判斷。 | | ☐ |
-| | — #159 的 `checklist_unsynced` 狀態應由 IssueOps Agent 發出。 | | ☐ |
-| | — Telegram completion message 根據 Issue FSM state 顯示不同 action：同步 checklist、重新驗證、重新規劃剩餘項、關閉 issue。 | | ☐ |
-| | — 避免 planner 對 `checklist_unsynced` 產生 no-op continuation。 | | ☐ |
-| | — Runtime event 增加 Issue FSM state transition 記錄。 | | ☐ |
-| | — 自動勾 checklist 前列出 evidence mapping。 | | ☐ |
-| | — 對低信心 mapping 要求人工確認。 | | ☐ |
-| | — 支援 dry-run：只顯示將更新哪些 checklist / comment，不真正寫入。 | | ☐ |
-| | — GitHub API / gh CLI 失敗時進入 `blocked`，並提供 retry action。 | | ☐ |
-| | — 防止 issue body 被覆蓋掉使用者手動新增內容。 | | ☐ |
-| | — #157 類型案例不再出現 executor/review 已完成但 checklist 未同步後反覆 no-op continuation。 | | ☐ |
-| | — IssueOps FSM 能明確輸出目前 state，例如 `checklist_unsynced`、`ready_to_close`、`blocked`。 | | ☐ |
-| | — Telegram 可以依 Issue FSM state 顯示正確操作，而不是單純「繼續 / 重新規劃 / 停止」。 | | ☐ |
-| | — 每個自動勾選 checklist item 都能追溯到 Hermes subtask result、review result 或 validation command。 | | ☐ |
-| | — Issue close 前必須通過 `CanAutoClose` guard。 | | ☐ |
-| | — 補單元測試：transition table、guard、checklist mapping、sync dry-run、blocked recovery。 | | ☐ |
+| | — 負責讀取 GitHub issue body、解析 checklist、建立 checklist mapping。 | | ✅ |
+| | — 負責收集 Hermes subtask result、review result、validation command 作為 evidence。 | | ✅ |
+| | — 負責產生 issue comment / body patch，但實際寫入前需通過 guard。 | | ✅ |
+| | — 對外提供高階操作：`PlanIssue`、`RecordEvidence`、`SyncChecklist`、`AssessCloseReadiness`、`CloseIssue`。 | | ✅ |
+| | — 將目前 post-run issue reconciliation 改為呼叫 IssueOps FSM，而不是只讀 checklist 判斷。 | | ✅ |
+| | — #159 的 `checklist_unsynced` 狀態應由 IssueOps Agent 發出。 | | ✅ |
+| | — Telegram completion message 根據 Issue FSM state 顯示不同 action：同步 checklist、重新驗證、重新規劃剩餘項、關閉 issue。 | | ✅ |
+| | — 避免 planner 對 `checklist_unsynced` 產生 no-op continuation。 | | ✅ |
+| | — Runtime event 增加 Issue FSM state transition 記錄。 | | ✅ |
+| | — 自動勾 checklist 前列出 evidence mapping。 | | ✅ |
+| | — 對低信心 mapping 要求人工確認。 | | ✅ |
+| | — 支援 dry-run：只顯示將更新哪些 checklist / comment，不真正寫入。 | | ✅ |
+| | — GitHub API / gh CLI 失敗時進入 `blocked`，並提供 retry action。 | | ✅ |
+| | — 防止 issue body 被覆蓋掉使用者手動新增內容。 | | ✅ |
+| | — #157 類型案例不再出現 executor/review 已完成但 checklist 未同步後反覆 no-op continuation。 | | ✅ |
+| | — IssueOps FSM 能明確輸出目前 state，例如 `checklist_unsynced`、`ready_to_close`、`blocked`。 | | ✅ |
+| | — Telegram 可以依 Issue FSM state 顯示正確操作，而不是單純「繼續 / 重新規劃 / 停止」。 | | ✅ |
+| | — 每個自動勾選 checklist item 都能追溯到 Hermes subtask result、review result 或 validation command。 | | ✅ |
+| | — Issue close 前必須通過 `CanAutoClose` guard。 | | ✅ |
+| | — 補單元測試：transition table、guard、checklist mapping、sync dry-run、blocked recovery。 | | ✅ |
 | | — Add final IssueOps acceptance regression coverage for GitHub #160 by inspecting `internal/app/issueops`, `internal/app/hermes`, `internal/app/engine`, and `internal/app/telegram`, then modifying the relevant Go test files to assert that `checklist_unsynced`, `ready_to_close`, and `blocked` states drive non-no-op continuation actions, evidence-backed checklist sync, blocked retry recovery, runtime transition recording, and `CanAutoClose` guarding; finish by running the focused package tests and `go test ./...` to report concrete file paths, line numbers, and command output. | | ✅ |
+| P15.11 | **Hermes: durable execution runtime with reducer-based snapshots** | [#161](https://github.com/chimerakang/alice/issues/161) | 🔄 |
+| | — A Hermes task can be resumed from the latest snapshot after process restart. | | ☐ |
+| | — Step completion writes one durable snapshot with `state`, `next`, and metadata. | | ✅ |
+| | — Existing plan-execute-review behavior still works. | | ✅ |
+| | — Failed or panicked tasks do not remain indefinitely stuck in `executing`. | | ☐ |
+| | — `/retry sub-task N` is documented either as deferred to a later phase (time-travel / fork from snapshot — out of scope here) or expressed as forward-only resume from the latest snapshot. | | ☐ |
+| | — Approval / interruption state can be represented durably, even if Telegram callback wiring remains unchanged initially. | | ☐ |
+| | — #162 — schema + types | | ✅ |
+| | — #163 — reducer apply layer (batch semantics) | | ✅ |
+| | — #164 — step-boundary checkpoint writes (atomic) | | ✅ |
+| | — #165 — resume / recover (idempotent) | | ☐ |
+| | — #166 — durable interrupt (with expiry) | | ☐ |
+| | — Phase 1: snapshot schema and runtime types (#162) | | ✅ |
+| | — Phase 2: reducer apply layer (#163) | | ✅ |
+| | — Phase 3: step-boundary checkpointing (#164) | | ✅ |
+| | — Phase 4: resume/recover (#165) | | ☐ |
+| | — Phase 5: durable interrupt (#166) | | ☐ |
+| P15.12 | **Hermes runtime Phase 1: add snapshot schema and runtime types** | [#162](https://github.com/chimerakang/alice/issues/162) | ✅ |
+| | — Migration adds a snapshot table suitable for Hermes task checkpoints, including the required indexes above. | | ✅ |
+| | — `channel_versions_json` column is present and serialized as JSON, even if always empty in this phase. | | ✅ |
+| | — Go runtime types compile and are covered by basic serialization tests. | | ✅ |
+| | — Store API can create a snapshot, fetch latest snapshot by task/thread, and list snapshot history. | | ✅ |
+| | — Existing Hermes behavior is unchanged. | | ✅ |
+| | — Related package tests pass. | | ✅ |
+| P15.13 | **Hermes runtime Phase 2: centralize state updates behind reducers** | [#163](https://github.com/chimerakang/alice/issues/163) | ✅ |
+| | — `ApplyStateUpdates` accepts `[]StateUpdate`; single-update is just a slice of length 1. | | ✅ |
+| | — Reducer behavior is covered by table tests including the multi-update batch cases listed above for `accumulated` and `subtask_results`. | | ✅ |
+| | — Concurrent-style or multi-update inputs for append/merge fields behave deterministically (same input batch → same output state, regardless of platform map iteration order). | | ✅ |
+| | — Existing calls such as subtask completion, accumulated context update, and task advancement can be expressed as `StateUpdate` values. | | ✅ |
+| | — Existing plan-execute-review behavior remains unchanged. | | ✅ |
+| | — Related package tests pass. | | ✅ |
+| P15.14 | **Hermes runtime Phase 3: write snapshots at execution step boundaries** | [#164](https://github.com/chimerakang/alice/issues/164) | ✅ |
+| | — Each supported boundary writes one snapshot with `state`, `next`, and metadata. | | ✅ |
+| | — Snapshot write and legacy table updates are atomic per the contract above. | | ✅ |
+| | — Snapshot history can be inspected for a task. | | ✅ |
+| | — Existing task/subtask status remains compatible with current UI and Telegram flows. | | ✅ |
+| | — Failed snapshot writes fail safely rather than silently advancing in memory only. | | ✅ |
+| | — A test exercises the failure mode "snapshot insert errors mid-step" and confirms in-memory state is rolled back / not advanced. | | ✅ |
+| | — Related package tests pass. | | ✅ |
+| P15.15 | **Hermes runtime Phase 4: resume and recover from latest snapshot** | [#165](https://github.com/chimerakang/alice/issues/165) | 🔄 |
+| | — A Hermes task can be resumed from the latest snapshot after process restart. | | ☐ |
+| | — Tasks with a valid `next_step` do not remain indefinitely stuck in `executing`. | | ☐ |
+| | — Existing defer/recover sweep logic is either reduced, delegated to snapshot recovery, or documented as a fallback. | | ☐ |
+| | — Resume behavior is covered by tests using persisted snapshots. | | ☐ |
+| | — Concurrency safety: a test exercises the double-resume case (lease contention or idempotent replay) and shows no double execution. | | ☐ |
+| | — Related package tests pass. | | ☐ |
+| P15.16 | **Hermes runtime Phase 5: persist interrupts and approval waits** | [#166](https://github.com/chimerakang/alice/issues/166) | 🔄 |
+| | — A task waiting for approval has durable interrupt state in the latest snapshot. | | ☐ |
+| | — Process restart does not lose the fact that the task is waiting for a human decision. | | ☐ |
+| | — Resume can validate that the callback decision matches the pending interrupt (id-based idempotency). | | ☐ |
+| | — Expiry behavior is implemented per the chosen policy and covered by tests (resume after expiry, sweep after expiry). | | ☐ |
+| | — Existing Telegram callback flow still works or has a documented migration path. | | ☐ |
+| | — Related package tests pass. | | ☐ |
+| P15.17 | **Align Telegram Markdown render with leaf approach** | [#167](https://github.com/chimerakang/alice/issues/167) | 🔄 |
+| | — 先整理 `leaf` 目前 markdown/render 的處理方式，列出其支援範圍、轉換策略與重要邊界條件。 | | ☐ |
+| | — 盤點目前 `internal/app/telegram.go` 的 Telegram render pipeline，明確列出與 `leaf` 的能力落差。 | | ☐ |
+| | — 依分析結果，提出並實作一版 Telegram render 修正，優先補齊最常用且高價值的 Markdown 結構。 | | ☐ |
+| | — 對修正內容補上測試，覆蓋至少一組複合 markdown 輸入與預期 Telegram HTML 輸出。 | | ☐ |
+| | — 確保長訊息分段後仍維持可接受的 render 行為，不因補強 parser 造成明顯退化。 | | ☐ |
+| | — 保留 Telegram 相容性，避免輸出 Telegram 不接受的 HTML 標籤或危險巢狀。 | | ☐ |
+| | — 分析 leaf 專案的 markdown/render 實作：用 Glob/Grep 在 /Volumes/eclipse/projects 下定位 leaf 專案 markdown render 相關原始碼，Read 關鍵檔案，整理 leaf 支援的 Markdown 結構（headings、lists、blockquote、code fence、inline code、bold/italic、links、tables、strikethrough）、轉換策略（AST vs 規則式）、Telegram HTML 安全邊界，作為後續比對基礎。 | | ✅ |
+| | — 盤點 alice 現有 Telegram render pipeline：Read /Volumes/eclipse/projects/alice/internal/app/telegram.go 的 sendLongMarkdown、markdownToTelegramHTML 與相關 helper，Read /Volumes/eclipse/projects/alice/internal/app/telegram_test.go 對應測試，列出目前支援結構與邊界條件，對照 s1 的 leaf 能力清單產出明確 gap list（未支援結構、不穩巢狀、有風險的 HTML tag）。 | | ✅ |
+| | — 依 s2 的 gap list 在 /Volumes/eclipse/projects/alice/internal/app/telegram.go 實作 markdown→Telegram HTML render 修正，以 leaf 策略為基準補齊 lists、blockquote、inline 巢狀、code fence/inline code、escape 與 Telegram 接受的 HTML 子集（b/i/u/s/code/pre/a/blockquote），同步調整 sendLongMarkdown 長訊息分段邏輯避免切斷標籤；完成後執行 `cd /Volumes/eclipse/projects/alice && go build ./...` 確認可編譯。 | | ✅ |
+| | — 在 /Volumes/eclipse/projects/alice/internal/app/telegram_test.go 補 markdown render 測試：至少一組複合 markdown 輸入（含 heading/list/blockquote/code fence/inline 巢狀/link）對應預期 Telegram HTML 輸出，並補一個長訊息分段案例驗證跨段不留下未閉合標籤，涵蓋 Telegram 不接受的 HTML tag 不會被輸出；執行 `cd /Volumes/eclipse/projects/alice && go test ./internal/app/...` 並確認綠燈。 | | ✅ |
+| | — 以 Telegram sendMessage HTML parse_mode 規格做 smoke check：檢視 s3/s4 最終輸出，列出所有產生的 HTML tag/屬性，比對 Telegram Bot API 允許清單（b/strong、i/em、u、s/strike/del、code、pre、a href、blockquote、tg-spoiler），確認無 unsupported tag、無危險巢狀、href 已 escape；若偏離立即回到 telegram.go 修正並重跑 `go test ./internal/app/...`，最後整理中文總結回報落實的 checklist 項目與驗證結果。 | | ✅ |
 
 ## P15 - Parallel Subagents & Orchestration (🔄 91%)
 
@@ -1763,11 +1829,12 @@
 | [#86](https://github.com/chimerakang/alice/issues/86) | feat: Implement auto-skill generation system | P13 - Future Enhancements | ✅ |
 | [#89](https://github.com/chimerakang/alice/issues/89) | feat: Implement cron scheduler for automated tasks | P13 - Future Enhancements | ✅ |
 | [#90](https://github.com/chimerakang/alice/issues/90) | bug: CallStream 丟棄 CLI exit error 時的 streaming 結果導致「執行錯誤」 | P13 - Future Enhancements | ✅ |
-| [#91](https://github.com/chimerakang/alice/issues/91) | feat: Claude Design 整合 - UI 原型與設計生成 [等待 API 開放] | P13 - Future Enhancements | 🔄 |
+| [#91](https://github.com/chimerakang/alice/issues/91) | feat: Claude Design 整合 - UI 原型與設計生成 [等待 API 開放] | P13 - Future Enhancements | ✅ |
 | [#92](https://github.com/chimerakang/alice/issues/92) | feat: Telegram 對話式 UI 原型生成 (/prototype 命令) | P13 - Future Enhancements | ✅ |
 | [#93](https://github.com/chimerakang/alice/issues/93) | Model routing 造成 session context 丟失：改採 Sticky + Follow-up detection | P13 - Future Enhancements | ✅ |
 | [#129](https://github.com/chimerakang/alice/issues/129) | 整合 OpenAI Image Generation (gpt-image-2 / DALL-E) 為遊戲開發鋪路 | P13 - Future Enhancements | 🔄 |
-| [#130](https://github.com/chimerakang/alice/issues/130) | research: VS Code 上的 Codex CLI 訊息攔截方案 | P13 - Future Enhancements | 🔄 |
+| [#130](https://github.com/chimerakang/alice/issues/130) | research: VS Code 上的 Codex CLI 訊息攔截方案 | P13 - Future Enhancements | ✅ |
+| [#150](https://github.com/chimerakang/alice/issues/150) | Implement Codex CLI VS Code interception (Phase 1: JSONL watcher) | P13 - Future Enhancements | ✅ |
 | [#49](https://github.com/chimerakang/alice/issues/49) | Alice 商業化：單機版隱私優先定位策略 | P14 - Commercialization Strategy | 🔄 |
 | [#51](https://github.com/chimerakang/alice/issues/51) | 多人版架構設計：從單機到團隊協作 | P14 - Commercialization Strategy | 🔄 |
 | [#53](https://github.com/chimerakang/alice/issues/53) | 競品分析深化：Entire Checkpoints vs Alice 差異化策略 | P14 - Commercialization Strategy | 🔄 |
@@ -1782,8 +1849,15 @@
 | [#148](https://github.com/chimerakang/alice/issues/148) | Runtime trace + token/cache observability | P15 - Hermes Stabilization & Cleanup | 🔄 |
 | [#149](https://github.com/chimerakang/alice/issues/149) | Spike: Single-session walking agent via Python Claude Agent SDK (#148 Phase 2) | P15 - Hermes Stabilization & Cleanup | ✅ |
 | [#158](https://github.com/chimerakang/alice/issues/158) | Optimize Hermes token efficiency with outlier reporting and compact continuation context | P15 - Hermes Stabilization & Cleanup | 🔄 |
-| [#159](https://github.com/chimerakang/alice/issues/159) | Prevent Hermes no-op continuation loops when GitHub checklist is unsynced | P15 - Hermes Stabilization & Cleanup | 🔄 |
-| [#160](https://github.com/chimerakang/alice/issues/160) | Add IssueOps Agent FSM for GitHub issue lifecycle, checklist sync, and close readiness | P15 - Hermes Stabilization & Cleanup | 🔄 |
+| [#159](https://github.com/chimerakang/alice/issues/159) | Prevent Hermes no-op continuation loops when GitHub checklist is unsynced | P15 - Hermes Stabilization & Cleanup | ✅ |
+| [#160](https://github.com/chimerakang/alice/issues/160) | Add IssueOps Agent FSM for GitHub issue lifecycle, checklist sync, and close readiness | P15 - Hermes Stabilization & Cleanup | ✅ |
+| [#161](https://github.com/chimerakang/alice/issues/161) | Hermes: durable execution runtime with reducer-based snapshots | P15 - Hermes Stabilization & Cleanup | 🔄 |
+| [#162](https://github.com/chimerakang/alice/issues/162) | Hermes runtime Phase 1: add snapshot schema and runtime types | P15 - Hermes Stabilization & Cleanup | ✅ |
+| [#163](https://github.com/chimerakang/alice/issues/163) | Hermes runtime Phase 2: centralize state updates behind reducers | P15 - Hermes Stabilization & Cleanup | ✅ |
+| [#164](https://github.com/chimerakang/alice/issues/164) | Hermes runtime Phase 3: write snapshots at execution step boundaries | P15 - Hermes Stabilization & Cleanup | ✅ |
+| [#165](https://github.com/chimerakang/alice/issues/165) | Hermes runtime Phase 4: resume and recover from latest snapshot | P15 - Hermes Stabilization & Cleanup | 🔄 |
+| [#166](https://github.com/chimerakang/alice/issues/166) | Hermes runtime Phase 5: persist interrupts and approval waits | P15 - Hermes Stabilization & Cleanup | 🔄 |
+| [#167](https://github.com/chimerakang/alice/issues/167) | Align Telegram Markdown render with leaf approach | P15 - Hermes Stabilization & Cleanup | 🔄 |
 | [#87](https://github.com/chimerakang/alice/issues/87) | feat: Implement parallel subagent execution with isolated contexts | P15 - Parallel Subagents & Orchestration | ✅ |
 | [#95](https://github.com/chimerakang/alice/issues/95) | [Epic] Alice Hermes 化路徑圖：Brain-Executor 架構遷移 | P15 - Parallel Subagents & Orchestration | ✅ |
 | [#96](https://github.com/chimerakang/alice/issues/96) | Hermes: Tool Execution Hooks — Post-validator + Path guard | P15 - Parallel Subagents & Orchestration | ✅ |
@@ -1836,9 +1910,9 @@
 
 ## Summary
 
-**Total Issues:** 103
-**Completed:** 78 ✅
+**Total Issues:** 111
+**Completed:** 86 ✅
 **In Progress:** 25 🔄
 
-**Last sync:** 2026-05-06 03:57 UTC
+**Last sync:** 2026-05-08 09:10 UTC
 

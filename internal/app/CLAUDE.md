@@ -1,18 +1,6 @@
 <claude-mem-context>
 # Recent Activity
 
-### Mar 12, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #6278 | 2:12 PM | 🔵 | Photo Upload Implementation Details and Error Handling | ~399 |
-| #6277 | " | 🔵 | Located Photo Upload Functions in Telegram Bot Code | ~331 |
-| #6246 | 1:24 PM | 🔵 | Examined sendMediaFile implementation details | ~310 |
-| #6245 | " | 🔵 | Located sendMediaFile core upload function | ~237 |
-| #6244 | " | 🔵 | Examined media upload architecture and sendPhoto implementation | ~306 |
-| #6243 | 1:23 PM | 🔵 | Analyzed testPhotoUpload function implementation | ~284 |
-| #6242 | " | 🔵 | Examined /test-photo command implementation | ~219 |
-
 ### Apr 21, 2026
 
 | ID | Time | T | Title | Read |
@@ -24,10 +12,6 @@
 | #8511 | 12:44 AM | 🔵 | Agent.Reset() implementation deletes projectState | ~486 |
 | #8510 | " | 🔵 | /reset command already provides session clearing functionality | ~435 |
 | #8509 | " | 🔵 | Reset command exists but no clear command | ~217 |
-| #8507 | 12:43 AM | 🔵 | ProjectState session tracking infrastructure exists | ~480 |
-| #8506 | 12:42 AM | 🔵 | Agent model override mechanism and default configuration | ~468 |
-| #8505 | " | 🔵 | Model routing architecture and user preference system analysis | ~559 |
-| #8504 | " | 🔵 | Issue #93: Model routing session context loss investigation | ~483 |
 
 ### Apr 26, 2026
 
@@ -80,4 +64,20 @@
 | #11724 | 1:33 AM | 🔵 | Review result storage mechanism with source tracking | ~327 |
 | #11721 | 1:30 AM | 🔵 | Retry command integration in Telegram bot interface | ~272 |
 | #11720 | " | 🔵 | Retry mechanism implementation for failed sub-tasks | ~533 |
+
+### May 8, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #15981 | 5:08 PM | 🔴 | Added double-quote escaping to Telegram HTML sanitization function | ~321 |
+| #15980 | " | 🔵 | Test suite validates Telegram HTML compliance and security boundaries | ~384 |
+| #15979 | 5:07 PM | 🔵 | Telegram HTML output validated against Bot API parse_mode specification | ~340 |
+| #15976 | " | 🔵 | Telegram Markdown renderer targets frontend parity not external "leaf" project | ~268 |
+| #15977 | " | 🟣 | Telegram Markdown renderer enhanced with italic, lists, and blockquote support | ~311 |
+| #15978 | " | 🟣 | Comprehensive test suite added for Telegram Markdown HTML conversion | ~314 |
+| #15975 | 5:03 PM | 🟣 | Added regex patterns for enhanced Telegram markdown rendering | ~362 |
+| #15973 | 5:00 PM | 🔵 | Clarified "leaf" reference in Alice codebase | ~277 |
+| #15974 | " | 🔵 | Identified markdown rendering capability gaps in Telegram backend | ~355 |
+| #15972 | " | 🔵 | Frontend "leaf" markdown implementation identified as react-markdown with GFM | ~576 |
+| #15971 | 4:59 PM | 🔵 | Telegram markdown render pipeline inventory | ~194 |
 </claude-mem-context>
