@@ -25,6 +25,20 @@ type staleInterruptStore interface {
 	MarkTaskFailedDurable(taskID, reason string) error
 }
 
+// pendingInterruptStore is the read surface needed by RemindPendingPauses.
+// Implemented by hermes.SQLiteTaskStore.
+type pendingInterruptStore interface {
+	ListStaleInterrupts(cutoff time.Time) ([]hermes.StaleInterruptRef, error)
+}
+
+// pauseReminder is the bot-side surface RemindPendingPauses needs to
+// notify the operator. Defined here (rather than reaching into
+// *TelegramBot directly) so the function is testable without a live
+// bot instance.
+type pauseReminder interface {
+	NotifyPendingPause(chatID int64, threadID int, taskID string, interrupt hermes.HermesInterrupt, pausedFor time.Duration)
+}
+
 // SweepStaleHermesInterrupts marks tasks failed when their latest snapshot
 // holds a HermesInterrupt older than staleInterruptCutoff. Each cleared
 // task emits a HumanInterruptTimeout runtime event so dashboards can show
@@ -73,4 +87,42 @@ func SweepStaleHermesInterrupts(ctx context.Context, store staleInterruptStore) 
 			},
 		})
 	}
+}
+
+// RemindPendingPauses sends a Telegram reminder for each task whose
+// latest snapshot still carries an active HermesInterrupt that is younger
+// than staleInterruptCutoff (older ones were already failed by
+// SweepStaleHermesInterrupts). The reminder lets the operator know the
+// task is waiting for their decision after an alice restart, without
+// auto-deciding for them.
+//
+// Returns the count of reminders sent.
+func RemindPendingPauses(ctx context.Context, store pendingInterruptStore, reminder pauseReminder) int {
+	if store == nil || reminder == nil {
+		return 0
+	}
+	now := time.Now()
+	pauses, err := store.ListStaleInterrupts(now)
+	if err != nil {
+		log.Printf("[hermes.resume] list pending pauses: %v", err)
+		return 0
+	}
+	cutoff := now.Add(-staleInterruptCutoff)
+	sent := 0
+	for _, ref := range pauses {
+		// Filter out anything older than the staleness cutoff — those
+		// were already swept to failed by SweepStaleHermesInterrupts and
+		// would no longer have an interrupt in the snapshot anyway, but
+		// guard defensively.
+		if !ref.Interrupt.CreatedAt.IsZero() && ref.Interrupt.CreatedAt.Before(cutoff) {
+			continue
+		}
+		pausedFor := now.Sub(ref.Interrupt.CreatedAt).Round(time.Second)
+		reminder.NotifyPendingPause(ref.ChatID, ref.ThreadID, ref.TaskID, ref.Interrupt, pausedFor)
+		sent++
+	}
+	if sent > 0 {
+		log.Printf("[hermes.resume] reminded %d pending pause(s) on startup", sent)
+	}
+	return sent
 }

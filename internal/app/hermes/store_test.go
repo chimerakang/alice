@@ -1696,3 +1696,52 @@ func TestApplyInterruptResolution_RejectsUnknownDecision(t *testing.T) {
 		t.Error("expected error for unknown decision")
 	}
 }
+
+func TestSweepZombieTasks_SkipsPausedTasksWithActiveInterrupt(t *testing.T) {
+	// Slice 3d hotfix: tasks with a pending HermesInterrupt are
+	// legitimately paused waiting for the operator's click — they must
+	// NOT be marked failed by the zombie sweep, otherwise every alice
+	// restart would kill paused tasks before β1/β2 cold-restart resume
+	// can pick them up.
+	store := newTestStore(t)
+	pausedTask, _ := store.CreateTask(makeTask("zombie-paused", 110))
+	commitFailurePauseSnapshot(t, store, pausedTask.ID, 1)
+
+	zombieTask, _ := store.CreateTask(makeTask("zombie-real", 111))
+	executing := TaskStatusExecuting
+	idx := 0
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     zombieTask.ID,
+		Updates:    []StateUpdate{{Status: &executing, CurrentIdx: &idx}},
+		NextStep:   RuntimeStepExecutor,
+		SourceNode: RuntimeStepPlanner,
+	}); err != nil {
+		t.Fatalf("commit zombie: %v", err)
+	}
+
+	swept, err := store.SweepZombieTasks("test_paused_protection")
+	if err != nil {
+		t.Fatalf("SweepZombieTasks: %v", err)
+	}
+	if swept != 1 {
+		t.Errorf("swept = %d, want 1 (paused task should be excluded)", swept)
+	}
+
+	// Paused task must still be paused (Interrupt intact).
+	pausedSnap, err := store.GetLatestSnapshot(pausedTask.ID)
+	if err != nil {
+		t.Fatalf("GetLatestSnapshot paused: %v", err)
+	}
+	if pausedSnap.State.Status == TaskStatusFailed {
+		t.Errorf("paused task got marked failed by zombie sweep — bug returned")
+	}
+	if pausedSnap.State.Interrupt == nil {
+		t.Errorf("paused task interrupt was cleared — should still be pending")
+	}
+
+	// Real zombie was correctly swept.
+	zombieSnap, _ := store.GetLatestSnapshot(zombieTask.ID)
+	if zombieSnap.State.Status != TaskStatusFailed {
+		t.Errorf("zombie task status = %q, want failed", zombieSnap.State.Status)
+	}
+}

@@ -883,13 +883,24 @@ func interruptSubTaskIdx(interrupt *HermesInterrupt) (int, bool) {
 // failed, recording a recovery reason. Returns the count swept. Replaces
 // the legacy startup UPDATE on hermes_task_states.status which after
 // #169 slice 3d is no longer authoritative.
+//
+// Tasks whose latest snapshot has an active HermesInterrupt (i.e. the
+// task is legitimately paused waiting for the operator's pause-decision
+// click) are excluded — killing them on every restart would defeat the
+// β1/β2 cold-restart resume path. SweepStaleHermesInterrupts handles
+// abandoning paused tasks via its own 24h cutoff.
 func (s *SQLiteTaskStore) SweepZombieTasks(reason string) (int, error) {
 	rows, err := s.db.Query(`
-		SELECT task.id FROM hermes_task_states AS task
-		WHERE COALESCE((
-			SELECT s.state_status FROM hermes_snapshots s
-			WHERE s.task_id = task.id ORDER BY s.step DESC LIMIT 1
-		), task.status) IN ('planning','executing','validating')`)
+		SELECT task.id, snap.state_json FROM hermes_task_states AS task
+		LEFT JOIN (
+			SELECT s.task_id, s.state_json, s.state_status FROM hermes_snapshots s
+			INNER JOIN (
+				SELECT task_id, MAX(step) AS max_step
+				FROM hermes_snapshots
+				GROUP BY task_id
+			) latest ON latest.task_id = s.task_id AND latest.max_step = s.step
+		) AS snap ON snap.task_id = task.id
+		WHERE COALESCE(snap.state_status, task.status) IN ('planning','executing','validating')`)
 	if err != nil {
 		return 0, fmt.Errorf("SweepZombieTasks query: %w", err)
 	}
@@ -898,8 +909,18 @@ func (s *SQLiteTaskStore) SweepZombieTasks(reason string) (int, error) {
 	var ids []string
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err != nil {
+		var stateJSON sql.NullString
+		if err := rows.Scan(&id, &stateJSON); err != nil {
 			return 0, fmt.Errorf("SweepZombieTasks scan: %w", err)
+		}
+		// Skip tasks with an active interrupt — they are legitimately
+		// paused waiting for the operator's pause-decision click. The
+		// stale-interrupt sweeper (24h cutoff) handles abandonment.
+		if stateJSON.Valid && stateJSON.String != "" {
+			var state HermesState
+			if err := json.Unmarshal([]byte(stateJSON.String), &state); err == nil && state.Interrupt != nil {
+				continue
+			}
 		}
 		ids = append(ids, id)
 	}

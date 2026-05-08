@@ -875,6 +875,13 @@ func Main() {
 	if hermesStore, ok := buildHermesTaskStore().(staleInterruptStore); ok {
 		SweepStaleHermesInterrupts(appCtx, hermesStore)
 	}
+	// β5: surface tasks that are still legitimately paused (younger than
+	// 24h) by sending a Telegram reminder. Does not auto-decide for the
+	// operator — the original retry/skip/abort buttons (or /resume
+	// command) remain the canonical resolution path. See #169 slice β5.
+	if hermesStore, ok := buildHermesTaskStore().(pendingInterruptStore); ok {
+		RemindPendingPauses(appCtx, hermesStore, tgBot)
+	}
 
 	// Initialize Cron Scheduler
 	if config.EnablePersistence && globalStorage != nil {

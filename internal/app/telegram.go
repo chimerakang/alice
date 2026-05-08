@@ -1946,6 +1946,9 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		}
 		t.handleHermesCommand(key, parts, "codex")
 
+	case "/resume":
+		t.handleHermesResumeCommand(key, parts)
+
 	case "/hermes-stats":
 		t.handleHermesStatsCommand(key, parts)
 
@@ -2157,6 +2160,85 @@ func parseHermesRestartIssue(parts []string) (int, bool) {
 	}
 	issueNum, _, ok := findIssueRefInArgs(parts[2:])
 	return issueNum, ok && issueNum > 0
+}
+
+// handleHermesResumeCommand processes /resume <taskID> <retry|skip|abort>.
+// It is the slash-command equivalent of clicking the inline retry / skip /
+// abort buttons; useful when the original failure-pause Telegram message
+// has been buried in chat history (#169 slice β5 nudge points here).
+//
+// Routes through the same tryColdRestartFailureResume as a button click,
+// so the snapshot-aware ApplyInterruptResolution path keeps single-source-
+// of-truth semantics. Adjust (with hint) is intentionally not supported
+// here — keep retry/skip/abort.
+func (t *TelegramBot) handleHermesResumeCommand(key chatKey, parts []string) {
+	if len(parts) < 3 {
+		t.send(key, "用法：/resume <taskID> <retry|skip|abort>")
+		return
+	}
+	taskID := strings.TrimSpace(parts[1])
+	action := strings.ToLower(strings.TrimSpace(parts[2]))
+	switch action {
+	case "retry", "skip", "abort":
+	default:
+		t.send(key, "❌ 未知動作。請使用 retry / skip / abort 之一。")
+		return
+	}
+	if t.taskSvc == nil {
+		t.send(key, "❌ 任務服務未啟動。")
+		return
+	}
+	state, err := t.taskSvc.GetTask(taskID)
+	if err != nil {
+		// Try a short-form match: user might have typed the 8-char prefix
+		// shown in the pause-reminder ("Hermes 任務 a1b2c3d4...").
+		if full, ok := t.expandShortTaskID(key, taskID); ok {
+			state, err = t.taskSvc.GetTask(full)
+			if err == nil {
+				taskID = full
+			}
+		}
+		if err != nil {
+			t.send(key, fmt.Sprintf("❌ 找不到任務 %s。", taskID))
+			return
+		}
+	}
+	if state.IsTerminal() {
+		t.send(key, fmt.Sprintf("ℹ️ 任務 %s 已是終止狀態（%s），不需 resume。", shortHermesTaskID(taskID), state.Status))
+		return
+	}
+	if state.ChatID != key.chatID || state.ThreadID != key.threadID {
+		t.send(key, "❌ 此任務不屬於本 chat / topic，無法 resume。")
+		return
+	}
+	queryID := "" // no callback query; we synthesise a click
+	if !t.tryColdRestartFailureResume(key, queryID, action, taskID, "") {
+		t.send(key, fmt.Sprintf("❌ 無法 resume 任務 %s — 該任務目前沒有等待中的暫停。", shortHermesTaskID(taskID)))
+	}
+}
+
+// expandShortTaskID resolves an 8-character prefix to the full task ID
+// using the chat's recent task list. Returns ok=false when no unique
+// match is found.
+func (t *TelegramBot) expandShortTaskID(key chatKey, prefix string) (string, bool) {
+	if t.taskSvc == nil || len(prefix) < 4 {
+		return "", false
+	}
+	tasks, err := t.taskSvc.ListForChat(key.chatID, 50)
+	if err != nil {
+		return "", false
+	}
+	matched := ""
+	for _, task := range tasks {
+		if strings.HasPrefix(task.ID, prefix) {
+			if matched != "" {
+				// Ambiguous: more than one match.
+				return "", false
+			}
+			matched = task.ID
+		}
+	}
+	return matched, matched != ""
 }
 
 func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier string) {
@@ -6393,6 +6475,38 @@ func (t *TelegramBot) makeHermesFailureDecisionCallback(key chatKey, ch chan app
 	}
 }
 
+// NotifyPendingPause sends a Telegram reminder for one task whose pause
+// outlived a previous alice process. Implements the pauseReminder
+// interface so RemindPendingPauses can be unit-tested without coupling
+// to the bot's full state.
+func (t *TelegramBot) NotifyPendingPause(chatID int64, threadID int, taskID string, interrupt hermes.HermesInterrupt, pausedFor time.Duration) {
+	if t == nil {
+		return
+	}
+	displayTaskID := shortHermesTaskID(taskID)
+	subTaskRef := ""
+	if payload, ok := interrupt.Payload.(map[string]any); ok {
+		// JSON unmarshalling produces float64 for numeric fields.
+		if v, ok := payload["sub_task_idx"].(float64); ok {
+			total := 0
+			if tv, ok := payload["total"].(float64); ok {
+				total = int(tv)
+			}
+			if total > 0 {
+				subTaskRef = fmt.Sprintf("（子任務 %d/%d）", int(v)+1, total)
+			} else {
+				subTaskRef = fmt.Sprintf("（子任務 %d）", int(v)+1)
+			}
+		}
+	}
+	body := fmt.Sprintf(
+		"♻️ 偵測到 Hermes 任務 %s%s 仍在等待您的決定（已暫停 %s）。\n\n"+
+			"請點選原本的 retry / skip / abort 按鈕，或使用 /resume %s retry|skip|abort 直接套用。",
+		displayTaskID, subTaskRef, pausedFor, displayTaskID,
+	)
+	t.send(chatKey{chatID: chatID, threadID: threadID}, body)
+}
+
 // tryColdRestartFailureResume applies the operator's pause decision to
 // the task's snapshot and (for retry / skip) reconstructs a Hermes
 // coordinator to continue execution. Returns true when the click was
@@ -6590,6 +6704,15 @@ func (t *TelegramBot) handleHermesFailureDecisionCallback(key chatKey, queryID, 
 		if t.tryColdRestartFailureResume(key, queryID, action, taskID, idxStr) {
 			return true
 		}
+		// β6: adjust path is not supported in cold-restart because it
+		// would require persisting awaiting-hint state across restarts.
+		// Surface a clear message instead of the generic "task not
+		// waiting" so the operator knows what to do.
+		if action == "adjust" {
+			t.answerCallbackQuery(queryID, "✏️ alice 重啟後 adjust 路徑暫不支援")
+			t.send(key, fmt.Sprintf("⚠️ alice 重啟後，「✏️ 修正方向」路徑暫不支援。請改點 retry / skip / abort，或使用 /resume %s retry|skip|abort 直接套用。", shortHermesTaskID(taskID)))
+			return true
+		}
 		t.answerCallbackQuery(queryID, "❌ 任務不在等待狀態")
 		return true
 	}
@@ -6640,6 +6763,29 @@ func (t *TelegramBot) handleHermesFailureDecisionCallback(key chatKey, queryID, 
 	}
 	if subDesc != "" {
 		visible += "\n• " + truncateRunesText(subDesc, 180)
+	}
+
+	// β3: For Skip/Abort, persist the resolution to the snapshot before
+	// signalling the channel. This makes the choice durable across alice
+	// crashes — if the engine never gets to consume the channel, the
+	// snapshot still reflects the user's decision and the task does not
+	// silently zombie. Retry is intentionally channel-only because
+	// persisting a "retry now" intent before the engine actually retries
+	// could leave a paused task looking active-without-pause if alice
+	// crashes between persist and engine-consume; in that case we want
+	// the user to click again, which the existing path handles.
+	if t.taskSvc != nil && (decision == appengine.FailureSkip || decision == appengine.FailureAbort) {
+		var resolution hermes.InterruptResolution
+		if decision == appengine.FailureSkip {
+			resolution = hermes.InterruptResolutionSkip
+		} else {
+			resolution = hermes.InterruptResolutionAbort
+		}
+		if _, err := t.taskSvc.ApplyInterruptResolution(taskID, resolution); err != nil {
+			log.Printf("[hermes] live-click persist resolution task=%s decision=%s: %v", taskID, resolution, err)
+			// Fall through to channel send anyway — engine still gets the
+			// signal; we just lose crash-safety for this click.
+		}
 	}
 
 	select {
@@ -6830,6 +6976,13 @@ func (t *TelegramBot) handleHermesCallback(key chatKey, queryID, data string) {
 
 // answerCallbackQuery answers callback query to remove loading indicator
 func (t *TelegramBot) answerCallbackQuery(queryID, text string) {
+	// Empty queryID happens when a non-callback path (e.g. the /resume
+	// slash command) reuses code that was originally written for inline
+	// button clicks. Skip the API call rather than send an invalid
+	// answerCallbackQuery to Telegram.
+	if strings.TrimSpace(queryID) == "" {
+		return
+	}
 	params := map[string]interface{}{
 		"callback_query_id": queryID,
 		"text":              text,
