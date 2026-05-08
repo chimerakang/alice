@@ -4,6 +4,8 @@ import (
 	"log"
 	"strings"
 	"time"
+
+	"claude-tg-agent/internal/app/engine/errorclass"
 )
 
 type RecoveryAction string
@@ -243,13 +245,10 @@ func IsRetryableRecoveryError(err error) bool {
 	return isTransientRecoveryError(err.Error())
 }
 
+// isTransientRecoveryError keeps the original boolean signature but delegates
+// classification to the canonical errorclass package. Pattern coverage is a
+// strict superset of the previous local list (verified by
+// errorclass.TestRegression_IsTransientRecoveryErrorPatterns).
 func isTransientRecoveryError(text string) bool {
-	s := strings.ToLower(strings.TrimSpace(text))
-	return strings.Contains(s, "rate limit") ||
-		strings.Contains(s, "429") ||
-		strings.Contains(s, "overloaded") ||
-		strings.Contains(s, "529") ||
-		strings.Contains(s, "temporary") ||
-		strings.Contains(s, "connection reset") ||
-		strings.Contains(s, "eof")
+	return errorclass.ClassifyText(text).IsTransient()
 }
