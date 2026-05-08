@@ -114,6 +114,27 @@ func (svc *Service) LatestSnapshot(taskID string) (hermes.Snapshot, bool) {
 	return snap, true
 }
 
+// interruptResolutionStore is the storage capability needed to persist an
+// operator's pause decision. Implemented by *hermes.SQLiteTaskStore.
+type interruptResolutionStore interface {
+	ApplyInterruptResolution(taskID string, decision hermes.InterruptResolution) error
+}
+
+// ApplyInterruptResolution persists the operator's pause decision durably
+// (#169 β2). Returns ok=false when the underlying store does not support
+// snapshot-aware resolution; callers should fall back to the legacy
+// channel-based resume path.
+func (svc *Service) ApplyInterruptResolution(taskID string, decision hermes.InterruptResolution) (bool, error) {
+	store, ok := svc.store.(interruptResolutionStore)
+	if !ok {
+		return false, nil
+	}
+	if err := store.ApplyInterruptResolution(taskID, decision); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
 // GetActiveForChat returns the most recent non-terminal task for a chat.
 // Returns hermes.ErrNoTask if no active task exists.
 func (svc *Service) GetActiveForChat(chatID int64) (hermes.TaskState, error) {

@@ -1567,3 +1567,132 @@ func TestMarkTaskFailedDurable_WritesSnapshotWithReason(t *testing.T) {
 		t.Errorf("snapshot metadata = %+v", snap.Metadata)
 	}
 }
+
+// ── ApplyInterruptResolution (#169 β2) ─────────────────────────────────────
+
+// commitFailurePauseSnapshot writes a Hermes failure pause snapshot
+// onto a freshly-created task, returning the sub-task index that was
+// captured in Interrupt.Payload (used by skip resolution).
+func commitFailurePauseSnapshot(t *testing.T, store *SQLiteTaskStore, taskID string, idx int) {
+	t.Helper()
+	executing := TaskStatusExecuting
+	currentIdx := idx
+	plan := []SubTask{
+		{ID: "s1", Description: "first", Status: SubTaskDone},
+		{ID: "s2", Description: "second", Status: SubTaskInProgress, Result: "deadline exceeded"},
+	}
+	interrupt := &HermesInterrupt{
+		ID:         "iv-pause",
+		Reason:     "subtask_failure_pause",
+		SourceStep: RuntimeStepExecutor,
+		ResumeStep: RuntimeStepExecutor,
+		CreatedAt:  time.Now(),
+		Payload: map[string]any{
+			"sub_task_idx":  idx,
+			"sub_task_id":   plan[idx].ID,
+			"sub_task_desc": plan[idx].Description,
+			"total":         len(plan),
+			"error_text":    "deadline exceeded",
+			"failure_kind":  FailureEnv.Label(),
+		},
+	}
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    []StateUpdate{{Status: &executing, CurrentIdx: &currentIdx, Plan: plan, Interrupt: interrupt}},
+		NextStep:   RuntimeStepApproval,
+		SourceNode: RuntimeStepExecutor,
+		Metadata:   SnapshotMetadata{Source: "test", Reason: "subtask_failure_pause"},
+	}); err != nil {
+		t.Fatalf("commit pause snapshot: %v", err)
+	}
+}
+
+func TestApplyInterruptResolution_RetryClearsInterrupt(t *testing.T) {
+	store := newTestStore(t)
+	task, _ := store.CreateTask(makeTask("res-retry", 300))
+	commitFailurePauseSnapshot(t, store, task.ID, 1)
+
+	if err := store.ApplyInterruptResolution(task.ID, InterruptResolutionRetry); err != nil {
+		t.Fatalf("ApplyInterruptResolution: %v", err)
+	}
+
+	snap, err := store.GetLatestSnapshot(task.ID)
+	if err != nil {
+		t.Fatalf("GetLatestSnapshot: %v", err)
+	}
+	if snap.State.Interrupt != nil {
+		t.Errorf("Interrupt should be cleared, got %+v", snap.State.Interrupt)
+	}
+	// retry must NOT mutate the plan — sub-task stays in_progress for replay
+	if snap.State.Plan[1].Status != SubTaskInProgress {
+		t.Errorf("plan[1] status = %q, want %q (retry should not change plan)", snap.State.Plan[1].Status, SubTaskInProgress)
+	}
+	if snap.Metadata.Reason != "user_retry_after_pause" {
+		t.Errorf("metadata.reason = %q, want user_retry_after_pause", snap.Metadata.Reason)
+	}
+}
+
+func TestApplyInterruptResolution_SkipMarksSubTaskAndAdvances(t *testing.T) {
+	store := newTestStore(t)
+	task, _ := store.CreateTask(makeTask("res-skip", 301))
+	commitFailurePauseSnapshot(t, store, task.ID, 1)
+
+	if err := store.ApplyInterruptResolution(task.ID, InterruptResolutionSkip); err != nil {
+		t.Fatalf("ApplyInterruptResolution: %v", err)
+	}
+
+	snap, err := store.GetLatestSnapshot(task.ID)
+	if err != nil {
+		t.Fatalf("GetLatestSnapshot: %v", err)
+	}
+	if snap.State.Interrupt != nil {
+		t.Errorf("Interrupt should be cleared, got %+v", snap.State.Interrupt)
+	}
+	if snap.State.Plan[1].Status != SubTaskSkipped {
+		t.Errorf("plan[1] status = %q, want %q", snap.State.Plan[1].Status, SubTaskSkipped)
+	}
+	if snap.State.CurrentIdx != 2 {
+		t.Errorf("CurrentIdx = %d, want 2 (advanced past skipped)", snap.State.CurrentIdx)
+	}
+}
+
+func TestApplyInterruptResolution_AbortMarksTaskFailed(t *testing.T) {
+	store := newTestStore(t)
+	task, _ := store.CreateTask(makeTask("res-abort", 302))
+	commitFailurePauseSnapshot(t, store, task.ID, 1)
+
+	if err := store.ApplyInterruptResolution(task.ID, InterruptResolutionAbort); err != nil {
+		t.Fatalf("ApplyInterruptResolution: %v", err)
+	}
+
+	snap, err := store.GetLatestSnapshot(task.ID)
+	if err != nil {
+		t.Fatalf("GetLatestSnapshot: %v", err)
+	}
+	if snap.State.Status != TaskStatusFailed {
+		t.Errorf("status = %q, want failed", snap.State.Status)
+	}
+	if snap.Metadata.Reason != "user_abort_after_pause" {
+		t.Errorf("metadata.reason = %q, want user_abort_after_pause", snap.Metadata.Reason)
+	}
+}
+
+func TestApplyInterruptResolution_RejectsTaskWithoutInterrupt(t *testing.T) {
+	store := newTestStore(t)
+	task, _ := store.CreateTask(makeTask("res-no-interrupt", 303))
+	// No commit, so no snapshot at all — should also error.
+	err := store.ApplyInterruptResolution(task.ID, InterruptResolutionRetry)
+	if err == nil {
+		t.Error("expected error when no snapshot/interrupt exists")
+	}
+}
+
+func TestApplyInterruptResolution_RejectsUnknownDecision(t *testing.T) {
+	store := newTestStore(t)
+	task, _ := store.CreateTask(makeTask("res-bad-decision", 304))
+	commitFailurePauseSnapshot(t, store, task.ID, 1)
+	err := store.ApplyInterruptResolution(task.ID, InterruptResolution("bogus"))
+	if err == nil {
+		t.Error("expected error for unknown decision")
+	}
+}

@@ -770,6 +770,115 @@ func (s *SQLiteTaskStore) MarkTaskFailedDurable(taskID, reason string) error {
 	return err
 }
 
+// InterruptResolution names the operator's choice for a paused task.
+// Mirrors engine.FailureDecision but lives at the storage layer so the
+// resolution can be applied durably without dragging the engine package
+// into the storage package.
+type InterruptResolution string
+
+const (
+	InterruptResolutionRetry InterruptResolution = "retry"
+	InterruptResolutionSkip  InterruptResolution = "skip"
+	InterruptResolutionAbort InterruptResolution = "abort"
+)
+
+// ApplyInterruptResolution persists the operator's pause decision into
+// the snapshot so resume can pick up correctly even after alice restart.
+//
+//	retry → clear Interrupt; RunFromState will re-execute the paused
+//	        sub-task on resume (its Status is still in_progress).
+//	skip  → mark plan[idx] as Skipped + advance CurrentIdx + clear
+//	        Interrupt. RunFromState advances past the sub-task without
+//	        re-running it.
+//	abort → mark task failed durably via MarkTaskFailedDurable; no
+//	        resume goroutine should be launched.
+//
+// Returns an error if the task has no pending Interrupt or the
+// Interrupt's Payload does not carry a valid sub_task_idx for skip.
+func (s *SQLiteTaskStore) ApplyInterruptResolution(taskID string, decision InterruptResolution) error {
+	if strings.TrimSpace(taskID) == "" {
+		return fmt.Errorf("ApplyInterruptResolution: task_id is required")
+	}
+	snap, err := s.GetLatestSnapshot(taskID)
+	if err != nil {
+		return fmt.Errorf("ApplyInterruptResolution: load snapshot: %w", err)
+	}
+	if snap.State.Interrupt == nil {
+		return fmt.Errorf("ApplyInterruptResolution: task %s has no pending interrupt", taskID)
+	}
+
+	switch decision {
+	case InterruptResolutionAbort:
+		return s.MarkTaskFailedDurable(taskID, "user_abort_after_pause")
+
+	case InterruptResolutionSkip:
+		idx, ok := interruptSubTaskIdx(snap.State.Interrupt)
+		if !ok {
+			return fmt.Errorf("ApplyInterruptResolution: skip needs sub_task_idx in interrupt payload")
+		}
+		if idx < 0 || idx >= len(snap.State.Plan) {
+			return fmt.Errorf("ApplyInterruptResolution: sub_task_idx %d out of range (plan size %d)", idx, len(snap.State.Plan))
+		}
+		plan := append([]SubTask(nil), snap.State.Plan...)
+		plan[idx].Status = SubTaskSkipped
+		nextIdx := idx + 1
+		_, err := s.CommitRuntimeStep(RuntimeCommit{
+			TaskID: taskID,
+			Updates: []StateUpdate{{
+				Plan:           plan,
+				CurrentIdx:     &nextIdx,
+				ClearInterrupt: true,
+			}},
+			NextStep:   RuntimeStepExecutor,
+			SourceNode: RuntimeStepApproval,
+			Metadata: SnapshotMetadata{
+				Source: "interrupt_resolution",
+				Reason: "user_skip_after_pause",
+			},
+		})
+		return err
+
+	case InterruptResolutionRetry:
+		_, err := s.CommitRuntimeStep(RuntimeCommit{
+			TaskID:     taskID,
+			Updates:    []StateUpdate{{ClearInterrupt: true}},
+			NextStep:   RuntimeStepExecutor,
+			SourceNode: RuntimeStepApproval,
+			Metadata: SnapshotMetadata{
+				Source: "interrupt_resolution",
+				Reason: "user_retry_after_pause",
+			},
+		})
+		return err
+
+	default:
+		return fmt.Errorf("ApplyInterruptResolution: unknown decision %q", decision)
+	}
+}
+
+// interruptSubTaskIdx extracts the sub-task index that a HermesInterrupt
+// was created for. JSON unmarshalling of `Payload any` produces
+// map[string]any with float64 numeric fields, so handle both float64 and
+// int paths defensively.
+func interruptSubTaskIdx(interrupt *HermesInterrupt) (int, bool) {
+	if interrupt == nil {
+		return 0, false
+	}
+	payload, ok := interrupt.Payload.(map[string]any)
+	if !ok {
+		return 0, false
+	}
+	switch v := payload["sub_task_idx"].(type) {
+	case float64:
+		return int(v), true
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	}
+	return 0, false
+}
+
 // SweepZombieTasks marks tasks whose latest snapshot is non-terminal as
 // failed, recording a recovery reason. Returns the count swept. Replaces
 // the legacy startup UPDATE on hermes_task_states.status which after

@@ -6393,11 +6393,20 @@ func (t *TelegramBot) makeHermesFailureDecisionCallback(key chatKey, ch chan app
 	}
 }
 
-// tryColdRestartFailureResume reconstructs a Hermes coordinator and
-// resumes a paused task when the operator clicked the inline retry /
-// skip / abort button after alice restarted. Returns true when a resume
-// goroutine was launched (the click is "handled" — caller should not
-// fall through to the normal "task not waiting" answer).
+// tryColdRestartFailureResume applies the operator's pause decision to
+// the task's snapshot and (for retry / skip) reconstructs a Hermes
+// coordinator to continue execution. Returns true when the click was
+// handled — the caller should not fall through to the legacy "task not
+// waiting" answer.
+//
+// Resolution semantics (#169 slice β2):
+//
+//	abort → MarkTaskFailedDurable; no coord rebuild.
+//	skip  → snapshot marks plan[idx]=Skipped + advances CurrentIdx +
+//	        ClearInterrupt; coord rebuild + RunFromState picks up at
+//	        idx+1 without re-running the failed sub-task.
+//	retry → ClearInterrupt; coord rebuild + RunFromState re-executes
+//	        the still-in-progress sub-task (operator's intent).
 //
 // Constraints:
 //   - "adjust" path is not supported (needs hint-text exchange flow).
@@ -6425,29 +6434,52 @@ func (t *TelegramBot) tryColdRestartFailureResume(key chatKey, queryID, action, 
 		return false
 	}
 
-	var decision appengine.FailureDecision
+	var resolution hermes.InterruptResolution
 	var ack string
 	switch action {
 	case "retry":
-		decision = appengine.FailureRetry
+		resolution = hermes.InterruptResolutionRetry
 		ack = "🔁 alice 重啟後 resume — 重試中"
 	case "skip":
-		decision = appengine.FailureSkip
-		ack = "⏭ alice 重啟後 resume — 將跳過"
+		resolution = hermes.InterruptResolutionSkip
+		ack = "⏭ alice 重啟後 resume — 跳過此 sub-task"
 	case "abort":
-		decision = appengine.FailureAbort
+		resolution = hermes.InterruptResolutionAbort
 		ack = "🛑 alice 重啟後 resume — 中止任務"
 	default:
 		return false
 	}
 
-	log.Printf("[hermes.resume] cold-restart failure resume task=%s action=%s chat=%d thread=%d",
-		taskIDStr, action, state.ChatID, state.ThreadID)
-	t.answerCallbackQuery(queryID, ack)
-	t.send(key, fmt.Sprintf("♻️ 偵測到 alice 重啟後仍在等待的暫停 (任務 %s)，重新建立 Hermes 協調器並套用您的選擇 (%s)。", shortHermesTaskID(taskIDStr), action))
+	supported, err := t.taskSvc.ApplyInterruptResolution(taskIDStr, resolution)
+	if err != nil {
+		log.Printf("[hermes.resume] apply resolution task=%s decision=%s: %v", taskIDStr, resolution, err)
+		t.answerCallbackQuery(queryID, "❌ 重啟後恢復失敗，請查看 log")
+		return true
+	}
+	if !supported {
+		// Storage doesn't support snapshot-driven resolution; decline so
+		// the caller's existing fallback message fires.
+		return false
+	}
 
-	initialChoice := appengine.FailurePauseChoice{Decision: decision}
-	resumeState := state
+	log.Printf("[hermes.resume] cold-restart failure resume task=%s decision=%s chat=%d thread=%d",
+		taskIDStr, resolution, state.ChatID, state.ThreadID)
+	t.answerCallbackQuery(queryID, ack)
+
+	if resolution == hermes.InterruptResolutionAbort {
+		t.send(key, fmt.Sprintf("🛑 alice 重啟後 resume：任務 %s 已中止。", shortHermesTaskID(taskIDStr)))
+		return true
+	}
+
+	t.send(key, fmt.Sprintf("♻️ 偵測到 alice 重啟後仍在等待的暫停 (任務 %s)，重新建立 Hermes 協調器並套用您的選擇 (%s)。", shortHermesTaskID(taskIDStr), resolution))
+
+	// Re-fetch state — the resolution commit changed plan + interrupt;
+	// RunFromState needs the post-resolution state to pick up correctly.
+	resumeState, err := t.taskSvc.GetTask(taskIDStr)
+	if err != nil {
+		log.Printf("[hermes.resume] reload task after resolution failed: %v", err)
+		return true
+	}
 	go t.runTrackedJob("hermes.cold_resume", func() {
 		t.startHermesTaskWithIssueTierFromState(
 			key,
@@ -6458,7 +6490,6 @@ func (t *TelegramBot) tryColdRestartFailureResume(key chatKey, queryID, action, 
 			t.config.Hermes.GithubIntegration,
 			t.hermesTierFor(key),
 			&resumeState,
-			initialChoice,
 		)
 	})
 	return true
