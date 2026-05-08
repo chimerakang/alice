@@ -76,6 +76,12 @@ func ApplyStateUpdates(current HermesState, updates []StateUpdate) (HermesState,
 			issueNumber := *update.GithubIssueNumber
 			githubIssueWrite = &issueNumber
 		}
+		if update.ClearReplan {
+			next.Replan = nil
+		}
+		if update.Replan != nil {
+			next.Replan = cloneReplanContext(update.Replan)
+		}
 	}
 
 	if statusWrite != nil {
@@ -159,6 +165,14 @@ func collapseStateUpdates(updates []StateUpdate) StateUpdate {
 		if update.Interrupt != nil {
 			collapsed.Interrupt = cloneHermesInterrupt(update.Interrupt)
 			collapsed.ClearInterrupt = false
+		}
+		if update.ClearReplan {
+			collapsed.ClearReplan = true
+			collapsed.Replan = nil
+		}
+		if update.Replan != nil {
+			collapsed.Replan = cloneReplanContext(update.Replan)
+			collapsed.ClearReplan = false
 		}
 		collapsed.Errors = append(collapsed.Errors, update.Errors...)
 		if update.GithubIssueNumber != nil {
@@ -330,6 +344,7 @@ func cloneHermesState(state HermesState) HermesState {
 	state.SubTaskResults = cloneSubTaskResults(state.SubTaskResults)
 	state.Interrupt = cloneHermesInterrupt(state.Interrupt)
 	state.Errors = append([]HermesStateError(nil), state.Errors...)
+	state.Replan = cloneReplanContext(state.Replan)
 	return state
 }
 
@@ -344,6 +359,15 @@ func cloneSubTaskResults(results []SubTaskResult) []SubTaskResult {
 func cloneSubTaskResult(result SubTaskResult) SubTaskResult {
 	result.EndedAt = cloneTimePtr(result.EndedAt)
 	return result
+}
+
+func cloneReplanContext(rc *ReplanContext) *ReplanContext {
+	if rc == nil {
+		return nil
+	}
+	out := *rc
+	out.PreservedSubTasks = append([]SubTask(nil), rc.PreservedSubTasks...)
+	return &out
 }
 
 func cloneHermesInterrupt(interrupt *HermesInterrupt) *HermesInterrupt {

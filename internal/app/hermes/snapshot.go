@@ -8,6 +8,7 @@ type RuntimeStep string
 
 const (
 	RuntimeStepPlanner      RuntimeStep = "planner"
+	RuntimeStepReplanSetup  RuntimeStep = "replan_setup" // pre-planner replan decision (#169 #4)
 	RuntimeStepExecutor     RuntimeStep = "executor"
 	RuntimeStepReviewer     RuntimeStep = "reviewer"
 	RuntimeStepStrictReview RuntimeStep = "strict_review" // per-sub-task review (γ3c)
@@ -38,6 +39,37 @@ type HermesState struct {
 	SubTaskResults    []SubTaskResult    `json:"subtask_results,omitempty"`
 	Interrupt         *HermesInterrupt   `json:"interrupt,omitempty"`
 	Errors            []HermesStateError `json:"errors,omitempty"`
+	// Replan carries the partial-vs-full replan decision the
+	// ReplanSetupNode produced before re-entering the planner. It is
+	// consumed (and cleared) by PlannerNode on the next attempt; see
+	// #169 #4.
+	Replan *ReplanContext `json:"replan,omitempty"`
+}
+
+// ReplanContext is the structured output of the replan-setup decision.
+// Lives on HermesState while a retry attempt is queued; PlannerNode
+// reads it instead of state.Goal / state.Accumulated when set, then
+// clears it via StateUpdate.ClearReplan so it does not bleed into the
+// next attempt.
+type ReplanContext struct {
+	// Goal is the augmented goal text the planner should consume. It
+	// already folds in prior-review feedback (see buildReplanGoal /
+	// buildPartialReplanGoal in the engine package).
+	Goal string `json:"goal,omitempty"`
+	// Accumulated is the seed accumulated text. Empty string means
+	// "full reset"; non-empty means "partial retry — preserve this
+	// transcript prefix".
+	Accumulated string `json:"accumulated"`
+	// PreservedSubTasks is the list of high-score sub-tasks to merge
+	// in front of the planner's new tasks. Empty for full retries.
+	PreservedSubTasks []SubTask `json:"preserved_subtasks,omitempty"`
+	// AttemptIdx is the 1-based replan attempt index (1 = first
+	// replan). Used by telemetry and the planner's id-collision
+	// rename.
+	AttemptIdx int `json:"attempt_idx,omitempty"`
+	// Trigger is "partial" or "full" depending on the decision branch.
+	// Telemetry / dashboards key on this; routing does not.
+	Trigger string `json:"trigger,omitempty"`
 }
 
 // HermesStateFromTaskState converts the existing persisted task shape into the
@@ -134,6 +166,12 @@ type StateUpdate struct {
 	ClearInterrupt    bool               `json:"clear_interrupt,omitempty"`
 	Errors            []HermesStateError `json:"errors,omitempty"`
 	GithubIssueNumber *int               `json:"github_issue_number,omitempty"`
+	// Replan / ClearReplan follow the Interrupt / ClearInterrupt
+	// pattern: a non-nil Replan installs the replan context on the
+	// state; ClearReplan=true (with Replan==nil) erases it. PlannerNode
+	// sets ClearReplan once it has consumed the context.
+	Replan      *ReplanContext `json:"replan,omitempty"`
+	ClearReplan bool           `json:"clear_replan,omitempty"`
 }
 
 // SnapshotMetadata captures debug and audit context for a committed snapshot.

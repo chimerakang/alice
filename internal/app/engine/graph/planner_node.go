@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"claude-tg-agent/internal/app/hermes"
 )
@@ -69,9 +70,23 @@ func (n *PlannerNode) Handle(ctx context.Context, state hermes.HermesState) (Nod
 	if n == nil || n.Planner == nil {
 		return NodeOutput{}, fmt.Errorf("graph: PlannerNode requires a Planner")
 	}
-	tasks, planIn, planOut, planCost, err := n.Planner.Plan(ctx, state.Goal, state.ProjectDir)
+	plannerGoal := state.Goal
+	plannerAccumulated := state.Accumulated
+	if state.Replan != nil {
+		if g := strings.TrimSpace(state.Replan.Goal); g != "" {
+			plannerGoal = state.Replan.Goal
+		}
+		// Replan.Accumulated is authoritative when the replan path is
+		// active — empty string means "full reset", non-empty means
+		// "preserve this prefix". Always honour it (including empty).
+		plannerAccumulated = state.Replan.Accumulated
+	}
+	tasks, planIn, planOut, planCost, err := n.Planner.Plan(ctx, plannerGoal, state.ProjectDir)
 	if err != nil {
 		return NodeOutput{}, err
+	}
+	if state.Replan != nil && len(state.Replan.PreservedSubTasks) > 0 {
+		tasks = mergePreservedSubTasks(state.Replan.PreservedSubTasks, tasks, state.Replan.AttemptIdx)
 	}
 	if n.MaxSubTasks > 0 && len(tasks) > n.MaxSubTasks {
 		return NodeOutput{}, &PlannerComplexityViolationError{Got: len(tasks), Max: n.MaxSubTasks}
@@ -83,6 +98,13 @@ func (n *PlannerNode) Handle(ctx context.Context, state hermes.HermesState) (Nod
 		Status:     &status,
 		CurrentIdx: &idx,
 		Plan:       append([]hermes.SubTask(nil), tasks...),
+	}
+	if state.Replan != nil {
+		// Seed Accumulated for the new attempt and clear the replan
+		// context so it does not bleed into subsequent attempts.
+		acc := plannerAccumulated
+		update.Accumulated = &acc
+		update.ClearReplan = true
 	}
 
 	if n.PlannerModel != "" && (planIn > 0 || planOut > 0 || planCost != 0) {

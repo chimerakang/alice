@@ -24,6 +24,125 @@ func scriptedPlanFn(planJSON string, sessionID string) hermes.CallPlanFunc {
 	}
 }
 
+// recordingPlanFn captures the goal text the planner was called with,
+// so tests can assert PlannerNode used the replan-augmented goal
+// instead of state.Goal.
+func recordingPlanFn(planJSON string, captured *string) hermes.CallPlanFunc {
+	return func(ctx context.Context, message, projectDir, prevSession string) (hermes.CallPlanResult, error) {
+		if captured != nil {
+			*captured = message
+		}
+		return hermes.CallPlanResult{
+			Text:         "```json\n" + planJSON + "\n```",
+			InputTokens:  10,
+			OutputTokens: 5,
+		}, nil
+	}
+}
+
+func TestPlannerNode_ReplanContextOverridesGoalAndMergesPreserved(t *testing.T) {
+	var captured string
+	planJSON := `[{"id":"new1","description":"replanned step","tool_hints":["Edit"]}]`
+	planner := hermes.NewPlannerSession(recordingPlanFn(planJSON, &captured), 1, "")
+	node := &PlannerNode{Planner: planner, MaxSubTasks: 15}
+
+	state := hermes.HermesState{
+		TaskID:      "task-replan",
+		Goal:        "ORIGINAL_GOAL_SHOULD_NOT_REACH_PLANNER",
+		ProjectDir:  "/repo",
+		Accumulated: "STALE_ACCUMULATED",
+		Replan: &hermes.ReplanContext{
+			Goal:        "AUGMENTED_REPLAN_GOAL",
+			Accumulated: "PRESERVED_PREFIX",
+			PreservedSubTasks: []hermes.SubTask{
+				{ID: "s1", Description: "kept", Status: hermes.SubTaskDone, Result: "ok"},
+			},
+			AttemptIdx: 1,
+			Trigger:    "partial",
+		},
+	}
+	out, err := node.Handle(context.Background(), state)
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if !strings.Contains(captured, "AUGMENTED_REPLAN_GOAL") {
+		t.Errorf("planner received wrong goal: %q", captured)
+	}
+	if strings.Contains(captured, "ORIGINAL_GOAL_SHOULD_NOT_REACH_PLANNER") {
+		t.Errorf("planner saw original goal: %q", captured)
+	}
+	u := out.Updates[0]
+	if len(u.Plan) != 2 {
+		t.Fatalf("merged plan size = %d, want 2 (1 preserved + 1 replanned)", len(u.Plan))
+	}
+	if u.Plan[0].ID != "s1" {
+		t.Errorf("preserved should be first: %+v", u.Plan)
+	}
+	if u.Accumulated == nil || *u.Accumulated != "PRESERVED_PREFIX" {
+		t.Errorf("Accumulated = %+v, want PRESERVED_PREFIX", u.Accumulated)
+	}
+	if !u.ClearReplan {
+		t.Errorf("ClearReplan should be set so context does not bleed into next attempt")
+	}
+}
+
+func TestPlannerNode_FullReplanResetsAccumulatedToEmpty(t *testing.T) {
+	planJSON := `[{"id":"r1","description":"redo","tool_hints":["Edit"]}]`
+	planner := hermes.NewPlannerSession(scriptedPlanFn(planJSON, ""), 1, "")
+	node := &PlannerNode{Planner: planner, MaxSubTasks: 15}
+
+	state := hermes.HermesState{
+		TaskID:      "task-full-replan",
+		Goal:        "orig",
+		ProjectDir:  "/repo",
+		Accumulated: "stale stuff that must be reset",
+		Replan: &hermes.ReplanContext{
+			Goal:        "augmented full replan",
+			Accumulated: "",
+			AttemptIdx:  1,
+			Trigger:     "full",
+		},
+	}
+	out, err := node.Handle(context.Background(), state)
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	u := out.Updates[0]
+	if u.Accumulated == nil || *u.Accumulated != "" {
+		t.Errorf("expected empty Accumulated, got: %+v", u.Accumulated)
+	}
+	if !u.ClearReplan {
+		t.Errorf("ClearReplan should be set")
+	}
+	if len(u.Plan) != 1 || u.Plan[0].ID != "r1" {
+		t.Errorf("plan: %+v", u.Plan)
+	}
+}
+
+func TestPlannerNode_NilReplanLeavesGoalAndAccumulatedAlone(t *testing.T) {
+	var captured string
+	planJSON := `[{"id":"s1","description":"do it","tool_hints":["Read"]}]`
+	planner := hermes.NewPlannerSession(recordingPlanFn(planJSON, &captured), 1, "")
+	node := &PlannerNode{Planner: planner, MaxSubTasks: 15}
+
+	out, err := node.Handle(context.Background(), hermes.HermesState{
+		TaskID: "t", Goal: "ORIG_GOAL", ProjectDir: "/repo", Accumulated: "keep me",
+	})
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if !strings.Contains(captured, "ORIG_GOAL") {
+		t.Errorf("planner did not receive original goal: %q", captured)
+	}
+	u := out.Updates[0]
+	if u.Accumulated != nil {
+		t.Errorf("Accumulated should not be touched when Replan is nil: %+v", u.Accumulated)
+	}
+	if u.ClearReplan {
+		t.Errorf("ClearReplan should be false when Replan was already nil")
+	}
+}
+
 func TestPlannerNode_HandleEmitsPlanReadyUpdate(t *testing.T) {
 	planJSON := `[{"id":"s1","description":"prep","tool_hints":["Read","Bash"]},{"id":"s2","description":"verify","tool_hints":["Bash"]}]`
 	planner := hermes.NewPlannerSession(scriptedPlanFn(planJSON, "session-7"), 1, "")
