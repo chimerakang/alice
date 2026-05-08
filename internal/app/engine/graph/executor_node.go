@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"claude-tg-agent/internal/app/hermes"
 )
@@ -79,6 +80,14 @@ type ExecutorNode struct {
 	// reviewer when true; otherwise the Walker terminates after the
 	// last sub-task. Mirrors PlanExecuteConfig.ReviewMode.
 	ReviewModeIsPerTask bool
+	// FailurePauseEnabled controls what happens when a sub-task
+	// fails. When true (γ4) the Node emits a HermesInterrupt and
+	// routes to RuntimeStepApproval so a Walker-driven resume can
+	// pause the engine and wait for the operator's
+	// retry / skip / abort click. When false (γ3a default) the Node
+	// just marks the sub-task Failed and advances — matching the
+	// engine's pre-γ4 silent-skip behaviour.
+	FailurePauseEnabled bool
 }
 
 // Name implements Node.
@@ -113,10 +122,26 @@ func (n *ExecutorNode) Handle(ctx context.Context, state hermes.HermesState) (No
 	finalStatus := hermes.SubTaskDone
 	finalText := strings.TrimSpace(res.Text)
 	reason := "subtask_done"
+	pauseForApproval := false
 	if runErr != nil {
-		finalStatus = hermes.SubTaskFailed
-		finalText = runErr.Error()
-		reason = "subtask_failed"
+		// On failure with FailurePauseEnabled (γ4) we emit an
+		// Interrupt and route to ApprovalNode instead of marking the
+		// sub-task Failed and advancing. The sub-task's plan entry
+		// stays InProgress so a retry resolution can re-run it
+		// without further wiring.
+		if n.FailurePauseEnabled {
+			pauseForApproval = true
+			reason = "subtask_failure_pause"
+			finalText = runErr.Error()
+		} else {
+			finalStatus = hermes.SubTaskFailed
+			finalText = runErr.Error()
+			reason = "subtask_failed"
+		}
+	}
+
+	if pauseForApproval {
+		return n.outputForApprovalPause(state, idx, finalText, tokens, res), nil
 	}
 
 	plan := append([]hermes.SubTask(nil), state.Plan...)
@@ -191,6 +216,76 @@ func (n *ExecutorNode) advanceWithoutRunning(state hermes.HermesState, idx int, 
 		Updates:  []hermes.StateUpdate{{CurrentIdx: &nextIdx}},
 		NextStep: n.nextStepAfter(nextIdx, len(state.Plan)),
 		Reason:   reason,
+	}
+}
+
+// outputForApprovalPause builds the StateUpdate that pauses the task on
+// a sub-task failure when FailurePauseEnabled is true. The plan entry
+// stays InProgress so a Retry resolution can re-run it; an Interrupt is
+// committed so ApprovalNode finds it on the next Walker iteration.
+// Telemetry from the failed call is still attached so token cost is
+// not lost. NextStep routes to RuntimeStepApproval, but Halt is left
+// false here — the Walker commits this snapshot and then dispatches
+// ApprovalNode, which is where the engine actually exits.
+func (n *ExecutorNode) outputForApprovalPause(state hermes.HermesState, idx int, errText string, tokens int, res SubTaskRunResult) NodeOutput {
+	subTask := state.Plan[idx]
+	now := time.Now()
+	expires := now.Add(24 * time.Hour)
+	interrupt := &hermes.HermesInterrupt{
+		ID:         fmt.Sprintf("%s:graphpause:%d:%d", state.TaskID, idx, now.UnixNano()),
+		SourceStep: hermes.RuntimeStepExecutor,
+		ResumeStep: hermes.RuntimeStepExecutor,
+		Reason:     "subtask_failure_pause",
+		CreatedAt:  now,
+		ExpiresAt:  &expires,
+		Payload: map[string]any{
+			"sub_task_idx":  idx,
+			"sub_task_id":   subTask.ID,
+			"sub_task_desc": subTask.Description,
+			"total":         len(state.Plan),
+			"error_text":    errText,
+		},
+	}
+
+	// Bump attempts so re-runs reflect the spent attempt; record the
+	// tokens consumed even though the call failed. Plan stays
+	// InProgress so a Retry resolution causes ExecutorNode to re-run.
+	plan := append([]hermes.SubTask(nil), state.Plan...)
+	plan[idx].TokensUsed += tokens
+	plan[idx].Attempts++
+	plan[idx].Result = errText
+
+	update := hermes.StateUpdate{
+		Plan:      plan,
+		Interrupt: interrupt,
+	}
+	if res.Model != "" && tokens > 0 {
+		update.ModelUsages = []hermes.ModelUsage{{
+			Model:                    res.Model,
+			InputTokens:              res.InputTokens,
+			UncachedInputTokens:      res.UncachedInputTokens,
+			CacheReadInputTokens:     res.CacheReadInputTokens,
+			CacheCreationInputTokens: res.CacheCreationInputTokens,
+			OutputTokens:             res.OutputTokens,
+			CostUSD:                  res.CostUSD,
+		}}
+		update.PhaseUsages = []hermes.PhaseUsage{{
+			Phase:                    "executor",
+			Model:                    res.Model,
+			InputTokens:              res.InputTokens,
+			UncachedInputTokens:      res.UncachedInputTokens,
+			CacheReadInputTokens:     res.CacheReadInputTokens,
+			CacheCreationInputTokens: res.CacheCreationInputTokens,
+			OutputTokens:             res.OutputTokens,
+			CostUSD:                  res.CostUSD,
+		}}
+		update.TokenUsageDelta = tokens
+	}
+
+	return NodeOutput{
+		Updates:  []hermes.StateUpdate{update},
+		NextStep: hermes.RuntimeStepApproval,
+		Reason:   "subtask_failure_pause",
 	}
 }
 
