@@ -134,20 +134,23 @@ func (r *TextProgressReporter) OnSubTaskStart(idx, total int, task SubTask) {
 
 func (r *TextProgressReporter) OnSubTaskDone(idx, total int, task SubTask, success bool, result string) {
 	if !success {
-		// Surface failures as a new sticky, *notifying* message — operators
-		// must see these immediately, not be left guessing why the rest of
-		// the plan fell over. Categorise env vs content so the reader can
-		// decide whether the fix is "shrink scope / retry" or "look at the
-		// diagnostic".
-		kind := ClassifyFailure(result)
-		header := fmt.Sprintf("❌ [%d/%d] %s — %s", idx+1, total, task.Description, kind.Label())
+		icon := "❌"
+		label := ClassifyFailure(result).Label()
+		if task.Status == SubTaskSkipped || isPartialSubTaskResult(result) {
+			icon = "⚠️"
+			label = "部分完成，待確認"
+		}
+		// Surface incomplete sub-tasks as a new sticky, *notifying* message —
+		// operators must see these immediately. Keep true execution failures
+		// visually distinct from strict-review partial results.
+		header := fmt.Sprintf("%s [%d/%d] %s — %s", icon, idx+1, total, task.Description, label)
 		msg := header
 		if result != "" {
 			msg += "\n" + result
 		}
 		r.sendFn(msg, true)
 		if r.progressMsgID != 0 {
-			r.editProgress(fmt.Sprintf("%s\n❌ [%d/%d] %s", r.planSummary, idx+1, total, kind.Label()))
+			r.editProgress(fmt.Sprintf("%s\n%s [%d/%d] %s", r.planSummary, icon, idx+1, total, label))
 		}
 		return
 	}
@@ -155,6 +158,10 @@ func (r *TextProgressReporter) OnSubTaskDone(idx, total int, task SubTask, succe
 		return
 	}
 	r.editProgress(fmt.Sprintf("%s\n✓ [%d/%d] 完成，準備下一步…", r.planSummary, idx+1, total))
+}
+
+func isPartialSubTaskResult(result string) bool {
+	return strings.HasPrefix(strings.TrimSpace(result), "PARTIAL")
 }
 
 func (r *TextProgressReporter) OnRetry(idx, attempt, maxAttempts int, validationErr string) {

@@ -44,12 +44,12 @@ func formatHermesDirtyWorktreeWarning(issueNumber int, changes []string) string 
 
 	var b strings.Builder
 	if issueNumber > 0 {
-		fmt.Fprintf(&b, "⚠️ Git 工作樹目前有未提交變更；Hermes 會以此作為 Issue #%d 的啟動 baseline 繼續執行。\n\n", issueNumber)
+		fmt.Fprintf(&b, "⚠️ 啟動 Issue #%d 前，Git 工作樹已經有未提交變更。\n\n", issueNumber)
 	} else {
-		b.WriteString("⚠️ Git 工作樹目前有未提交變更；Hermes 會以此作為啟動 baseline 繼續執行。\n\n")
+		b.WriteString("⚠️ 啟動 Hermes 前，Git 工作樹已經有未提交變更。\n\n")
 	}
-	b.WriteString("請注意：executor 會看見這些既有變更；最後驗證時應比對本次新增/修改內容，並確認工作樹沒有混入無關任務。\n\n")
-	b.WriteString("啟動 baseline 偵測到：\n")
+	b.WriteString("Hermes 會繼續執行；結束時請確認本次任務沒有混入這些舊變更。\n\n")
+	b.WriteString("啟動前已有：\n")
 	for i, change := range changes {
 		if i >= maxShown {
 			fmt.Fprintf(&b, "- …另有 %d 筆\n", len(changes)-maxShown)

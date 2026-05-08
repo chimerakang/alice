@@ -84,3 +84,24 @@ func TestTextProgressReporterMinimalEmitsPlanFailureAndDone(t *testing.T) {
 		t.Fatalf("error event should notify: %#v", events[3])
 	}
 }
+
+func TestTextProgressReporterShowsPartialAsWarning(t *testing.T) {
+	var events []string
+	reporter := NewTextProgressReporterWithNotify(func(text string, notify bool) {
+		if notify {
+			events = append(events, text)
+		}
+	})
+
+	reporter.OnSubTaskDone(0, 1, SubTask{Description: "step"}, false, "PARTIAL\nneeds one more fix")
+
+	if len(events) != 1 {
+		t.Fatalf("events len = %d, want 1: %#v", len(events), events)
+	}
+	if !strings.Contains(events[0], "⚠️ [1/1] step — 部分完成，待確認") {
+		t.Fatalf("partial warning missing: %q", events[0])
+	}
+	if strings.Contains(events[0], "❌") || strings.Contains(events[0], "執行錯誤") {
+		t.Fatalf("partial warning should not look like execution failure: %q", events[0])
+	}
+}
