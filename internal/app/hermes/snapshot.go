@@ -112,8 +112,22 @@ type StateUpdate struct {
 	Accumulated       *string            `json:"accumulated,omitempty"`
 	AccumulatedDelta  string             `json:"accumulated_delta,omitempty"`
 	Artifacts         []Artifact         `json:"artifacts,omitempty"`
-	ModelUsages       []ModelUsage       `json:"model_usages,omitempty"`
-	PhaseUsages       []PhaseUsage       `json:"phase_usages,omitempty"`
+	// ModelUsages and PhaseUsages are merged by key (Model / (Phase, Model))
+	// in the reducer to match the legacy AddModelUsageBreakdown semantics.
+	// Each entry represents a delta to add; the reducer sums token fields
+	// and bumps CallCount when the key already exists.
+	ModelUsages []ModelUsage `json:"model_usages,omitempty"`
+	PhaseUsages []PhaseUsage `json:"phase_usages,omitempty"`
+	// TokenUsageDelta is added to TokenBudget.UsedTokens. Used by callers
+	// that record a budget consumption without a full per-model breakdown.
+	TokenUsageDelta int `json:"token_usage_delta,omitempty"`
+	// BudgetStartedAt resets TokenBudget.StartedAt. Used by the budget
+	// continue/resume path to start a fresh measurement window.
+	BudgetStartedAt *time.Time `json:"budget_started_at,omitempty"`
+	// PlannerSessionID and ExecutorSessionID record the backend resume IDs
+	// captured by Plan/Execute calls; needed for cross-restart continuation.
+	PlannerSessionID  *string            `json:"planner_session_id,omitempty"`
+	ExecutorSessionID *string            `json:"executor_session_id,omitempty"`
 	SubTaskResults    []SubTaskResult    `json:"subtask_results,omitempty"`
 	Interrupt         *HermesInterrupt   `json:"interrupt,omitempty"`
 	ClearInterrupt    bool               `json:"clear_interrupt,omitempty"`

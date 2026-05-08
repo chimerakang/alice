@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -152,6 +153,35 @@ type statusRecordingStore struct {
 func (s *statusRecordingStore) MarkStatus(taskID string, status hermes.TaskStatus) error {
 	s.statuses = append(s.statuses, status)
 	return s.TaskStateStore.MarkStatus(taskID, status)
+}
+
+// CommitRuntimeStep delegates to the embedded store when it satisfies
+// RuntimeStepStore. Records the resulting status in s.statuses ONLY when
+// the commit's StateUpdate explicitly set Status (i.e. a status transition,
+// not telemetry / interrupt-only updates). This matches the semantics of
+// the legacy MarkStatus tracking before #169 slice 3b routed all engine
+// writes through CommitRuntimeStep.
+func (s *statusRecordingStore) CommitRuntimeStep(commit hermes.RuntimeCommit) (hermes.Snapshot, error) {
+	rt, ok := s.TaskStateStore.(hermes.RuntimeStepStore)
+	if !ok {
+		return hermes.Snapshot{}, fmt.Errorf("statusRecordingStore: embedded store does not implement RuntimeStepStore")
+	}
+	statusWritten := false
+	for _, u := range commit.Updates {
+		if u.Status != nil {
+			statusWritten = true
+			break
+		}
+	}
+	snap, err := rt.CommitRuntimeStep(commit)
+	if err == nil && statusWritten && snap.State.Status != "" {
+		// Each commit that writes Status adds an entry. After #169 slice 3a
+		// commitExecutorBoundary skips Status when it would be a no-op, so
+		// the recording only fires for genuine phase transitions
+		// (planner/replan ready and terminal commits).
+		s.statuses = append(s.statuses, snap.State.Status)
+	}
+	return snap, err
 }
 
 type fakeIssueOps struct {
@@ -1261,4 +1291,98 @@ func TestFailureDecision_Label(t *testing.T) {
 			t.Errorf("FailureDecision(%d).label() = %q, want %q", d, got, want)
 		}
 	}
+}
+
+// ── commitFailureBoundary (#169 slice 3a-1) ────────────────────────────────
+
+func TestCommitFailureBoundary_WritesSnapshotWithReason(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	task, err := store.CreateTask(hermes.TaskState{
+		ID:     "task-fail",
+		ChatID: 42,
+		Goal:   "x",
+		Status: hermes.TaskStatusExecuting,
+	})
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{}, nil
+	}
+	runner := &planExecuteRunner{}
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{ProjectDir: "/repo", ChatID: 42}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
+
+	engine.commitFailureBoundary(task.ID, hermes.RuntimeStepPlanner, 2, "complexity_violation_max_subtasks")
+
+	got, err := store.GetTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if got.Status != hermes.TaskStatusFailed {
+		t.Errorf("status = %q, want %q", got.Status, hermes.TaskStatusFailed)
+	}
+
+	snap, err := store.GetLatestSnapshot(task.ID)
+	if err != nil {
+		t.Fatalf("GetLatestSnapshot: %v", err)
+	}
+	if snap.SourceNode != hermes.RuntimeStepPlanner {
+		t.Errorf("snapshot.SourceNode = %q, want planner", snap.SourceNode)
+	}
+	if snap.NextStep != hermes.RuntimeStepTerminal {
+		t.Errorf("snapshot.NextStep = %q, want terminal", snap.NextStep)
+	}
+	if snap.Metadata.Reason != "complexity_violation_max_subtasks" {
+		t.Errorf("snapshot.Metadata.Reason = %q, want complexity_violation_max_subtasks", snap.Metadata.Reason)
+	}
+	if snap.Metadata.Attempt != 2 {
+		t.Errorf("snapshot.Metadata.Attempt = %d, want 2", snap.Metadata.Attempt)
+	}
+	if snap.State.Status != hermes.TaskStatusFailed {
+		t.Errorf("snapshot state status = %q, want failed", snap.State.Status)
+	}
+}
+
+// noRuntimeStore is a minimal hermes.TaskStateStore that does NOT implement
+// hermes.RuntimeStepStore. Kept after #169 slice 3b only as documentation
+// that legacy stores still satisfy TaskStateStore — runtime now wraps them
+// via syntheticRuntimeStepStore so callers do not gate on nil.
+type noRuntimeStore struct {
+	statuses map[string]hermes.TaskStatus
+}
+
+func (s *noRuntimeStore) CreateTask(t hermes.TaskState) (hermes.TaskState, error)              { return t, nil }
+func (s *noRuntimeStore) GetTask(id string) (hermes.TaskState, error)                          { return hermes.TaskState{}, hermes.ErrNoTask }
+func (s *noRuntimeStore) GetActiveTaskForChat(chatID int64) (hermes.TaskState, error)          { return hermes.TaskState{}, hermes.ErrNoTask }
+func (s *noRuntimeStore) StorePlan(taskID string, plan []hermes.SubTask) error                 { return nil }
+func (s *noRuntimeStore) UpdateSubTask(taskID string, idx int, status hermes.SubTaskStatus, result string, tokensUsed int) error {
+	return nil
+}
+func (s *noRuntimeStore) MarkSubTaskStarted(taskID string, idx int) error                      { return nil }
+func (s *noRuntimeStore) AdvanceTask(taskID string, nextIdx int, status hermes.TaskStatus) error {
+	return nil
+}
+func (s *noRuntimeStore) AppendArtifact(taskID string, artifact hermes.Artifact) error         { return nil }
+func (s *noRuntimeStore) UpdateAccumulated(taskID string, accumulated string) error            { return nil }
+func (s *noRuntimeStore) UpdatePlannerSession(taskID, sessionID string) error                  { return nil }
+func (s *noRuntimeStore) MarkInterrupted(taskID string, messageID int64) error                 { return nil }
+func (s *noRuntimeStore) MarkStatus(taskID string, status hermes.TaskStatus) error {
+	s.statuses[taskID] = status
+	return nil
+}
+func (s *noRuntimeStore) ResetBudgetStartedAt(taskID string, t time.Time) error                { return nil }
+func (s *noRuntimeStore) AddTokenUsage(taskID string, delta int) error                         { return nil }
+func (s *noRuntimeStore) AddModelUsage(taskID, model string, in, out int, cost float64) error  { return nil }
+func (s *noRuntimeStore) AddModelUsageBreakdown(taskID, model string, u hermes.TokenUsageBreakdown) error {
+	return nil
+}
+func (s *noRuntimeStore) AddPhaseUsage(taskID, phase, model string, in, out int, cost float64) error {
+	return nil
+}
+func (s *noRuntimeStore) AddPhaseUsageBreakdown(taskID, phase, model string, u hermes.TokenUsageBreakdown) error {
+	return nil
+}
+func (s *noRuntimeStore) ListTasksForChat(chatID int64, limit int) ([]hermes.TaskState, error) {
+	return nil, nil
 }

@@ -46,3 +46,28 @@ func (n *NoopTaskStore) ListTasksForChat(chatID int64, limit int) ([]TaskState, 
 	return nil, nil
 }
 func (n *NoopTaskStore) ResetBudgetStartedAt(taskID string, t time.Time) error { return nil }
+
+// CommitRuntimeStep makes NoopTaskStore satisfy RuntimeStepStore so the
+// engine never has to special-case "no runtime" anymore. Returns the
+// commit echoed as a Snapshot with sensible zero defaults; nothing is
+// persisted (#169 slice 3b).
+func (n *NoopTaskStore) CommitRuntimeStep(commit RuntimeCommit) (Snapshot, error) {
+	if commit.CreatedAt.IsZero() {
+		commit.CreatedAt = time.Now()
+	}
+	state, err := ApplyStateUpdates(HermesState{TaskID: commit.TaskID}, commit.Updates)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	return Snapshot{
+		ID:         commit.SnapshotID,
+		TaskID:     commit.TaskID,
+		Step:       1,
+		State:      state,
+		NextStep:   commit.NextStep,
+		SourceNode: commit.SourceNode,
+		Writes:     collapseStateUpdates(commit.Updates),
+		Metadata:   commit.Metadata,
+		CreatedAt:  commit.CreatedAt,
+	}, nil
+}

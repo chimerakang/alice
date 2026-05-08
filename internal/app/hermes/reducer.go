@@ -45,10 +45,22 @@ func ApplyStateUpdates(current HermesState, updates []StateUpdate) (HermesState,
 			next.Artifacts = append(next.Artifacts, update.Artifacts...)
 		}
 		if len(update.ModelUsages) > 0 {
-			next.ModelUsages = append(next.ModelUsages, update.ModelUsages...)
+			next.ModelUsages = mergeModelUsages(next.ModelUsages, update.ModelUsages)
 		}
 		if len(update.PhaseUsages) > 0 {
-			next.PhaseUsages = append(next.PhaseUsages, update.PhaseUsages...)
+			next.PhaseUsages = mergePhaseUsages(next.PhaseUsages, update.PhaseUsages)
+		}
+		if update.TokenUsageDelta != 0 {
+			next.TokenBudget.UsedTokens += update.TokenUsageDelta
+		}
+		if update.BudgetStartedAt != nil {
+			next.TokenBudget.StartedAt = *update.BudgetStartedAt
+		}
+		if update.PlannerSessionID != nil {
+			next.PlannerSessionID = *update.PlannerSessionID
+		}
+		if update.ExecutorSessionID != nil {
+			next.ExecutorSessionID = *update.ExecutorSessionID
 		}
 		subTaskResultWrites = append(subTaskResultWrites, update.SubTaskResults...)
 		if update.ClearInterrupt {
@@ -153,6 +165,19 @@ func collapseStateUpdates(updates []StateUpdate) StateUpdate {
 			issueNumber := *update.GithubIssueNumber
 			collapsed.GithubIssueNumber = &issueNumber
 		}
+		collapsed.TokenUsageDelta += update.TokenUsageDelta
+		if update.BudgetStartedAt != nil {
+			ts := *update.BudgetStartedAt
+			collapsed.BudgetStartedAt = &ts
+		}
+		if update.PlannerSessionID != nil {
+			s := *update.PlannerSessionID
+			collapsed.PlannerSessionID = &s
+		}
+		if update.ExecutorSessionID != nil {
+			s := *update.ExecutorSessionID
+			collapsed.ExecutorSessionID = &s
+		}
 	}
 	return collapsed
 }
@@ -168,6 +193,76 @@ func appendAccumulatedDelta(current string, delta string) string {
 		return current + delta
 	}
 	return current + accumulatedUpdateSeparator + delta
+}
+
+// mergeModelUsages applies StateUpdate.ModelUsages onto an existing list,
+// summing token / cost fields and bumping CallCount when the Model key
+// already exists. Mirrors the read-modify-write logic in
+// SQLiteTaskStore.AddModelUsageBreakdown so reducer-driven and legacy
+// callsites converge on the same totals.
+func mergeModelUsages(current []ModelUsage, incoming []ModelUsage) []ModelUsage {
+	out := append([]ModelUsage(nil), current...)
+	idx := make(map[string]int, len(out))
+	for i := range out {
+		idx[out[i].Model] = i
+	}
+	for _, delta := range incoming {
+		if i, ok := idx[delta.Model]; ok {
+			out[i].InputTokens += delta.InputTokens
+			out[i].UncachedInputTokens += delta.UncachedInputTokens
+			out[i].CacheReadInputTokens += delta.CacheReadInputTokens
+			out[i].CacheCreationInputTokens += delta.CacheCreationInputTokens
+			out[i].OutputTokens += delta.OutputTokens
+			out[i].CostUSD += delta.CostUSD
+			callCount := delta.CallCount
+			if callCount <= 0 {
+				callCount = 1
+			}
+			out[i].CallCount += callCount
+			continue
+		}
+		entry := delta
+		if entry.CallCount <= 0 {
+			entry.CallCount = 1
+		}
+		out = append(out, entry)
+		idx[entry.Model] = len(out) - 1
+	}
+	return out
+}
+
+// mergePhaseUsages mirrors mergeModelUsages keyed by (Phase, Model).
+func mergePhaseUsages(current []PhaseUsage, incoming []PhaseUsage) []PhaseUsage {
+	out := append([]PhaseUsage(nil), current...)
+	idx := make(map[string]int, len(out))
+	key := func(p PhaseUsage) string { return p.Phase + "\x00" + p.Model }
+	for i := range out {
+		idx[key(out[i])] = i
+	}
+	for _, delta := range incoming {
+		k := key(delta)
+		if i, ok := idx[k]; ok {
+			out[i].InputTokens += delta.InputTokens
+			out[i].UncachedInputTokens += delta.UncachedInputTokens
+			out[i].CacheReadInputTokens += delta.CacheReadInputTokens
+			out[i].CacheCreationInputTokens += delta.CacheCreationInputTokens
+			out[i].OutputTokens += delta.OutputTokens
+			out[i].CostUSD += delta.CostUSD
+			callCount := delta.CallCount
+			if callCount <= 0 {
+				callCount = 1
+			}
+			out[i].CallCount += callCount
+			continue
+		}
+		entry := delta
+		if entry.CallCount <= 0 {
+			entry.CallCount = 1
+		}
+		out = append(out, entry)
+		idx[k] = len(out) - 1
+	}
+	return out
 }
 
 func mergeSubTaskResults(current []SubTaskResult, incoming []SubTaskResult) []SubTaskResult {

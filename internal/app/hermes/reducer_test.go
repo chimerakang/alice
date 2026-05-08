@@ -297,3 +297,93 @@ func TestExistingMutationsCanBeExpressedAsStateUpdates(t *testing.T) {
 		t.Fatalf("subtask result mismatch: %+v", got.SubTaskResults)
 	}
 }
+
+func TestApplyStateUpdates_MergesModelUsagesByModel(t *testing.T) {
+	current := HermesState{
+		ModelUsages: []ModelUsage{
+			{Model: "claude", InputTokens: 100, UncachedInputTokens: 80, OutputTokens: 50, CostUSD: 0.10, CallCount: 1},
+		},
+	}
+	got, err := ApplyStateUpdates(current, []StateUpdate{
+		{
+			ModelUsages: []ModelUsage{
+				{Model: "claude", InputTokens: 30, UncachedInputTokens: 30, OutputTokens: 20, CostUSD: 0.05, CallCount: 1},
+				{Model: "gpt", InputTokens: 50, OutputTokens: 25, CostUSD: 0.08, CallCount: 1},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyStateUpdates: %v", err)
+	}
+	if len(got.ModelUsages) != 2 {
+		t.Fatalf("want 2 distinct models, got %d: %+v", len(got.ModelUsages), got.ModelUsages)
+	}
+	var claude, gpt *ModelUsage
+	for i := range got.ModelUsages {
+		switch got.ModelUsages[i].Model {
+		case "claude":
+			claude = &got.ModelUsages[i]
+		case "gpt":
+			gpt = &got.ModelUsages[i]
+		}
+	}
+	if claude == nil || claude.InputTokens != 130 || claude.UncachedInputTokens != 110 || claude.OutputTokens != 70 || claude.CallCount != 2 {
+		t.Errorf("claude merge wrong: %+v", claude)
+	}
+	if claude == nil || claude.CostUSD < 0.149 || claude.CostUSD > 0.151 {
+		t.Errorf("claude cost wrong: %+v", claude)
+	}
+	if gpt == nil || gpt.Model != "gpt" || gpt.CallCount != 1 {
+		t.Errorf("gpt entry missing or wrong: %+v", gpt)
+	}
+}
+
+func TestApplyStateUpdates_MergesPhaseUsagesByPhaseAndModel(t *testing.T) {
+	current := HermesState{
+		PhaseUsages: []PhaseUsage{
+			{Phase: "executor", Model: "claude", InputTokens: 100, OutputTokens: 50, CostUSD: 0.10, CallCount: 1},
+		},
+	}
+	got, err := ApplyStateUpdates(current, []StateUpdate{
+		{
+			PhaseUsages: []PhaseUsage{
+				{Phase: "executor", Model: "claude", InputTokens: 30, OutputTokens: 20, CostUSD: 0.05, CallCount: 1},
+				{Phase: "reviewer", Model: "claude", InputTokens: 80, OutputTokens: 40, CostUSD: 0.07, CallCount: 1},
+				{Phase: "executor", Model: "gpt", InputTokens: 50, OutputTokens: 25, CostUSD: 0.08, CallCount: 1},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ApplyStateUpdates: %v", err)
+	}
+	if len(got.PhaseUsages) != 3 {
+		t.Fatalf("want 3 distinct (phase,model), got %d: %+v", len(got.PhaseUsages), got.PhaseUsages)
+	}
+	for _, p := range got.PhaseUsages {
+		if p.Phase == "executor" && p.Model == "claude" {
+			if p.InputTokens != 130 || p.OutputTokens != 70 || p.CallCount != 2 {
+				t.Errorf("executor/claude merge wrong: %+v", p)
+			}
+		}
+		if p.Phase == "executor" && p.Model == "gpt" && p.CallCount != 1 {
+			t.Errorf("executor/gpt entry wrong: %+v", p)
+		}
+		if p.Phase == "reviewer" && p.Model == "claude" && p.CallCount != 1 {
+			t.Errorf("reviewer/claude entry wrong: %+v", p)
+		}
+	}
+}
+
+func TestApplyStateUpdates_TokenUsageDeltaIncrementsBudget(t *testing.T) {
+	current := HermesState{TokenBudget: TokenBudget{UsedTokens: 1000, MaxTotalTokens: 10000}}
+	got, err := ApplyStateUpdates(current, []StateUpdate{
+		{TokenUsageDelta: 250},
+		{TokenUsageDelta: 50},
+	})
+	if err != nil {
+		t.Fatalf("ApplyStateUpdates: %v", err)
+	}
+	if got.TokenBudget.UsedTokens != 1300 {
+		t.Errorf("UsedTokens = %d, want 1300", got.TokenBudget.UsedTokens)
+	}
+}

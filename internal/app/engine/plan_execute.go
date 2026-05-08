@@ -194,9 +194,41 @@ func (e *PlanExecuteEngine) issueOpsService() issueops.IssueOps {
 	return issueops.New()
 }
 
+// runtimeStepStore returns the snapshot-aware runtime step store for the
+// given task store. After #169 slice 3b every built-in store satisfies
+// RuntimeStepStore (SQLiteTaskStore, MemoryTaskStore, NoopTaskStore); this
+// function only falls back to a wrapper when an exotic test stub is used.
+// The wrapper applies reducer updates to a synthetic state so callers can
+// keep treating runtime as non-nil without conditional branches.
 func runtimeStepStore(store hermes.TaskStateStore) hermes.RuntimeStepStore {
-	runtime, _ := store.(hermes.RuntimeStepStore)
-	return runtime
+	if runtime, ok := store.(hermes.RuntimeStepStore); ok {
+		return runtime
+	}
+	return syntheticRuntimeStepStore{}
+}
+
+// syntheticRuntimeStepStore satisfies RuntimeStepStore for legacy task
+// stores that do not implement snapshot persistence. It validates updates
+// through the reducer and returns a transient snapshot so plan_execute
+// callers do not have to special-case nil. Nothing is persisted.
+type syntheticRuntimeStepStore struct{}
+
+func (syntheticRuntimeStepStore) CommitRuntimeStep(commit hermes.RuntimeCommit) (hermes.Snapshot, error) {
+	if commit.CreatedAt.IsZero() {
+		commit.CreatedAt = time.Now()
+	}
+	state, err := hermes.ApplyStateUpdates(hermes.HermesState{TaskID: commit.TaskID}, commit.Updates)
+	if err != nil {
+		return hermes.Snapshot{}, err
+	}
+	return hermes.Snapshot{
+		TaskID:     commit.TaskID,
+		State:      state,
+		NextStep:   commit.NextStep,
+		SourceNode: commit.SourceNode,
+		Metadata:   commit.Metadata,
+		CreatedAt:  commit.CreatedAt,
+	}, nil
 }
 
 func NewPlanExecuteEngine(
@@ -296,9 +328,7 @@ func (e *PlanExecuteEngine) InterruptWith(messageID int64) {
 		e.cancelFn()
 	}
 	if e.taskID != "" {
-		if err := e.store.MarkInterrupted(e.taskID, messageID); err != nil {
-			log.Printf("[plan_execute] MarkInterrupted: %v", err)
-		}
+		e.commitInterruptedBoundary(e.taskID, messageID)
 	}
 }
 
@@ -406,11 +436,7 @@ func (e *PlanExecuteEngine) RunFromState(ctx context.Context, state hermes.TaskS
 	}
 
 	tasks := append([]hermes.SubTask(nil), state.Plan...)
-	if e.runtime == nil {
-		if err := e.store.MarkStatus(state.ID, hermes.TaskStatusExecuting); err != nil {
-			return Result{Duration: time.Since(start)}, err
-		}
-	} else {
+	{
 		status := hermes.TaskStatusExecuting
 		currentIdx := decision.FromIdx
 		if _, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
@@ -506,10 +532,10 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 		}
 		if r := recover(); r != nil {
 			log.Printf("[plan_execute] task %s panic: %v", taskID, r)
-			_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+			e.commitFailureBoundary(taskID, hermes.RuntimeStepExecutor, 0, "panic_recover")
 		} else if state, err := e.store.GetTask(taskID); err == nil && !state.IsTerminal() {
 			log.Printf("[plan_execute] task %s exited before terminal status; marking failed (status=%s current_idx=%d)", taskID, state.Status, state.CurrentIdx)
-			_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+			e.commitFailureBoundary(taskID, hermes.RuntimeStepExecutor, 0, "non_terminal_exit")
 		}
 		e.mu.Lock()
 		// Cancel runCtx so callers and subprocesses tied to this run are
@@ -549,7 +575,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 				currentGoal = buildPartialReplanGoal(goal, prevReview, partialRetry)
 				if err := e.commitAccumulatedBoundary(taskID, partialRetry.Accumulated, attempt, "partial_replan_context"); err != nil {
 					e.reporter.OnError(fmt.Errorf("persist partial replan context: %w", err))
-					_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+					e.commitFailureBoundary(taskID, hermes.RuntimeStepPlanner, attempt, "persist_partial_replan_context_failed")
 					return
 				}
 			} else {
@@ -557,7 +583,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 				// Reset accumulated state so the new plan executes from scratch.
 				if err := e.commitAccumulatedBoundary(taskID, "", attempt, "full_replan_reset"); err != nil {
 					e.reporter.OnError(fmt.Errorf("persist replan reset: %w", err))
-					_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+					e.commitFailureBoundary(taskID, hermes.RuntimeStepPlanner, attempt, "persist_replan_reset_failed")
 					return
 				}
 			}
@@ -572,29 +598,40 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 			tasks = mergePartialRetryPlan(partialRetry.Preserved, tasks, attempt)
 		}
 		if !plannerSkipped {
-			_ = e.store.AddTokenUsage(taskID, planIn+planOut)
-			_ = e.store.AddModelUsageBreakdown(taskID, e.cfg.PlannerModel, hermes.TokenUsageBreakdown{
-				UncachedInputTokens: planIn,
-				OutputTokens:        planOut,
-				CostUSD:             planCost,
-			})
 			plannerPhase := "planner"
 			if attempt > 0 {
 				plannerPhase = "retry_planner"
 			}
-			e.recordPhaseUsage(taskID, plannerPhase, e.cfg.PlannerModel, planIn, planOut, planCost)
+			e.commitTelemetryBoundary(taskID, hermes.RuntimeStepPlanner, attempt,
+				hermes.ModelUsage{
+					Model:               e.cfg.PlannerModel,
+					InputTokens:         planIn,
+					UncachedInputTokens: planIn,
+					OutputTokens:        planOut,
+					CostUSD:             planCost,
+				},
+				hermes.PhaseUsage{
+					Phase:               plannerPhase,
+					Model:               e.cfg.PlannerModel,
+					InputTokens:         planIn,
+					UncachedInputTokens: planIn,
+					OutputTokens:        planOut,
+					CostUSD:             planCost,
+				},
+				planIn+planOut,
+				"planner_telemetry")
 			if sid := e.planner.SessionID(); sid != "" {
-				_ = e.store.UpdatePlannerSession(taskID, sid)
+				e.commitPlannerSessionBoundary(taskID, sid, attempt)
 			}
 		}
 		if len(tasks) > 15 {
 			e.reporter.OnError(fmt.Errorf("complexity violation: plan has %d sub-tasks (max 15)", len(tasks)))
-			_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+			e.commitFailureBoundary(taskID, hermes.RuntimeStepPlanner, attempt, "complexity_violation_max_subtasks")
 			return
 		}
 		if err := e.commitPlanBoundary(taskID, tasks, attempt); err != nil {
 			e.reporter.OnError(fmt.Errorf("persist plan: %w", err))
-			_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+			e.commitFailureBoundary(taskID, hermes.RuntimeStepPlanner, attempt, "persist_plan_failed")
 			return
 		}
 		e.reporter.OnPlanReady(tasks)
@@ -615,7 +652,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 			state, err := e.store.GetTask(taskID)
 			if err != nil {
 				e.reporter.OnError(err)
-				_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+				e.commitFailureBoundary(taskID, hermes.RuntimeStepExecutor, attempt, "fetch_task_failed")
 				return
 			}
 			if !e.checkBudget(ctx, taskID, state) {
@@ -660,7 +697,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 				}
 				if err := e.commitExecutorBoundary(taskID, tasks, idx, &updated, hermes.TaskStatusExecuting, next, attempt, "subtask_done"); err != nil {
 					e.reporter.OnError(fmt.Errorf("persist subtask result: %w", err))
-					_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+					e.commitFailureBoundary(taskID, hermes.RuntimeStepExecutor, attempt, "persist_subtask_done_failed")
 					return
 				}
 			} else if finalStatus == hermes.SubTaskSkipped {
@@ -716,7 +753,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 							log.Printf("[plan_execute] partial pause: abort task=%s at idx=%d", taskID, idx)
 							e.applySubTaskOutcome(taskID, tasks, idx, hermes.SubTaskFailed, finalText, finalTokens)
 							e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
-							_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+							e.commitFailureBoundary(taskID, hermes.RuntimeStepExecutor, attempt, "partial_pause_abort")
 							return
 						}
 					}
@@ -737,7 +774,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 				}
 				if err := e.commitExecutorBoundary(taskID, tasks, idx, &updated, hermes.TaskStatusExecuting, next, attempt, "subtask_skipped"); err != nil {
 					e.reporter.OnError(fmt.Errorf("persist skipped subtask: %w", err))
-					_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+					e.commitFailureBoundary(taskID, hermes.RuntimeStepExecutor, attempt, "persist_subtask_skipped_failed")
 					return
 				}
 			} else if !success {
@@ -801,7 +838,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 					log.Printf("[plan_execute] failure pause: abort task=%s at idx=%d", taskID, idx)
 					e.applySubTaskOutcome(taskID, tasks, idx, hermes.SubTaskFailed, finalText, finalTokens)
 					e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
-					_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+					e.commitFailureBoundary(taskID, hermes.RuntimeStepExecutor, attempt, "failure_pause_abort")
 					return
 				default: // FailureSkip
 					e.applySubTaskOutcome(taskID, tasks, idx, hermes.SubTaskFailed, finalText, finalTokens)
@@ -817,7 +854,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 					}
 					if err := e.commitExecutorBoundary(taskID, tasks, idx, nil, hermes.TaskStatusExecuting, next, attempt, "subtask_failed_skip"); err != nil {
 						e.reporter.OnError(fmt.Errorf("persist failed subtask: %w", err))
-						_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+						e.commitFailureBoundary(taskID, hermes.RuntimeStepExecutor, attempt, "persist_subtask_failed_skip_failed")
 						return
 					}
 				}
@@ -832,7 +869,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 		if reviewMode != ReviewModePerTask {
 			if err := e.commitTerminalBoundary(taskID, hermes.RuntimeStepExecutor, attempt, "task_done_without_final_review"); err != nil {
 				e.reporter.OnError(fmt.Errorf("persist terminal status: %w", err))
-				_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+				e.commitFailureBoundary(taskID, hermes.RuntimeStepExecutor, attempt, "persist_terminal_no_review_failed")
 				return
 			}
 			break
@@ -872,7 +909,7 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 
 		if err := e.commitTerminalBoundary(taskID, hermes.RuntimeStepReviewer, attempt, "task_done_after_review"); err != nil {
 			e.reporter.OnError(fmt.Errorf("persist terminal status: %w", err))
-			_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+			e.commitFailureBoundary(taskID, hermes.RuntimeStepReviewer, attempt, "persist_terminal_after_review_failed")
 			return
 		}
 		finalState, _ = e.store.GetTask(taskID)
@@ -922,12 +959,6 @@ func (e *PlanExecuteEngine) plan(ctx context.Context, goal string) ([]hermes.Sub
 func (e *PlanExecuteEngine) commitPlanBoundary(taskID string, tasks []hermes.SubTask, attempt int) error {
 	status := hermes.TaskStatusExecuting
 	currentIdx := 0
-	if e.runtime == nil {
-		if err := e.store.StorePlan(taskID, tasks); err != nil {
-			return err
-		}
-		return e.store.MarkStatus(taskID, status)
-	}
 	reason := "plan_ready"
 	if attempt > 0 {
 		reason = "replan_ready"
@@ -949,9 +980,6 @@ func (e *PlanExecuteEngine) commitPlanBoundary(taskID string, tasks []hermes.Sub
 }
 
 func (e *PlanExecuteEngine) commitAccumulatedBoundary(taskID string, accumulated string, attempt int, reason string) error {
-	if e.runtime == nil {
-		return e.store.UpdateAccumulated(taskID, accumulated)
-	}
 	_, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
 		TaskID: taskID,
 		Updates: []hermes.StateUpdate{
@@ -970,21 +998,16 @@ func (e *PlanExecuteEngine) commitAccumulatedBoundary(taskID string, accumulated
 
 func (e *PlanExecuteEngine) commitExecutorBoundary(taskID string, tasks []hermes.SubTask, idx int, accumulated *string, status hermes.TaskStatus, next hermes.RuntimeStep, attempt int, reason string) error {
 	nextIdx := idx + 1
-	if e.runtime == nil {
-		if idx >= 0 && idx < len(tasks) {
-			st := tasks[idx]
-			if err := e.store.UpdateSubTask(taskID, idx, st.Status, st.Result, st.TokensUsed); err != nil {
-				return err
-			}
-		}
-		if accumulated != nil {
-			if err := e.store.UpdateAccumulated(taskID, *accumulated); err != nil {
-				return err
-			}
-		}
-		return e.store.AdvanceTask(taskID, nextIdx, status)
+	// Only write Status when it represents an actual transition. All
+	// intermediate sub-task commits pass TaskStatusExecuting which is the
+	// steady state — emitting it on every commit would inflate the
+	// dashboard's status-transition timeline. Terminal transitions use
+	// commitTerminalBoundary / commitFailureBoundary instead.
+	updates := []hermes.StateUpdate{{Plan: tasks, CurrentIdx: &nextIdx}}
+	if status != hermes.TaskStatusExecuting {
+		s := status
+		updates[0].Status = &s
 	}
-	updates := []hermes.StateUpdate{{Plan: tasks, CurrentIdx: &nextIdx, Status: &status}}
 	if idx >= 0 && idx < len(tasks) {
 		updates = append(updates, hermes.StateUpdateForSubTaskResult(tasks[idx], idx))
 	}
@@ -1005,14 +1028,184 @@ func (e *PlanExecuteEngine) commitExecutorBoundary(taskID string, tasks []hermes
 	return err
 }
 
+// commitTelemetryBoundary persists token / cost telemetry through the
+// reducer so the snapshot history records who paid for what at each
+// phase. modelUsage and phaseUsage are passed by value (zero-valued
+// fields are skipped). tokenDelta is added to TokenBudget.UsedTokens.
+//
+// When no snapshot store is wired, falls back to the legacy direct-write
+// path (AddModelUsageBreakdown / AddPhaseUsageBreakdown / AddTokenUsage)
+// so test stubs and NoopTaskStore continue to work.
+func (e *PlanExecuteEngine) commitTelemetryBoundary(taskID string, source hermes.RuntimeStep, attempt int, modelUsage hermes.ModelUsage, phaseUsage hermes.PhaseUsage, tokenDelta int, reason string) {
+	hasModel := modelUsage.Model != ""
+	hasPhase := phaseUsage.Phase != "" && phaseUsage.Model != ""
+	if !hasModel && !hasPhase && tokenDelta == 0 {
+		return
+	}
+	update := hermes.StateUpdate{TokenUsageDelta: tokenDelta}
+	if hasModel {
+		update.ModelUsages = []hermes.ModelUsage{modelUsage}
+	}
+	if hasPhase {
+		update.PhaseUsages = []hermes.PhaseUsage{phaseUsage}
+	}
+	_, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    []hermes.StateUpdate{update},
+		NextStep:   source, // telemetry doesn't advance the workflow
+		SourceNode: source,
+		Metadata: hermes.SnapshotMetadata{
+			Source:  "plan_execute",
+			Reason:  reason,
+			Attempt: attempt,
+		},
+	})
+	if err != nil {
+		log.Printf("[plan_execute] commitTelemetryBoundary task=%s reason=%s: %v", taskID, reason, err)
+	}
+}
+
+// commitInterruptedBoundary records a user-initiated interrupt at a snapshot
+// boundary. Status moves to TaskStatusInterrupted with the originating
+// Telegram message ID captured in the Interrupt payload so dashboards can
+// trace who pulled the brake.
+func (e *PlanExecuteEngine) commitInterruptedBoundary(taskID string, messageID int64) {
+	now := time.Now()
+	status := hermes.TaskStatusInterrupted
+	interrupt := hermes.HermesInterrupt{
+		ID:         fmt.Sprintf("%s:user-interrupt:%d", taskID, now.UnixNano()),
+		MessageID:  messageID,
+		SourceStep: hermes.RuntimeStepExecutor,
+		Reason:     "user_interrupt",
+		CreatedAt:  now,
+	}
+	_, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    []hermes.StateUpdate{{Status: &status, Interrupt: &interrupt}},
+		NextStep:   hermes.RuntimeStepTerminal,
+		SourceNode: hermes.RuntimeStepExecutor,
+		Metadata: hermes.SnapshotMetadata{
+			Source: "plan_execute",
+			Reason: "user_interrupt",
+		},
+	})
+	if err != nil {
+		log.Printf("[plan_execute] commitInterruptedBoundary task=%s: %v — falling back to legacy MarkInterrupted", taskID, err)
+		_ = e.store.MarkInterrupted(taskID, messageID)
+	}
+}
+
+// commitPlannerSessionBoundary persists a Planner backend session ID so the
+// next Plan call after restart can use --resume. Snapshot only; no status
+// change. Falls back to legacy when no runtime store is wired.
+func (e *PlanExecuteEngine) commitPlannerSessionBoundary(taskID, sessionID string, attempt int) {
+	if strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	sid := sessionID
+	_, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    []hermes.StateUpdate{{PlannerSessionID: &sid}},
+		NextStep:   hermes.RuntimeStepPlanner,
+		SourceNode: hermes.RuntimeStepPlanner,
+		Metadata: hermes.SnapshotMetadata{
+			Source:  "plan_execute",
+			Reason:  "planner_session_persisted",
+			Attempt: attempt,
+		},
+	})
+	if err != nil {
+		log.Printf("[plan_execute] commitPlannerSessionBoundary task=%s: %v", taskID, err)
+		_ = e.store.UpdatePlannerSession(taskID, sessionID)
+	}
+}
+
+// commitBudgetResetBoundary writes a fresh TokenBudget.StartedAt at a
+// snapshot boundary; used when the operator clicks "continue" on a budget
+// warning and the engine restarts the measurement window.
+func (e *PlanExecuteEngine) commitBudgetResetBoundary(taskID string, startedAt time.Time) {
+	ts := startedAt
+	_, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    []hermes.StateUpdate{{BudgetStartedAt: &ts}},
+		NextStep:   hermes.RuntimeStepExecutor,
+		SourceNode: hermes.RuntimeStepExecutor,
+		Metadata: hermes.SnapshotMetadata{
+			Source: "plan_execute",
+			Reason: "budget_continue_reset",
+		},
+	})
+	if err != nil {
+		log.Printf("[plan_execute] commitBudgetResetBoundary task=%s: %v", taskID, err)
+		_ = e.store.ResetBudgetStartedAt(taskID, startedAt)
+	}
+}
+
+// commitSubTaskStartBoundary marks a sub-task as in-progress through a Plan
+// update. The reducer treats Plan as a full replacement so we copy the
+// existing plan with only the chosen index mutated. Falls back to legacy
+// MarkSubTaskStarted when no runtime store is wired.
+func (e *PlanExecuteEngine) commitSubTaskStartBoundary(taskID string, idx int) {
+	current, err := e.store.GetTask(taskID)
+	if err != nil {
+		log.Printf("[plan_execute] commitSubTaskStartBoundary task=%s GetTask: %v", taskID, err)
+		_ = e.store.MarkSubTaskStarted(taskID, idx)
+		return
+	}
+	if idx < 0 || idx >= len(current.Plan) {
+		return
+	}
+	plan := append([]hermes.SubTask(nil), current.Plan...)
+	plan[idx].Status = hermes.SubTaskInProgress
+	currentIdx := idx
+	_, err = e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    []hermes.StateUpdate{{Plan: plan, CurrentIdx: &currentIdx}},
+		NextStep:   hermes.RuntimeStepExecutor,
+		SourceNode: hermes.RuntimeStepExecutor,
+		Metadata: hermes.SnapshotMetadata{
+			Source: "plan_execute",
+			Reason: "subtask_started",
+		},
+	})
+	if err != nil {
+		log.Printf("[plan_execute] commitSubTaskStartBoundary task=%s idx=%d: %v", taskID, idx, err)
+		_ = e.store.MarkSubTaskStarted(taskID, idx)
+	}
+}
+
+// commitFailureBoundary marks the task as failed at a snapshot boundary so
+// the failure carries provenance (source step + reason) into the runtime
+// log instead of being a silent legacy-table write. Falls back to the
+// legacy MarkStatus path when no snapshot store is wired (NoopTaskStore /
+// in-memory test harnesses); this keeps existing callsites correct while
+// production runs benefit from full snapshot coverage. Errors during
+// commit are logged and a legacy MarkStatus is attempted as last resort
+// so the task at least leaves the executing state.
+func (e *PlanExecuteEngine) commitFailureBoundary(taskID string, source hermes.RuntimeStep, attempt int, reason string) {
+	status := hermes.TaskStatusFailed
+	_, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    []hermes.StateUpdate{{Status: &status}},
+		NextStep:   hermes.RuntimeStepTerminal,
+		SourceNode: source,
+		Metadata: hermes.SnapshotMetadata{
+			Source:  "plan_execute",
+			Reason:  reason,
+			Attempt: attempt,
+		},
+	})
+	if err != nil {
+		log.Printf("[plan_execute] commitFailureBoundary task=%s reason=%s: %v — falling back to legacy MarkStatus", taskID, reason, err)
+		_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+	}
+}
+
 // commitInterruptBoundary persists a HermesInterrupt to the snapshot when a
 // human-in-the-loop pause fires. The task status stays in Executing — the
 // interrupt is observable state, not a status change. Callers are expected
 // to emit a corresponding HumanInterruptCreated runtime event.
 func (e *PlanExecuteEngine) commitInterruptBoundary(taskID string, interrupt hermes.HermesInterrupt, attempt int, reason string) error {
-	if e.runtime == nil {
-		return nil // legacy store: no snapshot persistence; observability only
-	}
 	_, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
 		TaskID:     taskID,
 		Updates:    []hermes.StateUpdate{{Interrupt: &interrupt}},
@@ -1030,9 +1223,6 @@ func (e *PlanExecuteEngine) commitInterruptBoundary(taskID string, interrupt her
 // commitInterruptCleared persists the resolution of a human-in-the-loop pause.
 // Mirrors commitInterruptBoundary; emit HumanInterruptResumed at the call site.
 func (e *PlanExecuteEngine) commitInterruptCleared(taskID string, attempt int, reason string) error {
-	if e.runtime == nil {
-		return nil
-	}
 	_, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
 		TaskID:     taskID,
 		Updates:    []hermes.StateUpdate{{ClearInterrupt: true}},
@@ -1049,9 +1239,6 @@ func (e *PlanExecuteEngine) commitInterruptCleared(taskID string, attempt int, r
 
 func (e *PlanExecuteEngine) commitTerminalBoundary(taskID string, source hermes.RuntimeStep, attempt int, reason string) error {
 	status := hermes.TaskStatusDone
-	if e.runtime == nil {
-		return e.store.MarkStatus(taskID, status)
-	}
 	_, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
 		TaskID:     taskID,
 		Updates:    []hermes.StateUpdate{{Status: &status}},
@@ -1093,7 +1280,7 @@ func (e *PlanExecuteEngine) handlePlanningError(ctx context.Context, taskID stri
 	default:
 		e.reporter.OnError(err)
 	}
-	_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+	e.commitFailureBoundary(taskID, hermes.RuntimeStepPlanner, 0, "planning_error")
 }
 
 func (e *PlanExecuteEngine) checkBudget(ctx context.Context, taskID string, state hermes.TaskState) bool {
@@ -1103,7 +1290,7 @@ func (e *PlanExecuteEngine) checkBudget(ctx context.Context, taskID string, stat
 	e.reporter.OnBudgetWarning(state.TokenBudget)
 	ch := e.cfg.ContinueCh
 	if ch == nil {
-		_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+		e.commitFailureBoundary(taskID, hermes.RuntimeStepExecutor, 0, "budget_exceeded_no_resume")
 		e.onBudgetExceeded(ctx, state)
 		return false
 	}
@@ -1117,12 +1304,10 @@ func (e *PlanExecuteEngine) checkBudget(ctx context.Context, taskID string, stat
 		e.mu.Lock()
 		e.cfg.Budget.StartedAt = startedAt
 		e.mu.Unlock()
-		if err := e.store.ResetBudgetStartedAt(taskID, startedAt); err != nil {
-			log.Printf("[plan_execute] ResetBudgetStartedAt: %v", err)
-		}
+		e.commitBudgetResetBoundary(taskID, startedAt)
 		return true
 	case <-time.After(timeout):
-		_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+		e.commitFailureBoundary(taskID, hermes.RuntimeStepExecutor, 0, "budget_exceeded_continue_timeout")
 		e.onBudgetExceeded(ctx, state)
 		return false
 	case <-ctx.Done():
@@ -1597,17 +1782,24 @@ func (e *PlanExecuteEngine) runReview(ctx context.Context, state hermes.TaskStat
 	// total cost include the review pass — previously this was uncounted, so
 	// dashboards under-reported by exactly the reviewer's share. See #148 1E.
 	if reviewerTokens := result.InputTokens + result.OutputTokens; result.ReviewerModel != "" && reviewerTokens > 0 {
-		if err := e.store.AddModelUsageBreakdown(state.ID, result.ReviewerModel, hermes.TokenUsageBreakdown{
-			UncachedInputTokens: result.InputTokens,
-			OutputTokens:        result.OutputTokens,
-			CostUSD:             result.CostUSD,
-		}); err != nil {
-			log.Printf("[plan_execute] AddModelUsage(reviewer) model=%s: %v", result.ReviewerModel, err)
-		}
-		e.recordPhaseUsage(state.ID, "reviewer", result.ReviewerModel, result.InputTokens, result.OutputTokens, result.CostUSD)
-		if err := e.store.AddTokenUsage(state.ID, reviewerTokens); err != nil {
-			log.Printf("[plan_execute] AddTokenUsage(reviewer): %v", err)
-		}
+		e.commitTelemetryBoundary(state.ID, hermes.RuntimeStepReviewer, 0,
+			hermes.ModelUsage{
+				Model:               result.ReviewerModel,
+				InputTokens:         result.InputTokens,
+				UncachedInputTokens: result.InputTokens,
+				OutputTokens:        result.OutputTokens,
+				CostUSD:             result.CostUSD,
+			},
+			hermes.PhaseUsage{
+				Phase:               "reviewer",
+				Model:               result.ReviewerModel,
+				InputTokens:         result.InputTokens,
+				UncachedInputTokens: result.InputTokens,
+				OutputTokens:        result.OutputTokens,
+				CostUSD:             result.CostUSD,
+			},
+			reviewerTokens,
+			"reviewer_telemetry")
 	}
 	if e.cfg.ReviewStore != nil {
 		if err := e.cfg.ReviewStore.StoreReview(ctx, state.ID, result); err != nil {
@@ -1632,26 +1824,6 @@ func (e *PlanExecuteEngine) shouldRunReview(tasks []hermes.SubTask) bool {
 		minTasks = 2
 	}
 	return len(tasks) >= minTasks
-}
-
-func (e *PlanExecuteEngine) recordPhaseUsage(taskID, phase, model string, inputTokens, outputTokens int, costUSD float64) {
-	e.recordPhaseUsageBreakdown(taskID, phase, model, hermes.TokenUsageBreakdown{
-		UncachedInputTokens: inputTokens,
-		OutputTokens:        outputTokens,
-		CostUSD:             costUSD,
-	})
-}
-
-func (e *PlanExecuteEngine) recordPhaseUsageBreakdown(taskID, phase, model string, usage hermes.TokenUsageBreakdown) {
-	if strings.TrimSpace(taskID) == "" || strings.TrimSpace(phase) == "" || strings.TrimSpace(model) == "" {
-		return
-	}
-	if usage.InputVolume()+usage.OutputTokens <= 0 {
-		return
-	}
-	if err := e.store.AddPhaseUsageBreakdown(taskID, phase, model, usage); err != nil {
-		log.Printf("[plan_execute] AddPhaseUsage(%s) model=%s: %v", phase, model, err)
-	}
 }
 
 func tokenUsageBreakdownFromResult(result Result) hermes.TokenUsageBreakdown {
@@ -1687,9 +1859,7 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 	metrics := subTaskExecMetrics{}
 	for {
 		if attempts == 0 {
-			if err := e.store.MarkSubTaskStarted(taskID, idx); err != nil {
-				log.Printf("[plan_execute] MarkSubTaskStarted idx=%d: %v", idx, err)
-			}
+			e.commitSubTaskStartBoundary(taskID, idx)
 			e.reporter.OnSubTaskStart(idx, len(tasks), subTask)
 		} else {
 			e.reporter.OnRetry(idx, attempts, totalAttempts, reviewFeedback)
@@ -1802,13 +1972,28 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 			tokensUsed := result.TokenVolume()
 			if result.Model != "" && tokensUsed > 0 {
 				usage := tokenUsageBreakdownFromResult(result)
-				if err := e.store.AddModelUsageBreakdown(taskID, result.Model, usage); err != nil {
-					log.Printf("[plan_execute] AddModelUsage(executor) idx=%d model=%s: %v", idx, result.Model, err)
-				}
-				e.recordPhaseUsageBreakdown(taskID, "executor", result.Model, usage)
-				if err := e.store.AddTokenUsage(taskID, tokensUsed); err != nil {
-					log.Printf("[plan_execute] AddTokenUsage(executor) idx=%d: %v", idx, err)
-				}
+				e.commitTelemetryBoundary(taskID, hermes.RuntimeStepExecutor, 0,
+					hermes.ModelUsage{
+						Model:                    result.Model,
+						InputTokens:              usage.InputVolume(),
+						UncachedInputTokens:      usage.UncachedInputTokens,
+						CacheReadInputTokens:     usage.CacheReadInputTokens,
+						CacheCreationInputTokens: usage.CacheCreationInputTokens,
+						OutputTokens:             usage.OutputTokens,
+						CostUSD:                  usage.CostUSD,
+					},
+					hermes.PhaseUsage{
+						Phase:                    "executor",
+						Model:                    result.Model,
+						InputTokens:              usage.InputVolume(),
+						UncachedInputTokens:      usage.UncachedInputTokens,
+						CacheReadInputTokens:     usage.CacheReadInputTokens,
+						CacheCreationInputTokens: usage.CacheCreationInputTokens,
+						OutputTokens:             usage.OutputTokens,
+						CostUSD:                  usage.CostUSD,
+					},
+					tokensUsed,
+					"executor_telemetry_failure")
 			}
 			return hermes.SubTaskFailed, execErr.Error(), tokensUsed, false, metrics
 		}
@@ -1817,13 +2002,28 @@ func (e *PlanExecuteEngine) executeSubTask(ctx context.Context, taskID, goal str
 		tokensUsed := result.TokenVolume()
 		if result.Model != "" && tokensUsed > 0 {
 			usage := tokenUsageBreakdownFromResult(result)
-			if err := e.store.AddModelUsageBreakdown(taskID, result.Model, usage); err != nil {
-				log.Printf("[plan_execute] AddModelUsage(executor) idx=%d model=%s: %v", idx, result.Model, err)
-			}
-			e.recordPhaseUsageBreakdown(taskID, "executor", result.Model, usage)
-			if err := e.store.AddTokenUsage(taskID, tokensUsed); err != nil {
-				log.Printf("[plan_execute] AddTokenUsage(executor) idx=%d: %v", idx, err)
-			}
+			e.commitTelemetryBoundary(taskID, hermes.RuntimeStepExecutor, 0,
+				hermes.ModelUsage{
+					Model:                    result.Model,
+					InputTokens:              usage.InputVolume(),
+					UncachedInputTokens:      usage.UncachedInputTokens,
+					CacheReadInputTokens:     usage.CacheReadInputTokens,
+					CacheCreationInputTokens: usage.CacheCreationInputTokens,
+					OutputTokens:             usage.OutputTokens,
+					CostUSD:                  usage.CostUSD,
+				},
+				hermes.PhaseUsage{
+					Phase:                    "executor",
+					Model:                    result.Model,
+					InputTokens:              usage.InputVolume(),
+					UncachedInputTokens:      usage.UncachedInputTokens,
+					CacheReadInputTokens:     usage.CacheReadInputTokens,
+					CacheCreationInputTokens: usage.CacheCreationInputTokens,
+					OutputTokens:             usage.OutputTokens,
+					CostUSD:                  usage.CostUSD,
+				},
+				tokensUsed,
+				"executor_telemetry_success")
 		}
 
 		finalStatus := hermes.SubTaskDone
@@ -1882,6 +2082,7 @@ func (e *PlanExecuteEngine) buildReviewRequest(state hermes.TaskState, mode Revi
 
 	switch mode.normalized() {
 	case ReviewModePerSubTask:
+		reviewReq.ReviewScope = "subtask"
 		if subTaskIdx >= 0 && subTaskIdx < len(reviewReq.Plan) {
 			reviewReq.Plan = []hermes.SubTask{reviewReq.Plan[subTaskIdx]}
 			reviewReq.SubTaskResults = []ReviewSubTaskInput{{
@@ -1894,6 +2095,7 @@ func (e *PlanExecuteEngine) buildReviewRequest(state hermes.TaskState, mode Revi
 			}}
 		}
 	default:
+		reviewReq.ReviewScope = "task"
 		reviewReq.SubTaskResults = ReviewInputsFromPlan(state.Plan)
 	}
 

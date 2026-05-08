@@ -448,6 +448,10 @@ func (s *SQLiteTaskStore) CommitRuntimeStep(commit RuntimeCommit) (Snapshot, err
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("marshal runtime phase usages: %w", err)
 	}
+	tokenBudgetJSON, err := json.Marshal(nextState.TokenBudget)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("marshal runtime token budget: %w", err)
+	}
 	stateJSON, err := json.Marshal(snapshot.State)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("marshal runtime snapshot state: %w", err)
@@ -486,11 +490,13 @@ func (s *SQLiteTaskStore) CommitRuntimeStep(commit RuntimeCommit) (Snapshot, err
 			UPDATE hermes_task_states
 			SET current_idx = ?, accumulated = ?, status = ?, interrupted_by = ?,
 			    plan_json = ?, github_issue_number = ?, model_usages = ?, phase_usages = ?,
+			    token_budget = ?, planner_session = ?,
 			    updated_at = ?
 			WHERE id = ?`,
 			nextState.CurrentIdx, nextState.Accumulated, string(nextState.Status), interruptedBy,
 			string(planJSON), nextState.GithubIssueNumber, string(modelUsagesJSON),
-			string(phaseUsagesJSON), now, commit.TaskID,
+			string(phaseUsagesJSON), string(tokenBudgetJSON), nextState.PlannerSessionID,
+			now, commit.TaskID,
 		); err != nil {
 			return err
 		}
