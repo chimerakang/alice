@@ -1009,6 +1009,84 @@ func TestPlanExecuteEngineMarksPartialAfterStrictRetryExhaustion(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteEngineShowsFailurePauseForStrictPartial(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	runner := &planExecuteRunner{}
+	reviewPhase := &scriptedReviewPhase{
+		results: []ReviewResult{
+			{
+				Verdict:      VerdictPass,
+				OverallScore: 75,
+				Feedback:     "補 runtime validation",
+				IssueTags:    []ReviewTag{ReviewTagScopeCreep},
+			},
+			{
+				Verdict:      VerdictPass,
+				OverallScore: 75,
+				Feedback:     "仍缺 runtime validation",
+				IssueTags:    []ReviewTag{ReviewTagScopeCreep},
+			},
+			{
+				Verdict:      VerdictPass,
+				OverallScore: 75,
+				Feedback:     "還是缺 runtime validation",
+				IssueTags:    []ReviewTag{ReviewTagScopeCreep},
+			},
+			{
+				Verdict:      VerdictPass,
+				OverallScore: 93,
+				Feedback:     "ok",
+			},
+		},
+	}
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s1","description":"first"}]` +
+				"\n```",
+		}, nil
+	}
+
+	pauseCalls := 0
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		PlannerModel:          "planner-model",
+		ProjectDir:            "/repo",
+		ChatID:                42,
+		MaxPlannerJSONRetries: 1,
+		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
+		ReviewPhase:           reviewPhase,
+		ReviewMode:            ReviewModePerSubTask,
+		StrictMode:            StrictModeConfig{Enabled: true, MaxRetriesPerSub: 2},
+		OnSubTaskFailurePause: func(ctx context.Context, idx, total int, subTask hermes.SubTask, errText string, kind hermes.FailureKind) FailurePauseChoice {
+			pauseCalls++
+			if !strings.Contains(errText, "PARTIAL") {
+				t.Fatalf("pause errText missing PARTIAL: %q", errText)
+			}
+			return FailurePauseChoice{Decision: FailureRetry}
+		},
+	}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
+
+	taskID, err := engine.Start(context.Background(), "請實作 strict goal 流程", NewChatContext(42, 0, "/repo"))
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitForPlanExecute(t, engine)
+
+	state, err := store.GetTask(taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if pauseCalls != 1 {
+		t.Fatalf("pause calls = %d, want 1", pauseCalls)
+	}
+	if len(runner.prompts) != 4 {
+		t.Fatalf("runner calls = %d, want 4", len(runner.prompts))
+	}
+	if state.Plan[0].Status != hermes.SubTaskDone {
+		t.Fatalf("sub-task status = %s, want done after retry", state.Plan[0].Status)
+	}
+}
+
 type failingOnceRunner struct {
 	prompts []string
 }
@@ -1135,4 +1213,52 @@ func waitForPlanExecute(t *testing.T, engine *PlanExecuteEngine) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("plan execute engine still running after timeout")
+}
+
+// ── Failure pause interrupt helpers (#169 slice 2) ─────────────────────────
+
+func TestBuildFailurePauseInterrupt_PopulatesPayloadAndExpiry(t *testing.T) {
+	now := time.Date(2026, 5, 8, 23, 0, 0, 0, time.UTC)
+	subTask := hermes.SubTask{ID: "s3", Description: "run go test ./..."}
+	got := buildFailurePauseInterrupt("task-abc", 2, 5, subTask, "deadline exceeded", hermes.FailureEnv, now)
+
+	if got.SourceStep != hermes.RuntimeStepExecutor || got.ResumeStep != hermes.RuntimeStepExecutor {
+		t.Errorf("step fields wrong: source=%q resume=%q", got.SourceStep, got.ResumeStep)
+	}
+	if got.Reason != "subtask_failure_pause" {
+		t.Errorf("reason = %q, want subtask_failure_pause", got.Reason)
+	}
+	if got.CreatedAt != now {
+		t.Errorf("CreatedAt = %v, want %v", got.CreatedAt, now)
+	}
+	if got.ExpiresAt == nil || !got.ExpiresAt.Equal(now.Add(24*time.Hour)) {
+		t.Errorf("ExpiresAt = %v, want %v", got.ExpiresAt, now.Add(24*time.Hour))
+	}
+	payload, ok := got.Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T, want map[string]any", got.Payload)
+	}
+	if payload["sub_task_idx"] != 2 || payload["sub_task_id"] != "s3" {
+		t.Errorf("payload mismatch: %+v", payload)
+	}
+	if payload["error_text"] != "deadline exceeded" {
+		t.Errorf("payload error_text = %v", payload["error_text"])
+	}
+	if payload["failure_kind"] != hermes.FailureEnv.Label() {
+		t.Errorf("payload failure_kind = %v, want %v", payload["failure_kind"], hermes.FailureEnv.Label())
+	}
+}
+
+func TestFailureDecision_Label(t *testing.T) {
+	cases := map[FailureDecision]string{
+		FailureSkip:         "skip",
+		FailureRetry:        "retry",
+		FailureAbort:        "abort",
+		FailureDecision(99): "unknown",
+	}
+	for d, want := range cases {
+		if got := d.label(); got != want {
+			t.Errorf("FailureDecision(%d).label() = %q, want %q", d, got, want)
+		}
+	}
 }

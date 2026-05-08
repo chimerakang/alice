@@ -550,6 +550,82 @@ func (s *SQLiteTaskStore) GetLatestSnapshotForThread(chatID int64, threadID int)
 	return scanSnapshot(row)
 }
 
+// StaleInterruptRef describes one task that holds a HermesInterrupt older
+// than the cutoff supplied to ListStaleInterrupts. Returned by the
+// startup-orphan-cleanup pass so callers can mark the task failed and
+// emit a HumanInterruptTimeout runtime event.
+type StaleInterruptRef struct {
+	TaskID    string
+	ChatID    int64
+	ThreadID  int
+	Step      int
+	State     HermesState
+	Interrupt HermesInterrupt
+}
+
+// ListStaleInterrupts returns active tasks (status not terminal) whose
+// latest snapshot carries an Interrupt with CreatedAt older than the
+// cutoff. The query joins hermes_task_states (for status filter) with the
+// latest snapshot per task; rows whose state JSON has no interrupt or
+// whose interrupt is younger than the cutoff are filtered in Go.
+//
+// Used at alice startup to fail tasks whose engine goroutine died while
+// blocking on a human-in-the-loop pause (e.g. process restart). With the
+// engine still using an in-process channel for the actual block, we cannot
+// resume those tasks; cleanup is the safe default.
+func (s *SQLiteTaskStore) ListStaleInterrupts(cutoff time.Time) ([]StaleInterruptRef, error) {
+	rows, err := s.db.Query(`
+		SELECT snap.task_id, snap.chat_id, snap.thread_id, snap.step, snap.state_json
+		FROM hermes_snapshots AS snap
+		INNER JOIN hermes_task_states AS task ON task.id = snap.task_id
+		INNER JOIN (
+			SELECT task_id, MAX(step) AS max_step
+			FROM hermes_snapshots
+			GROUP BY task_id
+		) latest ON latest.task_id = snap.task_id AND latest.max_step = snap.step
+		WHERE task.status NOT IN ('done','failed','interrupted')`)
+	if err != nil {
+		return nil, fmt.Errorf("ListStaleInterrupts query: %w", err)
+	}
+	defer rows.Close()
+
+	var stale []StaleInterruptRef
+	for rows.Next() {
+		var (
+			taskID    string
+			chatID    int64
+			threadID  int
+			step      int
+			stateJSON string
+		)
+		if err := rows.Scan(&taskID, &chatID, &threadID, &step, &stateJSON); err != nil {
+			return nil, fmt.Errorf("ListStaleInterrupts scan: %w", err)
+		}
+		var state HermesState
+		if err := json.Unmarshal([]byte(stateJSON), &state); err != nil {
+			return nil, fmt.Errorf("ListStaleInterrupts unmarshal task=%s: %w", taskID, err)
+		}
+		if state.Interrupt == nil {
+			continue
+		}
+		if state.Interrupt.CreatedAt.IsZero() || state.Interrupt.CreatedAt.After(cutoff) {
+			continue
+		}
+		stale = append(stale, StaleInterruptRef{
+			TaskID:    taskID,
+			ChatID:    chatID,
+			ThreadID:  threadID,
+			Step:      step,
+			State:     state,
+			Interrupt: *state.Interrupt,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ListStaleInterrupts rows: %w", err)
+	}
+	return stale, nil
+}
+
 // ListSnapshotHistory returns all snapshots for taskID in chronological step
 // order. This is the read side needed for audit/debug timelines.
 func (s *SQLiteTaskStore) ListSnapshotHistory(taskID string) ([]Snapshot, error) {

@@ -127,6 +127,45 @@ type FailurePauseChoice struct {
 	Hint     string
 }
 
+// label returns a stable string label for FailureDecision used in runtime
+// events. Mirrors the const names so dashboards can filter on them.
+func (d FailureDecision) label() string {
+	switch d {
+	case FailureRetry:
+		return "retry"
+	case FailureAbort:
+		return "abort"
+	case FailureSkip:
+		return "skip"
+	default:
+		return "unknown"
+	}
+}
+
+// buildFailurePauseInterrupt assembles a HermesInterrupt record for a
+// sub-task failure pause. The Payload field carries the data a future
+// startup-resume path needs to re-issue the Telegram button without
+// re-running the failed sub-task.
+func buildFailurePauseInterrupt(taskID string, idx, total int, subTask hermes.SubTask, errText string, kind hermes.FailureKind, now time.Time) hermes.HermesInterrupt {
+	expires := now.Add(24 * time.Hour)
+	return hermes.HermesInterrupt{
+		ID:         fmt.Sprintf("%s:subfail:%d:%d", taskID, idx, now.UnixNano()),
+		SourceStep: hermes.RuntimeStepExecutor,
+		ResumeStep: hermes.RuntimeStepExecutor,
+		Reason:     "subtask_failure_pause",
+		CreatedAt:  now,
+		ExpiresAt:  &expires,
+		Payload: map[string]any{
+			"sub_task_idx":  idx,
+			"sub_task_id":   subTask.ID,
+			"sub_task_desc": subTask.Description,
+			"total":         total,
+			"error_text":    errText,
+			"failure_kind":  kind.Label(),
+		},
+	}
+}
+
 // PlanExecuteEngine plans a goal and executes each sub-task through DirectEngine.
 type PlanExecuteEngine struct {
 	cfg      PlanExecuteConfig
@@ -625,6 +664,63 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 					return
 				}
 			} else if finalStatus == hermes.SubTaskSkipped {
+				if strings.HasPrefix(strings.TrimSpace(finalText), "PARTIAL") {
+					if cb := e.cfg.OnSubTaskFailurePause; cb != nil {
+						kind := hermes.ClassifyFailure(finalText)
+						interrupt := buildFailurePauseInterrupt(taskID, idx, len(tasks), subTask, finalText, kind, time.Now())
+						if err := e.commitInterruptBoundary(taskID, interrupt, attempt, "subtask_partial_pause"); err != nil {
+							log.Printf("[plan_execute] persist partial pause interrupt: %v", err)
+						}
+						e.emitRuntimeEvent(ctx, Event{
+							Type:      "HumanInterruptCreated",
+							Timestamp: time.Now(),
+							Payload: map[string]any{
+								"interrupt_id": interrupt.ID,
+								"reason":       interrupt.Reason,
+								"source_step":  string(interrupt.SourceStep),
+								"resume_step":  string(interrupt.ResumeStep),
+								"sub_task_idx": idx,
+								"sub_task_id":  subTask.ID,
+								"failure_kind": kind.Label(),
+							},
+						})
+
+						choice := cb(ctx, idx, len(tasks), subTask, finalText, kind)
+
+						if err := e.commitInterruptCleared(taskID, attempt, "subtask_partial_resumed"); err != nil {
+							log.Printf("[plan_execute] persist partial pause clear: %v", err)
+						}
+						e.emitRuntimeEvent(ctx, Event{
+							Type:      "HumanInterruptResumed",
+							Timestamp: time.Now(),
+							Payload: map[string]any{
+								"interrupt_id": interrupt.ID,
+								"sub_task_idx": idx,
+								"sub_task_id":  subTask.ID,
+								"decision":     choice.Decision.label(),
+								"has_hint":     strings.TrimSpace(choice.Hint) != "",
+							},
+						})
+
+						switch choice.Decision {
+						case FailureRetry:
+							if hint := strings.TrimSpace(choice.Hint); hint != "" {
+								log.Printf("[plan_execute] partial pause: retry-with-hint idx=%d task=%s hint=%.60q", idx, taskID, hint)
+								pendingOperatorHint = hint
+							} else {
+								log.Printf("[plan_execute] partial pause: retry idx=%d task=%s", idx, taskID)
+							}
+							idx-- // re-run same idx; for-loop will idx++
+							continue
+						case FailureAbort:
+							log.Printf("[plan_execute] partial pause: abort task=%s at idx=%d", taskID, idx)
+							e.applySubTaskOutcome(taskID, tasks, idx, hermes.SubTaskFailed, finalText, finalTokens)
+							e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
+							_ = e.store.MarkStatus(taskID, hermes.TaskStatusFailed)
+							return
+						}
+					}
+				}
 				e.applySubTaskOutcome(taskID, tasks, idx, hermes.SubTaskSkipped, finalText, finalTokens)
 				e.reporter.OnSubTaskDone(idx, len(tasks), subTask, false, finalText)
 				e.onSubTaskDone(ctx, idx, len(tasks), tasks, subTask, finalText, finalTokens, completed)
@@ -651,7 +747,45 @@ func (e *PlanExecuteEngine) run(ctx context.Context, taskID, goal string, cc *Ch
 				choice := FailurePauseChoice{Decision: FailureSkip}
 				if cb := e.cfg.OnSubTaskFailurePause; cb != nil {
 					kind := hermes.ClassifyFailure(finalText)
+					// Persist the interrupt to the snapshot BEFORE blocking on
+					// the operator. This makes paused tasks observable in the
+					// dashboard and lets the orphan-cleanup pass identify
+					// tasks whose engine goroutine died (e.g. alice restart)
+					// while waiting for a click.
+					interrupt := buildFailurePauseInterrupt(taskID, idx, len(tasks), subTask, finalText, kind, time.Now())
+					if err := e.commitInterruptBoundary(taskID, interrupt, attempt, "subtask_failure_pause"); err != nil {
+						log.Printf("[plan_execute] persist failure pause interrupt: %v", err)
+					}
+					e.emitRuntimeEvent(ctx, Event{
+						Type:      "HumanInterruptCreated",
+						Timestamp: time.Now(),
+						Payload: map[string]any{
+							"interrupt_id": interrupt.ID,
+							"reason":       interrupt.Reason,
+							"source_step":  string(interrupt.SourceStep),
+							"resume_step":  string(interrupt.ResumeStep),
+							"sub_task_idx": idx,
+							"sub_task_id":  subTask.ID,
+							"failure_kind": kind.Label(),
+						},
+					})
+
 					choice = cb(ctx, idx, len(tasks), subTask, finalText, kind)
+
+					if err := e.commitInterruptCleared(taskID, attempt, "subtask_failure_resumed"); err != nil {
+						log.Printf("[plan_execute] persist failure pause clear: %v", err)
+					}
+					e.emitRuntimeEvent(ctx, Event{
+						Type:      "HumanInterruptResumed",
+						Timestamp: time.Now(),
+						Payload: map[string]any{
+							"interrupt_id": interrupt.ID,
+							"sub_task_idx": idx,
+							"sub_task_id":  subTask.ID,
+							"decision":     choice.Decision.label(),
+							"has_hint":     strings.TrimSpace(choice.Hint) != "",
+						},
+					})
 				}
 				switch choice.Decision {
 				case FailureRetry:
@@ -862,6 +996,48 @@ func (e *PlanExecuteEngine) commitExecutorBoundary(taskID string, tasks []hermes
 		Updates:    updates,
 		NextStep:   next,
 		SourceNode: hermes.RuntimeStepExecutor,
+		Metadata: hermes.SnapshotMetadata{
+			Source:  "plan_execute",
+			Reason:  reason,
+			Attempt: attempt,
+		},
+	})
+	return err
+}
+
+// commitInterruptBoundary persists a HermesInterrupt to the snapshot when a
+// human-in-the-loop pause fires. The task status stays in Executing — the
+// interrupt is observable state, not a status change. Callers are expected
+// to emit a corresponding HumanInterruptCreated runtime event.
+func (e *PlanExecuteEngine) commitInterruptBoundary(taskID string, interrupt hermes.HermesInterrupt, attempt int, reason string) error {
+	if e.runtime == nil {
+		return nil // legacy store: no snapshot persistence; observability only
+	}
+	_, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    []hermes.StateUpdate{{Interrupt: &interrupt}},
+		NextStep:   hermes.RuntimeStepApproval,
+		SourceNode: hermes.RuntimeStepExecutor,
+		Metadata: hermes.SnapshotMetadata{
+			Source:  "plan_execute",
+			Reason:  reason,
+			Attempt: attempt,
+		},
+	})
+	return err
+}
+
+// commitInterruptCleared persists the resolution of a human-in-the-loop pause.
+// Mirrors commitInterruptBoundary; emit HumanInterruptResumed at the call site.
+func (e *PlanExecuteEngine) commitInterruptCleared(taskID string, attempt int, reason string) error {
+	if e.runtime == nil {
+		return nil
+	}
+	_, err := e.runtime.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    []hermes.StateUpdate{{ClearInterrupt: true}},
+		NextStep:   hermes.RuntimeStepExecutor,
+		SourceNode: hermes.RuntimeStepApproval,
 		Metadata: hermes.SnapshotMetadata{
 			Source:  "plan_execute",
 			Reason:  reason,

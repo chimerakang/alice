@@ -1110,3 +1110,175 @@ func TestMarkStatus_SequentialTransitions_NoDeadlock(t *testing.T) {
 		t.Errorf("final status = %q, want %q", got.Status, TaskStatusDone)
 	}
 }
+
+// ── ListStaleInterrupts (#169 slice 2) ─────────────────────────────────────
+
+func TestListStaleInterrupts_SkipsTasksWithoutInterrupt(t *testing.T) {
+	store := newTestStore(t)
+	task, err := store.CreateTask(makeTask("task-no-interrupt", 100))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	status := TaskStatusExecuting
+	currentIdx := 0
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     task.ID,
+		Updates:    []StateUpdate{{Status: &status, CurrentIdx: &currentIdx}},
+		NextStep:   RuntimeStepExecutor,
+		SourceNode: RuntimeStepPlanner,
+		Metadata:   SnapshotMetadata{Source: "test"},
+	}); err != nil {
+		t.Fatalf("CommitRuntimeStep: %v", err)
+	}
+
+	stale, err := store.ListStaleInterrupts(time.Now())
+	if err != nil {
+		t.Fatalf("ListStaleInterrupts: %v", err)
+	}
+	if len(stale) != 0 {
+		t.Errorf("want 0 stale, got %d: %+v", len(stale), stale)
+	}
+}
+
+func TestListStaleInterrupts_FindsExpiredInterrupt(t *testing.T) {
+	store := newTestStore(t)
+	task, err := store.CreateTask(makeTask("task-stale", 200))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	status := TaskStatusExecuting
+	currentIdx := 1
+	// Pretend the pause was created 25h ago, well past a 24h cutoff.
+	createdAt := time.Now().Add(-25 * time.Hour)
+	interrupt := &HermesInterrupt{
+		ID:         "iv-old",
+		SourceStep: RuntimeStepExecutor,
+		ResumeStep: RuntimeStepExecutor,
+		Reason:     "subtask_failure_pause",
+		CreatedAt:  createdAt,
+	}
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     task.ID,
+		Updates:    []StateUpdate{{Status: &status, CurrentIdx: &currentIdx, Interrupt: interrupt}},
+		NextStep:   RuntimeStepApproval,
+		SourceNode: RuntimeStepExecutor,
+		Metadata:   SnapshotMetadata{Source: "test", Reason: "subtask_failure_pause"},
+	}); err != nil {
+		t.Fatalf("CommitRuntimeStep: %v", err)
+	}
+
+	stale, err := store.ListStaleInterrupts(time.Now().Add(-24 * time.Hour))
+	if err != nil {
+		t.Fatalf("ListStaleInterrupts: %v", err)
+	}
+	if len(stale) != 1 {
+		t.Fatalf("want 1 stale, got %d: %+v", len(stale), stale)
+	}
+	got := stale[0]
+	if got.TaskID != task.ID || got.ChatID != 200 {
+		t.Errorf("ref mismatch: %+v", got)
+	}
+	if got.Interrupt.ID != "iv-old" || got.Interrupt.Reason != "subtask_failure_pause" {
+		t.Errorf("interrupt mismatch: %+v", got.Interrupt)
+	}
+}
+
+func TestListStaleInterrupts_SkipsRecentInterrupt(t *testing.T) {
+	store := newTestStore(t)
+	task, err := store.CreateTask(makeTask("task-recent", 300))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	status := TaskStatusExecuting
+	currentIdx := 0
+	// Pause is 5min old — well within the cutoff.
+	interrupt := &HermesInterrupt{
+		ID:        "iv-recent",
+		Reason:    "subtask_failure_pause",
+		CreatedAt: time.Now().Add(-5 * time.Minute),
+	}
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     task.ID,
+		Updates:    []StateUpdate{{Status: &status, CurrentIdx: &currentIdx, Interrupt: interrupt}},
+		NextStep:   RuntimeStepApproval,
+		SourceNode: RuntimeStepExecutor,
+		Metadata:   SnapshotMetadata{Source: "test"},
+	}); err != nil {
+		t.Fatalf("CommitRuntimeStep: %v", err)
+	}
+
+	stale, err := store.ListStaleInterrupts(time.Now().Add(-24 * time.Hour))
+	if err != nil {
+		t.Fatalf("ListStaleInterrupts: %v", err)
+	}
+	if len(stale) != 0 {
+		t.Errorf("want 0 stale (recent interrupt), got %d: %+v", len(stale), stale)
+	}
+}
+
+func TestListStaleInterrupts_SkipsTerminalTasks(t *testing.T) {
+	store := newTestStore(t)
+	task, err := store.CreateTask(makeTask("task-done-with-interrupt", 400))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	// Even with a stale interrupt in the snapshot, terminal status should
+	// exclude the task — failed/done are already accounted for elsewhere.
+	executing := TaskStatusExecuting
+	idx := 0
+	stale := time.Now().Add(-25 * time.Hour)
+	interrupt := &HermesInterrupt{ID: "iv", CreatedAt: stale}
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     task.ID,
+		Updates:    []StateUpdate{{Status: &executing, CurrentIdx: &idx, Interrupt: interrupt}},
+		NextStep:   RuntimeStepApproval,
+		SourceNode: RuntimeStepExecutor,
+	}); err != nil {
+		t.Fatalf("CommitRuntimeStep: %v", err)
+	}
+	if err := store.MarkStatus(task.ID, TaskStatusDone); err != nil {
+		t.Fatalf("MarkStatus: %v", err)
+	}
+
+	got, err := store.ListStaleInterrupts(time.Now().Add(-24 * time.Hour))
+	if err != nil {
+		t.Fatalf("ListStaleInterrupts: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("terminal task should be excluded: %+v", got)
+	}
+}
+
+func TestCommitRuntimeStep_ClearInterruptRemovesFromSnapshot(t *testing.T) {
+	store := newTestStore(t)
+	task, err := store.CreateTask(makeTask("task-clear-interrupt", 500))
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	status := TaskStatusExecuting
+	idx := 0
+	interrupt := &HermesInterrupt{ID: "iv", Reason: "subtask_failure_pause", CreatedAt: time.Now()}
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     task.ID,
+		Updates:    []StateUpdate{{Status: &status, CurrentIdx: &idx, Interrupt: interrupt}},
+		NextStep:   RuntimeStepApproval,
+		SourceNode: RuntimeStepExecutor,
+	}); err != nil {
+		t.Fatalf("commit pause: %v", err)
+	}
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID:     task.ID,
+		Updates:    []StateUpdate{{ClearInterrupt: true}},
+		NextStep:   RuntimeStepExecutor,
+		SourceNode: RuntimeStepApproval,
+	}); err != nil {
+		t.Fatalf("commit clear: %v", err)
+	}
+	latest, err := store.GetLatestSnapshot(task.ID)
+	if err != nil {
+		t.Fatalf("GetLatestSnapshot: %v", err)
+	}
+	if latest.State.Interrupt != nil {
+		t.Errorf("interrupt should be cleared, got %+v", latest.State.Interrupt)
+	}
+}

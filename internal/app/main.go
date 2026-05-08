@@ -868,6 +868,14 @@ func Main() {
 		log.Printf("   Codex session watcher: enabled")
 	}
 
+	// Sweep tasks whose human-in-the-loop pause outlived a previous alice
+	// process (e.g. restart while the operator was away). Without this,
+	// the legacy task table would show those tasks as still 'executing'
+	// even though no engine goroutine is running. See #169 slice 2 / #166.
+	if hermesStore, ok := buildHermesTaskStore().(staleInterruptStore); ok {
+		SweepStaleHermesInterrupts(appCtx, hermesStore)
+	}
+
 	// Initialize Cron Scheduler
 	if config.EnablePersistence && globalStorage != nil {
 		globalCronScheduler = NewCronScheduler(tgBot, client)
