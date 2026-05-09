@@ -563,17 +563,17 @@ func TestPlanExecuteEngineRecordsMappingEvidenceBeforeChecklistSync(t *testing.T
 	if state.Status != hermes.TaskStatusDone {
 		t.Fatalf("status = %s, want done", state.Status)
 	}
-	if !reflect.DeepEqual(ops.callOrder, []string{"load_mapping", "record_evidence", "sync_checklist"}) {
+	if !reflect.DeepEqual(ops.callOrder, []string{"load_mapping", "record_evidence", "sync_checklist", "load_mapping", "sync_checklist"}) {
 		t.Fatalf("call order = %#v", ops.callOrder)
 	}
-	if ops.loadCalls != 1 {
-		t.Fatalf("load calls = %d, want 1", ops.loadCalls)
+	if ops.loadCalls != 2 {
+		t.Fatalf("load calls = %d, want 2", ops.loadCalls)
 	}
 	if len(ops.recorded) != 1 {
 		t.Fatalf("recorded evidence calls = %d, want 1", len(ops.recorded))
 	}
-	if len(ops.syncRequests) != 1 {
-		t.Fatalf("sync calls = %d, want 1", len(ops.syncRequests))
+	if len(ops.syncRequests) != 2 {
+		t.Fatalf("sync calls = %d, want 2", len(ops.syncRequests))
 	}
 
 	evidenceReq := ops.recorded[0]
@@ -599,6 +599,13 @@ func TestPlanExecuteEngineRecordsMappingEvidenceBeforeChecklistSync(t *testing.T
 	}
 	if len(syncReq.ChecklistMapping.Mappings) != 1 || syncReq.ChecklistMapping.Mappings[0].SubTaskID != "s1" {
 		t.Fatalf("sync mapping = %+v", syncReq.ChecklistMapping)
+	}
+	finalSyncReq := ops.syncRequests[1]
+	if finalSyncReq.ChecklistMapping == nil {
+		t.Fatal("final sync checklist mapping = nil, want loaded mapping result")
+	}
+	if finalSyncReq.RequireHumanDecision {
+		t.Fatalf("final RequireHumanDecision = true, want false: %+v", finalSyncReq)
 	}
 }
 

@@ -92,6 +92,23 @@ func TestExtractChecklist_StableIDsAndSections(t *testing.T) {
 	}
 }
 
+func TestExtractChecklist_IgnoresHermesPlanSection(t *testing.T) {
+	body := "## Acceptance\n" +
+		"- [ ] Original item\n\n" +
+		"## Hermes 執行計劃\n\n" +
+		"- [ ] Internal executor step\n" +
+		"- [x] Internal finished step\n\n" +
+		"## Notes\n" +
+		"- [ ] Follow-up note\n"
+	items := ExtractChecklist(body)
+	if len(items) != 2 {
+		t.Fatalf("want 2 non-Hermes checklist items, got %d (%+v)", len(items), items)
+	}
+	if items[0].Text != "Original item" || items[1].Text != "Follow-up note" {
+		t.Fatalf("unexpected checklist items: %+v", items)
+	}
+}
+
 func TestBuildChecklistSyncPreview_DeclaredItemsTicked(t *testing.T) {
 	body := "## Acceptance\n" +
 		"- [ ] Build passes\n" +
@@ -148,6 +165,22 @@ func TestBuildChecklistSyncPreview_LegacyFuzzyFallback(t *testing.T) {
 	}
 	if !strings.Contains(preview.BodyAfter, "- [x] Implement auth") {
 		t.Errorf("fuzzy match should tick auth: %s", preview.BodyAfter)
+	}
+}
+
+func TestBuildChecklistSyncPreview_LegacyFuzzyIgnoresHermesPlanSection(t *testing.T) {
+	body := "## Acceptance\n" +
+		"- [ ] Ship video support\n\n" +
+		"## Hermes 執行計劃\n\n" +
+		"- [ ] Ship video support\n"
+	preview := BuildChecklistSyncPreview(body, []SubTask{
+		{ID: "s1", Description: "Ship video support", Status: SubTaskDone},
+	})
+	if !strings.Contains(preview.BodyAfter, "- [x] Ship video support") {
+		t.Fatalf("acceptance item should be checked:\n%s", preview.BodyAfter)
+	}
+	if strings.Contains(preview.BodyAfter, "## Hermes 執行計劃\n\n- [x] Ship video support") {
+		t.Fatalf("Hermes plan section should not be checked:\n%s", preview.BodyAfter)
 	}
 }
 
@@ -596,6 +629,7 @@ exit 1
 
 func TestWritePlanToIssueReplacesExistingPlanSection(t *testing.T) {
 	tmp := t.TempDir()
+	bodyPath := filepath.Join(tmp, "body.txt")
 	script := `#!/bin/sh
 set -eu
 log="$FAKE_GH_LOG"
@@ -608,6 +642,7 @@ JSON
     exit 0
     ;;
   issue\ edit\ 7\ --body\ *)
+    printf '%s' "$5" >"$BODY_FILE"
     exit 0
     ;;
 esac
@@ -618,6 +653,7 @@ exit 1
 	t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
 	logFile := filepath.Join(tmp, "gh.log")
 	t.Setenv("FAKE_GH_LOG", logFile)
+	t.Setenv("BODY_FILE", bodyPath)
 
 	err := WritePlanToIssue(context.Background(), "", 7, "", []SubTask{{Description: "New step", Status: SubTaskPending}})
 	if err != nil {
@@ -632,8 +668,19 @@ exit 1
 	if !strings.Contains(got, "issue view 7 --json body") {
 		t.Fatalf("missing issue body fetch:\n%s", got)
 	}
-	if !strings.Contains(got, "issue edit 7 --body") || !strings.Contains(got, "## Hermes 執行計劃") || !strings.Contains(got, "- [ ] New step") {
+	if !strings.Contains(got, "issue edit 7 --body") || !strings.Contains(got, "## Hermes 執行計劃") {
 		t.Fatalf("unexpected issue edit payload:\n%s", got)
+	}
+	body, err := os.ReadFile(bodyPath)
+	if err != nil {
+		t.Fatalf("ReadFile body: %v", err)
+	}
+	text := string(body)
+	if strings.Contains(text, "- [ ] New step") {
+		t.Fatalf("Hermes plan should not create GitHub checklist items:\n%s", text)
+	}
+	if !strings.Contains(text, "1. New step") {
+		t.Fatalf("Hermes plan should include numbered step:\n%s", text)
 	}
 }
 

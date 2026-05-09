@@ -1618,6 +1618,16 @@ func (e *PlanExecuteEngine) onDone(ctx context.Context, finalState hermes.TaskSt
 	}
 	var notes []string
 	ops := e.issueOpsService()
+	if ghCfg.SyncChecklist {
+		syncResult, syncErr := e.syncFinalChecklist(ctx, ops, issueNum, finalState)
+		e.recordChecklistSyncOutcome(ctx, issueNum, -1, len(finalState.Plan), syncResult, syncErr)
+		if syncErr != nil {
+			log.Printf("[plan_execute] final checklist sync issue #%d failed: %v", issueNum, syncErr)
+		}
+		if len(syncResult.Notes) > 0 {
+			notes = append(notes, syncResult.Notes...)
+		}
+	}
 	readiness, err := ops.AssessCloseReadiness(ctx, issueops.AssessCloseReadinessRequest{
 		ProjectDir:         e.cfg.ProjectDir,
 		IssueNumber:        issueNum,
@@ -1733,6 +1743,27 @@ func (e *PlanExecuteEngine) onDone(ctx context.Context, finalState hermes.TaskSt
 			log.Printf("[plan_execute] GitHub comment done: %v", err)
 		}
 	}
+}
+
+func (e *PlanExecuteEngine) syncFinalChecklist(ctx context.Context, ops issueops.IssueOps, issueNum int, finalState hermes.TaskState) (issueops.SyncChecklistResult, error) {
+	var (
+		mappingResult        *issueops.ChecklistMappingResult
+		requireHumanDecision bool
+	)
+	loadedMapping, err := ops.LoadIssueChecklistMapping(ctx, e.cfg.ProjectDir, issueNum, finalState.Plan)
+	if err != nil {
+		requireHumanDecision = true
+		log.Printf("[plan_execute] GitHub final load checklist mapping issue #%d: %v", issueNum, err)
+	} else {
+		mappingResult = &loadedMapping
+	}
+	return ops.SyncChecklist(ctx, issueops.SyncChecklistRequest{
+		ProjectDir:           e.cfg.ProjectDir,
+		IssueNumber:          issueNum,
+		SubTasks:             finalState.Plan,
+		ChecklistMapping:     mappingResult,
+		RequireHumanDecision: requireHumanDecision,
+	})
 }
 
 func (e *PlanExecuteEngine) onBudgetExceeded(ctx context.Context, state hermes.TaskState) {

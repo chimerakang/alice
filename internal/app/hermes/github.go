@@ -299,6 +299,9 @@ func ExtractChecklist(body string) []ChecklistItem {
 			currentSection = heading
 			continue
 		}
+		if isHermesPlanSection(currentSection) {
+			continue
+		}
 		m := checklistRe.FindStringSubmatch(line)
 		if len(m) < 3 {
 			continue
@@ -709,19 +712,29 @@ func matchesChecklistItem(itemText, desc string) bool {
 // UpdateChecklistInBody replaces `- [ ] <text>` with `- [x] <text>` for each
 // completedDesc entry (case-insensitive prefix match).
 func UpdateChecklistInBody(body string, completedDescs []string) string {
-	return checklistRe.ReplaceAllStringFunc(body, func(match string) string {
-		m := checklistRe.FindStringSubmatch(match)
+	lines := strings.Split(body, "\n")
+	currentSection := ""
+	for i, line := range lines {
+		if heading := extractHeadingText(line); heading != "" {
+			currentSection = heading
+			continue
+		}
+		if isHermesPlanSection(currentSection) {
+			continue
+		}
+		m := checklistRe.FindStringSubmatch(line)
 		if len(m) < 3 || strings.ToLower(m[1]) == "x" {
-			return match // already checked
+			continue // not a checklist item, or already checked
 		}
 		itemText := strings.TrimSpace(m[2])
 		for _, desc := range completedDescs {
 			if matchesChecklistItem(itemText, desc) {
-				return "- [x] " + m[2]
+				lines[i] = "- [x] " + m[2]
+				break
 			}
 		}
-		return match
-	})
+	}
+	return strings.Join(lines, "\n")
 }
 
 // ChecklistSyncPreview captures the checklist body patch derived from a
@@ -781,7 +794,15 @@ func BuildChecklistSyncPreview(body string, subtasks []SubTask) ChecklistSyncPre
 	} else {
 		updatedBody = UpdateChecklistInBody(body, completed)
 		if updatedBody != body {
+			currentSection := ""
 			for _, line := range strings.Split(body, "\n") {
+				if heading := extractHeadingText(line); heading != "" {
+					currentSection = heading
+					continue
+				}
+				if isHermesPlanSection(currentSection) {
+					continue
+				}
 				m := checklistRe.FindStringSubmatch(line)
 				if len(m) < 3 || strings.ToLower(m[1]) == "x" {
 					continue
@@ -924,7 +945,7 @@ func HasLabel(issue *IssueContext, label string) bool {
 	return false
 }
 
-// WritePlanToIssue writes the generated sub-task plan as a checklist to the Issue body.
+// WritePlanToIssue writes the generated sub-task plan to the Issue body.
 //
 // The body is always re-fetched from GitHub before mutation — the caller's
 // notion of "originalBody" was historically the chat-side goal augmented
@@ -960,9 +981,13 @@ func WritePlanToIssue(ctx context.Context, projectDir string, number int, origin
 		sb.WriteString("\n")
 	}
 	sb.WriteString("\n## Hermes 執行計劃\n\n")
-	for _, t := range tasks {
-		sb.WriteString("- [ ] ")
-		sb.WriteString(t.Description)
+	for idx, t := range tasks {
+		fmt.Fprintf(&sb, "%d. %s", idx+1, t.Description)
+		if len(t.ChecklistItemIDs) > 0 {
+			sb.WriteString(" _(covers: ")
+			sb.WriteString(strings.Join(t.ChecklistItemIDs, ", "))
+			sb.WriteString(")_")
+		}
 		sb.WriteString("\n")
 	}
 
@@ -975,11 +1000,17 @@ func WritePlanToIssue(ctx context.Context, projectDir string, number int, origin
 	return nil
 }
 
+func isHermesPlanSection(section string) bool {
+	return strings.EqualFold(strings.TrimSpace(section), "Hermes 執行計劃")
+}
+
 // stripHermesPlanSections removes every "## Hermes 執行計劃" block from
 // the body — a section header followed by content up to the next "## "
 // heading or end-of-body. Idempotent; bodies without such a section are
 // returned unchanged. Used to clean up bodies that previous Hermes runs
-// appended duplicate plan sections to before this function was fixed.
+// appended duplicate plan sections to before this function was fixed. The
+// section is intentionally not a GitHub task list so it does not pollute the
+// issue's acceptance checklist.
 func stripHermesPlanSections(body string) string {
 	const header = "## Hermes 執行計劃"
 	for {

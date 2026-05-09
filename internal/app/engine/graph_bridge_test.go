@@ -218,6 +218,74 @@ func TestRunViaGraph_ReplanLoopFromBlockReviewToPass(t *testing.T) {
 	}
 }
 
+func TestRunViaGraphFinalReviewNotifiesAndDoesNotDoubleCountTelemetry(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	runner := &planExecuteRunner{}
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s1","description":"first","tool_hints":["Read"]},` +
+				`{"id":"s2","description":"second","tool_hints":["Bash"]}]` +
+				"\n```",
+		}, nil
+	}
+	reviewPhase := &scriptedReviewPhase{
+		results: []ReviewResult{{
+			ReviewerModel: "reviewer-1",
+			Verdict:       VerdictPass,
+			OverallScore:  86,
+			Feedback:      "ship it",
+			InputTokens:   10,
+			OutputTokens:  5,
+		}},
+	}
+
+	var notifications []ReviewNotification
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		ProjectDir:    "/repo",
+		ChatID:        42,
+		ReviewPhase:   reviewPhase,
+		ReviewMode:    ReviewModePerTask,
+		DisableReview: false,
+		OnReview: func(ctx context.Context, state hermes.TaskState, review ReviewResult, notification ReviewNotification) {
+			notifications = append(notifications, notification)
+		},
+	}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
+
+	final, err := engine.RunViaGraph(context.Background(), "ship with review", NewChatContext(42, 0, "/repo"))
+	if err != nil {
+		t.Fatalf("RunViaGraph: %v", err)
+	}
+	if len(notifications) != 1 {
+		t.Fatalf("OnReview notifications = %d, want 1", len(notifications))
+	}
+	if notifications[0].OverallScore != 86 || notifications[0].Verdict != VerdictPass {
+		t.Fatalf("unexpected review notification: %+v", notifications[0])
+	}
+	if reviewPhase.calls != 1 {
+		t.Fatalf("review calls = %d, want 1", reviewPhase.calls)
+	}
+	phase := findGraphPhaseUsage(final.State.PhaseUsages, "reviewer", "reviewer-1")
+	if phase == nil {
+		t.Fatalf("missing reviewer phase usage: %+v", final.State.PhaseUsages)
+	}
+	if phase.CallCount != 1 {
+		t.Fatalf("reviewer call_count = %d, want 1", phase.CallCount)
+	}
+	if phase.InputTokens != 10 || phase.OutputTokens != 5 {
+		t.Fatalf("reviewer tokens = in:%d out:%d, want in:10 out:5", phase.InputTokens, phase.OutputTokens)
+	}
+}
+
+func findGraphPhaseUsage(usages []hermes.PhaseUsage, phase, model string) *hermes.PhaseUsage {
+	for i := range usages {
+		if usages[i].Phase == phase && usages[i].Model == model {
+			return &usages[i]
+		}
+	}
+	return nil
+}
+
 // walkingTestRunner satisfies DirectRunner + Walking* + cache-metrics so
 // the bridge integration test can drive the walking-agent decision tree
 // without spinning up a real model session. It records every Run call

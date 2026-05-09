@@ -753,6 +753,9 @@ func (a *taskReviewerAdapter) ReviewTask(ctx context.Context, state hermes.Herme
 	}
 	review, err := a.engine.runReview(ctx, taskState, ReviewModePerTask, -1, "", false)
 	if err != nil {
+		if a.engine.cfg.OnReviewSkipped != nil {
+			a.engine.cfg.OnReviewSkipped(ctx, taskState, err)
+		}
 		return graph.TaskReviewResult{}, err
 	}
 
@@ -782,6 +785,9 @@ func (a *taskReviewerAdapter) ReviewTask(ctx context.Context, state hermes.Herme
 	if wantReplan && a.replan != nil {
 		a.replan.recordReview(state.TaskID, review, append([]hermes.SubTask(nil), state.Plan...), maxAttempts)
 	}
+	if !wantReplan && review.Verdict != "" && a.engine.cfg.OnReview != nil {
+		a.engine.cfg.OnReview(ctx, taskState, review, BuildReviewNotification(taskState.ID, review))
+	}
 
 	return graph.TaskReviewResult{
 		Verdict:      string(review.Verdict),
@@ -789,9 +795,11 @@ func (a *taskReviewerAdapter) ReviewTask(ctx context.Context, state hermes.Herme
 		Feedback:     review.Feedback,
 		OverallScore: review.OverallScore,
 		Model:        review.ReviewerModel,
-		InputTokens:  review.InputTokens,
-		OutputTokens: review.OutputTokens,
-		CostUSD:      review.CostUSD,
+		// runReview already committed reviewer telemetry. Leave token fields
+		// zero here so ReviewerNode does not double-count the same review pass.
+		InputTokens:  0,
+		OutputTokens: 0,
+		CostUSD:      0,
 	}, nil
 }
 
