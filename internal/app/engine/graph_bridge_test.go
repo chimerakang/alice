@@ -146,6 +146,11 @@ func TestRunViaGraph_ReplanLoopFromBlockReviewToPass(t *testing.T) {
 		},
 	}
 
+	var onRetryCalls []struct {
+		attempt    int
+		maxRetries int
+		verdict    string
+	}
 	engine := NewPlanExecuteEngine(PlanExecuteConfig{
 		PlannerModel:          "planner-model",
 		ProjectDir:            "/repo",
@@ -155,6 +160,13 @@ func TestRunViaGraph_ReplanLoopFromBlockReviewToPass(t *testing.T) {
 		ReviewPhase:           reviewPhase,
 		ReviewMode:            ReviewModePerTask,
 		TaskRetry:             TaskRetryConfig{Enabled: true, MaxTaskRetries: 2, ScoreThreshold: 60},
+		OnTaskRetry: func(_ context.Context, attempt, maxRetries int, review ReviewResult) {
+			onRetryCalls = append(onRetryCalls, struct {
+				attempt    int
+				maxRetries int
+				verdict    string
+			}{attempt, maxRetries, string(review.Verdict)})
+		},
 	}, planFn, NewDirectEngine(runner), store, reporter)
 
 	cc := NewChatContext(42, 0, "/repo")
@@ -191,6 +203,18 @@ func TestRunViaGraph_ReplanLoopFromBlockReviewToPass(t *testing.T) {
 	}
 	if plannerHops < 2 {
 		t.Errorf("expected at least 2 planner hops in history, got %d", plannerHops)
+	}
+	if len(onRetryCalls) != 1 {
+		t.Fatalf("OnTaskRetry calls = %d, want 1 (one replan attempt)", len(onRetryCalls))
+	}
+	if onRetryCalls[0].verdict != string(VerdictBlock) {
+		t.Errorf("OnTaskRetry review verdict = %q, want %q", onRetryCalls[0].verdict, VerdictBlock)
+	}
+	if onRetryCalls[0].maxRetries != 2 {
+		t.Errorf("OnTaskRetry maxRetries = %d, want 2", onRetryCalls[0].maxRetries)
+	}
+	if onRetryCalls[0].attempt != 0 {
+		t.Errorf("OnTaskRetry attempt = %d, want 0 (first attempt just completed)", onRetryCalls[0].attempt)
 	}
 }
 

@@ -796,6 +796,21 @@ func (a *replanDeciderAdapter) DecideReplan(_ context.Context, state hermes.Herm
 		originalGoal = state.Goal
 	}
 
+	// Notify the operator that a replan attempt is starting before we
+	// build the new goal. Mirrors legacy Run()'s OnTaskRetry call: the
+	// Telegram side typically prints "🔄 Re-planning attempt N/M" so the
+	// user is not left wondering why a fresh plan is being generated.
+	if cb := a.engine.cfg.OnTaskRetry; cb != nil {
+		maxRetries := 0
+		if a.engine.cfg.TaskRetry.Enabled {
+			maxRetries = a.engine.cfg.TaskRetry.WithDefaults().MaxTaskRetries
+		}
+		// attemptIdx is 1-based for the new attempt; legacy convention
+		// passes the just-completed attempt index (zero-based), so subtract
+		// one to keep notification text consistent with Run().
+		cb(context.Background(), attemptIdx-1, maxRetries, prevReview)
+	}
+
 	partial := buildPartialRetryPlan(prevReview, prevPlan, retryCfg.ScoreThreshold)
 	if len(partial.Preserved) > 0 {
 		return graph.ReplanDecision{
