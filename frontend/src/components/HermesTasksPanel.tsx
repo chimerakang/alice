@@ -131,7 +131,7 @@ export default function HermesTasksPanel() {
         <div className="flex items-center gap-2">
           <Pickaxe className="w-5 h-5 text-primary" />
           <h2 className="text-lg font-semibold text-white">
-            {t("runtime.hermes_tasks.title", "Hermes 任務（未結束）")}
+            {t("hermes_tasks.panel_title")}
           </h2>
           <span className="text-xs text-gray-500">{tasks.length}</span>
         </div>
@@ -159,7 +159,7 @@ export default function HermesTasksPanel() {
               <div className="flex items-start gap-x-3 gap-y-1">
                 <span className="font-mono text-xs text-gray-500 mt-0.5">{shortTaskID(task.task_id)}</span>
                 <div className="flex-1 min-w-0">
-                  <div className="text-gray-200 font-medium whitespace-pre-wrap break-words">
+                  <div className="text-gray-200 font-medium whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
                     {task.goal || "(no goal)"}
                   </div>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500 mt-1">

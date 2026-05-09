@@ -142,7 +142,7 @@ function SubTaskCard({ sub, idx }: { sub: HermesSubTaskView; idx: number }) {
           <summary className="text-xs text-gray-500 cursor-pointer mb-1">
             Result {tooLong && !showFull ? `(${result.length} chars, click to expand)` : ""}
           </summary>
-          <pre className="text-[12px] text-gray-300 whitespace-pre-wrap break-words bg-black/30 p-2 rounded font-mono leading-relaxed">
+          <pre className="text-[12px] text-gray-300 whitespace-pre-wrap break-words bg-black/30 p-2 rounded font-mono leading-relaxed max-h-[50vh] overflow-y-auto">
             {visible}
             {tooLong && !showFull && "…"}
           </pre>
@@ -161,7 +161,7 @@ function SubTaskCard({ sub, idx }: { sub: HermesSubTaskView; idx: number }) {
           <summary className="text-xs text-orange-400 cursor-pointer">
             Reviewer retry feedback
           </summary>
-          <pre className="text-[12px] text-orange-200 whitespace-pre-wrap break-words bg-black/30 p-2 rounded font-mono leading-relaxed mt-1">
+          <pre className="text-[12px] text-orange-200 whitespace-pre-wrap break-words bg-black/30 p-2 rounded font-mono leading-relaxed mt-1 max-h-[40vh] overflow-y-auto">
             {sub.retry_feedback}
           </pre>
         </details>
@@ -247,7 +247,7 @@ function TaskHistory({ taskId }: { taskId: string }) {
       {tab === "accumulated" && (
         <div>
           {accumulated ? (
-            <pre className="text-[12px] text-gray-300 whitespace-pre-wrap break-words bg-black/30 p-3 rounded font-mono leading-relaxed">
+            <pre className="text-[12px] text-gray-300 whitespace-pre-wrap break-words bg-black/30 p-3 rounded font-mono leading-relaxed max-h-[60vh] overflow-y-auto">
               {accumulated}
             </pre>
           ) : (
@@ -322,10 +322,10 @@ export default function HermesTasks() {
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-2">
             <Pickaxe className="w-6 h-6 text-primary" />
-            {t("hermes_tasks.title", "Hermes 任務")}
+            {t("hermes_tasks.title")}
           </h1>
           <p className="text-sm text-gray-500 mt-1">
-            {t("hermes_tasks.subtitle", "完整 Hermes 任務歷史，含 Walker hop 軌跡")}
+            {t("hermes_tasks.subtitle")}
           </p>
         </div>
         <button
@@ -366,7 +366,7 @@ export default function HermesTasks() {
       <div className="card divide-y divide-gray-800">
         {tasks.length === 0 && !loading && (
           <div className="p-6 text-center text-sm text-gray-500">
-            {t("hermes_tasks.empty", "找不到符合的任務")}
+            {t("hermes_tasks.empty")}
           </div>
         )}
         {tasks.map((task) => {
@@ -393,7 +393,7 @@ export default function HermesTasks() {
                     </span>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-gray-200 font-medium whitespace-pre-wrap break-words">
+                    <div className="text-gray-200 font-medium whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
                       {task.goal || "(no goal)"}
                     </div>
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500 mt-1">

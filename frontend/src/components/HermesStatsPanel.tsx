@@ -88,7 +88,7 @@ export default function HermesStatsPanel() {
       <div className="card p-4">
         <div className="flex items-center gap-2 text-sm text-gray-400">
           <Loader2 className="w-4 h-4 animate-spin" />
-          {t("hermes_tasks.stats_loading", "讀取統計資料…")}
+          {t("hermes_tasks.stats_loading")}
         </div>
       </div>
     );
@@ -97,7 +97,7 @@ export default function HermesStatsPanel() {
     return (
       <div className="card p-4">
         <div className="text-sm text-red-400">
-          {error || t("hermes_tasks.stats_error", "無法讀取統計資料")}
+          {error || t("hermes_tasks.stats_error")}
         </div>
       </div>
     );
@@ -111,9 +111,11 @@ export default function HermesStatsPanel() {
         <div className="flex items-center gap-2">
           <BarChart3 className="w-5 h-5 text-primary" />
           <h2 className="text-lg font-semibold text-white">
-            {t("hermes_tasks.stats_title", "Hermes 成效")}
+            {t("hermes_tasks.stats_title")}
           </h2>
-          <span className="text-xs text-gray-500">window {stats.window_days}d</span>
+          <span className="text-xs text-gray-500">
+            {t("hermes_tasks.stats_window", { days: stats.window_days })}
+          </span>
         </div>
         <div className="flex items-center gap-2">
           <select
@@ -143,13 +145,13 @@ export default function HermesStatsPanel() {
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <SummaryCard label="總任務" value={String(stats.totals.total)} />
+        <SummaryCard label={t("hermes_tasks.stats_card_total")} value={String(stats.totals.total)} />
         <SummaryCard
-          label="完成 / 失敗"
+          label={t("hermes_tasks.stats_card_done_failed")}
           value={`${stats.totals.done} / ${stats.totals.failed}`}
         />
         <SummaryCard
-          label="成功率"
+          label={t("hermes_tasks.stats_card_success_rate")}
           value={pct(stats.totals.done, stats.totals.total)}
           accent={
             successRate >= 0.9
@@ -159,15 +161,18 @@ export default function HermesStatsPanel() {
               : "bad"
           }
         />
-        <SummaryCard label="中斷" value={String(stats.totals.interrupted)} />
-        <SummaryCard label="生成時間" value={new Date(stats.generated_at).toLocaleTimeString()} />
+        <SummaryCard label={t("hermes_tasks.stats_card_interrupted")} value={String(stats.totals.interrupted)} />
+        <SummaryCard
+          label={t("hermes_tasks.stats_card_generated_at")}
+          value={new Date(stats.generated_at).toLocaleTimeString()}
+        />
       </div>
 
       {/* Daily success rate */}
       <div className="card p-4">
         <div className="flex items-center gap-2 mb-2">
           <Activity className="w-4 h-4 text-blue-400" />
-          <h3 className="text-sm font-semibold text-gray-200">每日狀態分佈</h3>
+          <h3 className="text-sm font-semibold text-gray-200">{t("hermes_tasks.stats_chart_daily")}</h3>
         </div>
         <ResponsiveContainer width="100%" height={220}>
           <BarChart data={dailyData}>
@@ -194,7 +199,7 @@ export default function HermesStatsPanel() {
         {/* Source node distribution */}
         <div className="card p-4">
           <h3 className="text-sm font-semibold text-gray-200 mb-2">
-            Walker 節點觸發次數
+            {t("hermes_tasks.stats_chart_source_nodes")}
           </h3>
           <ResponsiveContainer width="100%" height={Math.max(140, sourceNodeData.length * 32)}>
             <BarChart data={sourceNodeData} layout="vertical" margin={{ left: 16, right: 16 }}>
@@ -219,15 +224,15 @@ export default function HermesStatsPanel() {
 
         {/* Failure reasons */}
         <div className="card p-4">
-          <h3 className="text-sm font-semibold text-gray-200 mb-2">失敗原因</h3>
+          <h3 className="text-sm font-semibold text-gray-200 mb-2">{t("hermes_tasks.stats_chart_failure_reasons")}</h3>
           {Object.keys(stats.failure_reasons).length === 0 ? (
-            <div className="text-sm text-gray-500 py-2">期間內沒有失敗任務</div>
+            <div className="text-sm text-gray-500 py-2">{t("hermes_tasks.stats_no_failures")}</div>
           ) : (
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-xs text-gray-500 border-b border-gray-800">
-                  <th className="text-left pb-1">Reason</th>
-                  <th className="text-right pb-1">Count</th>
+                  <th className="text-left pb-1">{t("hermes_tasks.stats_table_reason")}</th>
+                  <th className="text-right pb-1">{t("hermes_tasks.stats_table_count")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -249,19 +254,19 @@ export default function HermesStatsPanel() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <div className="card p-4">
           <h3 className="text-sm font-semibold text-gray-200 mb-2">
-            Phase token 平均（done 任務）
+            {t("hermes_tasks.stats_chart_phase_tokens")}
           </h3>
           {stats.phases.length === 0 ? (
-            <div className="text-sm text-gray-500">沒有 done 任務的 phase 資料。</div>
+            <div className="text-sm text-gray-500">{t("hermes_tasks.stats_no_phase_data")}</div>
           ) : (
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-xs text-gray-500 border-b border-gray-800">
-                  <th className="text-left pb-1">Phase</th>
-                  <th className="text-right pb-1">Calls</th>
-                  <th className="text-right pb-1">Avg In</th>
-                  <th className="text-right pb-1">Avg Out</th>
-                  <th className="text-right pb-1">Sum In</th>
+                  <th className="text-left pb-1">{t("hermes_tasks.stats_table_phase")}</th>
+                  <th className="text-right pb-1">{t("hermes_tasks.stats_table_calls")}</th>
+                  <th className="text-right pb-1">{t("hermes_tasks.stats_table_avg_in")}</th>
+                  <th className="text-right pb-1">{t("hermes_tasks.stats_table_avg_out")}</th>
+                  <th className="text-right pb-1">{t("hermes_tasks.stats_table_sum_in")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -289,9 +294,9 @@ export default function HermesStatsPanel() {
         </div>
 
         <div className="card p-4">
-          <h3 className="text-sm font-semibold text-gray-200 mb-2">每任務 hop 數分佈</h3>
+          <h3 className="text-sm font-semibold text-gray-200 mb-2">{t("hermes_tasks.stats_chart_hops")}</h3>
           {stats.hops.length === 0 ? (
-            <div className="text-sm text-gray-500">沒有 snapshot 資料。</div>
+            <div className="text-sm text-gray-500">{t("hermes_tasks.stats_no_snapshot_data")}</div>
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={stats.hops}>
@@ -299,7 +304,7 @@ export default function HermesStatsPanel() {
                 <XAxis
                   dataKey="hops"
                   tick={{ fill: "#9ca3af", fontSize: 11 }}
-                  label={{ value: "hops per task", fontSize: 10, fill: "#9ca3af" }}
+                  label={{ value: t("hermes_tasks.stats_xaxis_hops"), fontSize: 10, fill: "#9ca3af" }}
                 />
                 <YAxis tick={{ fill: "#9ca3af", fontSize: 11 }} />
                 <Tooltip
@@ -308,7 +313,7 @@ export default function HermesStatsPanel() {
                     border: "1px solid #374151",
                     fontSize: 12,
                   }}
-                  formatter={(v) => [v as number, "tasks"]}
+                  formatter={(v) => [v as number, t("hermes_tasks.stats_tooltip_tasks")]}
                   labelFormatter={(l) => `${l} hops`}
                 />
                 <Bar dataKey="tasks" fill="#6366f1" />
