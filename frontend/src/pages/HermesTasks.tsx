@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "@/lib/api";
 import type { HermesActiveTask, HermesSnapshotHop, HermesSubTaskView } from "@/types/alice";
@@ -290,6 +290,12 @@ export default function HermesTasks() {
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
+  // counts is fetched separately from /api/hermes/stats so the chip
+  // numbers reflect ALL tasks in the window, not the currently-filtered
+  // subset. Without this, switching to "Interrupted" made every other
+  // chip read 0 because they were computed from the loaded list only.
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [allCount, setAllCount] = useState(0);
 
   const load = () => {
     setLoading(true);
@@ -304,17 +310,36 @@ export default function HermesTasks() {
       .finally(() => setLoading(false));
   };
 
+  // Fetch counts once (independent of which filter is active) so chip
+  // values stay stable when the user changes the status filter.
+  // Refreshes alongside the list when the manual refresh button is
+  // pressed.
+  const loadCounts = () => {
+    api
+      .getHermesStats(90)
+      .then((s) => {
+        setAllCount(s.totals.total);
+        setCounts({
+          done: s.totals.done,
+          failed: s.totals.failed,
+          interrupted: s.totals.interrupted,
+          executing: s.totals.executing,
+          planning: s.totals.planning,
+        });
+      })
+      .catch(() => {
+        // non-fatal — chip numbers fall back to "?"
+      });
+  };
+
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
-  const counts = useMemo(() => {
-    return tasks.reduce<Record<string, number>>((acc, task) => {
-      acc[task.status] = (acc[task.status] || 0) + 1;
-      return acc;
-    }, {});
-  }, [tasks]);
+  useEffect(() => {
+    loadCounts();
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -329,7 +354,10 @@ export default function HermesTasks() {
           </p>
         </div>
         <button
-          onClick={load}
+          onClick={() => {
+            load();
+            loadCounts();
+          }}
           disabled={loading}
           className="btn btn-secondary inline-flex items-center gap-2 self-start sm:self-auto"
         >
@@ -343,7 +371,7 @@ export default function HermesTasks() {
       <div className="flex flex-wrap gap-2">
         {STATUS_FILTERS.map((f) => {
           const active = status === f.value;
-          const n = f.value ? counts[f.value] || 0 : tasks.length;
+          const n = f.value ? counts[f.value] ?? 0 : allCount;
           return (
             <button
               key={f.value || "all"}

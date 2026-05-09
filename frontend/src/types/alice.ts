@@ -306,6 +306,8 @@ export interface HermesStats {
     done: number;
     failed: number;
     interrupted: number;
+    executing: number;
+    planning: number;
     other: number;
   };
   daily: Array<{

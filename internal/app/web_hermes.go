@@ -439,6 +439,8 @@ type hermesStatusCounts struct {
 	Done        int `json:"done"`
 	Failed      int `json:"failed"`
 	Interrupted int `json:"interrupted"`
+	Executing   int `json:"executing"`
+	Planning    int `json:"planning"`
 	Other       int `json:"other"`
 }
 
@@ -507,6 +509,10 @@ func buildHermesStats(db *sql.DB, days int) (*hermesStats, error) {
 		case "interrupted":
 			d.Interrupted += count
 			out.Totals.Interrupted += count
+		case "executing":
+			out.Totals.Executing += count
+		case "planning":
+			out.Totals.Planning += count
 		default:
 			out.Totals.Other += count
 		}
