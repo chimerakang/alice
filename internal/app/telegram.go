@@ -6026,7 +6026,15 @@ func reviewNotificationActionRows(key chatKey, t *TelegramBot, notification appe
 	if taskID == "" || !notification.AdvisoryRetry {
 		return nil
 	}
-	rows := make([][]map[string]interface{}, 0, 2)
+	rows := make([][]map[string]interface{}, 0, 4)
+	for _, subTask := range lowScoreReviewSubTasks(notification, 3) {
+		rows = append(rows, []map[string]interface{}{
+			{
+				"text":          fmt.Sprintf("🔁 重跑低分 #%d", subTask.Index),
+				"callback_data": fmt.Sprintf("retry:confirm:index:%s:%d", taskID, subTask.Index),
+			},
+		})
+	}
 	if notification.FailingSubTasks > 0 {
 		rows = append(rows, []map[string]interface{}{
 			{"text": t.getLocalizedMessage(key.chatID, "menu_retry_all_failed", nil), "callback_data": "retry:confirm:all:" + taskID},
@@ -6037,6 +6045,23 @@ func reviewNotificationActionRows(key chatKey, t *TelegramBot, notification appe
 		{"text": t.getLocalizedMessage(key.chatID, "menu_retry_title_short", nil), "callback_data": "retry:task:" + taskID},
 	})
 	return rows
+}
+
+func lowScoreReviewSubTasks(notification appengine.ReviewNotification, limit int) []appengine.ReviewNotificationSubTaskResult {
+	if limit <= 0 {
+		return nil
+	}
+	out := make([]appengine.ReviewNotificationSubTaskResult, 0, limit)
+	for _, subTask := range notification.SubTaskResults {
+		if subTask.Score >= appengine.SubTaskScoreFailingThreshold {
+			continue
+		}
+		out = append(out, subTask)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
 }
 
 func retryCandidateButtonText(candidate retryTaskCandidate) string {

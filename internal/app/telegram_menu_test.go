@@ -260,20 +260,64 @@ func TestSendReviewNotificationIncludesAllFailedRetryAction(t *testing.T) {
 		AdvisoryRetry:   true,
 		FailingSubTasks: 3,
 		RetryNote:       "建議人工評估後重跑 3 個失敗/低分子任務",
+		SubTaskResults: []appengine.ReviewNotificationSubTaskResult{
+			{Index: 1, Score: 65},
+			{Index: 4, Score: 72},
+		},
 	})
 
 	select {
 	case msg := <-bot.messageQueue:
 		markup := msg.Params["reply_markup"].(map[string]interface{})
 		rows := markup["inline_keyboard"].([][]map[string]interface{})
-		if rows[0][0]["callback_data"] != "retry:confirm:all:38bd507a" {
-			t.Errorf("all failed button = %v, want retry:confirm:all:38bd507a", rows[0][0]["callback_data"])
+		if rows[0][0]["callback_data"] != "retry:confirm:index:38bd507a:1" {
+			t.Errorf("first low-score button = %v, want retry:confirm:index:38bd507a:1", rows[0][0]["callback_data"])
 		}
-		if rows[0][1]["callback_data"] != "retry:confirm:lowest:38bd507a" {
-			t.Errorf("lowest button = %v, want retry:confirm:lowest:38bd507a", rows[0][1]["callback_data"])
+		if rows[1][0]["callback_data"] != "retry:confirm:index:38bd507a:4" {
+			t.Errorf("second low-score button = %v, want retry:confirm:index:38bd507a:4", rows[1][0]["callback_data"])
+		}
+		if rows[2][0]["callback_data"] != "retry:confirm:all:38bd507a" {
+			t.Errorf("all failed button = %v, want retry:confirm:all:38bd507a", rows[2][0]["callback_data"])
+		}
+		if rows[2][1]["callback_data"] != "retry:confirm:lowest:38bd507a" {
+			t.Errorf("lowest button = %v, want retry:confirm:lowest:38bd507a", rows[2][1]["callback_data"])
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out")
+	}
+}
+
+func TestReviewNotificationActionRowsLimitsExplicitLowScoreButtons(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{}
+
+	rows := reviewNotificationActionRows(key, bot, appengine.ReviewNotification{
+		TaskID:          "task-many-low",
+		AdvisoryRetry:   true,
+		FailingSubTasks: 4,
+		SubTaskResults: []appengine.ReviewNotificationSubTaskResult{
+			{Index: 5, Score: 50},
+			{Index: 2, Score: 60},
+			{Index: 8, Score: 79},
+			{Index: 9, Score: 81},
+			{Index: 3, Score: 70},
+		},
+	})
+	if len(rows) < 4 {
+		t.Fatalf("rows len = %d, want explicit low-score rows plus aggregate actions", len(rows))
+	}
+	wants := []string{
+		"retry:confirm:index:task-many-low:5",
+		"retry:confirm:index:task-many-low:2",
+		"retry:confirm:index:task-many-low:8",
+	}
+	for i, want := range wants {
+		if got := rows[i][0]["callback_data"]; got != want {
+			t.Fatalf("row %d callback_data = %v, want %s", i, got, want)
+		}
+	}
+	if got := rows[3][0]["callback_data"]; got != "retry:confirm:all:task-many-low" {
+		t.Fatalf("aggregate row callback_data = %v, want retry:confirm:all:task-many-low", got)
 	}
 }
 
