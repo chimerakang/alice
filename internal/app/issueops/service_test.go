@@ -84,6 +84,50 @@ func TestBuildChecklistMapping_LowConfidenceNeedsHumanConfirmation(t *testing.T)
 	}
 }
 
+func TestBuildChecklistMapping_DeclaredIDsBypassFuzzyHumanConfirmation(t *testing.T) {
+	issue := &hermes.IssueContext{
+		Number: 83,
+		Title:  "Lead radar",
+		Body:   "body",
+		State:  "open",
+		Checklist: []hermes.ChecklistItem{
+			{ID: "item-57", Text: "新增/調整 Apify reply collector，能在 production smoke 中產生 `lead_reply_participants > 0`。", Checked: false, LineNumber: 57},
+			{ID: "item-58", Text: "回覆名單 tab 顯示 reply author、來源貼文、回覆摘要、跨貼文次數。", Checked: false, LineNumber: 58},
+			{ID: "item-59", Text: "客源訊號 `confidence` 不再全部為 0；一般有效訊號應落在合理區間，例如 40%~90%。", Checked: false, LineNumber: 59},
+		},
+	}
+
+	got := New().BuildChecklistMapping(issue, []hermes.SubTask{
+		{
+			ID:               "s1",
+			Description:      "Tune Apify reply collector so production smoke produces lead_reply_participants > 0: read backend/internal/intel/lead_radar/apify_replies.go + config.go + worker integration, then adjust actor input mapping and add cost controls.",
+			ChecklistItemIDs: []string{"item-57"},
+		},
+		{
+			ID:               "s2",
+			Description:      "Update the web UI reply tab and confidence display in the existing Lead Radar page.",
+			ChecklistItemIDs: []string{"item-58", "item-59"},
+		},
+	})
+	if got.State != hermes.IssueStateChecklistSynced {
+		t.Fatalf("State = %q, want %q; notes=%v", got.State, hermes.IssueStateChecklistSynced, got.Notes)
+	}
+	if got.NeedsHumanConfirmation {
+		t.Fatalf("declared checklist ids should not require human confirmation: %+v", got)
+	}
+	if len(got.Mappings) != 3 {
+		t.Fatalf("Mappings len = %d, want 3", len(got.Mappings))
+	}
+	for _, mapping := range got.Mappings {
+		if mapping.Confidence != ChecklistMappingConfidenceHigh || mapping.RequiresHumanConfirmation {
+			t.Fatalf("declared mapping should be high confidence without human confirmation: %+v", mapping)
+		}
+		if !strings.Contains(mapping.Reason, "declared checklist_item_ids") {
+			t.Fatalf("mapping reason = %q, want declared checklist_item_ids", mapping.Reason)
+		}
+	}
+}
+
 func TestBuildChecklistMapping_UnmappedItemsMarkUnsynced(t *testing.T) {
 	issue := &hermes.IssueContext{
 		Number: 100,

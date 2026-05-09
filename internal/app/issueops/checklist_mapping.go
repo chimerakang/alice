@@ -76,6 +76,10 @@ func buildChecklistMapping(issue *hermes.IssueContext, subtasks []hermes.SubTask
 		return result
 	}
 
+	if hasChecklistDeclarations(subtasks) {
+		return buildDeclaredChecklistMapping(result, issue, subtasks)
+	}
+
 	usedChecklist := make([]bool, len(issue.Checklist))
 	for idx, subTask := range subtasks {
 		bestIdx := -1
@@ -150,6 +154,81 @@ func buildChecklistMapping(issue *hermes.IssueContext, subtasks []hermes.SubTask
 
 	if len(result.UnmappedSubTasks) > 0 {
 		result.Notes = append(result.Notes, fmt.Sprintf("%d Hermes sub-task(s) did not map to checklist items", len(result.UnmappedSubTasks)))
+	}
+	if len(result.UnmappedChecklistItems) > 0 {
+		result.Notes = append(result.Notes, fmt.Sprintf("%d checklist item(s) remain unmatched", len(result.UnmappedChecklistItems)))
+	}
+	return result
+}
+
+func hasChecklistDeclarations(subtasks []hermes.SubTask) bool {
+	for _, subTask := range subtasks {
+		if len(subTask.ChecklistItemIDs) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func buildDeclaredChecklistMapping(result ChecklistMappingResult, issue *hermes.IssueContext, subtasks []hermes.SubTask) ChecklistMappingResult {
+	itemByID := make(map[string]int, len(issue.Checklist))
+	for idx, item := range issue.Checklist {
+		itemByID[item.ID] = idx
+	}
+
+	usedChecklist := make([]bool, len(issue.Checklist))
+	seenIDs := make(map[string]bool)
+	for idx, subTask := range subtasks {
+		for _, rawID := range subTask.ChecklistItemIDs {
+			id := strings.TrimSpace(rawID)
+			if id == "" {
+				continue
+			}
+			checklistIdx, ok := itemByID[id]
+			if !ok {
+				result.NeedsHumanConfirmation = true
+				result.Notes = append(result.Notes, fmt.Sprintf("declared checklist item %q was not found in issue body for sub-task %q", id, subTask.Description))
+				continue
+			}
+			if seenIDs[id] {
+				result.NeedsHumanConfirmation = true
+				result.Notes = append(result.Notes, fmt.Sprintf("declared checklist item %q is claimed by multiple sub-tasks", id))
+				continue
+			}
+			seenIDs[id] = true
+			usedChecklist[checklistIdx] = true
+
+			checklistItem := issue.Checklist[checklistIdx]
+			result.Mappings = append(result.Mappings, ChecklistMapping{
+				SubTaskIndex:              idx,
+				SubTaskID:                 subTask.ID,
+				SubTaskDescription:        subTask.Description,
+				ChecklistIndex:            checklistIdx,
+				ChecklistText:             checklistItem.Text,
+				ChecklistLineNumber:       checklistItem.LineNumber,
+				Score:                     100,
+				Confidence:                ChecklistMappingConfidenceHigh,
+				Reason:                    fmt.Sprintf("declared checklist_item_ids match %s", id),
+				RequiresHumanConfirmation: false,
+			})
+		}
+	}
+
+	for checklistIdx, checklistItem := range issue.Checklist {
+		if usedChecklist[checklistIdx] {
+			continue
+		}
+		result.UnmappedChecklistItems = append(result.UnmappedChecklistItems, checklistItem)
+	}
+
+	switch {
+	case result.NeedsHumanConfirmation:
+		result.State = hermes.IssueStateBlocked
+	case len(result.UnmappedChecklistItems) > 0:
+		result.State = hermes.IssueStateChecklistUnsynced
+	default:
+		result.State = hermes.IssueStateChecklistSynced
+		result.ChecklistSynced = true
 	}
 	if len(result.UnmappedChecklistItems) > 0 {
 		result.Notes = append(result.Notes, fmt.Sprintf("%d checklist item(s) remain unmatched", len(result.UnmappedChecklistItems)))
