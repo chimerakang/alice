@@ -24,6 +24,7 @@ import type {
   HermesActiveTask,
   HermesSnapshotHop,
   HermesSubTaskView,
+  HermesStats,
 } from "@/types/alice";
 
 const BASE = "";
@@ -240,6 +241,8 @@ export const api = {
       `/api/hermes/tasks${qs}`
     );
   },
+  getHermesStats: (days = 14) =>
+    fetchJson<HermesStats>(`/api/hermes/stats?days=${days}`),
   getHermesSnapshots: (taskId: string) =>
     fetchJson<{
       task_id: string;

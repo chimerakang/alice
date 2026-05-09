@@ -113,6 +113,7 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/hermes/resolve", wi.handleHermesResolve)
 	mux.HandleFunc("/api/hermes/tasks", wi.handleHermesTasks)
 	mux.HandleFunc("/api/hermes/snapshots", wi.handleHermesSnapshots)
+	mux.HandleFunc("/api/hermes/stats", wi.handleHermesStats)
 	mux.HandleFunc("/api/runtime/events", wi.handleRuntimeEvents)
 	mux.HandleFunc("/api/memory/preview", wi.handleMemoryPreview)
 	mux.HandleFunc("/api/quality/decomposition", wi.handleQualityDecomposition)

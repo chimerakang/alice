@@ -296,6 +296,38 @@ export interface HermesActiveTask {
   interrupt?: HermesInterrupt;
 }
 
+// HermesStats mirrors /api/hermes/stats output: aggregate effectiveness
+// metrics for the dashboard's stats panel (#171 / #173 observability).
+export interface HermesStats {
+  window_days: number;
+  generated_at: string;
+  totals: {
+    total: number;
+    done: number;
+    failed: number;
+    interrupted: number;
+    other: number;
+  };
+  daily: Array<{
+    day: string;
+    total: number;
+    done: number;
+    failed: number;
+    interrupted: number;
+  }>;
+  source_nodes: Record<string, number>;
+  failure_reasons: Record<string, number>;
+  phases: Array<{
+    phase: string;
+    calls: number;
+    avg_input: number;
+    avg_output: number;
+    sum_input: number;
+    sum_output: number;
+  }>;
+  hops: Array<{ hops: number; tasks: number }>;
+}
+
 // HermesSubTaskView is the per-sub-task slice returned by
 // /api/hermes/snapshots in the latest_plan field. Carries the actual
 // executor result + reviewer-driven retry feedback so the dashboard

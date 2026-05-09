@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { api } from "@/lib/api";
 import type { HermesActiveTask, HermesSnapshotHop, HermesSubTaskView } from "@/types/alice";
+import HermesStatsPanel from "@/components/HermesStatsPanel";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -336,6 +337,8 @@ export default function HermesTasks() {
           {t("common.refresh")}
         </button>
       </div>
+
+      <HermesStatsPanel />
 
       <div className="flex flex-wrap gap-2">
         {STATUS_FILTERS.map((f) => {

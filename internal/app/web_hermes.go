@@ -1,12 +1,14 @@
 package app
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"claude-tg-agent/internal/app/hermes"
 )
@@ -375,4 +377,292 @@ func (wi *WebInterface) handleHermesSnapshots(w http.ResponseWriter, r *http.Req
 
 		log.Printf("[hermes.web] snapshot history task=%s hops=%d", taskID, len(out))
 	})(w, r)
+}
+
+// handleHermesStats returns aggregate Hermes effectiveness metrics for
+// the dashboard's stats panel: daily success counts, failure-reason
+// breakdown, source-node distribution (proves graph path is alive),
+// per-phase token averages, and hop-count distribution.
+//
+// Read-only — no auth. Default window is 14 days; cap 90.
+func (wi *WebInterface) handleHermesStats(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		days := 14
+		if v := r.URL.Query().Get("days"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil && n > 0 {
+				if n > 90 {
+					n = 90
+				}
+				days = n
+			}
+		}
+		ss, ok := globalStorage.(*SQLiteStorage)
+		if !ok {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "storage unavailable"})
+			return
+		}
+		db, ok := ss.GetDB().(*sql.DB)
+		if !ok {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "db unavailable"})
+			return
+		}
+		out, err := buildHermesStats(db, days)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	})(w, r)
+}
+
+type hermesStats struct {
+	WindowDays  int                  `json:"window_days"`
+	GeneratedAt string               `json:"generated_at"`
+	Totals      hermesStatusCounts   `json:"totals"`
+	Daily       []hermesDailyCounts  `json:"daily"`
+	SourceNodes map[string]int       `json:"source_nodes"`
+	FailureReasons map[string]int    `json:"failure_reasons"`
+	Phases      []hermesPhaseStats   `json:"phases"`
+	Hops        []hermesHopBucket    `json:"hops"`
+}
+
+type hermesStatusCounts struct {
+	Total       int `json:"total"`
+	Done        int `json:"done"`
+	Failed      int `json:"failed"`
+	Interrupted int `json:"interrupted"`
+	Other       int `json:"other"`
+}
+
+type hermesDailyCounts struct {
+	Day         string `json:"day"`
+	Total       int    `json:"total"`
+	Done        int    `json:"done"`
+	Failed      int    `json:"failed"`
+	Interrupted int    `json:"interrupted"`
+}
+
+type hermesPhaseStats struct {
+	Phase     string `json:"phase"`
+	Calls     int    `json:"calls"`
+	AvgInput  int    `json:"avg_input"`
+	AvgOutput int    `json:"avg_output"`
+	SumInput  int64  `json:"sum_input"`
+	SumOutput int64  `json:"sum_output"`
+}
+
+type hermesHopBucket struct {
+	Hops  int `json:"hops"`
+	Tasks int `json:"tasks"`
+}
+
+func buildHermesStats(db *sql.DB, days int) (*hermesStats, error) {
+	cutoff := fmt.Sprintf("-%d days", days)
+	out := &hermesStats{
+		WindowDays:     days,
+		GeneratedAt:    time.Now().Format(time.RFC3339),
+		SourceNodes:    map[string]int{},
+		FailureReasons: map[string]int{},
+	}
+
+	// Totals + daily.
+	rows, err := db.Query(
+		`SELECT date(created_at) AS day, status, COUNT(*) FROM hermes_task_states
+		 WHERE created_at >= date('now', ?)
+		 GROUP BY day, status ORDER BY day`,
+		cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("daily query: %w", err)
+	}
+	dailyMap := map[string]*hermesDailyCounts{}
+	for rows.Next() {
+		var day, status string
+		var count int
+		if err := rows.Scan(&day, &status, &count); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		d, ok := dailyMap[day]
+		if !ok {
+			d = &hermesDailyCounts{Day: day}
+			dailyMap[day] = d
+		}
+		d.Total += count
+		out.Totals.Total += count
+		switch status {
+		case "done":
+			d.Done += count
+			out.Totals.Done += count
+		case "failed":
+			d.Failed += count
+			out.Totals.Failed += count
+		case "interrupted":
+			d.Interrupted += count
+			out.Totals.Interrupted += count
+		default:
+			out.Totals.Other += count
+		}
+	}
+	rows.Close()
+	for _, d := range dailyMap {
+		out.Daily = append(out.Daily, *d)
+	}
+	// Sort daily ascending by day.
+	for i := 0; i < len(out.Daily); i++ {
+		for j := i + 1; j < len(out.Daily); j++ {
+			if out.Daily[j].Day < out.Daily[i].Day {
+				out.Daily[i], out.Daily[j] = out.Daily[j], out.Daily[i]
+			}
+		}
+	}
+
+	// Failure reasons (terminal commit reason on failed tasks).
+	rows, err = db.Query(
+		`SELECT json_extract(s.metadata_json,'$.reason') AS reason, COUNT(*)
+		 FROM hermes_task_states t
+		 JOIN hermes_snapshots s ON s.task_id = t.id
+		 WHERE t.created_at >= date('now', ?)
+		   AND t.status = 'failed'
+		   AND s.step = (SELECT MAX(step) FROM hermes_snapshots WHERE task_id = t.id)
+		 GROUP BY reason`,
+		cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("failure reasons: %w", err)
+	}
+	for rows.Next() {
+		var reason sql.NullString
+		var count int
+		if err := rows.Scan(&reason, &count); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		key := reason.String
+		if key == "" {
+			key = "(unspecified)"
+		}
+		out.FailureReasons[key] = count
+	}
+	rows.Close()
+
+	// Source node distribution across all snapshots in window.
+	rows, err = db.Query(
+		`SELECT s.source_node, COUNT(*)
+		 FROM hermes_task_states t
+		 JOIN hermes_snapshots s ON s.task_id = t.id
+		 WHERE t.created_at >= date('now', ?)
+		 GROUP BY s.source_node`,
+		cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("source nodes: %w", err)
+	}
+	for rows.Next() {
+		var node string
+		var count int
+		if err := rows.Scan(&node, &count); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if node == "" {
+			node = "(seed)"
+		}
+		out.SourceNodes[node] = count
+	}
+	rows.Close()
+
+	// Phase token aggregation from done tasks' final snapshot state_json.
+	rows, err = db.Query(
+		`SELECT s.state_json
+		 FROM hermes_task_states t
+		 JOIN hermes_snapshots s ON s.task_id = t.id
+		 WHERE t.created_at >= date('now', ?)
+		   AND t.status = 'done'
+		   AND s.step = (SELECT MAX(step) FROM hermes_snapshots WHERE task_id = t.id)`,
+		cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("phase agg: %w", err)
+	}
+	type phaseAcc struct {
+		calls    int
+		sumIn    int64
+		sumOut   int64
+	}
+	phases := map[string]*phaseAcc{}
+	for rows.Next() {
+		var stateJSON string
+		if err := rows.Scan(&stateJSON); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		var st struct {
+			PhaseUsages []struct {
+				Phase        string `json:"phase"`
+				InputTokens  int    `json:"input_tokens"`
+				OutputTokens int    `json:"output_tokens"`
+			} `json:"phase_usages"`
+		}
+		if err := json.Unmarshal([]byte(stateJSON), &st); err != nil {
+			continue // skip malformed; don't fail the whole endpoint
+		}
+		for _, p := range st.PhaseUsages {
+			acc, ok := phases[p.Phase]
+			if !ok {
+				acc = &phaseAcc{}
+				phases[p.Phase] = acc
+			}
+			acc.calls++
+			acc.sumIn += int64(p.InputTokens)
+			acc.sumOut += int64(p.OutputTokens)
+		}
+	}
+	rows.Close()
+	for name, a := range phases {
+		out.Phases = append(out.Phases, hermesPhaseStats{
+			Phase:     name,
+			Calls:     a.calls,
+			AvgInput:  safeAvg(a.sumIn, a.calls),
+			AvgOutput: safeAvg(a.sumOut, a.calls),
+			SumInput:  a.sumIn,
+			SumOutput: a.sumOut,
+		})
+	}
+
+	// Hop-count distribution: number of snapshots per task.
+	rows, err = db.Query(
+		`SELECT n_hops, COUNT(*) FROM (
+		   SELECT task_id, COUNT(*) AS n_hops
+		   FROM hermes_snapshots s
+		   JOIN hermes_task_states t ON t.id = s.task_id
+		   WHERE t.created_at >= date('now', ?)
+		   GROUP BY task_id
+		 ) GROUP BY n_hops ORDER BY n_hops`,
+		cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("hops: %w", err)
+	}
+	for rows.Next() {
+		var hops, n int
+		if err := rows.Scan(&hops, &n); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out.Hops = append(out.Hops, hermesHopBucket{Hops: hops, Tasks: n})
+	}
+	rows.Close()
+
+	return out, nil
+}
+
+func safeAvg(sum int64, n int) int {
+	if n <= 0 {
+		return 0
+	}
+	return int(sum / int64(n))
 }
