@@ -11,6 +11,44 @@ import (
 	"claude-tg-agent/internal/app/hermes"
 )
 
+// enrichTasksWithGithubURL resolves a GitHub issue URL per task that
+// has a github_issue_number, caching by project_dir so a list of N
+// tasks never runs more than one `git remote` per unique project.
+// On lookup failure we leave GithubURL empty rather than aborting —
+// the dashboard falls back to plain "#N" text.
+func enrichTasksWithGithubURL(tasks []hermes.ActiveTaskRef) []hermes.ActiveTaskRef {
+	if len(tasks) == 0 {
+		return tasks
+	}
+	repoCache := make(map[string]string)
+	for i := range tasks {
+		if tasks[i].GithubIssueNumber <= 0 || strings.TrimSpace(tasks[i].ProjectDir) == "" {
+			continue
+		}
+		repoURL, cached := repoCache[tasks[i].ProjectDir]
+		if !cached {
+			if resolved, err := resolveGitHubRepoURL(tasks[i].ProjectDir); err == nil {
+				repoURL = resolved
+			}
+			repoCache[tasks[i].ProjectDir] = repoURL
+		}
+		if repoURL != "" {
+			tasks[i].GithubURL = fmt.Sprintf("%s/issues/%d", strings.TrimRight(repoURL, "/"), tasks[i].GithubIssueNumber)
+		}
+	}
+	return tasks
+}
+
+// truncateForDisplay caps a string at max bytes so the snapshots API
+// payload stays bounded. Adds an ellipsis marker on truncation so the
+// dashboard can show the user the cap was hit.
+func truncateForDisplay(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "\n…(truncated)"
+}
+
 // activeTaskStore is the storage surface the Hermes dashboard tools
 // need. SQLiteTaskStore satisfies it; the noop store does not (so a
 // missing-DB deployment surfaces 503 rather than blank lists).
@@ -45,6 +83,7 @@ func (wi *WebInterface) handleHermesActive(w http.ResponseWriter, r *http.Reques
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
 			return
 		}
+		tasks = enrichTasksWithGithubURL(tasks)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"tasks": tasks,
 			"total": len(tasks),
@@ -211,6 +250,9 @@ func (wi *WebInterface) handleHermesTasks(w http.ResponseWriter, r *http.Request
 			}
 		}
 		tasks, total, err := store.ListHermesTasks(filter)
+		if err == nil {
+			tasks = enrichTasksWithGithubURL(tasks)
+		}
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
@@ -287,10 +329,48 @@ func (wi *WebInterface) handleHermesSnapshots(w http.ResponseWriter, r *http.Req
 			}
 			out = append(out, hop)
 		}
+
+		// Project the LATEST snapshot's plan + accumulated so the
+		// dashboard drill-in can show actual sub-task descriptions /
+		// statuses / result text without making a second round trip.
+		// Result text is truncated to keep the payload reasonable; the
+		// caller can request the full transcript from /api/hermes/active
+		// or via task store APIs if needed.
+		type subTaskView struct {
+			ID            string `json:"id"`
+			Description   string `json:"description"`
+			Status        string `json:"status"`
+			Result        string `json:"result,omitempty"`
+			TokensUsed    int    `json:"tokens_used,omitempty"`
+			Attempts      int    `json:"attempts,omitempty"`
+			RetryFeedback string `json:"retry_feedback,omitempty"`
+		}
+		var latestPlan []subTaskView
+		var accumulated string
+		if len(hist) > 0 {
+			latest := hist[len(hist)-1]
+			accumulated = latest.State.Accumulated
+			for _, st := range latest.State.Plan {
+				latestPlan = append(latestPlan, subTaskView{
+					ID:            st.ID,
+					Description:   st.Description,
+					Status:        string(st.Status),
+					Result:        truncateForDisplay(st.Result, 4000),
+					TokensUsed:    st.TokensUsed,
+					Attempts:      st.Attempts,
+					RetryFeedback: truncateForDisplay(st.StrictRetryFeedback, 1500),
+				})
+			}
+			if len(accumulated) > 8000 {
+				accumulated = accumulated[:8000] + "\n…(truncated)"
+			}
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"task_id":   taskID,
-			"snapshots": out,
-			"total":     len(out),
+			"task_id":     taskID,
+			"snapshots":   out,
+			"total":       len(out),
+			"latest_plan": latestPlan,
+			"accumulated": accumulated,
 		})
 
 		log.Printf("[hermes.web] snapshot history task=%s hops=%d", taskID, len(out))

@@ -156,20 +156,37 @@ export default function HermesTasksPanel() {
               key={task.task_id}
               className="rounded-md border border-gray-800 bg-gray-900/40 p-3 text-sm"
             >
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span className="font-mono text-xs text-gray-500">{shortTaskID(task.task_id)}</span>
-                <span className="text-gray-200 font-medium truncate max-w-md">
-                  {task.goal || "(no goal)"}
-                </span>
-                <span className="text-xs text-gray-500">
-                  {task.status} · step={task.next_step || "—"} · {task.current_idx + 1}/{task.plan_length || "?"}
-                </span>
-                {task.max_total_tokens ? (
-                  <span className="text-xs text-gray-500">
-                    tokens {task.used_tokens}/{task.max_total_tokens}
-                  </span>
-                ) : null}
-                <span className="text-xs text-gray-600 ml-auto">{formatRelative(task.updated_at)}</span>
+              <div className="flex items-start gap-x-3 gap-y-1">
+                <span className="font-mono text-xs text-gray-500 mt-0.5">{shortTaskID(task.task_id)}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-gray-200 font-medium whitespace-pre-wrap break-words">
+                    {task.goal || "(no goal)"}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500 mt-1">
+                    <span>
+                      {task.status} · step={task.next_step || "—"} · {task.current_idx + 1}/
+                      {task.plan_length || "?"}
+                    </span>
+                    {task.github_issue_number ? (
+                      task.github_url ? (
+                        <a
+                          href={task.github_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-400 hover:underline"
+                        >
+                          #{task.github_issue_number} ↗
+                        </a>
+                      ) : (
+                        <span className="text-blue-400">#{task.github_issue_number}</span>
+                      )
+                    ) : null}
+                    {task.max_total_tokens ? (
+                      <span>tokens {task.used_tokens}/{task.max_total_tokens}</span>
+                    ) : null}
+                    <span className="text-gray-600 ml-auto">{formatRelative(task.updated_at)}</span>
+                  </div>
+                </div>
               </div>
               {kind && (
                 <div className="mt-2 flex flex-wrap items-center gap-2">

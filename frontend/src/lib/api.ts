@@ -23,6 +23,7 @@ import type {
   RuntimeEventRecord,
   HermesActiveTask,
   HermesSnapshotHop,
+  HermesSubTaskView,
 } from "@/types/alice";
 
 const BASE = "";
@@ -240,9 +241,13 @@ export const api = {
     );
   },
   getHermesSnapshots: (taskId: string) =>
-    fetchJson<{ task_id: string; snapshots?: HermesSnapshotHop[]; total?: number }>(
-      `/api/hermes/snapshots?task_id=${encodeURIComponent(taskId)}`
-    ),
+    fetchJson<{
+      task_id: string;
+      snapshots?: HermesSnapshotHop[];
+      total?: number;
+      latest_plan?: HermesSubTaskView[];
+      accumulated?: string;
+    }>(`/api/hermes/snapshots?task_id=${encodeURIComponent(taskId)}`),
 
   // ========== Quality Analytics ==========
   getQualityDecomposition: (window = "30d") =>

@@ -721,6 +721,7 @@ func scanActiveTaskRow(rows *sql.Rows) (ActiveTaskRef, error) {
 // Used by the dashboard's Hermes tasks panel (#171 Class C UI).
 type ActiveTaskRef struct {
 	TaskID            string           `json:"task_id"`
+	GithubURL         string           `json:"github_url,omitempty"`
 	ChatID            int64            `json:"chat_id"`
 	ThreadID          int              `json:"thread_id"`
 	Goal              string           `json:"goal"`

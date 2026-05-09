@@ -280,6 +280,7 @@ export interface HermesInterrupt {
 // resolve buttons can be rendered correctly.
 export interface HermesActiveTask {
   task_id: string;
+  github_url?: string;
   chat_id: number;
   thread_id: number;
   goal: string;
@@ -293,6 +294,20 @@ export interface HermesActiveTask {
   max_total_tokens?: number;
   updated_at: string;
   interrupt?: HermesInterrupt;
+}
+
+// HermesSubTaskView is the per-sub-task slice returned by
+// /api/hermes/snapshots in the latest_plan field. Carries the actual
+// executor result + reviewer-driven retry feedback so the dashboard
+// drill-in can show what each sub-task did, not just the Walker hops.
+export interface HermesSubTaskView {
+  id: string;
+  description: string;
+  status: string;
+  result?: string;
+  tokens_used?: number;
+  attempts?: number;
+  retry_feedback?: string;
 }
 
 // HermesSnapshotHop is one row in a task's Walker hop history. Returned
