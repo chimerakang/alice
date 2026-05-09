@@ -3,7 +3,9 @@ package graph
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"claude-tg-agent/internal/app/hermes"
 )
@@ -335,4 +337,152 @@ func TestWalker_PanicCommitDoesNotResurrectTerminalStatus(t *testing.T) {
 	if len(final.State.Errors) == 0 {
 		t.Errorf("expected error recorded even when status preserved")
 	}
+}
+
+func TestWalker_RefusesToDispatchWhenInterruptPresent(t *testing.T) {
+	store := makeWalkerStore(t)
+	// Mutate the seed snapshot to carry an unresolved interrupt.
+	now := time.Now()
+	if _, err := store.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID: "task-graph",
+		Updates: []hermes.StateUpdate{{
+			Interrupt: &hermes.HermesInterrupt{
+				ID:         "ext-pause",
+				SourceStep: hermes.RuntimeStepExecutor,
+				ResumeStep: hermes.RuntimeStepExecutor,
+				Reason:     "external_pause",
+				CreatedAt:  now,
+			},
+		}},
+		NextStep:   hermes.RuntimeStepPlanner,
+		SourceNode: hermes.RuntimeStepPlanner,
+		Metadata:   hermes.SnapshotMetadata{Source: "test"},
+	}); err != nil {
+		t.Fatalf("seed interrupt: %v", err)
+	}
+	dispatched := &recordingNode{
+		step: hermes.RuntimeStepPlanner,
+		outputs: []NodeOutput{{
+			NextStep: hermes.RuntimeStepTerminal,
+			Reason:   "should_not_dispatch",
+		}},
+	}
+	registry := NewRegistry()
+	registry.Register(dispatched)
+	walker, _ := NewWalker(store, registry)
+	walker.MaxSteps = 5
+
+	final, err := walker.Run(context.Background(), "task-graph")
+	if !errors.Is(err, ErrInterrupted) {
+		t.Fatalf("err = %v, want ErrInterrupted", err)
+	}
+	if dispatched.calls != 0 {
+		t.Errorf("planner dispatched despite interrupt: calls = %d", dispatched.calls)
+	}
+	if final.State.Interrupt == nil || final.State.Interrupt.Reason != "external_pause" {
+		t.Errorf("final snapshot lost interrupt context: %+v", final.State.Interrupt)
+	}
+}
+
+func TestWalker_DispatchesApprovalNodeEvenWithInterrupt(t *testing.T) {
+	// ApprovalNode is the in-graph resolver for state.Interrupt; the
+	// Walker must let it through so ApplyInterruptResolution can be
+	// observed and the interrupt cleared.
+	store := makeWalkerStore(t)
+	now := time.Now()
+	// Seed with NextStep=Approval and an active interrupt — simulates
+	// the post-pause state ApprovalNode is supposed to resolve.
+	if _, err := store.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID: "task-graph",
+		Updates: []hermes.StateUpdate{{
+			Interrupt: &hermes.HermesInterrupt{
+				ID: "p1", SourceStep: hermes.RuntimeStepExecutor, ResumeStep: hermes.RuntimeStepExecutor,
+				Reason: "subtask_failure_pause", CreatedAt: now,
+			},
+		}},
+		NextStep:   hermes.RuntimeStepApproval,
+		SourceNode: hermes.RuntimeStepExecutor,
+		Metadata:   hermes.SnapshotMetadata{Source: "test"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	approval := &recordingNode{
+		step: hermes.RuntimeStepApproval,
+		outputs: []NodeOutput{{
+			NextStep: hermes.RuntimeStepApproval,
+			Reason:   "still_paused",
+			Halt:     true,
+		}},
+	}
+	registry := NewRegistry()
+	registry.Register(approval)
+	walker, _ := NewWalker(store, registry)
+	walker.MaxSteps = 3
+
+	if _, err := walker.Run(context.Background(), "task-graph"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if approval.calls != 1 {
+		t.Errorf("ApprovalNode should have been dispatched: calls = %d", approval.calls)
+	}
+}
+
+func TestWalker_CtxCancelCommitsInterruptSnapshot(t *testing.T) {
+	store := makeWalkerStore(t)
+	// Use a node that performs at least one successful dispatch so we
+	// have a "lastSnapshot" to attach the ctx interrupt to. After the
+	// first commit the test cancels ctx; the next loop iteration sees
+	// ctx.Err() and must commit the interrupt.
+	step := 0
+	canceller := &recordingNode{
+		step: hermes.RuntimeStepPlanner,
+		outputs: []NodeOutput{
+			{NextStep: hermes.RuntimeStepPlanner, Reason: "loop"},
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	hookedNode := &hookNode{inner: canceller, hook: func() {
+		step++
+		if step == 1 {
+			cancel()
+		}
+	}}
+	registry := NewRegistry()
+	registry.Register(hookedNode)
+	walker, _ := NewWalker(store, registry)
+	walker.MaxSteps = 5
+
+	final, err := walker.Run(ctx, "task-graph")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if final.State.Interrupt == nil {
+		t.Fatalf("expected ctx-cancel interrupt committed onto snapshot, got nil")
+	}
+	if final.State.Interrupt.Reason == "" || !strings.Contains(final.State.Interrupt.Reason, "ctx_cancelled") {
+		t.Errorf("Interrupt.Reason = %q, want prefix ctx_cancelled", final.State.Interrupt.Reason)
+	}
+	if final.Metadata.Reason != "ctx_cancelled" {
+		t.Errorf("Metadata.Reason = %q, want ctx_cancelled", final.Metadata.Reason)
+	}
+	// NextStep is preserved so a resume picks up where we cancelled.
+	if final.NextStep != hermes.RuntimeStepPlanner {
+		t.Errorf("NextStep = %q, want planner (preserved for resume)", final.NextStep)
+	}
+}
+
+// hookNode wraps another Node and runs a hook before delegating, so
+// tests can inject side effects (like ctx cancel) at a specific point
+// in the dispatch loop.
+type hookNode struct {
+	inner Node
+	hook  func()
+}
+
+func (h *hookNode) Name() hermes.RuntimeStep { return h.inner.Name() }
+func (h *hookNode) Handle(ctx context.Context, state hermes.HermesState) (NodeOutput, error) {
+	if h.hook != nil {
+		h.hook()
+	}
+	return h.inner.Handle(ctx, state)
 }

@@ -130,6 +130,14 @@ var ErrUnregisteredStep = errors.New("graph: no handler registered for runtime s
 // ErrMaxStepsExceeded means Walker.Run hit its iteration cap.
 var ErrMaxStepsExceeded = errors.New("graph: max walker steps exceeded")
 
+// ErrInterrupted means the Walker observed an active state.Interrupt
+// at the top of a dispatch iteration and refused to dispatch the
+// pending Node. Snapshot-level interrupts are now the canonical source
+// of truth for "this task is paused"; ApplyInterruptResolution clears
+// them, after which a subsequent Walker.Run picks up from the resume
+// step. See #169 #3.
+var ErrInterrupted = errors.New("graph: task interrupted")
+
 // ErrNodePanic means a Node implementation panicked during Handle.
 // Walker.Run recovers the panic, commits a terminal snapshot marking the
 // task Failed (with the panic message recorded in state.Errors), and
@@ -181,8 +189,19 @@ func (w *Walker) Run(ctx context.Context, taskID string) (hermes.Snapshot, error
 	steps := 0
 	var lastSnapshot hermes.Snapshot
 	for {
-		if ctx.Err() != nil {
-			return lastSnapshot, ctx.Err()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			// Snapshot-level interrupt commit before returning so the
+			// next read sees state.Interrupt. Without this, a process-
+			// level cancel would leave the snapshot pointing at the
+			// pre-cancel NextStep with no record of the cancellation —
+			// callers re-dispatching after restart would re-run the
+			// cancelled work blindly. See #169 #3.
+			if committed, commitErr := w.commitCtxInterrupt(taskID, lastSnapshot, ctxErr); commitErr == nil {
+				lastSnapshot = committed
+			} else {
+				log.Printf("[graph] ctx-cancel interrupt commit failed task=%s: %v", taskID, commitErr)
+			}
+			return lastSnapshot, ctxErr
 		}
 		if w.MaxSteps > 0 && steps >= w.MaxSteps {
 			return lastSnapshot, fmt.Errorf("%w: ran %d steps", ErrMaxStepsExceeded, steps)
@@ -196,6 +215,14 @@ func (w *Walker) Run(ctx context.Context, taskID string) (hermes.Snapshot, error
 		lastSnapshot = snap
 		if snap.NextStep == hermes.RuntimeStepTerminal {
 			return snap, nil
+		}
+		// Snapshot-level interrupt observed — refuse to dispatch. The
+		// caller is responsible for clearing the interrupt (typically
+		// via ApplyInterruptResolution) before calling Walker.Run
+		// again. ApprovalNode is the in-graph path for clean resumes;
+		// ErrInterrupted indicates an unresolved external pause.
+		if snap.State.Interrupt != nil && snap.NextStep != hermes.RuntimeStepApproval {
+			return snap, fmt.Errorf("%w: source=%s reason=%q", ErrInterrupted, snap.State.Interrupt.SourceStep, snap.State.Interrupt.Reason)
 		}
 
 		node, ok := w.registry.Lookup(snap.NextStep)
@@ -248,6 +275,40 @@ func (w *Walker) Run(ctx context.Context, taskID string) (hermes.Snapshot, error
 			return committed, nil
 		}
 	}
+}
+
+// commitCtxInterrupt records ctx-cancellation as a durable interrupt
+// on the snapshot so future readers know the task was paused mid-flight
+// (rather than silently terminated). NextStep is preserved so a clean
+// resume after the operator clears the interrupt re-dispatches the
+// same step that was about to run. lastSnapshot may be zero on the
+// very first iteration, in which case we have nothing meaningful to
+// commit and return its zero value harmlessly.
+func (w *Walker) commitCtxInterrupt(taskID string, last hermes.Snapshot, ctxErr error) (hermes.Snapshot, error) {
+	if last.TaskID == "" {
+		// No prior snapshot loaded yet — nothing to attach an interrupt
+		// to. Caller surfaces ctx.Err() unchanged.
+		return last, nil
+	}
+	now := time.Now()
+	interrupt := &hermes.HermesInterrupt{
+		ID:         fmt.Sprintf("%s:ctxcancel:%d", taskID, now.UnixNano()),
+		SourceStep: last.NextStep,
+		ResumeStep: last.NextStep,
+		Reason:     "ctx_cancelled: " + ctxErr.Error(),
+		CreatedAt:  now,
+	}
+	return w.store.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    []hermes.StateUpdate{{Interrupt: interrupt}},
+		NextStep:   last.NextStep,
+		SourceNode: last.NextStep,
+		Metadata: hermes.SnapshotMetadata{
+			Source: "graph_walker",
+			Reason: "ctx_cancelled",
+		},
+		CreatedAt: now,
+	})
 }
 
 // commitPanicTerminal commits a terminal snapshot after a node panic.
