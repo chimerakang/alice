@@ -4321,6 +4321,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, p
 		ContinueCh:                   continueCh,
 		OnSubTaskFailurePause:        t.makeHermesFailureDecisionCallback(key, failureDecisionCh),
 		OnGraphInterrupt:             t.makeHermesGraphInterruptCallback(key),
+		OnPlanningError:              t.makeHermesPlanningErrorCallback(key, issueNumber),
 		OnDone:                       onDone,
 		WalkingAgentEnabled:          cfg.WalkingAgentEnabled,
 		WalkingAgentMaxContextTokens: cfg.WalkingAgentMaxContextTokens,
@@ -6611,6 +6612,68 @@ func budgetTokensFromInterrupt(interrupt hermes.HermesInterrupt) (used, max int)
 	used = intFromInterruptPayload(payload["used_tokens"])
 	max = intFromInterruptPayload(payload["max_total_tokens"])
 	return used, max
+}
+
+// makeHermesPlanningErrorCallback formats friendly Telegram messages
+// for typed planner errors and posts an action menu (open issue /
+// cancel). Mirrors handlePlanningError from the legacy run() path,
+// extended with structured buttons because retry alone does not help
+// when the issue body is the source of the rejection.
+func (t *TelegramBot) makeHermesPlanningErrorCallback(key chatKey, issueNumber int) func(ctx context.Context, taskID string, err error) {
+	return func(_ context.Context, taskID string, err error) {
+		if err == nil {
+			return
+		}
+		var (
+			checklist *hermes.ErrPlannerChecklistViolation
+			jfail     *hermes.ErrPlannerJSONFailed
+			empty     *hermes.ErrPlannerEmptyPlan
+			header    string
+			detail    string
+		)
+		switch {
+		case errors.As(err, &checklist):
+			header = "❌ Hermes Planner 拒絕計畫：checklist 覆蓋不足"
+			detail = fmt.Sprintf(
+				"以下 acceptance item(s) 沒有任何 sub-task 在 checklist_item_ids 裡 claim：\n• %s\n\n"+
+					"重試 LLM 通常無效（會繼續漏 cover）。請打開 Issue 把不需要的 item 勾掉或刪掉，再重發 /hermes。",
+				strings.Join(checklist.Missing, ", "),
+			)
+		case errors.As(err, &empty):
+			header = "❌ Hermes Planner：判定無事可做"
+			detail = "Planner 連續多次回空計畫 — 目標可能已完成或無法拆解。請檢查目前程式碼／Issue 狀態，必要時手動關閉 Issue 或調整目標描述。"
+		case errors.As(err, &jfail):
+			header = "❌ Hermes Planner JSON 解析失敗"
+			detail = "Planner 多次重試後仍無法產出合法 JSON，已降級終止。可重發 /hermes 重試（這類錯誤通常是暫時性的）。"
+		default:
+			return // not actionable; OnError already fired
+		}
+
+		body := header
+		if detail != "" {
+			body += "\n\n" + detail
+		}
+		if taskID != "" {
+			body += "\n\n📌 任務：" + shortHermesTaskID(taskID)
+		}
+
+		btns := [][]map[string]interface{}{}
+		row := []map[string]interface{}{}
+		if issueNumber > 0 {
+			if repoURL, repoErr := resolveGitHubRepoURL(""); repoErr == nil && repoURL != "" {
+				row = append(row, map[string]interface{}{
+					"text": fmt.Sprintf("📝 開啟 Issue #%d", issueNumber),
+					"url":  fmt.Sprintf("%s/issues/%d", strings.TrimRight(repoURL, "/"), issueNumber),
+				})
+			}
+		}
+		row = append(row, map[string]interface{}{
+			"text":          "🛑 取消任務",
+			"callback_data": "hermes:cancel",
+		})
+		btns = append(btns, row)
+		t.sendMenuMessage(key, body, btns)
+	}
 }
 
 func hermesGraphInterruptDetails(interrupt hermes.HermesInterrupt) (idx, total int, subDesc, errText string) {

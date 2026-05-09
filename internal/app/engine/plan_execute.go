@@ -106,6 +106,13 @@ type PlanExecuteConfig struct {
 	// driven later by ApplyInterruptResolution + ResumeViaGraph.
 	OnGraphInterrupt func(ctx context.Context, state hermes.TaskState, interrupt hermes.HermesInterrupt)
 
+	// OnPlanningError is invoked when the graph path's planner returns a
+	// typed planner error (ErrPlannerJSONFailed / ErrPlannerEmptyPlan /
+	// ErrPlannerChecklistViolation). Receivers should show an actionable
+	// menu — generic OnError still fires for fallback logging.
+	// When nil, only OnError is called.
+	OnPlanningError func(ctx context.Context, taskID string, err error)
+
 	OnDone func(ctx context.Context, state hermes.TaskState)
 }
 

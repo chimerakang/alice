@@ -396,8 +396,20 @@ func validateChecklistDeclaration(goal string, tasks []SubTask) error {
 		return nil
 	}
 	sort.Strings(missing)
-	return fmt.Errorf("checklist declaration violation: %d acceptance item(s) without coverage — %s. Each unchecked [item-N] in the issue body must be claimed by at least one sub-task's checklist_item_ids field; setup/prerequisite sub-tasks may declare an empty array but real acceptance items must be covered",
-		len(missing), strings.Join(missing, ", "))
+	return &ErrPlannerChecklistViolation{Missing: missing}
+}
+
+// ErrPlannerChecklistViolation is returned when the planner emits a
+// plan that does not cover every unchecked [item-N] in the issue body.
+// Carries the missing item IDs so callers (graph_bridge / telegram UX)
+// can show a structured action menu rather than a raw error string.
+type ErrPlannerChecklistViolation struct {
+	Missing []string
+}
+
+func (e *ErrPlannerChecklistViolation) Error() string {
+	return fmt.Sprintf("checklist declaration violation: %d acceptance item(s) without coverage — %s. Each unchecked [item-N] in the issue body must be claimed by at least one sub-task's checklist_item_ids field; setup/prerequisite sub-tasks may declare an empty array but real acceptance items must be covered",
+		len(e.Missing), strings.Join(e.Missing, ", "))
 }
 
 func validateImplementationPlan(goal string, tasks []SubTask) error {

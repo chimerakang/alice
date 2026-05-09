@@ -266,6 +266,13 @@ func (e *PlanExecuteEngine) startGraphRun(ctx context.Context, taskID string, cc
 			if !errors.Is(runErr, graph.ErrInterrupted) && !errors.Is(runErr, context.Canceled) {
 				e.commitFailureBoundary(taskID, hermes.RuntimeStepExecutor, 0, "graph_run_failed")
 			}
+			// Typed planner errors get a structured callback so the
+			// receiver can show an action menu instead of dumping the
+			// raw error text. OnError still fires for fallback logging
+			// / dashboards that key off generic error events.
+			if e.cfg.OnPlanningError != nil && isTypedPlannerError(runErr) {
+				e.cfg.OnPlanningError(runCtx, taskID, runErr)
+			}
 			if e.reporter != nil {
 				e.reporter.OnError(runErr)
 			}
@@ -344,6 +351,21 @@ func (e *PlanExecuteEngine) clearGraphRunState(taskID string) {
 
 func logGraphRunError(taskID string, err error) {
 	log.Printf("[plan_execute.graph] task %s failed: %v", taskID, err)
+}
+
+// isTypedPlannerError reports whether err (possibly wrapped through the
+// graph node failure chain) is one of the user-actionable planner
+// errors: JSON parse failure, empty plan after retries, or checklist
+// coverage violation. The caller uses this to decide whether to fire
+// OnPlanningError for an action menu rather than the generic OnError.
+func isTypedPlannerError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var jfail *hermes.ErrPlannerJSONFailed
+	var empty *hermes.ErrPlannerEmptyPlan
+	var checklist *hermes.ErrPlannerChecklistViolation
+	return errors.As(err, &jfail) || errors.As(err, &empty) || errors.As(err, &checklist)
 }
 
 // walkerSnapshotStore mirrors graph's internal walkerStore: the union
