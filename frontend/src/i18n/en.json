@@ -679,7 +679,9 @@
     "stats_table_avg_out": "Avg Out",
     "stats_table_sum_in": "Sum In",
     "stats_xaxis_hops": "hops per task",
-    "stats_tooltip_tasks": "tasks"
+    "stats_tooltip_tasks": "tasks",
+    "pagination_status": "Showing {shown} / {total}",
+    "pagination_load_more": "Load more"
   },
   "memory": {
     "title": "Memory",

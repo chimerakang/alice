@@ -297,13 +297,35 @@ export default function HermesTasks() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [allCount, setAllCount] = useState(0);
 
+  const PAGE_SIZE = 100;
+
+  // load fetches the first page of the current filter, replacing the
+  // task list. Used on initial mount, filter change, and manual refresh.
   const load = () => {
     setLoading(true);
     setError(null);
     api
-      .getHermesTasks({ status: status || undefined, limit: 100 })
+      .getHermesTasks({ status: status || undefined, limit: PAGE_SIZE, offset: 0 })
       .then((res) => {
         setTasks(res.tasks || []);
+        setTotal(res.total || 0);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  };
+
+  // loadMore appends the next page using the current task count as the
+  // offset. The backend's stable order (updated_at DESC, then task_id)
+  // means this gives a deterministic page boundary as long as no new
+  // tasks land mid-pagination — good enough for an admin-facing
+  // history view.
+  const loadMore = () => {
+    setLoading(true);
+    setError(null);
+    api
+      .getHermesTasks({ status: status || undefined, limit: PAGE_SIZE, offset: tasks.length })
+      .then((res) => {
+        setTasks((prev) => [...prev, ...(res.tasks || [])]);
         setTotal(res.total || 0);
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
@@ -468,8 +490,21 @@ export default function HermesTasks() {
       </div>
 
       {total > tasks.length && (
-        <div className="text-xs text-gray-500 text-center">
-          顯示 {tasks.length} / {total}（捲頁尚未實作）
+        <div className="flex flex-col items-center gap-2 py-2">
+          <div className="text-xs text-gray-500">
+            {t("hermes_tasks.pagination_status", {
+              shown: tasks.length,
+              total,
+            })}
+          </div>
+          <button
+            onClick={loadMore}
+            disabled={loading}
+            className="btn btn-secondary text-sm inline-flex items-center gap-2"
+          >
+            {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
+            {t("hermes_tasks.pagination_load_more")}
+          </button>
         </div>
       )}
     </div>

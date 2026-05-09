@@ -679,7 +679,9 @@
     "stats_table_avg_out": "Avg Out",
     "stats_table_sum_in": "Sum In",
     "stats_xaxis_hops": "每任務 hops",
-    "stats_tooltip_tasks": "任務數"
+    "stats_tooltip_tasks": "任務數",
+    "pagination_status": "已顯示 {shown} / 共 {total}",
+    "pagination_load_more": "載入更多"
   },
   "memory": {
     "title": "記憶體",
