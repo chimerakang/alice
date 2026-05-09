@@ -295,6 +295,23 @@ export interface HermesActiveTask {
   interrupt?: HermesInterrupt;
 }
 
+// HermesSnapshotHop is one row in a task's Walker hop history. Returned
+// by /api/hermes/snapshots; rendered as a vertical timeline in the
+// dashboard's Hermes history drill-in.
+export interface HermesSnapshotHop {
+  step: number;
+  snapshot_id: string;
+  parent_snapshot_id?: string;
+  source_node?: string;
+  next_step?: string;
+  reason?: string;
+  status?: string;
+  current_idx: number;
+  has_interrupt?: boolean;
+  interrupt_reason?: string;
+  created_at: string;
+}
+
 export interface RuntimeEventRecord {
   timestamp: string;
   type: string;

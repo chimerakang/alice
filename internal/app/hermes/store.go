@@ -604,6 +604,118 @@ type StaleInterruptRef struct {
 	Interrupt HermesInterrupt
 }
 
+// HermesTaskFilter narrows ListHermesTasks. Empty Status returns all
+// statuses. Limit defaults to 100 when ≤0.
+type HermesTaskFilter struct {
+	Status string
+	Limit  int
+	Offset int
+}
+
+// ListHermesTasks returns Hermes tasks with their latest snapshot
+// metadata, optionally filtered by status. Used by the dashboard's
+// Hermes history view (#171 Class C UI follow-up). Newest-updated
+// first; pagination via Limit/Offset.
+func (s *SQLiteTaskStore) ListHermesTasks(filter HermesTaskFilter) ([]ActiveTaskRef, int, error) {
+	limit := filter.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	args := []any{}
+	where := ""
+	if status := strings.TrimSpace(filter.Status); status != "" {
+		where = "WHERE t.status = ?"
+		args = append(args, status)
+	}
+	totalArgs := append([]any(nil), args...)
+	var total int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM hermes_task_states AS t "+where, totalArgs...).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("ListHermesTasks count: %w", err)
+	}
+	args = append(args, limit, filter.Offset)
+	q := `
+		SELECT t.id, t.chat_id, t.goal, t.github_issue_number, t.status,
+		       t.current_idx, t.token_budget, t.updated_at, t.plan_json,
+		       snap.state_json, snap.next_step
+		FROM hermes_task_states AS t
+		LEFT JOIN (
+			SELECT task_id, MAX(step) AS max_step
+			FROM hermes_snapshots
+			GROUP BY task_id
+		) latest ON latest.task_id = t.id
+		LEFT JOIN hermes_snapshots AS snap
+		       ON snap.task_id = latest.task_id AND snap.step = latest.max_step
+		` + where + `
+		ORDER BY t.updated_at DESC
+		LIMIT ? OFFSET ?`
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, 0, fmt.Errorf("ListHermesTasks query: %w", err)
+	}
+	defer rows.Close()
+	out := make([]ActiveTaskRef, 0, limit)
+	for rows.Next() {
+		ref, err := scanActiveTaskRow(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("ListHermesTasks rows: %w", err)
+	}
+	return out, total, nil
+}
+
+// scanActiveTaskRow shares the row-decode logic between ListActiveTasks
+// and ListHermesTasks. Both queries return the same column order.
+func scanActiveTaskRow(rows *sql.Rows) (ActiveTaskRef, error) {
+	var (
+		taskID, goal, statusRaw, planJSON, budgetJSON string
+		chatID                                        int64
+		issueNumber, currentIdx                       int
+		updatedRaw                                    string
+		stateJSON, nextStepRaw                        sql.NullString
+	)
+	if err := rows.Scan(&taskID, &chatID, &goal, &issueNumber, &statusRaw,
+		&currentIdx, &budgetJSON, &updatedRaw, &planJSON,
+		&stateJSON, &nextStepRaw); err != nil {
+		return ActiveTaskRef{}, fmt.Errorf("scan task row: %w", err)
+	}
+	ref := ActiveTaskRef{
+		TaskID:            taskID,
+		ChatID:            chatID,
+		Goal:              goal,
+		GithubIssueNumber: issueNumber,
+		Status:            TaskStatus(statusRaw),
+		CurrentIdx:        currentIdx,
+	}
+	if updatedAt, err := time.Parse(time.RFC3339, updatedRaw); err == nil {
+		ref.UpdatedAt = updatedAt
+	}
+	var budget TokenBudget
+	_ = json.Unmarshal([]byte(budgetJSON), &budget)
+	ref.UsedTokens = budget.UsedTokens
+	ref.MaxTotalTokens = budget.MaxTotalTokens
+	var plan []SubTask
+	_ = json.Unmarshal([]byte(planJSON), &plan)
+	ref.PlanLength = len(plan)
+	if stateJSON.Valid && stateJSON.String != "" {
+		var state HermesState
+		if err := json.Unmarshal([]byte(stateJSON.String), &state); err == nil {
+			ref.ThreadID = state.ThreadID
+			ref.ProjectDir = state.ProjectDir
+			if state.Interrupt != nil {
+				ref.Interrupt = state.Interrupt
+			}
+		}
+	}
+	if nextStepRaw.Valid {
+		ref.NextStep = RuntimeStep(nextStepRaw.String)
+	}
+	return ref, nil
+}
+
 // ActiveTaskRef is a compact view of one non-terminal Hermes task:
 // task metadata + the latest snapshot's NextStep / state.Interrupt.
 // Used by the dashboard's Hermes tasks panel (#171 Class C UI).
@@ -651,48 +763,9 @@ func (s *SQLiteTaskStore) ListActiveTasks() ([]ActiveTaskRef, error) {
 
 	var out []ActiveTaskRef
 	for rows.Next() {
-		var (
-			taskID, goal, statusRaw, planJSON, budgetJSON string
-			chatID                                        int64
-			issueNumber, currentIdx                       int
-			updatedRaw                                    string
-			stateJSON, nextStepRaw                        sql.NullString
-		)
-		if err := rows.Scan(&taskID, &chatID, &goal, &issueNumber, &statusRaw,
-			&currentIdx, &budgetJSON, &updatedRaw, &planJSON,
-			&stateJSON, &nextStepRaw); err != nil {
-			return nil, fmt.Errorf("ListActiveTasks scan: %w", err)
-		}
-		ref := ActiveTaskRef{
-			TaskID:            taskID,
-			ChatID:            chatID,
-			Goal:              goal,
-			GithubIssueNumber: issueNumber,
-			Status:            TaskStatus(statusRaw),
-			CurrentIdx:        currentIdx,
-		}
-		if updatedAt, err := time.Parse(time.RFC3339, updatedRaw); err == nil {
-			ref.UpdatedAt = updatedAt
-		}
-		var budget TokenBudget
-		_ = json.Unmarshal([]byte(budgetJSON), &budget)
-		ref.UsedTokens = budget.UsedTokens
-		ref.MaxTotalTokens = budget.MaxTotalTokens
-		var plan []SubTask
-		_ = json.Unmarshal([]byte(planJSON), &plan)
-		ref.PlanLength = len(plan)
-		if stateJSON.Valid && stateJSON.String != "" {
-			var state HermesState
-			if err := json.Unmarshal([]byte(stateJSON.String), &state); err == nil {
-				ref.ThreadID = state.ThreadID
-				ref.ProjectDir = state.ProjectDir
-				if state.Interrupt != nil {
-					ref.Interrupt = state.Interrupt
-				}
-			}
-		}
-		if nextStepRaw.Valid {
-			ref.NextStep = RuntimeStep(nextStepRaw.String)
+		ref, err := scanActiveTaskRow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("ListActiveTasks: %w", err)
 		}
 		out = append(out, ref)
 	}

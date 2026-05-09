@@ -10,6 +10,7 @@
     "checkpoints": "檢查點",
     "performance": "效能",
     "runtime": "Runtime 事件",
+    "hermes_tasks": "Hermes 任務",
     "memory": "記憶體",
     "security": "安全"
   },

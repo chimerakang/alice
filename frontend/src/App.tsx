@@ -12,6 +12,7 @@ import Performance from "@/pages/Performance";
 import Security from "@/pages/Security";
 import Memory from "@/pages/Memory";
 import Runtime from "@/pages/Runtime";
+import HermesTasks from "@/pages/HermesTasks";
 import {
   LayoutDashboard,
   Clock,
@@ -22,6 +23,7 @@ import {
   Shield,
   BrainCircuit,
   Activity,
+  Pickaxe,
   Wifi,
   WifiOff,
 } from "lucide-react";
@@ -47,6 +49,7 @@ const navSections = [
       { to: "/checkpoints", icon: Camera, labelKey: "nav.checkpoints" },
       { to: "/performance", icon: BarChart3, labelKey: "nav.performance" },
       { to: "/runtime", icon: Activity, labelKey: "nav.runtime" },
+      { to: "/hermes-tasks", icon: Pickaxe, labelKey: "nav.hermes_tasks" },
       { to: "/memory", icon: BrainCircuit, labelKey: "nav.memory" },
       { to: "/security", icon: Shield, labelKey: "nav.security" },
     ],
@@ -136,6 +139,7 @@ function AppLayout() {
             <Route path="/checkpoints" element={<Checkpoints />} />
             <Route path="/performance" element={<Performance />} />
             <Route path="/runtime" element={<Runtime />} />
+            <Route path="/hermes-tasks" element={<HermesTasks />} />
             <Route path="/memory" element={<Memory />} />
             <Route path="/security" element={<Security />} />
           </Routes>

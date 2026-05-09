@@ -22,6 +22,7 @@ import type {
   MemoryPreviewResponse,
   RuntimeEventRecord,
   HermesActiveTask,
+  HermesSnapshotHop,
 } from "@/types/alice";
 
 const BASE = "";
@@ -227,6 +228,20 @@ export const api = {
     postJson<{ ok: boolean; task_id: string; decision: string; relaunched: boolean }>(
       "/api/hermes/resolve",
       { task_id: taskId, decision }
+    ),
+  getHermesTasks: (params: { status?: string; limit?: number; offset?: number } = {}) => {
+    const qs = buildQuery({
+      status: params.status,
+      limit: params.limit,
+      offset: params.offset,
+    });
+    return fetchJson<{ tasks?: HermesActiveTask[]; total?: number; limit?: number; offset?: number }>(
+      `/api/hermes/tasks${qs}`
+    );
+  },
+  getHermesSnapshots: (taskId: string) =>
+    fetchJson<{ task_id: string; snapshots?: HermesSnapshotHop[]; total?: number }>(
+      `/api/hermes/snapshots?task_id=${encodeURIComponent(taskId)}`
     ),
 
   // ========== Quality Analytics ==========

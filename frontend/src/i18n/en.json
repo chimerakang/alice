@@ -10,6 +10,7 @@
     "checkpoints": "Checkpoints",
     "performance": "Performance",
     "runtime": "Runtime",
+    "hermes_tasks": "Hermes Tasks",
     "memory": "Memory",
     "security": "Security"
   },

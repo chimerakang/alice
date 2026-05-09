@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"claude-tg-agent/internal/app/hermes"
@@ -15,6 +16,8 @@ import (
 // missing-DB deployment surfaces 503 rather than blank lists).
 type activeTaskStore interface {
 	ListActiveTasks() ([]hermes.ActiveTaskRef, error)
+	ListHermesTasks(filter hermes.HermesTaskFilter) ([]hermes.ActiveTaskRef, int, error)
+	ListSnapshotHistory(taskID string) ([]hermes.Snapshot, error)
 	ApplyInterruptResolution(taskID string, decision hermes.InterruptResolution) error
 	GetTask(id string) (hermes.TaskState, error)
 }
@@ -168,5 +171,128 @@ func (wi *WebInterface) handleHermesResolve(w http.ResponseWriter, r *http.Reque
 			"decision":   string(resolution),
 			"relaunched": relaunched,
 		})
+	})(w, r)
+}
+
+// handleHermesTasks returns Hermes tasks (active + terminal), optionally
+// filtered by status. Used by the dashboard's Hermes history page
+// (#171 Class C UI follow-up). Read-only — no auth.
+//
+// Query params:
+//
+//	status=planning|executing|done|failed|interrupted (optional)
+//	limit=<int>  (default 100, capped at 500)
+//	offset=<int> (default 0)
+func (wi *WebInterface) handleHermesTasks(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		store, ok := buildHermesTaskStore().(activeTaskStore)
+		if !ok {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "hermes task store unavailable"})
+			return
+		}
+		q := r.URL.Query()
+		filter := hermes.HermesTaskFilter{
+			Status: strings.TrimSpace(q.Get("status")),
+		}
+		if v := q.Get("limit"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				filter.Limit = n
+			}
+		}
+		if v := q.Get("offset"); v != "" {
+			if n, err := strconv.Atoi(v); err == nil {
+				filter.Offset = n
+			}
+		}
+		tasks, total, err := store.ListHermesTasks(filter)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tasks":  tasks,
+			"total":  total,
+			"limit":  filter.Limit,
+			"offset": filter.Offset,
+		})
+	})(w, r)
+}
+
+// handleHermesSnapshots returns the snapshot history (Walker hops) for
+// a single task: source_node, next_step, metadata.reason, created_at,
+// step number. Used by the history page's drill-in to visualise the
+// path a task took through the graph.
+func (wi *WebInterface) handleHermesSnapshots(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		taskID := strings.TrimSpace(r.URL.Query().Get("task_id"))
+		if taskID == "" {
+			http.Error(w, "task_id is required", http.StatusBadRequest)
+			return
+		}
+		store, ok := buildHermesTaskStore().(activeTaskStore)
+		if !ok {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "hermes task store unavailable"})
+			return
+		}
+		hist, err := store.ListSnapshotHistory(taskID)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+			return
+		}
+		// Project to a slim shape — full state JSON is too large to
+		// stream for every hop and the dashboard only needs the path.
+		type hopView struct {
+			Step             int                      `json:"step"`
+			SnapshotID       string                   `json:"snapshot_id"`
+			ParentSnapshotID string                   `json:"parent_snapshot_id,omitempty"`
+			SourceNode       string                   `json:"source_node,omitempty"`
+			NextStep         string                   `json:"next_step,omitempty"`
+			Reason           string                   `json:"reason,omitempty"`
+			Status           string                   `json:"status,omitempty"`
+			CurrentIdx       int                      `json:"current_idx"`
+			HasInterrupt     bool                     `json:"has_interrupt,omitempty"`
+			InterruptReason  string                   `json:"interrupt_reason,omitempty"`
+			CreatedAt        string                   `json:"created_at"`
+		}
+		out := make([]hopView, 0, len(hist))
+		for _, s := range hist {
+			hop := hopView{
+				Step:             s.Step,
+				SnapshotID:       s.ID,
+				ParentSnapshotID: s.ParentSnapshotID,
+				SourceNode:       string(s.SourceNode),
+				NextStep:         string(s.NextStep),
+				Reason:           s.Metadata.Reason,
+				Status:           string(s.State.Status),
+				CurrentIdx:       s.State.CurrentIdx,
+				CreatedAt:        s.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			}
+			if s.State.Interrupt != nil {
+				hop.HasInterrupt = true
+				hop.InterruptReason = s.State.Interrupt.Reason
+			}
+			out = append(out, hop)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"task_id":   taskID,
+			"snapshots": out,
+			"total":     len(out),
+		})
+
+		log.Printf("[hermes.web] snapshot history task=%s hops=%d", taskID, len(out))
 	})(w, r)
 }
