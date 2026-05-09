@@ -147,6 +147,34 @@ func (c *replanCoordinator) consumeForReplan(taskID string) (ReviewResult, []her
 	return st.lastReview, append([]hermes.SubTask(nil), st.lastPlan...), st.attemptIdx
 }
 
+// RunViaGraphResult is the Result-returning wrapper used by call
+// sites migrating off the legacy Run() (#171). It dispatches the
+// Walker, then projects the final snapshot into the same Result shape
+// Run() returned (Text, Duration, basic telemetry). Callers that
+// previously consumed result.Text only — e.g. the direct-chat
+// plan/execute path in agent.go — can swap Run() for this without
+// further changes.
+//
+// On terminal failure (state.Status == failed / interrupted) the
+// returned error mirrors Run()'s "plan_execute ended with status X"
+// shape so recovery code keeps working unchanged.
+func (e *PlanExecuteEngine) RunViaGraphResult(ctx context.Context, goal string, cc *ChatContext, prog ProgressSink) (Result, error) {
+	start := time.Now()
+	final, err := e.RunViaGraph(ctx, goal, cc)
+	if err != nil {
+		return Result{Duration: time.Since(start)}, err
+	}
+	text := strings.TrimSpace(final.State.Accumulated)
+	result := Result{Text: text, Duration: time.Since(start)}
+	if final.State.Status == hermes.TaskStatusFailed || final.State.Status == hermes.TaskStatusInterrupted {
+		return result, fmt.Errorf("plan_execute ended with status %s", final.State.Status)
+	}
+	if prog != nil {
+		prog.OnComplete(text)
+	}
+	return result, nil
+}
+
 // RunViaGraph is the alternate Walker-driven entry point. Today its
 // production wiring footprint is intentionally smaller than Run():
 // RunViaGraph creates / loads the task, seeds an initial snapshot

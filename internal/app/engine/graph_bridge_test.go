@@ -283,6 +283,32 @@ func TestRunViaGraph_WalkingAgentReusesSessionForSecondSubTask(t *testing.T) {
 	}
 }
 
+func TestRunViaGraphResult_ReturnsAccumulatedTextOnSuccess(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	runner := &planExecuteRunner{}
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s1","description":"do","tool_hints":["Read"]}]` +
+				"\n```",
+		}, nil
+	}
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		ProjectDir: "/repo", ChatID: 42, DisableReview: true,
+	}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
+
+	res, err := engine.RunViaGraphResult(context.Background(), "g", NewChatContext(42, 0, "/repo"), nil)
+	if err != nil {
+		t.Fatalf("RunViaGraphResult: %v", err)
+	}
+	if res.Text == "" {
+		t.Errorf("expected non-empty Text from accumulated, got empty")
+	}
+	if res.Duration <= 0 {
+		t.Errorf("Duration should be positive: %v", res.Duration)
+	}
+}
+
 func TestRunViaGraph_RegistryHasAllNodes(t *testing.T) {
 	store := hermes.NewMemoryTaskStore()
 	runner := &planExecuteRunner{}

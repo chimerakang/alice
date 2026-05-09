@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -16,6 +17,17 @@ import (
 	"claude-tg-agent/internal/app/hermes"
 	"claude-tg-agent/internal/app/security"
 )
+
+// directPlanViaGraph reports whether the direct-chat plan/execute path
+// (Class A in #171) should dispatch via the Walker-driven RunViaGraph
+// instead of the legacy Run(). Gated on ALICE_DIRECT_PLAN_VIA_GRAPH so
+// we can flip it per-deploy without a rebuild and revert if a
+// regression slips through bake-in. Default off until the rollout is
+// observed clean.
+func directPlanViaGraph() bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("ALICE_DIRECT_PLAN_VIA_GRAPH")))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
 
 // TokenStats tracks cumulative token usage for an agent session.
 type TokenStats struct {
@@ -1272,7 +1284,16 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 		OnRuntimeEvent:        recordRuntimeEvent,
 	}, planFn, direct, store, &hermes.NoopProgressReporter{})
 
-	result, err := engine.Run(ctx, userMessage, a.chatContext, nil)
+	var (
+		result appengine.Result
+		err    error
+	)
+	if directPlanViaGraph() {
+		log.Printf("[agent] plan/execute via RunViaGraphResult (ALICE_DIRECT_PLAN_VIA_GRAPH=on)")
+		result, err = engine.RunViaGraphResult(ctx, userMessage, a.chatContext, nil)
+	} else {
+		result, err = engine.Run(ctx, userMessage, a.chatContext, nil)
+	}
 	if err != nil {
 		log.Printf("[agent] plan/execute via PlanExecuteEngine failed: %v", err)
 		recoveryReq := appengine.RecoveryRequest{
