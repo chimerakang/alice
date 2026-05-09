@@ -224,6 +224,20 @@ func (w *Walker) Run(ctx context.Context, taskID string) (hermes.Snapshot, error
 		if snap.State.Interrupt != nil && snap.NextStep != hermes.RuntimeStepApproval {
 			return snap, fmt.Errorf("%w: source=%s reason=%q", ErrInterrupted, snap.State.Interrupt.SourceStep, snap.State.Interrupt.Reason)
 		}
+		// Budget gate: if the previous commit pushed UsedTokens past
+		// MaxTotalTokens, install a durable budget interrupt and return
+		// before dispatching. The legacy run() blocked on a ContinueCh
+		// here; the graph path persists the pause so a Resume call (with
+		// BudgetStartedAt reset) can pick up where we left off. See
+		// #169 follow-up + #171 Class B.
+		if snap.State.TokenBudget.Exceeded() {
+			if committed, commitErr := w.commitBudgetInterrupt(taskID, snap); commitErr == nil {
+				lastSnapshot = committed
+			} else {
+				log.Printf("[graph] budget interrupt commit failed task=%s: %v", taskID, commitErr)
+			}
+			return lastSnapshot, fmt.Errorf("%w: reason=%q", ErrInterrupted, "budget_exceeded")
+		}
 
 		node, ok := w.registry.Lookup(snap.NextStep)
 		if !ok {
@@ -329,6 +343,38 @@ func (w *Walker) commitCtxInterrupt(taskID string, last hermes.Snapshot, ctxErr 
 		Metadata: hermes.SnapshotMetadata{
 			Source: "graph_walker",
 			Reason: "ctx_cancelled",
+		},
+		CreatedAt: now,
+	})
+}
+
+// commitBudgetInterrupt installs a durable budget-exceeded interrupt
+// on the snapshot when state.TokenBudget.Exceeded() trips. ResumeStep
+// preserves the pre-pause NextStep so a Resume call (after the operator
+// resets BudgetStartedAt or grants more budget) re-dispatches the
+// step that was about to run. emitProgress on the engine side keys off
+// Reason="budget_exceeded" to fire OnBudgetWarning.
+func (w *Walker) commitBudgetInterrupt(taskID string, snap hermes.Snapshot) (hermes.Snapshot, error) {
+	now := time.Now()
+	interrupt := &hermes.HermesInterrupt{
+		ID:         fmt.Sprintf("%s:budget:%d", taskID, now.UnixNano()),
+		SourceStep: snap.NextStep,
+		ResumeStep: snap.NextStep,
+		Reason:     "budget_exceeded",
+		CreatedAt:  now,
+		Payload: map[string]any{
+			"used_tokens":      snap.State.TokenBudget.UsedTokens,
+			"max_total_tokens": snap.State.TokenBudget.MaxTotalTokens,
+		},
+	}
+	return w.store.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    []hermes.StateUpdate{{Interrupt: interrupt}},
+		NextStep:   snap.NextStep,
+		SourceNode: snap.NextStep,
+		Metadata: hermes.SnapshotMetadata{
+			Source: "graph_walker",
+			Reason: "budget_exceeded",
 		},
 		CreatedAt: now,
 	})

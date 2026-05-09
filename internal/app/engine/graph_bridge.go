@@ -377,13 +377,22 @@ func (s *graphProgressStore) emitProgress(prev, committed hermes.Snapshot) {
 	if s == nil || s.engine == nil {
 		return
 	}
-	plan := committed.State.Plan
-	if len(plan) == 0 {
-		return
-	}
 	ctx := s.ctx
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	// Budget warning fires once on the transition to exceeded — the
+	// commit that installed the budget interrupt is keyed by Walker
+	// metadata, so we only need to react to it here. legacy run()
+	// emitted via reporter.OnBudgetWarning + onBudgetExceeded; the
+	// graph path mirrors both.
+	if committed.Metadata.Reason == "budget_exceeded" && (prev.State.Interrupt == nil || prev.Metadata.Reason != "budget_exceeded") {
+		s.engine.reporter.OnBudgetWarning(committed.State.TokenBudget)
+		s.engine.onBudgetExceeded(ctx, hermesStateToTaskStateForGraph(committed.State))
+	}
+	plan := committed.State.Plan
+	if len(plan) == 0 {
+		return
 	}
 	if committed.Metadata.Reason == "plan_ready" || committed.Metadata.Reason == "replan_ready" {
 		s.engine.reporter.OnPlanReady(plan)
@@ -737,13 +746,16 @@ func (a *taskReviewerAdapter) ReviewTask(ctx context.Context, state hermes.Herme
 	if a.replan != nil {
 		attempt = a.replan.currentAttempt(state.TaskID)
 	}
-	decision := DecideRecovery(RecoveryRequest{
+	recoveryReq := RecoveryRequest{
 		Mode:        "task_review",
 		Attempt:     attempt,
 		MaxAttempts: maxAttempts,
 		Review:      review,
 		TaskRetry:   retryCfg,
-	})
+	}
+	decision := DecideRecovery(recoveryReq)
+	LogRecoveryDecision(recoveryReq, decision)
+	a.engine.emitRuntimeEvent(ctx, RecoveryTraceEvent(recoveryReq, decision, time.Now()))
 	wantReplan := decision.Action == RecoveryActionRetry && retryCfg.Enabled && attempt < maxAttempts
 	if wantReplan && a.replan != nil {
 		a.replan.recordReview(state.TaskID, review, append([]hermes.SubTask(nil), state.Plan...), maxAttempts)

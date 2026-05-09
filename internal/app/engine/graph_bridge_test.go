@@ -262,7 +262,7 @@ func TestRunViaGraph_WalkingAgentReusesSessionForSecondSubTask(t *testing.T) {
 		PlannerModel:        "planner-model",
 		ProjectDir:          "/repo",
 		ChatID:              42,
-		Budget:              hermes.TokenBudget{MaxTotalTokens: 1000},
+		Budget:              hermes.TokenBudget{}, // unlimited; walking test isn't about budget
 		DisableReview:       true,
 		WalkingAgentEnabled: true,
 		ExecutorModel:       "claude-sonnet-4-6",
@@ -306,6 +306,48 @@ func TestRunViaGraph_WalkingAgentReusesSessionForSecondSubTask(t *testing.T) {
 	}
 	if final.State.Walking.PrevExecutorModel != "claude-sonnet-4-6" {
 		t.Errorf("PrevExecutorModel = %q, want claude-sonnet-4-6", final.State.Walking.PrevExecutorModel)
+	}
+}
+
+func TestRunViaGraph_BudgetExceededFiresWarningAndPauses(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	runner := &planExecuteRunner{}
+	reporter := &planExecuteReporter{}
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		// Planner reports a huge token cost so its commit immediately
+		// pushes UsedTokens past the configured cap.
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s1","description":"step","tool_hints":["Read"]}]` +
+				"\n```",
+			InputTokens:  9999,
+			OutputTokens: 9999,
+		}, nil
+	}
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		PlannerModel:  "planner-model",
+		ProjectDir:    "/repo",
+		ChatID:        42,
+		Budget:        hermes.TokenBudget{MaxTotalTokens: 10}, // intentionally tiny
+		DisableReview: true,
+	}, planFn, NewDirectEngine(runner), store, reporter)
+
+	cc := NewChatContext(42, 0, "/repo")
+	final, err := engine.RunViaGraph(context.Background(), "blow the budget", cc)
+	if err == nil {
+		t.Fatalf("expected ErrInterrupted from budget gate, got nil")
+	}
+	if final.State.Interrupt == nil {
+		t.Fatalf("expected budget interrupt on final snapshot")
+	}
+	if final.State.Interrupt.Reason != "budget_exceeded" {
+		t.Errorf("Reason = %q, want budget_exceeded", final.State.Interrupt.Reason)
+	}
+	// reporter records "budget warning" via OnBudgetWarning hook —
+	// planExecuteReporter implements it as a no-op, but we can at
+	// least confirm the snapshot recorded the budget metadata.
+	if final.Metadata.Reason != "budget_exceeded" {
+		t.Errorf("Metadata.Reason = %q, want budget_exceeded", final.Metadata.Reason)
 	}
 }
 
