@@ -4,6 +4,7 @@ import i18n from "@/i18n";
 import { api } from "@/lib/api";
 import type { RuntimeEventRecord } from "@/types/alice";
 import StatusBadge from "@/components/StatusBadge";
+import HermesTasksPanel from "@/components/HermesTasksPanel";
 import {
   Activity,
   AlertTriangle,
@@ -267,6 +268,8 @@ export default function Runtime() {
           {t("common.refresh")}
         </button>
       </div>
+
+      <HermesTasksPanel />
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {ACTION_COUNT_OPTIONS.map((action) => (

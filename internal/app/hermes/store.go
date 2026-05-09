@@ -604,6 +604,104 @@ type StaleInterruptRef struct {
 	Interrupt HermesInterrupt
 }
 
+// ActiveTaskRef is a compact view of one non-terminal Hermes task:
+// task metadata + the latest snapshot's NextStep / state.Interrupt.
+// Used by the dashboard's Hermes tasks panel (#171 Class C UI).
+type ActiveTaskRef struct {
+	TaskID            string           `json:"task_id"`
+	ChatID            int64            `json:"chat_id"`
+	ThreadID          int              `json:"thread_id"`
+	Goal              string           `json:"goal"`
+	ProjectDir        string           `json:"project_dir"`
+	GithubIssueNumber int              `json:"github_issue_number,omitempty"`
+	Status            TaskStatus       `json:"status"`
+	NextStep          RuntimeStep      `json:"next_step,omitempty"`
+	CurrentIdx        int              `json:"current_idx"`
+	PlanLength        int              `json:"plan_length"`
+	UsedTokens        int              `json:"used_tokens"`
+	MaxTotalTokens    int              `json:"max_total_tokens,omitempty"`
+	UpdatedAt         time.Time        `json:"updated_at"`
+	Interrupt         *HermesInterrupt `json:"interrupt,omitempty"`
+}
+
+// ListActiveTasks returns every non-terminal Hermes task with the
+// snapshot fields the dashboard's resume tool needs (NextStep,
+// Interrupt, current sub-task pointer). Tasks without a snapshot yet
+// are still returned (NextStep empty, Interrupt nil) so the operator
+// can see them queued. Newest-updated first.
+func (s *SQLiteTaskStore) ListActiveTasks() ([]ActiveTaskRef, error) {
+	rows, err := s.db.Query(`
+		SELECT t.id, t.chat_id, t.goal, t.github_issue_number, t.status,
+		       t.current_idx, t.token_budget, t.updated_at, t.plan_json,
+		       snap.state_json, snap.next_step
+		FROM hermes_task_states AS t
+		LEFT JOIN (
+			SELECT task_id, MAX(step) AS max_step
+			FROM hermes_snapshots
+			GROUP BY task_id
+		) latest ON latest.task_id = t.id
+		LEFT JOIN hermes_snapshots AS snap
+		       ON snap.task_id = latest.task_id AND snap.step = latest.max_step
+		WHERE t.status NOT IN ('done','failed','interrupted')
+		ORDER BY t.updated_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("ListActiveTasks query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ActiveTaskRef
+	for rows.Next() {
+		var (
+			taskID, goal, statusRaw, planJSON, budgetJSON string
+			chatID                                        int64
+			issueNumber, currentIdx                       int
+			updatedRaw                                    string
+			stateJSON, nextStepRaw                        sql.NullString
+		)
+		if err := rows.Scan(&taskID, &chatID, &goal, &issueNumber, &statusRaw,
+			&currentIdx, &budgetJSON, &updatedRaw, &planJSON,
+			&stateJSON, &nextStepRaw); err != nil {
+			return nil, fmt.Errorf("ListActiveTasks scan: %w", err)
+		}
+		ref := ActiveTaskRef{
+			TaskID:            taskID,
+			ChatID:            chatID,
+			Goal:              goal,
+			GithubIssueNumber: issueNumber,
+			Status:            TaskStatus(statusRaw),
+			CurrentIdx:        currentIdx,
+		}
+		if updatedAt, err := time.Parse(time.RFC3339, updatedRaw); err == nil {
+			ref.UpdatedAt = updatedAt
+		}
+		var budget TokenBudget
+		_ = json.Unmarshal([]byte(budgetJSON), &budget)
+		ref.UsedTokens = budget.UsedTokens
+		ref.MaxTotalTokens = budget.MaxTotalTokens
+		var plan []SubTask
+		_ = json.Unmarshal([]byte(planJSON), &plan)
+		ref.PlanLength = len(plan)
+		if stateJSON.Valid && stateJSON.String != "" {
+			var state HermesState
+			if err := json.Unmarshal([]byte(stateJSON.String), &state); err == nil {
+				ref.ThreadID = state.ThreadID
+				ref.ProjectDir = state.ProjectDir
+				if state.Interrupt != nil {
+					ref.Interrupt = state.Interrupt
+				}
+			}
+		}
+		if nextStepRaw.Valid {
+			ref.NextStep = RuntimeStep(nextStepRaw.String)
+		}
+		out = append(out, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("ListActiveTasks rows: %w", err)
+	}
+	return out, nil
+}
+
 // ListStaleInterrupts returns active tasks (status not terminal) whose
 // latest snapshot carries an Interrupt with CreatedAt older than the
 // cutoff. The query joins hermes_task_states (for status filter) with the

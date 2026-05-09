@@ -262,6 +262,39 @@ export interface UnifiedTask {
 
 // ========== Runtime Events ==========
 
+// HermesInterrupt mirrors hermes.HermesInterrupt for the active-tasks
+// API. Only the fields the dashboard consumes are typed; payload is
+// open-ended so per-Reason renderers can pick what they need.
+export interface HermesInterrupt {
+  id?: string;
+  source_step?: string;
+  resume_step?: string;
+  reason?: string;
+  payload?: Record<string, unknown>;
+  created_at?: string;
+  expires_at?: string;
+}
+
+// HermesActiveTask is the view returned by /api/hermes/active for the
+// dashboard's Hermes Tasks panel. Includes interrupt context so the
+// resolve buttons can be rendered correctly.
+export interface HermesActiveTask {
+  task_id: string;
+  chat_id: number;
+  thread_id: number;
+  goal: string;
+  project_dir: string;
+  github_issue_number?: number;
+  status: string;
+  next_step?: string;
+  current_idx: number;
+  plan_length: number;
+  used_tokens: number;
+  max_total_tokens?: number;
+  updated_at: string;
+  interrupt?: HermesInterrupt;
+}
+
 export interface RuntimeEventRecord {
   timestamp: string;
   type: string;

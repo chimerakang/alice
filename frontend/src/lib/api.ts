@@ -21,6 +21,7 @@ import type {
   MemoryPreviewQuery,
   MemoryPreviewResponse,
   RuntimeEventRecord,
+  HermesActiveTask,
 } from "@/types/alice";
 
 const BASE = "";
@@ -218,6 +219,15 @@ export const api = {
       timestamp?: string;
     }>(`/api/runtime/events${qs}`);
   },
+
+  // ========== Hermes Tasks (#171 Class C UI) ==========
+  getHermesActiveTasks: () =>
+    fetchJson<{ tasks?: HermesActiveTask[]; total?: number }>("/api/hermes/active"),
+  resolveHermesTask: (taskId: string, decision: "retry" | "skip" | "abort") =>
+    postJson<{ ok: boolean; task_id: string; decision: string; relaunched: boolean }>(
+      "/api/hermes/resolve",
+      { task_id: taskId, decision }
+    ),
 
   // ========== Quality Analytics ==========
   getQualityDecomposition: (window = "30d") =>
