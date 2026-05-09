@@ -388,14 +388,25 @@ func cloneReplanContext(rc *ReplanContext) *ReplanContext {
 // CarryForwardSnapshotFields copies fields that live only on the
 // snapshot (no TaskState column to round-trip through) from the prior
 // snapshot's state into the next commit's seed state. Without this,
-// fields like Walking are dropped on every commit because the stores
+// fields like Interrupt are dropped on every commit because the stores
 // seed via HermesStateFromTaskState.
 //
-// Currently carries: Walking. Replan is short-lived (set by
-// ReplanSetupNode and cleared by PlannerNode in the next commit) so it
-// does not need carry-forward — its lifetime is one Walker hop. If a
-// future field needs persistence across hops, add it here.
+// These are durable runtime fields, so no-op commits such as ApprovalNode's
+// "approval_pending" boundary must keep them intact until a reducer update
+// explicitly clears or replaces them.
 func CarryForwardSnapshotFields(seed, prev HermesState) HermesState {
+	if len(prev.SubTaskResults) > 0 {
+		seed.SubTaskResults = append([]SubTaskResult(nil), prev.SubTaskResults...)
+	}
+	if prev.Interrupt != nil {
+		seed.Interrupt = cloneHermesInterrupt(prev.Interrupt)
+	}
+	if len(prev.Errors) > 0 {
+		seed.Errors = append([]HermesStateError(nil), prev.Errors...)
+	}
+	if prev.Replan != nil {
+		seed.Replan = cloneReplanContext(prev.Replan)
+	}
 	if prev.Walking != nil {
 		seed.Walking = cloneWalkingAgentState(prev.Walking)
 	}

@@ -300,8 +300,13 @@ func (svc *Service) CommitRuntimeStep(commit hermes.RuntimeCommit) (hermes.Snaps
 		if commit.CreatedAt.IsZero() {
 			commit.CreatedAt = time.Now()
 		}
+		state, err := hermes.ApplyStateUpdates(hermes.HermesState{TaskID: commit.TaskID}, commit.Updates)
+		if err != nil {
+			return hermes.Snapshot{}, err
+		}
 		return hermes.Snapshot{
 			TaskID:     commit.TaskID,
+			State:      state,
 			NextStep:   commit.NextStep,
 			SourceNode: commit.SourceNode,
 			Metadata:   commit.Metadata,

@@ -101,6 +101,11 @@ type PlanExecuteConfig struct {
 	// silent skip.
 	OnSubTaskFailurePause func(ctx context.Context, idx, total int, subTask hermes.SubTask, errText string, kind hermes.FailureKind) FailurePauseChoice
 
+	// OnGraphInterrupt is invoked by the async graph path when the Walker halts
+	// on a durable Interrupt. The callback should notify the operator; resume is
+	// driven later by ApplyInterruptResolution + ResumeViaGraph.
+	OnGraphInterrupt func(ctx context.Context, state hermes.TaskState, interrupt hermes.HermesInterrupt)
+
 	OnDone func(ctx context.Context, state hermes.TaskState)
 }
 
@@ -423,7 +428,20 @@ func (e *PlanExecuteEngine) RunFromState(ctx context.Context, state hermes.TaskS
 	}()
 
 	if decision.Reason == "plan_complete_mark_done" {
-		_ = e.commitTerminalBoundary(state.ID, hermes.RuntimeStepExecutor, 0, "resume_plan_complete_mark_done")
+		source := hermes.RuntimeStepExecutor
+		reason := "resume_plan_complete_mark_done"
+		if e.reviewMode() == ReviewModePerTask {
+			reviewState, _ := e.store.GetTask(state.ID)
+			if reviewState.ID == "" {
+				reviewState = state
+			}
+			if _, reviewErr := e.runReview(runCtx, reviewState, ReviewModePerTask, -1, "", true); reviewErr != nil {
+				log.Printf("[plan_execute] resume final review skipped task=%s: %v", state.ID, reviewErr)
+			}
+			source = hermes.RuntimeStepReviewer
+			reason = "resume_plan_complete_after_review"
+		}
+		_ = e.commitTerminalBoundary(state.ID, source, 0, reason)
 		updated, _ := e.store.GetTask(state.ID)
 		e.reporter.OnDone(updated)
 		if e.cfg.OnDone != nil {

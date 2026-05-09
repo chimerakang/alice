@@ -256,9 +256,14 @@ func (w *Walker) Run(ctx context.Context, taskID string) (hermes.Snapshot, error
 		if next == "" {
 			return snap, fmt.Errorf("graph: node %q returned empty NextStep", snap.NextStep)
 		}
+		updates := output.Updates
+		if next == hermes.RuntimeStepTerminal && !stateUpdatesSetStatus(updates) && !isTerminalTaskStatus(snap.State.Status) {
+			done := hermes.TaskStatusDone
+			updates = append(updates, hermes.StateUpdate{Status: &done})
+		}
 		committed, err := w.store.CommitRuntimeStep(hermes.RuntimeCommit{
 			TaskID:     taskID,
-			Updates:    output.Updates,
+			Updates:    updates,
 			NextStep:   next,
 			SourceNode: snap.NextStep,
 			Metadata: hermes.SnapshotMetadata{
@@ -274,6 +279,24 @@ func (w *Walker) Run(ctx context.Context, taskID string) (hermes.Snapshot, error
 		if next == hermes.RuntimeStepTerminal || output.Halt {
 			return committed, nil
 		}
+	}
+}
+
+func stateUpdatesSetStatus(updates []hermes.StateUpdate) bool {
+	for _, update := range updates {
+		if update.Status != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func isTerminalTaskStatus(status hermes.TaskStatus) bool {
+	switch status {
+	case hermes.TaskStatusDone, hermes.TaskStatusFailed, hermes.TaskStatusInterrupted:
+		return true
+	default:
+		return false
 	}
 }
 

@@ -815,7 +815,7 @@ func (s *SQLiteTaskStore) ApplyInterruptResolution(taskID string, decision Inter
 		return s.MarkTaskFailedDurable(taskID, "user_abort_after_pause")
 
 	case InterruptResolutionSkip:
-		idx, ok := interruptSubTaskIdx(snap.State.Interrupt)
+		idx, ok := InterruptSubTaskIdx(snap.State.Interrupt)
 		if !ok {
 			return fmt.Errorf("ApplyInterruptResolution: skip needs sub_task_idx in interrupt payload")
 		}
@@ -859,11 +859,11 @@ func (s *SQLiteTaskStore) ApplyInterruptResolution(taskID string, decision Inter
 	}
 }
 
-// interruptSubTaskIdx extracts the sub-task index that a HermesInterrupt
+// InterruptSubTaskIdx extracts the sub-task index that a HermesInterrupt
 // was created for. JSON unmarshalling of `Payload any` produces
 // map[string]any with float64 numeric fields, so handle both float64 and
 // int paths defensively.
-func interruptSubTaskIdx(interrupt *HermesInterrupt) (int, bool) {
+func InterruptSubTaskIdx(interrupt *HermesInterrupt) (int, bool) {
 	if interrupt == nil {
 		return 0, false
 	}

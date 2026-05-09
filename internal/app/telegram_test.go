@@ -2647,6 +2647,27 @@ feedback: 需要補 data 層 super_admin membership 驗證。`)
 	}
 }
 
+func TestColdResumeButtonMatchesInterruptIndex(t *testing.T) {
+	interrupt := &hermes.HermesInterrupt{
+		Payload: map[string]any{
+			"sub_task_idx": float64(3),
+		},
+	}
+
+	if !coldResumeButtonMatchesInterrupt("3", interrupt) {
+		t.Fatal("matching button index should be accepted")
+	}
+	if coldResumeButtonMatchesInterrupt("2", interrupt) {
+		t.Fatal("stale button index should be rejected")
+	}
+	if !coldResumeButtonMatchesInterrupt("", interrupt) {
+		t.Fatal("/resume path without button index should be accepted")
+	}
+	if coldResumeButtonMatchesInterrupt("bogus", interrupt) {
+		t.Fatal("invalid button index should be rejected")
+	}
+}
+
 func TestClearHermesFailurePauseRequiresMatchingTaskAndIndex(t *testing.T) {
 	key := chatKey{chatID: 42, threadID: 7}
 	bot := &TelegramBot{

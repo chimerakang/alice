@@ -898,6 +898,62 @@ func TestPlanExecuteEngineRunFromStateSkipsPreservedSubTasks(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteEngineRunFromStateCompletePlanRunsFinalReview(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	task := hermes.TaskState{
+		ID:          "resume-complete-task",
+		ChatID:      42,
+		ThreadID:    7,
+		ProjectDir:  "/repo",
+		Goal:        "continue work",
+		Status:      hermes.TaskStatusExecuting,
+		CurrentIdx:  2,
+		Accumulated: "Sub-task 1 result:\nfirst already done",
+		Plan: []hermes.SubTask{
+			{ID: "s1", Description: "first", Status: hermes.SubTaskDone, Result: "first already done"},
+			{ID: "s2", Description: "second", Status: hermes.SubTaskSkipped, Result: "operator skipped"},
+		},
+	}
+	if _, err := store.CreateTask(task); err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+	runner := &planExecuteRunner{}
+	reviewPhase := &recordingReviewPhase{}
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		ProjectDir:  "/repo",
+		ChatID:      42,
+		ReviewPhase: reviewPhase,
+		ReviewMode:  ReviewModePerTask,
+	}, func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		t.Fatal("planner should not be called by RunFromState")
+		return hermes.CallPlanResult{}, nil
+	}, NewDirectEngine(runner), store, &planExecuteReporter{})
+
+	if _, err := engine.RunFromState(context.Background(), task, NewChatContext(42, 7, "/repo"), nil); err != nil {
+		t.Fatalf("RunFromState: %v", err)
+	}
+	if len(runner.prompts) != 0 {
+		t.Fatalf("runner prompts = %d, want none for complete plan", len(runner.prompts))
+	}
+	if reviewPhase.calls != 1 {
+		t.Fatalf("review calls = %d, want 1", reviewPhase.calls)
+	}
+	state, err := store.GetTask(task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if state.Status != hermes.TaskStatusDone {
+		t.Fatalf("status = %s, want done", state.Status)
+	}
+	history, err := store.ListSnapshotHistory(task.ID)
+	if err != nil {
+		t.Fatalf("ListSnapshotHistory: %v", err)
+	}
+	if len(history) == 0 || history[len(history)-1].Metadata.Reason != "resume_plan_complete_after_review" {
+		t.Fatalf("last snapshot should record review-aware resume completion: %#v", history)
+	}
+}
+
 func TestPlanExecuteEngineRetriesBlockedSubTaskAndContinues(t *testing.T) {
 	store := hermes.NewMemoryTaskStore()
 	runner := &planExecuteRunner{}

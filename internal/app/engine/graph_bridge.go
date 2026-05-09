@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -71,7 +72,7 @@ func (e *PlanExecuteEngine) BuildGraphRegistry(cc *ChatContext) *graph.Registry 
 	registry.Register(&graph.ReplanSetupNode{
 		Decider: &replanDeciderAdapter{engine: e, replan: replanCoord},
 	})
-	registry.Register(&graph.ApprovalNode{})
+	registry.Register(&graph.ApprovalNode{ReviewModeIsPerTask: reviewIsPerTask})
 	return registry
 }
 
@@ -86,8 +87,8 @@ func (e *PlanExecuteEngine) BuildGraphRegistry(cc *ChatContext) *graph.Registry 
 type replanCoordinator struct {
 	engine *PlanExecuteEngine
 
-	mu        sync.Mutex
-	perTask   map[string]*replanState
+	mu      sync.Mutex
+	perTask map[string]*replanState
 }
 
 type replanState struct {
@@ -193,6 +194,117 @@ func (e *PlanExecuteEngine) RunViaGraph(ctx context.Context, goal string, cc *Ch
 	if err != nil {
 		return hermes.Snapshot{}, err
 	}
+	defer e.clearGraphRunState(taskID)
+	return e.runViaGraphTask(ctx, taskID, cc)
+}
+
+// StartViaGraph is the async Class-B companion to RunViaGraph (#171).
+// It mirrors Start's task creation + cancellation contract, but dispatches
+// the Walker in a goroutine. The method is intentionally feature-flagged at
+// call sites until progress-event fan-out fully matches the legacy run().
+func (e *PlanExecuteEngine) StartViaGraph(ctx context.Context, goal string, cc *ChatContext) (string, error) {
+	if e == nil {
+		return "", errors.New("engine: nil PlanExecuteEngine")
+	}
+	taskID, err := e.createTaskForGraph(goal)
+	if err != nil {
+		return "", err
+	}
+	if err := e.seedPlannerSnapshot(taskID); err != nil {
+		e.clearGraphRunState(taskID)
+		return "", err
+	}
+	if err := e.startGraphRun(ctx, taskID, cc); err != nil {
+		e.clearGraphRunState(taskID)
+		return "", err
+	}
+	return taskID, nil
+}
+
+// ResumeViaGraph restarts the async graph Walker for an existing task after an
+// external actor has resolved its durable Interrupt. It is the graph-native
+// companion to RunFromState for Telegram retry/skip/abort buttons.
+func (e *PlanExecuteEngine) ResumeViaGraph(ctx context.Context, taskID string, cc *ChatContext) error {
+	if e == nil {
+		return errors.New("engine: nil PlanExecuteEngine")
+	}
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return errors.New("engine: resume graph task_id is required")
+	}
+	if _, err := e.store.GetTask(taskID); err != nil {
+		return fmt.Errorf("engine: resume graph task %s: %w", taskID, err)
+	}
+	e.mu.Lock()
+	e.taskID = taskID
+	e.mu.Unlock()
+	if err := e.startGraphRun(ctx, taskID, cc); err != nil {
+		e.clearGraphRunState(taskID)
+		return err
+	}
+	return nil
+}
+
+func (e *PlanExecuteEngine) startGraphRun(ctx context.Context, taskID string, cc *ChatContext) error {
+	runCtx, cancel := context.WithCancel(ctx)
+	e.mu.Lock()
+	e.cancelFn = cancel
+	e.interrupted = false
+	if e.cfg.PlannerSessionID != "" {
+		e.planner.SetSessionID(e.cfg.PlannerSessionID)
+	}
+	e.mu.Unlock()
+
+	go func() {
+		defer func() {
+			cancel()
+			e.clearGraphRunState(taskID)
+		}()
+		final, runErr := e.runViaGraphTask(runCtx, taskID, cc)
+		if runErr != nil {
+			logGraphRunError(taskID, runErr)
+			if !errors.Is(runErr, graph.ErrInterrupted) && !errors.Is(runErr, context.Canceled) {
+				e.commitFailureBoundary(taskID, hermes.RuntimeStepExecutor, 0, "graph_run_failed")
+			}
+			if e.reporter != nil {
+				e.reporter.OnError(runErr)
+			}
+			return
+		}
+		state := hermes.TaskState{}
+		if final.State.TaskID != "" {
+			state = hermesStateToTaskStateForGraph(final.State)
+		}
+		interrupt := final.State.Interrupt
+		if latest, err := e.store.(hermes.SnapshotStore).GetLatestSnapshot(taskID); err == nil && latest.State.Interrupt != nil {
+			interrupt = latest.State.Interrupt
+		}
+		if loaded, err := e.store.GetTask(taskID); err == nil {
+			state = loaded
+		}
+		if interrupt != nil && e.cfg.OnGraphInterrupt != nil {
+			e.cfg.OnGraphInterrupt(runCtx, state, *interrupt)
+			return
+		}
+		if state.Status == hermes.TaskStatusDone {
+			e.reporter.OnDone(state)
+			if e.cfg.OnDone != nil {
+				e.cfg.OnDone(runCtx, state)
+			}
+			e.onDone(runCtx, state, countDoneSubTasks(state.Plan), len(state.Plan))
+			if e.cfg.PostCompletionHook != nil {
+				go func() {
+					hookCtx, hookCancel := context.WithTimeout(context.Background(), 2*time.Minute)
+					defer hookCancel()
+					e.cfg.PostCompletionHook(hookCtx)
+				}()
+			}
+		}
+	}()
+	return nil
+}
+
+func (e *PlanExecuteEngine) runViaGraphTask(ctx context.Context, taskID string, cc *ChatContext) (hermes.Snapshot, error) {
 	if err := e.seedPlannerSnapshot(taskID); err != nil {
 		return hermes.Snapshot{}, err
 	}
@@ -209,11 +321,29 @@ func (e *PlanExecuteEngine) RunViaGraph(ctx context.Context, goal string, cc *Ch
 		e.direct.SetWalkingEnabled(true)
 		defer e.direct.SetWalkingEnabled(false)
 	}
-	walker, err := graph.NewWalker(store, e.BuildGraphRegistry(cc))
+	walkerStore := walkerSnapshotStore(&graphProgressStore{
+		walkerSnapshotStore: store,
+		engine:              e,
+		ctx:                 ctx,
+	})
+	walker, err := graph.NewWalker(walkerStore, e.BuildGraphRegistry(cc))
 	if err != nil {
 		return hermes.Snapshot{}, err
 	}
 	return walker.Run(ctx, taskID)
+}
+
+func (e *PlanExecuteEngine) clearGraphRunState(taskID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.taskID == taskID {
+		e.taskID = ""
+		e.cancelFn = nil
+	}
+}
+
+func logGraphRunError(taskID string, err error) {
+	log.Printf("[plan_execute.graph] task %s failed: %v", taskID, err)
 }
 
 // walkerSnapshotStore mirrors graph's internal walkerStore: the union
@@ -224,12 +354,78 @@ type walkerSnapshotStore interface {
 	hermes.RuntimeStepStore
 }
 
+type graphProgressStore struct {
+	walkerSnapshotStore
+	engine *PlanExecuteEngine
+	ctx    context.Context
+}
+
+func (s *graphProgressStore) CommitRuntimeStep(commit hermes.RuntimeCommit) (hermes.Snapshot, error) {
+	var prev hermes.Snapshot
+	if s != nil && s.walkerSnapshotStore != nil {
+		prev, _ = s.walkerSnapshotStore.GetLatestSnapshot(commit.TaskID)
+	}
+	committed, err := s.walkerSnapshotStore.CommitRuntimeStep(commit)
+	if err != nil {
+		return committed, err
+	}
+	s.emitProgress(prev, committed)
+	return committed, nil
+}
+
+func (s *graphProgressStore) emitProgress(prev, committed hermes.Snapshot) {
+	if s == nil || s.engine == nil {
+		return
+	}
+	plan := committed.State.Plan
+	if len(plan) == 0 {
+		return
+	}
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if committed.Metadata.Reason == "plan_ready" || committed.Metadata.Reason == "replan_ready" {
+		s.engine.reporter.OnPlanReady(plan)
+		s.engine.onPlanReady(ctx, hermesStateToTaskStateForGraph(committed.State), plan)
+	}
+	for idx, task := range plan {
+		if !isResolvedSubTaskStatus(task.Status) {
+			continue
+		}
+		if idx < len(prev.State.Plan) && prev.State.Plan[idx].Status == task.Status && prev.State.Plan[idx].Result == task.Result {
+			continue
+		}
+		success := task.Status == hermes.SubTaskDone
+		completed := countDoneSubTasks(plan)
+		s.engine.reporter.OnSubTaskDone(idx, len(plan), task, success, task.Result)
+		s.engine.onSubTaskDone(ctx, idx, len(plan), plan, task, task.Result, task.TokensUsed, completed)
+	}
+}
+
+func isResolvedSubTaskStatus(status hermes.SubTaskStatus) bool {
+	switch status {
+	case hermes.SubTaskDone, hermes.SubTaskSkipped, hermes.SubTaskFailed:
+		return true
+	default:
+		return false
+	}
+}
+
 func (e *PlanExecuteEngine) ensureTaskForGraph(goal string) (string, error) {
 	e.mu.Lock()
 	taskID := e.taskID
 	e.mu.Unlock()
 	if taskID != "" {
 		return taskID, nil
+	}
+	return e.createTaskForGraph(goal)
+}
+
+func (e *PlanExecuteEngine) createTaskForGraph(goal string) (string, error) {
+	budget := e.cfg.Budget
+	if budget.StartedAt.IsZero() {
+		budget.StartedAt = time.Now()
 	}
 	task := hermes.TaskState{
 		ID:                uuid.NewString(),
@@ -238,7 +434,7 @@ func (e *PlanExecuteEngine) ensureTaskForGraph(goal string) (string, error) {
 		Goal:              goal,
 		ProjectDir:        e.cfg.ProjectDir,
 		Status:            hermes.TaskStatusPlanning,
-		TokenBudget:       e.cfg.Budget,
+		TokenBudget:       budget,
 		PlannerSessionID:  e.cfg.PlannerSessionID,
 		GithubIssueNumber: e.cfg.GithubIssueNumber,
 	}
@@ -250,6 +446,37 @@ func (e *PlanExecuteEngine) ensureTaskForGraph(goal string) (string, error) {
 	e.taskID = created.ID
 	e.mu.Unlock()
 	return created.ID, nil
+}
+
+func hermesStateToTaskStateForGraph(state hermes.HermesState) hermes.TaskState {
+	return hermes.TaskState{
+		ID:                state.TaskID,
+		ChatID:            state.ChatID,
+		ThreadID:          state.ThreadID,
+		PlannerSessionID:  state.PlannerSessionID,
+		ExecutorSessionID: state.ExecutorSessionID,
+		ProjectDir:        state.ProjectDir,
+		Goal:              state.Goal,
+		Status:            state.Status,
+		CurrentIdx:        state.CurrentIdx,
+		Plan:              append([]hermes.SubTask(nil), state.Plan...),
+		Accumulated:       state.Accumulated,
+		Artifacts:         append([]hermes.Artifact(nil), state.Artifacts...),
+		TokenBudget:       state.TokenBudget,
+		GithubIssueNumber: state.GithubIssueNumber,
+		ModelUsages:       append([]hermes.ModelUsage(nil), state.ModelUsages...),
+		PhaseUsages:       append([]hermes.PhaseUsage(nil), state.PhaseUsages...),
+	}
+}
+
+func countDoneSubTasks(plan []hermes.SubTask) int {
+	done := 0
+	for _, st := range plan {
+		if st.Status == hermes.SubTaskDone {
+			done++
+		}
+	}
+	return done
 }
 
 // seedPlannerSnapshot writes the initial snapshot that points the Walker at
@@ -332,6 +559,7 @@ func (r *executorSubTaskRunner) RunSubTask(ctx context.Context, state hermes.Her
 	if forceFresh {
 		r.engine.direct.ForceFreshSession()
 	}
+	r.engine.reporter.OnSubTaskStart(idx, len(state.Plan), subTask)
 	r.engine.direct.BindSubTask(subTask)
 	res, err := r.engine.direct.Run(ctx, prompt, r.cc, subTaskSink{})
 

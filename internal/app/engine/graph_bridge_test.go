@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -309,6 +311,143 @@ func TestRunViaGraphResult_ReturnsAccumulatedTextOnSuccess(t *testing.T) {
 	}
 }
 
+func TestRunViaGraphClearsTaskIDBetweenRuns(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	runner := &planExecuteRunner{}
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s1","description":"do","tool_hints":["Read"]}]` +
+				"\n```",
+		}, nil
+	}
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		ProjectDir: "/repo", ChatID: 42, DisableReview: true,
+	}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
+
+	first, err := engine.RunViaGraph(context.Background(), "first", NewChatContext(42, 0, "/repo"))
+	if err != nil {
+		t.Fatalf("first RunViaGraph: %v", err)
+	}
+	if engine.TaskID() != "" {
+		t.Fatalf("TaskID after first RunViaGraph = %q, want cleared", engine.TaskID())
+	}
+	second, err := engine.RunViaGraph(context.Background(), "second", NewChatContext(42, 0, "/repo"))
+	if err != nil {
+		t.Fatalf("second RunViaGraph: %v", err)
+	}
+	if first.TaskID == second.TaskID {
+		t.Fatalf("RunViaGraph reused task ID %q across independent runs", first.TaskID)
+	}
+}
+
+func TestStartViaGraphRunsAsyncAndCompletes(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	runner := &planExecuteRunner{}
+	reporter := &planExecuteReporter{}
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s1","description":"do","tool_hints":["Read"]}]` +
+				"\n```",
+		}, nil
+	}
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		ProjectDir: "/repo", ChatID: 42, DisableReview: true,
+	}, planFn, NewDirectEngine(runner), store, reporter)
+
+	taskID, err := engine.StartViaGraph(context.Background(), "async graph", NewChatContext(42, 0, "/repo"))
+	if err != nil {
+		t.Fatalf("StartViaGraph: %v", err)
+	}
+	waitForPlanExecute(t, engine)
+	state, err := store.GetTask(taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if state.Status != hermes.TaskStatusDone {
+		t.Fatalf("status = %s, want done", state.Status)
+	}
+	if engine.TaskID() != "" {
+		t.Fatalf("TaskID after async completion = %q, want cleared", engine.TaskID())
+	}
+	wantEvents := []string{"plan", "start:s1", "done:s1", "complete:done"}
+	if !reflect.DeepEqual(reporter.events, wantEvents) {
+		t.Fatalf("reporter events missing completion: %#v", reporter.events)
+	}
+}
+
+func TestStartViaGraphPausesAndResumeViaGraphContinues(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	runner := &failOnceRunner{}
+	interrupts := make(chan hermes.HermesInterrupt, 1)
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s1","description":"do","tool_hints":["Read"]}]` +
+				"\n```",
+		}, nil
+	}
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		ProjectDir:    "/repo",
+		ChatID:        42,
+		DisableReview: true,
+		OnSubTaskFailurePause: func(ctx context.Context, idx, total int, subTask hermes.SubTask, errText string, kind hermes.FailureKind) FailurePauseChoice {
+			return FailurePauseChoice{Decision: FailureSkip}
+		},
+		OnGraphInterrupt: func(ctx context.Context, state hermes.TaskState, interrupt hermes.HermesInterrupt) {
+			interrupts <- interrupt
+		},
+	}, planFn, NewDirectEngine(runner), store, &planExecuteReporter{})
+
+	taskID, err := engine.StartViaGraph(context.Background(), "async graph pause", NewChatContext(42, 0, "/repo"))
+	if err != nil {
+		t.Fatalf("StartViaGraph: %v", err)
+	}
+	waitForPlanExecute(t, engine)
+
+	var interrupt hermes.HermesInterrupt
+	select {
+	case interrupt = <-interrupts:
+	default:
+		t.Fatal("OnGraphInterrupt was not called")
+	}
+	if interrupt.Reason != "subtask_failure_pause" {
+		t.Fatalf("interrupt reason = %q, want subtask_failure_pause", interrupt.Reason)
+	}
+	idx, ok := hermes.InterruptSubTaskIdx(&interrupt)
+	if !ok || idx != 0 {
+		t.Fatalf("interrupt idx = %d/%v, want 0/true", idx, ok)
+	}
+
+	if _, err := store.CommitRuntimeStep(hermes.RuntimeCommit{
+		TaskID:     taskID,
+		Updates:    []hermes.StateUpdate{{ClearInterrupt: true}},
+		NextStep:   hermes.RuntimeStepExecutor,
+		SourceNode: hermes.RuntimeStepApproval,
+		Metadata: hermes.SnapshotMetadata{
+			Source: "test",
+			Reason: "user_retry_after_pause",
+		},
+	}); err != nil {
+		t.Fatalf("clear interrupt: %v", err)
+	}
+	if err := engine.ResumeViaGraph(context.Background(), taskID, NewChatContext(42, 0, "/repo")); err != nil {
+		t.Fatalf("ResumeViaGraph: %v", err)
+	}
+	waitForPlanExecute(t, engine)
+	state, err := store.GetTask(taskID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if state.Status != hermes.TaskStatusDone {
+		t.Fatalf("status after resume = %s, want done", state.Status)
+	}
+	if runner.calls != 2 {
+		t.Fatalf("runner calls = %d, want 2", runner.calls)
+	}
+}
+
 func TestRunViaGraph_RegistryHasAllNodes(t *testing.T) {
 	store := hermes.NewMemoryTaskStore()
 	runner := &planExecuteRunner{}
@@ -331,4 +470,16 @@ func TestRunViaGraph_RegistryHasAllNodes(t *testing.T) {
 			t.Errorf("registry missing handler for %q", step)
 		}
 	}
+}
+
+type failOnceRunner struct {
+	calls int
+}
+
+func (r *failOnceRunner) Run(userMessage string, onUpdate func(string, bool)) (string, error) {
+	r.calls++
+	if r.calls == 1 {
+		return "partial", errors.New("boom")
+	}
+	return "ok after retry", nil
 }

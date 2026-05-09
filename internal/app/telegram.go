@@ -250,6 +250,7 @@ type failurePauseCtx struct {
 	idx     int
 	total   int
 	subDesc string
+	graph   bool
 }
 
 type interruptibleCoordinator interface {
@@ -4319,6 +4320,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, p
 		TaskRetry:                    appengine.TaskRetryConfig(cfg.TaskRetry),
 		ContinueCh:                   continueCh,
 		OnSubTaskFailurePause:        t.makeHermesFailureDecisionCallback(key, failureDecisionCh),
+		OnGraphInterrupt:             t.makeHermesGraphInterruptCallback(key),
 		OnDone:                       onDone,
 		WalkingAgentEnabled:          cfg.WalkingAgentEnabled,
 		WalkingAgentMaxContextTokens: cfg.WalkingAgentMaxContextTokens,
@@ -4336,7 +4338,14 @@ func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, p
 		displayTaskID := shortHermesTaskID(taskID)
 		t.sendHermesStopMessage(key, t.getLocalizedMessage(key.chatID, "hermes_task_id_label", map[string]string{"taskID": displayTaskID}))
 		go t.runTrackedJob("hermes.resume", func() {
-			if _, err := coord.RunFromState(ctx, *resumeTask, agent.chatContext, nil); err != nil {
+			var err error
+			if hermesStartViaGraph() {
+				log.Printf("[hermes] chat %d resuming task %s via ResumeViaGraph (ALICE_HERMES_START_VIA_GRAPH=on)", key.chatID, taskID)
+				err = coord.ResumeViaGraph(ctx, taskID, agent.chatContext)
+			} else {
+				_, err = coord.RunFromState(ctx, *resumeTask, agent.chatContext, nil)
+			}
+			if err != nil {
 				log.Printf("[hermes] resume task %s failed: %v", taskID, err)
 				t.clearHermesStopMessage(key, t.getLocalizedMessage(key.chatID, "execution_error", nil))
 				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_start_failed", map[string]string{"error": err.Error()}))
@@ -4345,7 +4354,14 @@ func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, p
 		return
 	}
 
-	taskID, err := coord.Start(ctx, goal, agent.chatContext)
+	var taskID string
+	var err error
+	if hermesStartViaGraph() {
+		log.Printf("[hermes] chat %d starting task via StartViaGraph (ALICE_HERMES_START_VIA_GRAPH=on)", key.chatID)
+		taskID, err = coord.StartViaGraph(ctx, goal, agent.chatContext)
+	} else {
+		taskID, err = coord.Start(ctx, goal, agent.chatContext)
+	}
 	if err != nil {
 		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_start_failed", map[string]string{"error": err.Error()}))
 		return
@@ -6403,6 +6419,11 @@ func parseHermesCallbackData(data string) (mode string, taskID string, ok bool) 
 // open another window to read the diagnostic.
 const hermesFailureDecisionTimeout = 10 * time.Minute
 
+func hermesStartViaGraph() bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("ALICE_HERMES_START_VIA_GRAPH")))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
 // makeHermesFailureDecisionCallback returns the OnSubTaskFailurePause hook
 // passed to PlanExecuteConfig. It posts an inline-button message describing
 // the failure and blocks until the operator clicks one of the buttons or the
@@ -6482,6 +6503,103 @@ func (t *TelegramBot) makeHermesFailureDecisionCallback(key chatKey, ch chan app
 	}
 }
 
+// makeHermesGraphInterruptCallback is the non-blocking graph-native pause UI.
+// The graph Walker has already halted after committing an Interrupt; button
+// clicks resolve the snapshot and re-enter ResumeViaGraph instead of sending to
+// the legacy in-process failureDecisionCh.
+func (t *TelegramBot) makeHermesGraphInterruptCallback(key chatKey) func(ctx context.Context, state hermes.TaskState, interrupt hermes.HermesInterrupt) {
+	return func(ctx context.Context, state hermes.TaskState, interrupt hermes.HermesInterrupt) {
+		taskID := strings.TrimSpace(state.ID)
+		if taskID == "" {
+			return
+		}
+		idx, total, subDesc, errText := hermesGraphInterruptDetails(interrupt)
+		if total <= 0 {
+			total = len(state.Plan)
+		}
+		if idx < 0 {
+			idx = state.CurrentIdx
+		}
+		if subDesc == "" && idx >= 0 && idx < len(state.Plan) {
+			subDesc = state.Plan[idx].Description
+		}
+		kind := hermes.ClassifyFailure(errText)
+		if kind == hermes.FailureUnknown {
+			kind = hermes.FailureContent
+		}
+
+		t.hermesMu.Lock()
+		if hc := t.hermesCoords[key]; hc != nil {
+			hc.failureCtx = &failurePauseCtx{
+				taskID:  taskID,
+				idx:     idx,
+				total:   total,
+				subDesc: subDesc,
+				graph:   true,
+			}
+			hc.awaitingFailureHint = false
+		}
+		t.hermesMu.Unlock()
+
+		header := fmt.Sprintf("⏸ 子任務 %d/%d 失敗（%s）— 請選擇下一步", idx+1, total, kind.Label())
+		if subDesc != "" {
+			header += "\n• " + strings.TrimSpace(subDesc)
+		}
+		if detail := formatHermesFailurePauseDetail(errText); detail != "" {
+			header += "\n\n" + detail
+		}
+		header += "\n\n此暫停已寫入 snapshot；按 retry / skip / abort 後會從同一個任務繼續。"
+
+		btns := [][]map[string]interface{}{
+			{
+				{"text": "🔁 重試", "callback_data": fmt.Sprintf("hermes:fail:retry:%s:%d", taskID, idx)},
+				{"text": "✏️ 修正方向", "callback_data": fmt.Sprintf("hermes:fail:adjust:%s:%d", taskID, idx)},
+			},
+			{
+				{"text": "⏭ 跳過", "callback_data": fmt.Sprintf("hermes:fail:skip:%s:%d", taskID, idx)},
+				{"text": "🛑 中止任務", "callback_data": fmt.Sprintf("hermes:fail:abort:%s:%d", taskID, idx)},
+			},
+		}
+		t.sendMenuMessage(key, header, btns)
+
+		if ctx != nil && ctx.Err() != nil {
+			log.Printf("[hermes.graph] interrupt callback context ended after menu task=%s: %v", taskID, ctx.Err())
+		}
+	}
+}
+
+func hermesGraphInterruptDetails(interrupt hermes.HermesInterrupt) (idx, total int, subDesc, errText string) {
+	idx = -1
+	if got, ok := hermes.InterruptSubTaskIdx(&interrupt); ok {
+		idx = got
+	}
+	payload, ok := interrupt.Payload.(map[string]any)
+	if !ok {
+		return idx, 0, "", ""
+	}
+	total = intFromInterruptPayload(payload["total"])
+	if s, ok := payload["sub_task_desc"].(string); ok {
+		subDesc = strings.TrimSpace(s)
+	}
+	if s, ok := payload["error_text"].(string); ok {
+		errText = strings.TrimSpace(s)
+	}
+	return idx, total, subDesc, errText
+}
+
+func intFromInterruptPayload(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	default:
+		return 0
+	}
+}
+
 // NotifyPendingPause sends a Telegram reminder for one task whose pause
 // outlived a previous alice process. Implements the pauseReminder
 // interface so RemindPendingPauses can be unit-tested without coupling
@@ -6553,6 +6671,10 @@ func (t *TelegramBot) tryColdRestartFailureResume(key chatKey, queryID, action, 
 	snap, ok := t.taskSvc.LatestSnapshot(taskIDStr)
 	if !ok || snap.State.Interrupt == nil {
 		return false
+	}
+	if !coldResumeButtonMatchesInterrupt(idxStr, snap.State.Interrupt) {
+		t.answerCallbackQuery(queryID, "❌ 此暫停已失效")
+		return true
 	}
 
 	var resolution hermes.InterruptResolution
@@ -6734,6 +6856,21 @@ func (t *TelegramBot) handleHermesFailureDecisionCallback(key chatKey, queryID, 
 	idx := hc.failureCtx.idx
 	total := hc.failureCtx.total
 	subDesc := strings.TrimSpace(hc.failureCtx.subDesc)
+	graphPause := hc.failureCtx.graph
+
+	if graphPause {
+		if action == "adjust" {
+			t.answerCallbackQuery(queryID, "✏️ graph 暫停暫不支援修正方向")
+			t.send(key, fmt.Sprintf("⚠️ graph-native 暫停目前先支援 retry / skip / abort。請改點上方按鈕，或使用 /resume %s retry|skip|abort。", shortHermesTaskID(taskID)))
+			return true
+		}
+		if t.tryColdRestartFailureResume(key, queryID, action, taskID, idxStr) {
+			t.clearHermesFailurePause(key, taskID, idx)
+			return true
+		}
+		t.answerCallbackQuery(queryID, "❌ 無法從 snapshot 繼續")
+		return true
+	}
 
 	// "adjust" parks the pause in awaiting-hint mode and waits for the next
 	// text message in this chat. The choice is not sent to the channel yet;
@@ -6772,29 +6909,6 @@ func (t *TelegramBot) handleHermesFailureDecisionCallback(key chatKey, queryID, 
 		visible += "\n• " + truncateRunesText(subDesc, 180)
 	}
 
-	// β3: For Skip/Abort, persist the resolution to the snapshot before
-	// signalling the channel. This makes the choice durable across alice
-	// crashes — if the engine never gets to consume the channel, the
-	// snapshot still reflects the user's decision and the task does not
-	// silently zombie. Retry is intentionally channel-only because
-	// persisting a "retry now" intent before the engine actually retries
-	// could leave a paused task looking active-without-pause if alice
-	// crashes between persist and engine-consume; in that case we want
-	// the user to click again, which the existing path handles.
-	if t.taskSvc != nil && (decision == appengine.FailureSkip || decision == appengine.FailureAbort) {
-		var resolution hermes.InterruptResolution
-		if decision == appengine.FailureSkip {
-			resolution = hermes.InterruptResolutionSkip
-		} else {
-			resolution = hermes.InterruptResolutionAbort
-		}
-		if _, err := t.taskSvc.ApplyInterruptResolution(taskID, resolution); err != nil {
-			log.Printf("[hermes] live-click persist resolution task=%s decision=%s: %v", taskID, resolution, err)
-			// Fall through to channel send anyway — engine still gets the
-			// signal; we just lose crash-safety for this click.
-		}
-	}
-
 	select {
 	case hc.failureDecisionCh <- appengine.FailurePauseChoice{Decision: decision}:
 		t.answerCallbackQuery(queryID, ack)
@@ -6804,6 +6918,19 @@ func (t *TelegramBot) handleHermesFailureDecisionCallback(key chatKey, queryID, 
 		t.answerCallbackQuery(queryID, "（已收到上一次選擇）")
 	}
 	return true
+}
+
+func coldResumeButtonMatchesInterrupt(idxStr string, interrupt *hermes.HermesInterrupt) bool {
+	idxStr = strings.TrimSpace(idxStr)
+	if idxStr == "" {
+		return true
+	}
+	want, err := strconv.Atoi(idxStr)
+	if err != nil {
+		return false
+	}
+	got, ok := hermes.InterruptSubTaskIdx(interrupt)
+	return ok && got == want
 }
 
 // trySignalHermesFailureHint inspects an incoming text message and, when the
