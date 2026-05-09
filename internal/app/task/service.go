@@ -316,6 +316,46 @@ func (svc *Service) CommitRuntimeStep(commit hermes.RuntimeCommit) (hermes.Snaps
 	return runtime.CommitRuntimeStep(commit)
 }
 
+// CreateSnapshot implements hermes.SnapshotStore by forwarding to the
+// wrapped store when it supports the snapshot interface. Required for
+// the graph runtime's seedPlannerSnapshot path; non-snapshot stores
+// fall through to a no-op-style synthetic so callers can keep treating
+// Service as if every backend supports it.
+func (svc *Service) CreateSnapshot(snapshot hermes.Snapshot) (hermes.Snapshot, error) {
+	store, ok := svc.store.(hermes.SnapshotStore)
+	if !ok {
+		return snapshot, fmt.Errorf("CreateSnapshot: underlying store does not implement SnapshotStore")
+	}
+	return store.CreateSnapshot(snapshot)
+}
+
+// GetLatestSnapshot implements hermes.SnapshotStore.
+func (svc *Service) GetLatestSnapshot(taskID string) (hermes.Snapshot, error) {
+	store, ok := svc.store.(hermes.SnapshotStore)
+	if !ok {
+		return hermes.Snapshot{}, fmt.Errorf("GetLatestSnapshot: underlying store does not implement SnapshotStore")
+	}
+	return store.GetLatestSnapshot(taskID)
+}
+
+// GetLatestSnapshotForThread implements hermes.SnapshotStore.
+func (svc *Service) GetLatestSnapshotForThread(chatID int64, threadID int) (hermes.Snapshot, error) {
+	store, ok := svc.store.(hermes.SnapshotStore)
+	if !ok {
+		return hermes.Snapshot{}, fmt.Errorf("GetLatestSnapshotForThread: underlying store does not implement SnapshotStore")
+	}
+	return store.GetLatestSnapshotForThread(chatID, threadID)
+}
+
+// ListSnapshotHistory implements hermes.SnapshotStore.
+func (svc *Service) ListSnapshotHistory(taskID string) ([]hermes.Snapshot, error) {
+	store, ok := svc.store.(hermes.SnapshotStore)
+	if !ok {
+		return nil, fmt.Errorf("ListSnapshotHistory: underlying store does not implement SnapshotStore")
+	}
+	return store.ListSnapshotHistory(taskID)
+}
+
 // IsTerminal reports whether s is a terminal task status (done, failed, or
 // interrupted). A terminal task must not accept further Transition calls.
 func IsTerminal(s hermes.TaskStatus) bool {
