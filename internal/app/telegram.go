@@ -3186,10 +3186,13 @@ func (t *TelegramBot) classifyHermesNLIntent(key chatKey, text string) (hermesNL
 	}
 	// Hermes chat-mode active for this topic. Continuation phrases stay on
 	// the regular agent path so check-ins like "繼續處理" do not silently
-	// revive a finished Hermes task.
+	// revive a finished Hermes task. Issue references are intentionally not
+	// auto-launched here: operators often mention "#83" while asking Alice to
+	// inspect or edit the issue itself. Explicit issue work still routes via
+	// isHermesIssueReferenceRequest above, or via /hermes #N.
 	if t.isHermesEnabled(key) && !isHermesContinuationRequest(text) {
-		if issueNum, ok := ParseIssueNumber(text); ok {
-			return hermesNLChatModeIssue, issueNum
+		if _, ok := ParseIssueNumber(text); ok {
+			return hermesNLNone, 0
 		}
 		return hermesNLChatModeFresh, 0
 	}
@@ -3390,6 +3393,8 @@ func isHermesIssueReferenceRequest(text string) bool {
 		strings.Contains(lower, "繼續") ||
 		strings.Contains(lower, "接續") ||
 		strings.Contains(lower, "續做") ||
+		strings.Contains(lower, "請處理") ||
+		strings.Contains(lower, "開始處理") ||
 		strings.HasPrefix(lower, "處理") ||
 		strings.HasPrefix(lower, "請處理") ||
 		strings.HasPrefix(lower, "開始") ||

@@ -1848,7 +1848,7 @@ func TestHermesContinuationModeFromRequest(t *testing.T) {
 }
 
 func TestIsHermesIssueReferenceRequest(t *testing.T) {
-	for _, text := range []string{"繼續處理＃１３７", "好，繼續處理 #137", "接續 #137", "請處理 #137", "start #137"} {
+	for _, text := range []string{"繼續處理＃１３７", "好，繼續處理 #137", "接續 #137", "請處理 #137", "接下來請處理 #109", "start #137"} {
 		if !isHermesIssueReferenceRequest(text) {
 			t.Fatalf("expected issue reference request for %q", text)
 		}
@@ -1862,6 +1862,24 @@ func TestIsHermesIssueReferenceRequest(t *testing.T) {
 		if isHermesIssueReferenceRequest(text) {
 			t.Fatalf("status-style issue mention should not be treated as an issue launch request: %q", text)
 		}
+	}
+}
+
+func TestClassifyHermesNLIntent_ChatModeDoesNotAutoLaunchPlainIssueMention(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		config:       &Config{Hermes: HermesConfig{Enabled: true}},
+		hermesCoords: map[chatKey]*hermesCoord{key: {enabled: true}},
+	}
+
+	if got, issue := bot.classifyHermesNLIntent(key, "可否把 #83 的 issue 改成使用 skill 的 playwright-cli 取代"); got != hermesNLNone || issue != 0 {
+		t.Fatalf("plain issue edit request routed to Hermes: intent=%v issue=%d", got, issue)
+	}
+	if got, issue := bot.classifyHermesNLIntent(key, "請處理 #83"); got != hermesNLStartIssue || issue != 83 {
+		t.Fatalf("explicit issue work should still route to Hermes: intent=%v issue=%d", got, issue)
+	}
+	if got, issue := bot.classifyHermesNLIntent(key, "請實作新的 dashboard graph"); got != hermesNLChatModeFresh || issue != 0 {
+		t.Fatalf("Hermes chat-mode fresh goal should still route: intent=%v issue=%d", got, issue)
 	}
 }
 
