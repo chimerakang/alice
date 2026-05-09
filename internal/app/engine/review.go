@@ -240,6 +240,18 @@ func ReviewTags(review ReviewResult) []ReviewIssueTag {
 }
 
 // ReviewDecisionFromStrictTags maps reviewer output to a hard-gate verdict.
+//
+// When the reviewer's overall verdict is "pass" AND overall_score is at
+// or above the failing threshold (80), block tags are treated as
+// advisory caveats — the reviewer's holistic judgment wins over a tag-
+// only filter. Without this rule, verification-only sub-tasks (work
+// already done in a prior session, no diff to show) get blocked
+// indefinitely on incomplete_traceability or missing_validation tags
+// even when the reviewer text explicitly says "appears satisfied".
+// See #171 follow-up.
+//
+// Tags still hard-block when the reviewer's verdict is partial / fail,
+// or when verdict=pass came with a low score (LLM hedging).
 func ReviewDecisionFromStrictTags(review ReviewResult, cfg StrictModeConfig) StrictReviewDecision {
 	cfg = cfg.WithDefaults()
 	if !cfg.Enabled {
@@ -256,7 +268,8 @@ func ReviewDecisionFromStrictTags(review ReviewResult, cfg StrictModeConfig) Str
 		BlockTags:   append([]ReviewIssueTag(nil), blockTags...),
 		UsedBackend: cfg.OpponentBackend,
 	}
-	if len(blockTags) > 0 {
+	reviewerSignedOff := review.Verdict == VerdictPass && review.OverallScore >= SubTaskScoreFailingThreshold
+	if len(blockTags) > 0 && !reviewerSignedOff {
 		decision.Verdict = VerdictBlock
 		decision.Retryable = true
 		return decision

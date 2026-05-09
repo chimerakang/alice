@@ -213,6 +213,60 @@ func TestStrictReviewDefaultsAndTagBlocking(t *testing.T) {
 	}
 }
 
+func TestReviewDecisionFromStrictTags_HighScorePassOverridesTags(t *testing.T) {
+	// Reviewer holistically signs off (verdict=pass, overall_score=85)
+	// but adds incomplete_traceability as a procedural caveat. Without
+	// the override rule this would still block on tags alone — that
+	// failure mode trapped verification-only sub-tasks in retry loops.
+	review := ReviewResult{
+		Verdict:      VerdictPass,
+		OverallScore: 85,
+		Feedback:     "Subtask appears satisfied; no diff because work was pre-existing.",
+		IssueTags: []ReviewIssueTag{
+			ReviewIssueTagIncompleteTraceability,
+		},
+	}
+	decision := ReviewDecisionFromStrictTags(review, StrictModeConfig{Enabled: true}.WithDefaults())
+	if decision.Verdict != VerdictAllow {
+		t.Errorf("verdict = %q, want allow (high-score pass should override tags)", decision.Verdict)
+	}
+	if decision.Retryable {
+		t.Errorf("Retryable should be false on allow")
+	}
+	// Tags still recorded for telemetry even though they did not trigger block.
+	if len(decision.BlockTags) != 1 {
+		t.Errorf("BlockTags should still record matches for telemetry: %+v", decision.BlockTags)
+	}
+}
+
+func TestReviewDecisionFromStrictTags_LowScorePassStillBlocksOnTags(t *testing.T) {
+	// verdict=pass with low score is the LLM hedging — tags should
+	// still block because the reviewer is not actually signing off.
+	review := ReviewResult{
+		Verdict:      VerdictPass,
+		OverallScore: 65, // below SubTaskScoreFailingThreshold (80)
+		IssueTags:    []ReviewIssueTag{ReviewIssueTagMissingValidation},
+	}
+	decision := ReviewDecisionFromStrictTags(review, StrictModeConfig{Enabled: true}.WithDefaults())
+	if decision.Verdict != VerdictBlock {
+		t.Errorf("verdict = %q, want block (low-score pass should not override tags)", decision.Verdict)
+	}
+}
+
+func TestReviewDecisionFromStrictTags_PartialVerdictStillBlocksOnTags(t *testing.T) {
+	// verdict=partial regardless of score should still hard-block on
+	// matching tags — only verdict=pass + high score gets the override.
+	review := ReviewResult{
+		Verdict:      VerdictPartial,
+		OverallScore: 90,
+		IssueTags:    []ReviewIssueTag{ReviewIssueTagScopeCreep},
+	}
+	decision := ReviewDecisionFromStrictTags(review, StrictModeConfig{Enabled: true}.WithDefaults())
+	if decision.Verdict != VerdictBlock {
+		t.Errorf("verdict = %q, want block (only verdict=pass qualifies for override)", decision.Verdict)
+	}
+}
+
 func TestResolveStrictReviewBackendFallsBackToExecutor(t *testing.T) {
 	cfg := StrictModeConfig{Enabled: true}.WithDefaults()
 	if got := ResolveStrictReviewBackend(BackendClaude, cfg, BackendClaude); got != BackendClaude {
