@@ -82,6 +82,12 @@ func ApplyStateUpdates(current HermesState, updates []StateUpdate) (HermesState,
 		if update.Replan != nil {
 			next.Replan = cloneReplanContext(update.Replan)
 		}
+		if update.ClearWalking {
+			next.Walking = nil
+		}
+		if update.Walking != nil {
+			next.Walking = cloneWalkingAgentState(update.Walking)
+		}
 	}
 
 	if statusWrite != nil {
@@ -173,6 +179,14 @@ func collapseStateUpdates(updates []StateUpdate) StateUpdate {
 		if update.Replan != nil {
 			collapsed.Replan = cloneReplanContext(update.Replan)
 			collapsed.ClearReplan = false
+		}
+		if update.ClearWalking {
+			collapsed.ClearWalking = true
+			collapsed.Walking = nil
+		}
+		if update.Walking != nil {
+			collapsed.Walking = cloneWalkingAgentState(update.Walking)
+			collapsed.ClearWalking = false
 		}
 		collapsed.Errors = append(collapsed.Errors, update.Errors...)
 		if update.GithubIssueNumber != nil {
@@ -345,6 +359,7 @@ func cloneHermesState(state HermesState) HermesState {
 	state.Interrupt = cloneHermesInterrupt(state.Interrupt)
 	state.Errors = append([]HermesStateError(nil), state.Errors...)
 	state.Replan = cloneReplanContext(state.Replan)
+	state.Walking = cloneWalkingAgentState(state.Walking)
 	return state
 }
 
@@ -367,6 +382,31 @@ func cloneReplanContext(rc *ReplanContext) *ReplanContext {
 	}
 	out := *rc
 	out.PreservedSubTasks = append([]SubTask(nil), rc.PreservedSubTasks...)
+	return &out
+}
+
+// CarryForwardSnapshotFields copies fields that live only on the
+// snapshot (no TaskState column to round-trip through) from the prior
+// snapshot's state into the next commit's seed state. Without this,
+// fields like Walking are dropped on every commit because the stores
+// seed via HermesStateFromTaskState.
+//
+// Currently carries: Walking. Replan is short-lived (set by
+// ReplanSetupNode and cleared by PlannerNode in the next commit) so it
+// does not need carry-forward — its lifetime is one Walker hop. If a
+// future field needs persistence across hops, add it here.
+func CarryForwardSnapshotFields(seed, prev HermesState) HermesState {
+	if prev.Walking != nil {
+		seed.Walking = cloneWalkingAgentState(prev.Walking)
+	}
+	return seed
+}
+
+func cloneWalkingAgentState(w *WalkingAgentState) *WalkingAgentState {
+	if w == nil {
+		return nil
+	}
+	out := *w
 	return &out
 }
 

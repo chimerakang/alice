@@ -44,6 +44,35 @@ type HermesState struct {
 	// consumed (and cleared) by PlannerNode on the next attempt; see
 	// #169 #4.
 	Replan *ReplanContext `json:"replan,omitempty"`
+	// Walking carries the walking-agent session contract across
+	// consecutive Executor sub-tasks of one task (#169 #1, #7). Lives
+	// on the snapshot so the contract survives restart instead of in
+	// process-local engine fields. Nil when walking-agent is disabled
+	// for this task.
+	Walking *WalkingAgentState `json:"walking,omitempty"`
+}
+
+// WalkingAgentState is the minimum contract the executor needs to
+// decide whether the next sub-task can reuse the prior Claude session
+// (slim prompt, no rules block) or must start fresh (cold prompt with
+// full context). See docs/arch/hermes-walking-agent.md.
+type WalkingAgentState struct {
+	// Enabled is the per-task toggle. When false, every sub-task uses a
+	// cold prompt and the rest of the fields are ignored.
+	Enabled bool `json:"enabled,omitempty"`
+	// PrevExecutorModel is the model that ran the previous executor
+	// sub-task this task. Empty means "no prior session yet" — first
+	// sub-task always cold-starts.
+	PrevExecutorModel string `json:"prev_executor_model,omitempty"`
+	// TokensSeen is the high-water mark of cache_read +
+	// cache_creation tokens observed since the last fresh session.
+	// When this crosses MaxContextTokens the next sub-task forces a
+	// fresh session to avoid hitting the model's context window.
+	TokensSeen int `json:"tokens_seen,omitempty"`
+	// MaxContextTokens is the watermark above which the executor
+	// forces a fresh session. 0 means "use the package default
+	// (120000)".
+	MaxContextTokens int `json:"max_context_tokens,omitempty"`
 }
 
 // ReplanContext is the structured output of the replan-setup decision.
@@ -172,6 +201,11 @@ type StateUpdate struct {
 	// sets ClearReplan once it has consumed the context.
 	Replan      *ReplanContext `json:"replan,omitempty"`
 	ClearReplan bool           `json:"clear_replan,omitempty"`
+	// Walking installs / replaces the walking-agent state on the
+	// snapshot. ClearWalking erases it (mirrors Interrupt /
+	// ClearInterrupt).
+	Walking      *WalkingAgentState `json:"walking,omitempty"`
+	ClearWalking bool               `json:"clear_walking,omitempty"`
 }
 
 // SnapshotMetadata captures debug and audit context for a committed snapshot.

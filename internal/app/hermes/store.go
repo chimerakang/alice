@@ -407,6 +407,9 @@ func (s *SQLiteTaskStore) CommitRuntimeStep(commit RuntimeCommit) (Snapshot, err
 		return Snapshot{}, err
 	}
 	current := HermesStateFromTaskState(currentTask)
+	if prev, prevErr := s.GetLatestSnapshot(commit.TaskID); prevErr == nil {
+		current = CarryForwardSnapshotFields(current, prev.State)
+	}
 	nextState, err := ApplyStateUpdates(current, commit.Updates)
 	if err != nil {
 		return Snapshot{}, err

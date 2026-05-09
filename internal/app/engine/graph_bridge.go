@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -171,6 +172,15 @@ func (e *PlanExecuteEngine) RunViaGraph(ctx context.Context, goal string, cc *Ch
 	if !ok {
 		return hermes.Snapshot{}, errors.New("engine: task store does not satisfy snapshot interfaces required by graph.Walker")
 	}
+	// Walking-agent process-local toggle on the runner. The snapshot's
+	// state.Walking carries the cross-sub-task decision data; this flag
+	// just lets the underlying runner know it can skip
+	// ClearSessionForModel between calls. Reset on exit so non-Hermes
+	// work after the task does not inherit walking semantics.
+	if e.cfg.WalkingAgentEnabled {
+		e.direct.SetWalkingEnabled(true)
+		defer e.direct.SetWalkingEnabled(false)
+	}
 	walker, err := graph.NewWalker(store, e.BuildGraphRegistry(cc))
 	if err != nil {
 		return hermes.Snapshot{}, err
@@ -233,6 +243,12 @@ func (e *PlanExecuteEngine) seedPlannerSnapshot(taskID string) error {
 	if state.Goal == "" {
 		state.Goal = task.Goal
 	}
+	if e.cfg.WalkingAgentEnabled {
+		state.Walking = &hermes.WalkingAgentState{
+			Enabled:          true,
+			MaxContextTokens: e.walkingMaxContextTokens(),
+		}
+	}
 	_, err = store.CreateSnapshot(hermes.Snapshot{
 		TaskID:    taskID,
 		ChatID:    task.ChatID,
@@ -252,10 +268,13 @@ func (e *PlanExecuteEngine) seedPlannerSnapshot(taskID string) error {
 // It owns prompt building (including strict-retry feedback prepend) and
 // translates DirectEngine.Result back into graph.SubTaskRunResult.
 //
-// What's deliberately NOT here: walking-agent slim-prompt logic, outer
-// failure-retry, and per-attempt operator-hint injection. Those concerns
-// belong on the graph side (StrictReviewNode for retry, ApprovalNode for
-// failure pause) or in a follow-up walking-agent node.
+// Walking-agent decision logic is now also here — the executor adapter
+// reads state.Walking before each call to decide between a slim
+// (session-reuse) prompt and a cold (fresh-session) prompt, then
+// returns the new walking state on the result so ExecutorNode commits
+// it via StateUpdate.Walking. See #169 #1, #7. Outer failure-retry and
+// operator-hint injection still live on the graph side (ApprovalNode +
+// future hint node).
 type executorSubTaskRunner struct {
 	engine *PlanExecuteEngine
 	cc     *ChatContext
@@ -270,6 +289,8 @@ func (r *executorSubTaskRunner) RunSubTask(ctx context.Context, state hermes.Her
 	}
 	subTask := state.Plan[idx]
 	feedback := subTask.StrictRetryFeedback
+
+	walkingActive, forceFresh, prevWalking := r.decideWalking(state, subTask, feedback)
 	prompt := buildSubTaskGoalVariant(
 		r.engine.cfg.ExecutorRules,
 		state.Goal,
@@ -278,14 +299,15 @@ func (r *executorSubTaskRunner) RunSubTask(ctx context.Context, state hermes.Her
 		len(state.Plan),
 		subTask,
 		feedback,
-		false, // walkingActive — γ6 first cut leaves walking-agent off the graph path
+		walkingActive,
 	)
+	if forceFresh {
+		r.engine.direct.ForceFreshSession()
+	}
 	r.engine.direct.BindSubTask(subTask)
 	res, err := r.engine.direct.Run(ctx, prompt, r.cc, subTaskSink{})
-	if err != nil {
-		return graph.SubTaskRunResult{}, err
-	}
-	return graph.SubTaskRunResult{
+
+	out := graph.SubTaskRunResult{
 		Text:                     res.Text,
 		Model:                    res.Model,
 		InputTokens:              res.InputTokens,
@@ -294,7 +316,85 @@ func (r *executorSubTaskRunner) RunSubTask(ctx context.Context, state hermes.Her
 		CacheCreationInputTokens: res.CacheCreationInputTokens,
 		OutputTokens:             res.OutputTokens,
 		CostUSD:                  res.Cost,
-	}, nil
+	}
+	if prevWalking != nil && prevWalking.Enabled {
+		out.WalkingState = nextWalkingState(prevWalking, res, walkingActive, err)
+	}
+	if err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+// decideWalking ports the case-by-case decision tree from the legacy
+// PlanExecuteEngine.executeSubTask: when can the next call reuse the
+// prior session (walkingActive) vs must start fresh (forceFresh).
+//
+// Mirrors the original ladder so behaviour matches Run():
+//
+//	walking disabled                              → cold, no walking
+//	first sub-task (PrevExecutorModel == "")      → cold, force fresh
+//	predicted model unknown                       → cold, force fresh (safe)
+//	predicted model != PrevExecutorModel          → model boundary, fresh
+//	strict-retry feedback present                 → fresh seat for retry
+//	TokensSeen >= MaxContextTokens                → watermark trip
+//	default                                       → walking active
+func (r *executorSubTaskRunner) decideWalking(state hermes.HermesState, subTask hermes.SubTask, feedback string) (walkingActive, forceFresh bool, prev *hermes.WalkingAgentState) {
+	prev = state.Walking
+	if prev == nil || !prev.Enabled {
+		return false, false, prev
+	}
+	predicted := r.engine.predictExecutorModel(subTask)
+	max := prev.MaxContextTokens
+	if max <= 0 {
+		max = defaultWalkingMaxContextTokens
+	}
+	switch {
+	case prev.PrevExecutorModel == "":
+		return false, true, prev
+	case predicted == "":
+		return false, true, prev
+	case predicted != prev.PrevExecutorModel:
+		return false, true, prev
+	case strings.TrimSpace(feedback) != "":
+		return false, true, prev
+	case prev.TokensSeen >= max:
+		return false, true, prev
+	default:
+		return true, false, prev
+	}
+}
+
+// nextWalkingState computes the post-call walking state from the prior
+// state + the runner's metrics. Mirrors the legacy plan_execute.go
+// post-run update block: track the actual model that ran, advance the
+// transcript watermark when walkingActive, reset on cold or error.
+func nextWalkingState(prev *hermes.WalkingAgentState, res Result, walkingActive bool, runErr error) *hermes.WalkingAgentState {
+	if prev == nil {
+		return nil
+	}
+	out := *prev
+	if runErr != nil {
+		// Drop session state on error so the next sub-task starts fresh.
+		out.PrevExecutorModel = ""
+		out.TokensSeen = 0
+		return &out
+	}
+	if res.Model != "" {
+		out.PrevExecutorModel = res.Model
+	}
+	if walkingActive {
+		transcriptSize := res.CacheReadInputTokens + res.CacheCreationInputTokens
+		if transcriptSize == 0 {
+			transcriptSize = prev.TokensSeen + res.InputTokens + res.OutputTokens
+		}
+		if transcriptSize > out.TokensSeen {
+			out.TokensSeen = transcriptSize
+		}
+	} else {
+		out.TokensSeen = 0
+	}
+	return &out
 }
 
 // subTaskReviewerAdapter wraps PlanExecuteEngine.runReview for the

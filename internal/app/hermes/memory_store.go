@@ -270,7 +270,11 @@ func (s *MemoryTaskStore) CommitRuntimeStep(commit RuntimeCommit) (Snapshot, err
 	if !ok {
 		return Snapshot{}, ErrNoTask
 	}
-	nextState, err := ApplyStateUpdates(HermesStateFromTaskState(task), commit.Updates)
+	seed := HermesStateFromTaskState(task)
+	if hist := s.snapshots[commit.TaskID]; len(hist) > 0 {
+		seed = CarryForwardSnapshotFields(seed, hist[len(hist)-1].State)
+	}
+	nextState, err := ApplyStateUpdates(seed, commit.Updates)
 	if err != nil {
 		return Snapshot{}, err
 	}

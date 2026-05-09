@@ -23,6 +23,14 @@ type SubTaskRunResult struct {
 	CacheCreationInputTokens int
 	OutputTokens             int
 	CostUSD                  float64
+	// WalkingState is the runner's recommended next walking-agent
+	// state after this call. Optional — runners that don't implement
+	// the walking-agent contract leave it nil and ExecutorNode emits
+	// no Walking update. When set, ExecutorNode forwards it (or
+	// ClearWalking when set to a sentinel zero with Enabled=false) in
+	// the StateUpdate so the snapshot stays the source of truth for
+	// the cross-sub-task session contract (#169 #1, #7).
+	WalkingState *hermes.WalkingAgentState
 }
 
 // TokenVolume is the same metric PlanExecuteEngine uses to charge token
@@ -170,6 +178,7 @@ func (n *ExecutorNode) Handle(ctx context.Context, state hermes.HermesState) (No
 			update.PhaseUsages = []hermes.PhaseUsage{n.executorPhaseUsage(res)}
 			update.TokenUsageDelta = tokens
 		}
+		applyWalkingDelta(&update, res.WalkingState)
 		return NodeOutput{
 			Updates:  []hermes.StateUpdate{update},
 			NextStep: hermes.RuntimeStepStrictReview,
@@ -231,12 +240,32 @@ func (n *ExecutorNode) Handle(ctx context.Context, state hermes.HermesState) (No
 		}}
 		update.TokenUsageDelta = tokens
 	}
+	applyWalkingDelta(&update, res.WalkingState)
 
 	return NodeOutput{
 		Updates:  []hermes.StateUpdate{update},
 		NextStep: n.nextStepAfter(nextIdx, len(state.Plan)),
 		Reason:   reason,
 	}, nil
+}
+
+// applyWalkingDelta forwards the runner's recommended walking state
+// into a StateUpdate. A nil pointer means "runner does not implement
+// the walking-agent contract — leave snapshot untouched". A non-nil
+// state with Enabled=false is treated as an explicit clear (the next
+// sub-task starts cold-but-not-walking); otherwise the new state
+// replaces the previous via the reducer's set/clear pair.
+func applyWalkingDelta(update *hermes.StateUpdate, ws *hermes.WalkingAgentState) {
+	if update == nil || ws == nil {
+		return
+	}
+	if !ws.Enabled {
+		update.ClearWalking = true
+		update.Walking = nil
+		return
+	}
+	clone := *ws
+	update.Walking = &clone
 }
 
 // advanceWithoutRunning emits a no-op StateUpdate that just bumps the

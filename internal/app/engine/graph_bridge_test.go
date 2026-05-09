@@ -192,6 +192,97 @@ func TestRunViaGraph_ReplanLoopFromBlockReviewToPass(t *testing.T) {
 	}
 }
 
+// walkingTestRunner satisfies DirectRunner + Walking* + cache-metrics so
+// the bridge integration test can drive the walking-agent decision tree
+// without spinning up a real model session. It records every Run call
+// so tests can assert which prompts arrived (slim vs cold) at which
+// sub-task.
+type walkingTestRunner struct {
+	prompts        []string
+	walkingEnabled bool
+	freshCalls     int
+	model          string
+	cacheRead      int
+	cacheWrite     int
+}
+
+func (r *walkingTestRunner) Run(userMessage string, _ func(string, bool)) (string, error) {
+	r.prompts = append(r.prompts, userMessage)
+	return "ok-result", nil
+}
+func (r *walkingTestRunner) LastCallMetrics() (string, int, int, float64) {
+	return r.model, 0, 10, 0
+}
+func (r *walkingTestRunner) LastCacheMetrics() (int, int) { return r.cacheRead, r.cacheWrite }
+func (r *walkingTestRunner) SetWalkingEnabled(enabled bool) {
+	r.walkingEnabled = enabled
+}
+func (r *walkingTestRunner) ForceFreshSession() { r.freshCalls++ }
+
+func TestRunViaGraph_WalkingAgentReusesSessionForSecondSubTask(t *testing.T) {
+	store := hermes.NewMemoryTaskStore()
+	runner := &walkingTestRunner{model: "claude-sonnet-4-6", cacheRead: 8000, cacheWrite: 1000}
+	reporter := &planExecuteReporter{}
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{
+			Text: "```json\n" +
+				`[{"id":"s1","description":"prep","tool_hints":["Read"]},` +
+				`{"id":"s2","description":"verify","tool_hints":["Bash"]}]` +
+				"\n```",
+			SessionID: "planner-session", InputTokens: 5, OutputTokens: 3,
+		}, nil
+	}
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		PlannerModel:        "planner-model",
+		ProjectDir:          "/repo",
+		ChatID:              42,
+		Budget:              hermes.TokenBudget{MaxTotalTokens: 1000},
+		DisableReview:       true,
+		WalkingAgentEnabled: true,
+		ExecutorModel:       "claude-sonnet-4-6",
+	}, planFn, NewDirectEngine(runner), store, reporter)
+
+	cc := NewChatContext(42, 0, "/repo")
+	final, err := engine.RunViaGraph(context.Background(), "two-step task", cc)
+	if err != nil {
+		t.Fatalf("RunViaGraph: %v", err)
+	}
+	if final.NextStep != hermes.RuntimeStepTerminal {
+		t.Fatalf("NextStep = %q, want terminal", final.NextStep)
+	}
+	if len(runner.prompts) != 2 {
+		t.Fatalf("prompts = %d, want 2", len(runner.prompts))
+	}
+	// First call cold → must include the executor rules block; second
+	// call walking-active → slim prompt that omits the rules block.
+	first := runner.prompts[0]
+	second := runner.prompts[1]
+	if !strings.Contains(first, "sub-task") {
+		t.Errorf("first prompt missing sub-task framing: %s", first)
+	}
+	if strings.Contains(second, "Completed sub-task results so far") {
+		t.Errorf("second prompt should be slim (walking active), got cold form: %s", second)
+	}
+	// The runner's SetWalkingEnabled must have been toggled on by
+	// RunViaGraph and back off at exit.
+	if runner.walkingEnabled {
+		t.Errorf("walking flag should be reset to false on RunViaGraph exit")
+	}
+	// First sub-task is cold (no prior session) → ForceFreshSession
+	// must have been called at least once.
+	if runner.freshCalls < 1 {
+		t.Errorf("freshCalls = %d, want >= 1 (first sub-task cold-starts)", runner.freshCalls)
+	}
+	// Snapshot's Walking field should record the model the second
+	// sub-task ran on.
+	if final.State.Walking == nil {
+		t.Fatalf("expected state.Walking to be populated")
+	}
+	if final.State.Walking.PrevExecutorModel != "claude-sonnet-4-6" {
+		t.Errorf("PrevExecutorModel = %q, want claude-sonnet-4-6", final.State.Walking.PrevExecutorModel)
+	}
+}
+
 func TestRunViaGraph_RegistryHasAllNodes(t *testing.T) {
 	store := hermes.NewMemoryTaskStore()
 	runner := &planExecuteRunner{}

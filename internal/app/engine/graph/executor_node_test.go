@@ -253,3 +253,76 @@ func TestExecutorNode_HandleAccumulatedAppendsConclusion(t *testing.T) {
 		t.Errorf("Accumulated empty, want non-empty after success")
 	}
 }
+
+func TestExecutorNode_PropagatesWalkingStateFromRunner(t *testing.T) {
+	walking := &hermes.WalkingAgentState{
+		Enabled:           true,
+		PrevExecutorModel: "claude-sonnet-4-6",
+		TokensSeen:        4500,
+		MaxContextTokens:  120_000,
+	}
+	runner := &fakeRunner{
+		result: SubTaskRunResult{
+			Text:         "ok",
+			Model:        "claude-sonnet-4-6",
+			OutputTokens: 50,
+			WalkingState: walking,
+		},
+	}
+	node := &ExecutorNode{Runner: runner}
+	state := makeExecutorState([]hermes.SubTask{
+		{ID: "s1", Status: hermes.SubTaskPending},
+		{ID: "s2", Status: hermes.SubTaskPending},
+	}, 0, "")
+	out, err := node.Handle(context.Background(), state)
+	if err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	u := out.Updates[0]
+	if u.Walking == nil {
+		t.Fatalf("expected Walking propagated to StateUpdate")
+	}
+	if u.Walking.PrevExecutorModel != "claude-sonnet-4-6" || u.Walking.TokensSeen != 4500 {
+		t.Errorf("Walking = %+v", u.Walking)
+	}
+	if u.ClearWalking {
+		t.Errorf("ClearWalking should be false when Walking is set")
+	}
+}
+
+func TestExecutorNode_RunnerWalkingDisabledClearsState(t *testing.T) {
+	runner := &fakeRunner{
+		result: SubTaskRunResult{
+			Text:         "ok",
+			Model:        "claude-sonnet-4-6",
+			OutputTokens: 50,
+			// Enabled=false signals "explicit clear" to applyWalkingDelta.
+			WalkingState: &hermes.WalkingAgentState{Enabled: false},
+		},
+	}
+	node := &ExecutorNode{Runner: runner}
+	state := makeExecutorState([]hermes.SubTask{
+		{ID: "s1", Status: hermes.SubTaskPending},
+	}, 0, "")
+	out, _ := node.Handle(context.Background(), state)
+	u := out.Updates[0]
+	if !u.ClearWalking {
+		t.Errorf("ClearWalking should be true when runner returns disabled walking")
+	}
+	if u.Walking != nil {
+		t.Errorf("Walking should be nil on clear: %+v", u.Walking)
+	}
+}
+
+func TestExecutorNode_NoWalkingStateLeavesUpdateAlone(t *testing.T) {
+	runner := &fakeRunner{
+		result: SubTaskRunResult{Text: "ok", Model: "m", OutputTokens: 5},
+	}
+	node := &ExecutorNode{Runner: runner}
+	state := makeExecutorState([]hermes.SubTask{{ID: "s1", Status: hermes.SubTaskPending}}, 0, "")
+	out, _ := node.Handle(context.Background(), state)
+	u := out.Updates[0]
+	if u.Walking != nil || u.ClearWalking {
+		t.Errorf("expected no walking writes when runner returned nil WalkingState; got Walking=%+v ClearWalking=%v", u.Walking, u.ClearWalking)
+	}
+}
