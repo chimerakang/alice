@@ -1632,6 +1632,63 @@ func TestApplyInterruptResolution_RetryClearsInterrupt(t *testing.T) {
 	}
 }
 
+func TestApplyInterruptResolution_BudgetRetryResetsBudgetStartedAtAndPreservesResumeStep(t *testing.T) {
+	store := newTestStore(t)
+	task, _ := store.CreateTask(makeTask("res-budget", 310))
+	// Commit a budget-exceeded snapshot mid-reviewer (uncommon but
+	// tests the ResumeStep preservation explicitly).
+	executing := TaskStatusExecuting
+	startedAt := time.Now().Add(-2 * time.Hour)
+	plan := []SubTask{
+		{ID: "s1", Description: "first", Status: SubTaskDone},
+	}
+	interrupt := &HermesInterrupt{
+		ID:         "iv-budget",
+		Reason:     "budget_exceeded",
+		SourceStep: RuntimeStepReviewer,
+		ResumeStep: RuntimeStepReviewer,
+		CreatedAt:  time.Now(),
+		Payload: map[string]any{
+			"used_tokens":      99000,
+			"max_total_tokens": 50000,
+		},
+	}
+	if _, err := store.CommitRuntimeStep(RuntimeCommit{
+		TaskID: task.ID,
+		Updates: []StateUpdate{{
+			Status:          &executing,
+			Plan:            plan,
+			Interrupt:       interrupt,
+			BudgetStartedAt: &startedAt,
+		}},
+		NextStep:   RuntimeStepReviewer,
+		SourceNode: RuntimeStepReviewer,
+		Metadata:   SnapshotMetadata{Source: "test", Reason: "budget_exceeded"},
+	}); err != nil {
+		t.Fatalf("commit budget snapshot: %v", err)
+	}
+
+	if err := store.ApplyInterruptResolution(task.ID, InterruptResolutionRetry); err != nil {
+		t.Fatalf("ApplyInterruptResolution: %v", err)
+	}
+	snap, err := store.GetLatestSnapshot(task.ID)
+	if err != nil {
+		t.Fatalf("GetLatestSnapshot: %v", err)
+	}
+	if snap.State.Interrupt != nil {
+		t.Errorf("Interrupt should be cleared, got %+v", snap.State.Interrupt)
+	}
+	if snap.NextStep != RuntimeStepReviewer {
+		t.Errorf("NextStep = %q, want reviewer (preserved from ResumeStep)", snap.NextStep)
+	}
+	if snap.Metadata.Reason != "user_continue_after_budget" {
+		t.Errorf("metadata.reason = %q, want user_continue_after_budget", snap.Metadata.Reason)
+	}
+	if !snap.State.TokenBudget.StartedAt.After(startedAt) {
+		t.Errorf("BudgetStartedAt = %v, want reset to a time after %v", snap.State.TokenBudget.StartedAt, startedAt)
+	}
+}
+
 func TestApplyInterruptResolution_SkipMarksSubTaskAndAdvances(t *testing.T) {
 	store := newTestStore(t)
 	task, _ := store.CreateTask(makeTask("res-skip", 301))

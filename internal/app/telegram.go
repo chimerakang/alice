@@ -6513,6 +6513,14 @@ func (t *TelegramBot) makeHermesGraphInterruptCallback(key chatKey) func(ctx con
 		if taskID == "" {
 			return
 		}
+		// Budget interrupts have a separate UX (just "continue / abort"
+		// rather than retry/skip/adjust). Routed via the same
+		// ApplyInterruptResolution path so the persisted snapshot stays
+		// the source of truth for resumption. See #171 Class B follow-up.
+		if interrupt.Reason == "budget_exceeded" {
+			t.handleHermesBudgetInterrupt(key, state, interrupt)
+			return
+		}
 		idx, total, subDesc, errText := hermesGraphInterruptDetails(interrupt)
 		if total <= 0 {
 			total = len(state.Plan)
@@ -6566,6 +6574,43 @@ func (t *TelegramBot) makeHermesGraphInterruptCallback(key chatKey) func(ctx con
 			log.Printf("[hermes.graph] interrupt callback context ended after menu task=%s: %v", taskID, ctx.Err())
 		}
 	}
+}
+
+// handleHermesBudgetInterrupt posts the budget-exceeded UX (continue /
+// abort) and registers a per-key context so the click handler knows
+// which task to resolve. Mirrors the failure-pause path but with a
+// different button set + callback prefix.
+func (t *TelegramBot) handleHermesBudgetInterrupt(key chatKey, state hermes.TaskState, interrupt hermes.HermesInterrupt) {
+	taskID := strings.TrimSpace(state.ID)
+	if taskID == "" {
+		return
+	}
+	used, max := budgetTokensFromInterrupt(interrupt)
+	header := "💸 Hermes 預算上限觸發 — 任務已暫停"
+	if max > 0 {
+		header += fmt.Sprintf("\n• tokens 用量：%d / %d", used, max)
+	} else if used > 0 {
+		header += fmt.Sprintf("\n• tokens 用量：%d", used)
+	}
+	header += "\n\n按「繼續」會重置 wallclock 計時器後繼續執行（已用 token 不會清零；若 token 上限是主因，下一輪仍會再次暫停）。按「中止」直接結束此任務。"
+
+	btns := [][]map[string]interface{}{
+		{
+			{"text": "▶️ 繼續", "callback_data": fmt.Sprintf("hermes:budget:continue:%s", taskID)},
+			{"text": "🛑 中止任務", "callback_data": fmt.Sprintf("hermes:budget:abort:%s", taskID)},
+		},
+	}
+	t.sendMenuMessage(key, header, btns)
+}
+
+func budgetTokensFromInterrupt(interrupt hermes.HermesInterrupt) (used, max int) {
+	payload, ok := interrupt.Payload.(map[string]any)
+	if !ok {
+		return 0, 0
+	}
+	used = intFromInterruptPayload(payload["used_tokens"])
+	max = intFromInterruptPayload(payload["max_total_tokens"])
+	return used, max
 }
 
 func hermesGraphInterruptDetails(interrupt hermes.HermesInterrupt) (idx, total int, subDesc, errText string) {
@@ -6724,6 +6769,103 @@ func (t *TelegramBot) tryColdRestartFailureResume(key chatKey, queryID, action, 
 		return true
 	}
 	go t.runTrackedJob("hermes.cold_resume", func() {
+		t.startHermesTaskWithIssueTierFromState(
+			key,
+			resumeState.Goal,
+			resumeState.ProjectDir,
+			resumeState.GithubIssueNumber,
+			HermesBudgetConfig{},
+			t.config.Hermes.GithubIntegration,
+			t.hermesTierFor(key),
+			&resumeState,
+		)
+	})
+	return true
+}
+
+// handleHermesBudgetDecisionCallback processes a click on the
+// budget-exceeded Continue / Abort buttons. callback_data is
+// "hermes:budget:<continue|abort>:<taskID>". Returns true when the
+// callback was a budget decision so the dispatcher knows to stop.
+//
+// "continue" routes through ApplyInterruptResolutionRetry which, for
+// budget interrupts, clears the Interrupt + resets BudgetStartedAt +
+// commits at the snapshot's ResumeStep. "abort" goes through the same
+// ApplyInterruptResolutionAbort path the failure-pause flow uses.
+//
+// After the resolution is applied, we re-launch Hermes via
+// startHermesTaskWithIssueTierFromState — same path
+// tryColdRestartFailureResume uses, so live and post-restart budget
+// resumes share one re-entry point.
+func (t *TelegramBot) handleHermesBudgetDecisionCallback(key chatKey, queryID, data string) bool {
+	if !strings.HasPrefix(data, "hermes:budget:") {
+		return false
+	}
+	rest := strings.TrimPrefix(data, "hermes:budget:")
+	parts := strings.SplitN(rest, ":", 2)
+	if len(parts) < 2 {
+		t.answerCallbackQuery(queryID, "❌ 無效的預算按鈕")
+		return true
+	}
+	action, taskID := parts[0], parts[1]
+
+	if t.taskSvc == nil {
+		t.answerCallbackQuery(queryID, "❌ task service unavailable")
+		return true
+	}
+	state, err := t.taskSvc.GetTask(taskID)
+	if err != nil || state.IsTerminal() {
+		t.answerCallbackQuery(queryID, "❌ 任務已結束或不存在")
+		return true
+	}
+	if state.ChatID != key.chatID || state.ThreadID != key.threadID {
+		t.answerCallbackQuery(queryID, "❌ 此預算暫停屬於其他對話")
+		return true
+	}
+	snap, ok := t.taskSvc.LatestSnapshot(taskID)
+	if !ok || snap.State.Interrupt == nil || snap.State.Interrupt.Reason != "budget_exceeded" {
+		t.answerCallbackQuery(queryID, "❌ 此預算暫停已失效")
+		return true
+	}
+
+	var resolution hermes.InterruptResolution
+	var ack string
+	switch action {
+	case "continue":
+		resolution = hermes.InterruptResolutionRetry
+		ack = "▶️ 重置 wallclock 後繼續"
+	case "abort":
+		resolution = hermes.InterruptResolutionAbort
+		ack = "🛑 已中止任務"
+	default:
+		t.answerCallbackQuery(queryID, "❌ 不支援的預算決策")
+		return true
+	}
+
+	supported, err := t.taskSvc.ApplyInterruptResolution(taskID, resolution)
+	if err != nil {
+		log.Printf("[hermes.budget] apply resolution task=%s decision=%s: %v", taskID, resolution, err)
+		t.answerCallbackQuery(queryID, "❌ 套用決策失敗，請查看 log")
+		return true
+	}
+	if !supported {
+		t.answerCallbackQuery(queryID, "❌ task store 不支援 snapshot resolution")
+		return true
+	}
+	t.answerCallbackQuery(queryID, ack)
+
+	if resolution == hermes.InterruptResolutionAbort {
+		t.send(key, fmt.Sprintf("🛑 任務 %s 已中止。", shortHermesTaskID(taskID)))
+		return true
+	}
+
+	resumeState, err := t.taskSvc.GetTask(taskID)
+	if err != nil {
+		log.Printf("[hermes.budget] reload task after resolution failed: %v", err)
+		return true
+	}
+	t.send(key, fmt.Sprintf("▶️ 任務 %s — 預算已重置，繼續執行。", shortHermesTaskID(taskID)))
+	go t.runTrackedJob("hermes.budget_resume", func() {
 		t.startHermesTaskWithIssueTierFromState(
 			key,
 			resumeState.Goal,
@@ -7029,6 +7171,9 @@ func truncateRunesText(s string, max int) string {
 
 func (t *TelegramBot) handleHermesCallback(key chatKey, queryID, data string) {
 	if t.handleHermesFailureDecisionCallback(key, queryID, data) {
+		return
+	}
+	if t.handleHermesBudgetDecisionCallback(key, queryID, data) {
 		return
 	}
 	mode, taskID, ok := parseHermesCallbackData(data)

@@ -842,6 +842,35 @@ func (s *SQLiteTaskStore) ApplyInterruptResolution(taskID string, decision Inter
 		return err
 
 	case InterruptResolutionRetry:
+		// Budget interrupts route differently from failure-pause:
+		// resume at the SnappedStep the Walker recorded (could be
+		// planner / executor / reviewer) and reset BudgetStartedAt so
+		// wallclock-bounded budgets restart fresh. UsedTokens is not
+		// reset — if the user hits "continue" on a token-exhausted
+		// budget, the gate will re-trip on the next iteration and they
+		// can choose abort or expand MaxTotalTokens. See #171 Class B
+		// follow-up.
+		if snap.State.Interrupt.Reason == "budget_exceeded" {
+			resumeStep := snap.State.Interrupt.ResumeStep
+			if resumeStep == "" {
+				resumeStep = RuntimeStepExecutor
+			}
+			now := time.Now()
+			_, err := s.CommitRuntimeStep(RuntimeCommit{
+				TaskID: taskID,
+				Updates: []StateUpdate{{
+					ClearInterrupt:  true,
+					BudgetStartedAt: &now,
+				}},
+				NextStep:   resumeStep,
+				SourceNode: RuntimeStepApproval,
+				Metadata: SnapshotMetadata{
+					Source: "interrupt_resolution",
+					Reason: "user_continue_after_budget",
+				},
+			})
+			return err
+		}
 		_, err := s.CommitRuntimeStep(RuntimeCommit{
 			TaskID:     taskID,
 			Updates:    []StateUpdate{{ClearInterrupt: true}},
