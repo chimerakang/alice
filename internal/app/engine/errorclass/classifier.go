@@ -18,6 +18,33 @@
 // predicates (IsTransient, IsEnv) that recover each original question
 // without losing pattern coverage. New error categories are added here and
 // only here; callers stay thin wrappers.
+//
+// # Architectural boundary (#169 #6)
+//
+// errorclass owns one job: substring → Class for raw error strings.
+// Other error-handling code in the codebase has different jobs and
+// MUST NOT grow its own pattern list — they delegate to ClassifyText
+// or use typed errors instead:
+//
+//   - engine.handlePlanningError uses typed errors
+//     (hermes.ErrPlannerJSONFailed / ErrPlannerEmptyPlan) — the type
+//     IS the classification. Not a string classifier.
+//   - hermes.PlannerSession.Plan retries JSON parse failures via its
+//     own internal counter (MaxPlannerJSONRetries). The "is JSON
+//     valid?" question is local; transient/env classification of the
+//     planner's transport errors uses errorclass via the recovery
+//     decider.
+//   - app.classifyError (Telegram-side UX label) layers UX-only
+//     categories (cancelled, tool_file_patch, permission, not_found)
+//     on top of errorclass for the transient/env subset; it does
+//     not re-implement the transient pattern list.
+//   - engine.isTransientRecoveryError + hermes.ClassifyFailure are
+//     thin wrappers around ClassifyText.IsTransient / IsEnv.
+//
+// If you find yourself reaching for `strings.Contains(err.Error(),
+// "rate limit")` or similar in a new file, add a Class here instead
+// and let callers compose. Drift between parallel pattern lists is
+// the bug this package was created to prevent.
 package errorclass
 
 import "strings"

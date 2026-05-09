@@ -22,6 +22,7 @@ import (
 	"unicode/utf8"
 
 	appengine "claude-tg-agent/internal/app/engine"
+	"claude-tg-agent/internal/app/engine/errorclass"
 	"claude-tg-agent/internal/app/hermes"
 	"claude-tg-agent/internal/app/issueops"
 	"claude-tg-agent/internal/app/security"
@@ -1362,11 +1363,14 @@ func extractErrorReason(errStr string) string {
 	return errStr
 }
 
-// classifyError categorizes an error for better user-facing messages and logging.
+// classifyError returns a UX-facing label for an error string. UX
+// categories that errorclass does not track (cancelled, tool_file_patch,
+// permission, not_found) are matched here directly; transient/env
+// classes (timeout, rate_limit, overloaded) delegate to the errorclass
+// package so the same pattern list serves both recovery decisions and
+// user messages. See #169 #6.
 func classifyError(errStr string) string {
 	switch {
-	case strings.Contains(errStr, "context deadline exceeded"):
-		return "timeout"
 	case strings.Contains(errStr, "context canceled"),
 		strings.Contains(errStr, "agent aborted by user"):
 		return "cancelled"
@@ -1376,13 +1380,16 @@ func classifyError(errStr string) string {
 		return "permission"
 	case strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file"):
 		return "not_found"
-	case strings.Contains(errStr, "rate limit") || strings.Contains(errStr, "429"):
-		return "rate_limit"
-	case strings.Contains(errStr, "overloaded") || strings.Contains(errStr, "529"):
-		return "overloaded"
-	default:
-		return "unknown"
 	}
+	switch errorclass.ClassifyText(errStr) {
+	case errorclass.ClassTimeout:
+		return "timeout"
+	case errorclass.ClassRateLimit:
+		return "rate_limit"
+	case errorclass.ClassServerOverload:
+		return "overloaded"
+	}
+	return "unknown"
 }
 
 func (t *TelegramBot) handleCommand(key chatKey, text string) {

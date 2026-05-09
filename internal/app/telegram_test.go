@@ -3891,3 +3891,30 @@ func TestSplitMessageProducesBalancedHTMLTags(t *testing.T) {
 		}
 	}
 }
+
+func TestClassifyError_DelegatesTransientCategoriesToErrorclass(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want string
+	}{
+		{"timeout via context deadline", "context deadline exceeded after 30s", "timeout"},
+		{"timeout via i/o", "read tcp i/o timeout", "timeout"},
+		{"rate limit explicit", "Got 429 too many requests", "rate_limit"},
+		{"overloaded explicit", "529 overloaded — please retry", "overloaded"},
+		{"overloaded via 503", "503 service unavailable", "overloaded"},
+		{"cancelled by user", "agent aborted by user", "cancelled"},
+		{"cancelled by ctx", "operation failed: context canceled", "cancelled"},
+		{"file_patch", "file_patch unique match required", "tool_file_patch"},
+		{"permission denied", "open /etc/passwd: permission denied", "permission"},
+		{"not found", "no such file or directory", "not_found"},
+		{"unknown", "syntax error at line 42", "unknown"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := classifyError(tc.text); got != tc.want {
+				t.Errorf("classifyError(%q) = %q, want %q", tc.text, got, tc.want)
+			}
+		})
+	}
+}
