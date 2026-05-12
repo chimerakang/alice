@@ -270,11 +270,11 @@ func TestSendReviewNotificationIncludesAllFailedRetryAction(t *testing.T) {
 	case msg := <-bot.messageQueue:
 		markup := msg.Params["reply_markup"].(map[string]interface{})
 		rows := markup["inline_keyboard"].([][]map[string]interface{})
-		if rows[0][0]["callback_data"] != "retry:confirm:index:38bd507a:1" {
-			t.Errorf("first low-score button = %v, want retry:confirm:index:38bd507a:1", rows[0][0]["callback_data"])
+		if rows[0][0]["callback_data"] != "retry:run:index:38bd507a:1" {
+			t.Errorf("first low-score button = %v, want retry:run:index:38bd507a:1", rows[0][0]["callback_data"])
 		}
-		if rows[1][0]["callback_data"] != "retry:confirm:index:38bd507a:4" {
-			t.Errorf("second low-score button = %v, want retry:confirm:index:38bd507a:4", rows[1][0]["callback_data"])
+		if rows[1][0]["callback_data"] != "retry:run:index:38bd507a:4" {
+			t.Errorf("second low-score button = %v, want retry:run:index:38bd507a:4", rows[1][0]["callback_data"])
 		}
 		if rows[2][0]["callback_data"] != "retry:confirm:all:38bd507a" {
 			t.Errorf("all failed button = %v, want retry:confirm:all:38bd507a", rows[2][0]["callback_data"])
@@ -307,9 +307,9 @@ func TestReviewNotificationActionRowsLimitsExplicitLowScoreButtons(t *testing.T)
 		t.Fatalf("rows len = %d, want explicit low-score rows plus aggregate actions", len(rows))
 	}
 	wants := []string{
-		"retry:confirm:index:task-many-low:5",
-		"retry:confirm:index:task-many-low:2",
-		"retry:confirm:index:task-many-low:8",
+		"retry:run:index:task-many-low:5",
+		"retry:run:index:task-many-low:2",
+		"retry:run:index:task-many-low:8",
 	}
 	for i, want := range wants {
 		if got := rows[i][0]["callback_data"]; got != want {
@@ -318,6 +318,71 @@ func TestReviewNotificationActionRowsLimitsExplicitLowScoreButtons(t *testing.T)
 	}
 	if got := rows[3][0]["callback_data"]; got != "retry:confirm:all:task-many-low" {
 		t.Fatalf("aggregate row callback_data = %v, want retry:confirm:all:task-many-low", got)
+	}
+}
+
+func TestSendRetryTaskMenuShowsDiagnosticWhenReviewHasNoSubTaskScores(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	taskID := "task-retry-missing-scores"
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:         taskID,
+		ChatID:     42,
+		ThreadID:   7,
+		ProjectDir: "/repo",
+		Status:     "done",
+		StartedAt:  now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	for idx := 0; idx < 2; idx++ {
+		if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+			ID:          strings.TrimSpace(taskID) + ":s" + string(rune('1'+idx)),
+			TaskID:      taskID,
+			Idx:         idx,
+			Description: "step",
+			Status:      "done",
+			ResultText:  "done",
+			StartedAt:   now.Add(-30 * time.Minute),
+		}); err != nil {
+			t.Fatalf("UpsertUnifiedSubTask %d: %v", idx+1, err)
+		}
+	}
+	if _, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        taskID,
+		ReviewerModel: "gpt-5.5",
+		Verdict:       "partial",
+		OverallScore:  72,
+		FeedbackText:  "latest summary omitted per-subtask rows",
+		Source:        "review",
+		CreatedAt:     now.Add(-10 * time.Minute),
+	}); err != nil {
+		t.Fatalf("InsertUnifiedReviewResult latest without rows: %v", err)
+	}
+
+	oldStorage := globalStorage
+	globalStorage = s
+	t.Cleanup(func() { globalStorage = oldStorage })
+
+	bot := &TelegramBot{messageQueue: make(chan *TelegramMessage, 1)}
+	bot.sendRetryTaskMenu(chatKey{chatID: 42, threadID: 7}, taskID)
+
+	select {
+	case msg := <-bot.messageQueue:
+		text, _ := msg.Params["text"].(string)
+		if !strings.Contains(text, "沒有 per-subtask 分數") {
+			t.Fatalf("diagnostic text missing: %q", text)
+		}
+		markup, ok := msg.Params["reply_markup"].(map[string]interface{})
+		if !ok {
+			t.Fatal("expected reply markup with back button")
+		}
+		rows := markup["inline_keyboard"].([][]map[string]interface{})
+		if len(rows) != 1 || rows[0][0]["callback_data"] != "retry:menu" {
+			t.Fatalf("expected only back button row, got %+v", rows)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for retry task menu")
 	}
 }
 
@@ -493,6 +558,30 @@ loop:
 	rows := markup["inline_keyboard"].([][]map[string]interface{})
 	if rows[0][0]["callback_data"] != "retry:run:latest" {
 		t.Errorf("run button = %v, want retry:run:latest", rows[0][0]["callback_data"])
+	}
+}
+
+func TestSendRetryConfirmationInterpolatesLocalizedLabel(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		i18n:            newTestI18nManager(t),
+		langPreferences: map[int64]string{42: "zh-TW"},
+		messageQueue:    make(chan *TelegramMessage, 1),
+	}
+
+	bot.sendRetryConfirmation(key, "index", "task-12345678", 5)
+
+	select {
+	case msg := <-bot.messageQueue:
+		text := msg.Params["text"].(string)
+		if strings.Contains(text, "{label}") || strings.Contains(text, "{idx}") {
+			t.Fatalf("confirmation text still has placeholders: %q", text)
+		}
+		if !strings.Contains(text, "sub-task #5") {
+			t.Fatalf("confirmation text = %q, want sub-task #5 label", text)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for retry confirmation message")
 	}
 }
 

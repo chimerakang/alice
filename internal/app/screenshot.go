@@ -2,298 +2,344 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"net/url"
+	"io"
+	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
-
-	"github.com/go-rod/rod"
 )
 
 // WebMetadata 網頁元信息
 type WebMetadata struct {
-	Title       string // 頁面標題
-	Description string // 頁面描述
-	ImageURL    string // og:image 或 twitter:image
+	Title       string
+	Description string
+	ImageURL    string
 }
+
+type screenshotCommandRunner func(ctx context.Context, name string, args ...string) ([]byte, error)
 
 // ScreenshotManager 管理網頁截圖功能
 type ScreenshotManager struct {
-	timeoutSec int
-	maxRetries int
-	tempDir    string
+	timeoutSec         int
+	maxRetries         int
+	maxConcurrent      int
+	tempDir            string
+	waitForTimeout     time.Duration
+	viewportSize       string
+	commandRunner      screenshotCommandRunner
+	metadataHTTPClient *http.Client
+	captureLimiterMu   sync.Mutex
+	captureLimiter     chan struct{}
 }
+
+const screenshotRetentionLimit = 25
+const (
+	defaultScreenshotTimeout    = 20 * time.Second
+	defaultScreenshotWait       = 1 * time.Second
+	defaultScreenshotViewport   = "1280,720"
+	defaultScreenshotConcurrent = 2
+	defaultMetadataTimeout      = 3 * time.Second
+)
+
+var errScreenshotTimeout = errors.New("screenshot timeout")
 
 // NewScreenshotManager 建立截圖管理器
 func NewScreenshotManager() *ScreenshotManager {
-	return &ScreenshotManager{
-		timeoutSec: 30,
-		maxRetries: 2,
-		tempDir:    "temp/screenshots",
+	sm := &ScreenshotManager{
+		timeoutSec:     int(defaultScreenshotTimeout / time.Second),
+		maxRetries:     1,
+		maxConcurrent:  defaultScreenshotConcurrent,
+		tempDir:        "temp/screenshots",
+		waitForTimeout: defaultScreenshotWait,
+		viewportSize:   defaultScreenshotViewport,
+		metadataHTTPClient: &http.Client{
+			Timeout: defaultMetadataTimeout,
+		},
 	}
+	sm.commandRunner = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return runProcessCombinedOutput(ctx, ProcessOptions{
+			Timeout:     time.Duration(sm.timeoutSec+5) * time.Second,
+			OutputLimit: 16 * 1024,
+			LogPrefix:   "screenshot",
+		}, name, args...)
+	}
+	return sm
 }
 
-// CaptureScreenshot 截圖指定 URL
-// 返回：(圖片檔案路徑, 錯誤)
+// CaptureScreenshot 截圖指定 URL，返回圖片檔案路徑。
 func (sm *ScreenshotManager) CaptureScreenshot(ctx context.Context, urlStr string) (string, error) {
-	// 驗證 URL
-	if err := sm.validateURL(urlStr); err != nil {
-		return "", fmt.Errorf("URL 驗證失敗: %w", err)
-	}
-
-	// 建立臨時目錄
-	if err := os.MkdirAll(sm.tempDir, 0755); err != nil {
-		return "", fmt.Errorf("無法建立臨時目錄: %w", err)
-	}
-
-	// 帶重試的截圖
-	var lastErr error
-	for attempt := 0; attempt <= sm.maxRetries; attempt++ {
-		filePath, err := sm.captureWithRod(ctx, urlStr)
-		if err == nil {
-			return filePath, nil
-		}
-		lastErr = err
-
-		// 如果不是最後一次嘗試，等待後重試
-		if attempt < sm.maxRetries {
-			time.Sleep(time.Second)
-		}
-	}
-
-	return "", fmt.Errorf("截圖失敗（重試 %d 次）: %w", sm.maxRetries, lastErr)
-}
-
-// captureWithRod 使用 rod 進行單次截圖
-func (sm *ScreenshotManager) captureWithRod(ctx context.Context, urlStr string) (string, error) {
-	// 設置超時
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(sm.timeoutSec)*time.Second)
-	defer cancel()
-
-	// 啟動瀏覽器 (如果已啟動過會重複使用)
-	browser := rod.New().MustConnect()
-	defer browser.MustClose()
-
-	// 開啟頁面
-	page := browser.MustPage(urlStr)
-	defer page.MustClose()
-
-	// 等待頁面加載（先等 load 事件，再等 React/SPA 渲染完成）
-	page.MustWaitLoad()
-	time.Sleep(2 * time.Second) // 等待 React/SPA 渲染完成
-
-	// 獲取頁面截圖 (PNG 格式)
-	buf := page.MustScreenshot()
-	if len(buf) == 0 {
-		return "", fmt.Errorf("截圖資料為空")
-	}
-
-	// 保存截圖
-	filePath, err := sm.saveScreenshot(buf)
+	filePath, _, err := sm.captureWithRetry(ctx, urlStr, false)
 	if err != nil {
-		return "", fmt.Errorf("保存截圖失敗: %w", err)
+		return "", err
 	}
-
 	return filePath, nil
 }
 
-// validateURL 驗證 URL 格式
-func (sm *ScreenshotManager) validateURL(urlStr string) error {
-	if urlStr == "" {
-		return fmt.Errorf("URL 不能為空")
-	}
-
-	u, err := url.Parse(urlStr)
+// CaptureScreenshotBytes 截圖指定 URL，返回圖片 bytes。
+func (sm *ScreenshotManager) CaptureScreenshotBytes(ctx context.Context, urlStr string) ([]byte, *WebMetadata, error) {
+	filePath, metadata, err := sm.captureWithRetry(ctx, urlStr, true)
 	if err != nil {
-		return fmt.Errorf("URL 解析失敗: %w", err)
+		return nil, nil, err
 	}
 
-	// 檢查 scheme
-	if u.Scheme == "" {
-		return fmt.Errorf("URL 必須包含 scheme (http/https)，例如：https://example.com")
+	data, readErr := os.ReadFile(filePath)
+	removeErr := os.Remove(filePath)
+	if readErr != nil {
+		if removeErr != nil && !os.IsNotExist(removeErr) {
+			log.Printf("[screenshot] cleanup failed after read error: %v", removeErr)
+		}
+		return nil, nil, fmt.Errorf("讀取截圖失敗: %w", readErr)
 	}
-
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return fmt.Errorf("僅支援 http/https，不支援 %s", u.Scheme)
+	if removeErr != nil && !os.IsNotExist(removeErr) {
+		log.Printf("[screenshot] cleanup failed after buffer capture: %v", removeErr)
 	}
-
-	// 檢查主機名
-	if u.Host == "" {
-		return fmt.Errorf("URL 必須包含主機名")
-	}
-
-	return nil
+	return data, metadata, nil
 }
 
-// saveScreenshot 保存截圖到檔案
-func (sm *ScreenshotManager) saveScreenshot(data []byte) (string, error) {
-	if len(data) == 0 {
-		return "", fmt.Errorf("截圖資料為空")
-	}
-
-	// 生成檔名 (使用時間戳確保唯一性)
-	filename := fmt.Sprintf("screenshot_%d.png", time.Now().UnixMilli())
-	filePath := filepath.Join(sm.tempDir, filename)
-
-	// 寫入檔案
-	if err := os.WriteFile(filePath, data, 0644); err != nil {
-		return "", fmt.Errorf("寫入檔案失敗: %w", err)
-	}
-
-	return filePath, nil
-}
-
-// CaptureScreenshotWithMetadata 在單一 rod browser 中完成截圖和提取 metadata
+// CaptureScreenshotWithMetadata 在單一 Playwright CLI 截圖流程中完成截圖和 metadata 提取。
 // 返回：(圖片檔案路徑, metadata, 錯誤)
-// 性能優化：避免為同一 URL 開啟兩個 rod browser 實例
 func (sm *ScreenshotManager) CaptureScreenshotWithMetadata(ctx context.Context, urlStr string) (string, *WebMetadata, error) {
-	// 驗證 URL
+	return sm.captureWithRetry(ctx, urlStr, true)
+}
+
+func (sm *ScreenshotManager) captureWithRetry(ctx context.Context, urlStr string, includeMetadata bool) (string, *WebMetadata, error) {
 	if err := sm.validateURL(urlStr); err != nil {
 		return "", nil, fmt.Errorf("URL 驗證失敗: %w", err)
 	}
-
-	// 建立臨時目錄
-	if err := os.MkdirAll(sm.tempDir, 0755); err != nil {
+	release, err := sm.acquireCaptureSlot()
+	if err != nil {
+		return "", nil, err
+	}
+	defer release()
+	if err := os.MkdirAll(sm.tempDir, 0o755); err != nil {
 		return "", nil, fmt.Errorf("無法建立臨時目錄: %w", err)
 	}
 
-	// 帶重試的操作
 	var lastErr error
 	for attempt := 0; attempt <= sm.maxRetries; attempt++ {
-		filePath, metadata, err := sm.captureAndExtractWithRod(ctx, urlStr)
-		if err == nil {
-			return filePath, metadata, nil
+		filePath, err := sm.captureToFile(ctx, urlStr)
+		if err != nil {
+			lastErr = err
+			if errors.Is(err, errScreenshotTimeout) {
+				return "", nil, fmt.Errorf("截圖逾時")
+			}
+			if attempt < sm.maxRetries && ctx.Err() == nil {
+				time.Sleep(time.Duration(attempt+1) * time.Second)
+				continue
+			}
+			break
 		}
-		lastErr = err
 
-		// 如果不是最後一次嘗試，等待後重試
-		if attempt < sm.maxRetries {
-			time.Sleep(time.Second)
+		if !includeMetadata {
+			if err := sm.CleanupOldScreenshots(screenshotRetentionLimit); err != nil {
+				log.Printf("[screenshot] cleanup after capture failed: %v", err)
+			}
+			return filePath, nil, nil
 		}
+
+		metadata, metaErr := sm.fetchMetadata(ctx, urlStr)
+		if metaErr != nil {
+			log.Printf("[screenshot] metadata fetch failed for %s: %v", urlStr, metaErr)
+		}
+		if err := sm.CleanupOldScreenshots(screenshotRetentionLimit); err != nil {
+			log.Printf("[screenshot] cleanup after capture failed: %v", err)
+		}
+		return filePath, metadata, nil
 	}
 
-	return "", nil, fmt.Errorf("操作失敗（重試 %d 次）: %w", sm.maxRetries, lastErr)
+	if lastErr != nil {
+		log.Printf("[screenshot] capture failed after %d retries: %v", sm.maxRetries, lastErr)
+	}
+	return "", nil, fmt.Errorf("截圖失敗（已重試 %d 次）", sm.maxRetries)
 }
 
-// captureAndExtractWithRod 單一 rod browser 實例完成截圖和 metadata 提取
-func (sm *ScreenshotManager) captureAndExtractWithRod(ctx context.Context, urlStr string) (string, *WebMetadata, error) {
-	// 設置超時
+func (sm *ScreenshotManager) captureToFile(ctx context.Context, urlStr string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(sm.timeoutSec)*time.Second)
 	defer cancel()
 
-	// 啟動瀏覽器
-	browser := rod.New().MustConnect()
-	defer browser.MustClose()
-
-	// 開啟頁面
-	page := browser.MustPage(urlStr)
-	defer page.MustClose()
-
-	// 等待頁面加載（先等 load 事件，再等 JS/網路穩定）
-	page.MustWaitLoad()
-	time.Sleep(2 * time.Second) // 等待 React/SPA 渲染完成
-
-	// 獲取 HTML 並提取 metadata
-	html := page.MustHTML()
-	metadata := sm.extractMetadataFromHTML(html)
-
-	// 獲取頁面截圖
-	buf := page.MustScreenshot()
-	if len(buf) == 0 {
-		return "", nil, fmt.Errorf("截圖資料為空")
-	}
-
-	// 保存截圖
-	filePath, err := sm.saveScreenshot(buf)
+	tmpFile, err := os.CreateTemp(sm.tempDir, "preview-*.png")
 	if err != nil {
-		return "", nil, fmt.Errorf("保存截圖失敗: %w", err)
+		return "", fmt.Errorf("建立臨時截圖檔失敗: %w", err)
+	}
+	filePath := tmpFile.Name()
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(filePath)
+		return "", fmt.Errorf("關閉臨時截圖檔失敗: %w", err)
 	}
 
-	return filePath, metadata, nil
+	args := sm.playwrightScreenshotArgs(urlStr, filePath)
+	output, err := sm.commandRunner(ctx, "npx", args...)
+	if err != nil {
+		_ = os.Remove(filePath)
+		if ctx.Err() != nil {
+			log.Printf("[screenshot] playwright-cli timed out after %ds", sm.timeoutSec)
+			return "", fmt.Errorf("playwright-cli 截圖逾時: %w", errScreenshotTimeout)
+		}
+		if summary := trimOutput(output, 800); summary != "" {
+			log.Printf("[screenshot] playwright-cli failed: %v; output=%s", err, summary)
+		} else {
+			log.Printf("[screenshot] playwright-cli failed: %v", err)
+		}
+		return "", fmt.Errorf("playwright-cli 截圖失敗")
+	}
+
+	info, statErr := os.Stat(filePath)
+	if statErr != nil {
+		_ = os.Remove(filePath)
+		return "", fmt.Errorf("截圖檔案不存在: %w", statErr)
+	}
+	if info.Size() == 0 {
+		_ = os.Remove(filePath)
+		return "", fmt.Errorf("截圖資料為空")
+	}
+
+	return filePath, nil
 }
 
-// extractMetadataFromHTML 從 HTML 字串提取元信息
+func (sm *ScreenshotManager) playwrightScreenshotArgs(urlStr, filePath string) []string {
+	timeoutMS := strconv.Itoa(sm.timeoutSec * 1000)
+
+	return []string{
+		"--yes",
+		"playwright",
+		"screenshot",
+		"--browser=chromium",
+		"--full-page",
+		"--ignore-https-errors",
+		"--viewport-size", sm.viewportSize,
+		"--wait-for-timeout", strconv.Itoa(int(sm.waitForTimeout / time.Millisecond)),
+		"--timeout", timeoutMS,
+		urlStr,
+		filePath,
+	}
+}
+
+func (sm *ScreenshotManager) validateURL(urlStr string) error {
+	if strings.TrimSpace(urlStr) == "" {
+		return fmt.Errorf("URL 不能為空")
+	}
+	return validatePreviewURL(urlStr)
+}
+
+func (sm *ScreenshotManager) fetchMetadata(ctx context.Context, urlStr string) (*WebMetadata, error) {
+	ctx, cancel := context.WithTimeout(ctx, defaultMetadataTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, urlStr, nil)
+	if err != nil {
+		return nil, fmt.Errorf("建立請求失敗: %w", err)
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Alice Bot)")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+
+	resp, err := sm.metadataHTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("讀取網頁失敗: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	if ct := strings.ToLower(resp.Header.Get("Content-Type")); ct != "" && !strings.Contains(ct, "text/html") && !strings.Contains(ct, "application/xhtml+xml") {
+		return nil, fmt.Errorf("非 HTML 內容: %s", ct)
+	}
+
+	limited := io.LimitReader(resp.Body, 2*1024*1024)
+	htmlBytes, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, fmt.Errorf("讀取 HTML 失敗: %w", err)
+	}
+	if len(htmlBytes) == 0 {
+		return &WebMetadata{}, nil
+	}
+
+	return sm.extractMetadataFromHTML(string(htmlBytes)), nil
+}
+
 func (sm *ScreenshotManager) extractMetadataFromHTML(html string) *WebMetadata {
-	metadata := &WebMetadata{
-		Title:       "",
-		Description: "",
-		ImageURL:    "",
-	}
+	metadata := &WebMetadata{}
 
-	// 提取 title
-	titleRe := regexp.MustCompile(`<title[^>]*>([^<]+)</title>`)
+	titleRe := regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 	if matches := titleRe.FindStringSubmatch(html); len(matches) > 1 {
-		metadata.Title = matches[1]
+		metadata.Title = strings.TrimSpace(matches[1])
 	}
 
-	// 提取 og:description
-	descRe := regexp.MustCompile(`<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']`)
+	descRe := regexp.MustCompile(`(?is)<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']`)
 	if matches := descRe.FindStringSubmatch(html); len(matches) > 1 {
-		metadata.Description = matches[1]
+		metadata.Description = strings.TrimSpace(matches[1])
 	} else {
-		// 降級到 meta description
-		descRe := regexp.MustCompile(`<meta\s+name=["']description["']\s+content=["']([^"']+)["']`)
+		descRe := regexp.MustCompile(`(?is)<meta\s+name=["']description["']\s+content=["']([^"']+)["']`)
 		if matches := descRe.FindStringSubmatch(html); len(matches) > 1 {
-			metadata.Description = matches[1]
+			metadata.Description = strings.TrimSpace(matches[1])
 		}
 	}
 
-	// 提取 og:image
-	imgRe := regexp.MustCompile(`<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']`)
+	imgRe := regexp.MustCompile(`(?is)<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']`)
 	if matches := imgRe.FindStringSubmatch(html); len(matches) > 1 {
-		metadata.ImageURL = matches[1]
+		metadata.ImageURL = strings.TrimSpace(matches[1])
 	} else {
-		// 降級到 twitter:image
-		imgRe := regexp.MustCompile(`<meta\s+property=["']twitter:image["']\s+content=["']([^"']+)["']`)
+		imgRe := regexp.MustCompile(`(?is)<meta\s+property=["']twitter:image["']\s+content=["']([^"']+)["']`)
 		if matches := imgRe.FindStringSubmatch(html); len(matches) > 1 {
-			metadata.ImageURL = matches[1]
+			metadata.ImageURL = strings.TrimSpace(matches[1])
 		}
 	}
 
 	return metadata
 }
 
+func (sm *ScreenshotManager) acquireCaptureSlot() (func(), error) {
+	if sm.maxConcurrent <= 0 {
+		sm.maxConcurrent = defaultScreenshotConcurrent
+	}
+
+	sm.captureLimiterMu.Lock()
+	if sm.captureLimiter == nil || cap(sm.captureLimiter) != sm.maxConcurrent {
+		sm.captureLimiter = make(chan struct{}, sm.maxConcurrent)
+	}
+	limiter := sm.captureLimiter
+	sm.captureLimiterMu.Unlock()
+
+	select {
+	case limiter <- struct{}{}:
+		return func() { <-limiter }, nil
+	default:
+		return nil, fmt.Errorf("截圖服務忙碌，請稍後再試")
+	}
+}
+
 // ExtractMetadata 從網頁提取元信息（標題、描述、og:image）
 // 廢棄警告：建議使用 CaptureScreenshotWithMetadata() 以提高性能
 func (sm *ScreenshotManager) ExtractMetadata(ctx context.Context, urlStr string) *WebMetadata {
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	browser := rod.New().MustConnect()
-	defer browser.MustClose()
-
-	page := browser.MustPage(urlStr)
-	defer page.MustClose()
-
-	// 等待頁面加載
-	page.MustWaitLoad()
-
-	// 獲取 HTML
-	html := page.MustHTML()
-
-	// 使用共享的 metadata 提取邏輯
-	return sm.extractMetadataFromHTML(html)
+	metadata, err := sm.fetchMetadata(ctx, urlStr)
+	if err != nil {
+		log.Printf("[screenshot] ExtractMetadata failed: %v", err)
+		return &WebMetadata{}
+	}
+	return metadata
 }
 
-// CleanupOldScreenshots 清理舊的截圖檔案，保留最近的 N 張
+// CleanupOldScreenshots 清理舊的截圖檔案，保留最近的 N 張。
 func (sm *ScreenshotManager) CleanupOldScreenshots(maxScreenshots int) error {
 	entries, err := os.ReadDir(sm.tempDir)
 	if err != nil {
-		// 目錄不存在時返回 nil（不是錯誤）
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
 
-	// 如果檔案數量未超過限制，無需清理
 	if len(entries) <= maxScreenshots {
 		return nil
 	}
 
-	// 按修改時間排序並刪除最舊的檔案
 	type fileInfo struct {
 		path    string
 		modTime time.Time
@@ -301,16 +347,19 @@ func (sm *ScreenshotManager) CleanupOldScreenshots(maxScreenshots int) error {
 
 	var files []fileInfo
 	for _, entry := range entries {
-		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".png" {
-			info, _ := entry.Info()
-			files = append(files, fileInfo{
-				path:    filepath.Join(sm.tempDir, entry.Name()),
-				modTime: info.ModTime(),
-			})
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".png" {
+			continue
 		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			continue
+		}
+		files = append(files, fileInfo{
+			path:    filepath.Join(sm.tempDir, entry.Name()),
+			modTime: info.ModTime(),
+		})
 	}
 
-	// 按時間排序（舊到新）
 	for i := 0; i < len(files)-1; i++ {
 		for j := i + 1; j < len(files); j++ {
 			if files[j].modTime.Before(files[i].modTime) {
@@ -319,13 +368,23 @@ func (sm *ScreenshotManager) CleanupOldScreenshots(maxScreenshots int) error {
 		}
 	}
 
-	// 刪除超過限制的最舊檔案
 	filesToDelete := len(files) - maxScreenshots
 	for i := 0; i < filesToDelete; i++ {
-		if err := os.Remove(files[i].path); err != nil {
-			// 忽略刪除錯誤，繼續處理其他檔案
+		if err := os.Remove(files[i].path); err != nil && !os.IsNotExist(err) {
+			log.Printf("[screenshot] cleanup failed for %s: %v", files[i].path, err)
 		}
 	}
 
 	return nil
+}
+
+func trimOutput(output []byte, limit int) string {
+	if len(output) == 0 {
+		return ""
+	}
+	s := strings.TrimSpace(string(output))
+	if limit <= 0 || len(s) <= limit {
+		return s
+	}
+	return s[:limit] + "..."
 }

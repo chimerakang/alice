@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -2264,6 +2267,192 @@ func TestResolveStrictModeConfigUsesHermesReviewTimeoutOverride(t *testing.T) {
 	cfg = bot.resolveStrictModeConfig(key, "any goal")
 	if cfg.ReviewTimeout != 120*time.Second {
 		t.Fatalf("ReviewTimeout fallback = %s, want 120s (engine default)", cfg.ReviewTimeout)
+	}
+}
+
+type previewCaptureTransport struct {
+	path        string
+	contentType string
+	body        []byte
+}
+
+func (t *previewCaptureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.path = req.URL.Path
+	t.contentType = req.Header.Get("Content-Type")
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
+	}
+	t.body = body
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(`{"ok":true,"result":{}}`)),
+		Request:    req,
+	}, nil
+}
+
+type previewFailureTransport struct {
+	path        string
+	contentType string
+	statusCode  int
+	body        string
+}
+
+func (t *previewFailureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.path = req.URL.Path
+	t.contentType = req.Header.Get("Content-Type")
+	return &http.Response{
+		StatusCode: t.statusCode,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(t.body)),
+		Request:    req,
+	}, nil
+}
+
+func TestPreviewCommandMissingURLQueuesUsage(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		messageQueue: make(chan *TelegramMessage, 1),
+	}
+
+	bot.handleCommand(key, "/preview")
+
+	assertQueuedMessageContains(t, bot.messageQueue, "使用方式：/preview <URL>")
+}
+
+func TestPreviewCommandInvalidURLQueuesError(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{
+		messageQueue: make(chan *TelegramMessage, 1),
+	}
+
+	bot.handleCommand(key, "/preview ftp://example.com")
+
+	assertQueuedMessageContains(t, bot.messageQueue, "無效 URL")
+}
+
+func TestPreviewCommandFallsBackToTextWhenScreenshotFails(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	screenshotManager := NewScreenshotManager()
+	screenshotManager.tempDir = t.TempDir()
+	screenshotManager.commandRunner = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return nil, fmt.Errorf("playwright unavailable")
+	}
+
+	bot := &TelegramBot{
+		config: &Config{
+			TelegramToken: "bot-token",
+			Multimedia:    MultimediaConfig{MaxFileSizeMB: 5},
+		},
+		messageQueue:      make(chan *TelegramMessage, 2),
+		screenshotManager: screenshotManager,
+	}
+
+	bot.handleCommand(key, "/preview https://example.com")
+
+	assertQueuedMessageContains(t, bot.messageQueue, "正在預覽")
+	assertQueuedMessageContains(t, bot.messageQueue, "截圖失敗")
+}
+
+func TestPreviewCommandSendsPhoto(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	screenshotManager := NewScreenshotManager()
+	screenshotManager.tempDir = t.TempDir()
+	screenshotManager.commandRunner = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		outputPath := args[len(args)-1]
+		if err := os.WriteFile(outputPath, testPNG, 0o644); err != nil {
+			return nil, err
+		}
+		return []byte("navigating"), nil
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<!DOCTYPE html>
+<html>
+<head>
+  <title>Preview Title</title>
+  <meta name="description" content="Preview description">
+</head>
+<body>ok</body>
+</html>`)
+	}))
+	defer srv.Close()
+
+	transport := &previewCaptureTransport{}
+	bot := &TelegramBot{
+		config: &Config{
+			TelegramToken: "bot-token",
+			Multimedia:    MultimediaConfig{MaxFileSizeMB: 5},
+		},
+		messageQueue:      make(chan *TelegramMessage, 1),
+		screenshotManager: screenshotManager,
+		mediaHTTPClient:   &http.Client{Transport: transport},
+	}
+
+	bot.handleCommand(key, "/preview "+srv.URL)
+
+	assertQueuedMessageContains(t, bot.messageQueue, "正在預覽")
+	if transport.path != "/botbot-token/sendPhoto" {
+		t.Fatalf("sendPhoto path = %q, want /botbot-token/sendPhoto", transport.path)
+	}
+	if transport.contentType == "" || !strings.HasPrefix(transport.contentType, "multipart/form-data; boundary=") {
+		t.Fatalf("sendPhoto content-type = %q, want multipart form", transport.contentType)
+	}
+	body := string(transport.body)
+	for _, want := range []string{"name=\"photo\"", "Preview Title", "Preview description"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("sendPhoto body missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestPreviewCommandFallsBackToTextWhenSendPhotoFails(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	screenshotManager := NewScreenshotManager()
+	screenshotManager.tempDir = t.TempDir()
+	screenshotManager.commandRunner = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		outputPath := args[len(args)-1]
+		if err := os.WriteFile(outputPath, testPNG, 0o644); err != nil {
+			return nil, err
+		}
+		return []byte("navigating"), nil
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, `<!DOCTYPE html>
+<html>
+<head>
+  <title>Preview Title</title>
+  <meta name="description" content="Preview description">
+</head>
+<body>ok</body>
+</html>`)
+	}))
+	defer srv.Close()
+
+	transport := &previewFailureTransport{
+		statusCode: http.StatusInternalServerError,
+		body:       `{"ok":false,"description":"internal error"}`,
+	}
+	bot := &TelegramBot{
+		config: &Config{
+			TelegramToken: "bot-token",
+			Multimedia:    MultimediaConfig{MaxFileSizeMB: 5},
+		},
+		messageQueue:      make(chan *TelegramMessage, 2),
+		screenshotManager: screenshotManager,
+		mediaHTTPClient:   &http.Client{Transport: transport},
+	}
+
+	bot.handleCommand(key, "/preview "+srv.URL)
+
+	assertQueuedMessageContains(t, bot.messageQueue, "正在預覽")
+	assertQueuedMessageContains(t, bot.messageQueue, "Preview Title")
+	if transport.path != "/botbot-token/sendPhoto" {
+		t.Fatalf("sendPhoto path = %q, want /botbot-token/sendPhoto", transport.path)
 	}
 }
 

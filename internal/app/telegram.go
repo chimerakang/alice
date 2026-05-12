@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"mime/multipart"
 	"net/http"
@@ -75,6 +76,43 @@ type Document struct {
 	FileSize     int    `json:"file_size,omitempty"`
 }
 
+type mediaFileNotFoundError struct {
+	path string
+}
+
+func (e *mediaFileNotFoundError) Error() string {
+	return fmt.Sprintf("file not found: %s", e.path)
+}
+
+type mediaFileTooLargeError struct {
+	sizeBytes int64
+	limitMB   int
+}
+
+func (e *mediaFileTooLargeError) Error() string {
+	return fmt.Sprintf("file too large: %d bytes > %d MB limit", e.sizeBytes, e.limitMB)
+}
+
+type mediaFileUnsupportedTypeError struct {
+	mediaType string
+}
+
+func (e *mediaFileUnsupportedTypeError) Error() string {
+	return fmt.Sprintf("unsupported media type: %s", e.mediaType)
+}
+
+type mediaDispatchRecord struct {
+	SizeBytes int64
+	ModUnixNs int64
+	MediaType string
+}
+
+type mediaScanCandidate struct {
+	Path      string
+	MediaType string
+	Info      fs.FileInfo
+}
+
 // TelegramMessage represents a message to be sent through the rate-limited queue
 type TelegramMessage struct {
 	Method         string                 `json:"method"`
@@ -109,6 +147,9 @@ type TelegramBot struct {
 	apiHTTPClient      *http.Client
 	longPollHTTPClient *http.Client
 	downloadHTTPClient *http.Client
+	mediaHTTPClient    *http.Client
+	mediaSentMu        sync.Mutex
+	mediaSentHistory   map[chatKey]map[string]mediaDispatchRecord
 
 	// Model routing preferences per chat/thread
 	chatContexts map[chatKey]*ChatContext // Shared conversation state per chat/topic
@@ -396,6 +437,7 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 		apiHTTPClient:      apiHTTPClient,
 		longPollHTTPClient: &http.Client{Timeout: telegramLongPollTimeout},
 		downloadHTTPClient: &http.Client{Timeout: telegramDownloadTimeout},
+		mediaHTTPClient:    &http.Client{Timeout: 60 * time.Second},
 
 		// Model routing preferences
 		chatContexts:     make(map[chatKey]*ChatContext),
@@ -547,6 +589,7 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "close", "description": "Close a GitHub issue"},
 		{"command": "lang", "description": "Switch bot language"},
 		{"command": "preview", "description": "Preview webpage screenshot"},
+		{"command": "send-file", "description": "Send a file from the project directory"},
 		{"command": "strict", "description": "Toggle strict review mode"},
 		{"command": "retry", "description": "Retry reviewed low-score sub-task"},
 		{"command": "help", "description": "Show help message"},
@@ -1215,6 +1258,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	// 發送「處理中」提示
 	t.sendTyping(key)
 	_ = chatCtx.TransitionState(appengine.ChatStateDispatching, "telegram_agent")
+	startTime := time.Now()
 
 	var response string
 	var err error
@@ -1337,6 +1381,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 
 	// 解析 Agent 回應中的 [SEND_FILE:path] 標記並發送對應檔案
 	response = t.processAgentResponse(key, response, agent.ProjectDir())
+	t.scanAndSendRecentMediaFiles(key, agent.ProjectDir(), startTime)
 
 	// 加上模型標籤
 	modelTag := getModelTag(agent.lastUsedModel)
@@ -1423,6 +1468,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		help += t.getLocalizedMessage(key.chatID, "help_agents_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_tasks_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_lang_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_send_file_desc", nil) + "\n"
 		help += "/menu - 開啟視覺化操作選單\n"
 		help += "/strict - 切換 strict review mode\n"
 		help += t.getLocalizedMessage(key.chatID, "help_id_desc", nil)
@@ -1906,13 +1952,15 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		t.send(key, msg)
 
 	case "/preview":
-		// 解析 URL 參數
-		if len(parts) < 2 {
-			t.send(key, "❌ 使用方式：/preview <URL>\n例：/preview https://example.com\n或：/preview http://localhost:3939")
+		targetURL, err := parsePreviewCommandTarget(text)
+		if err != nil {
+			if errors.Is(err, errPreviewURLMissing) {
+				t.send(key, previewUsageMessage())
+				return
+			}
+			t.send(key, fmt.Sprintf("❌ 無效 URL：%v\n\n%s", err, previewUsageMessage()))
 			return
 		}
-
-		targetURL := parts[1]
 		t.handlePreviewCommand(key, targetURL)
 
 	case "/strict":
@@ -4073,6 +4121,32 @@ type hermesRoleModels struct {
 	executor      string
 	heavyExecutor string
 	reviewer      string
+	reviewerNote  string
+}
+
+func backendKindLabel(kind appengine.BackendKind) string {
+	switch kind {
+	case appengine.BackendClaude:
+		return "Claude/Opus"
+	case appengine.BackendCodex:
+		return "Codex/GPT"
+	default:
+		return "unknown"
+	}
+}
+
+func reviewerBackendSelectionNote(strictCfg appengine.StrictModeConfig, executorBackend, reviewBackend appengine.BackendKind, reviewModel string) string {
+	if !strictCfg.Enabled || reviewBackend == executorBackend {
+		return ""
+	}
+
+	reason := "strict review mode"
+	if strictCfg.OpponentBackend == appengine.BackendAuto {
+		reason += "（opponent backend 自動選擇）"
+	} else {
+		reason += fmt.Sprintf("（opponent backend 指定為 %s）", backendKindLabel(strictCfg.OpponentBackend))
+	}
+	return fmt.Sprintf("⚠️ %s：reviewer backend 切到 %s，因此 reviewer 使用 %s。", reason, backendKindLabel(reviewBackend), reviewModel)
 }
 
 func (t *TelegramBot) resolveHermesRoleModels(tier string, cfg HermesConfig, strictCfg appengine.StrictModeConfig) hermesRoleModels {
@@ -4122,12 +4196,14 @@ func (t *TelegramBot) resolveHermesRoleModels(tier string, cfg HermesConfig, str
 			log.Printf("[hermes] deep_model empty; reviewer falls back to planner model %q", reviewModel)
 		}
 	}
+	reviewerNote := reviewerBackendSelectionNote(strictCfg, appengine.BackendKindForModel(executorModel), reviewBackend, reviewModel)
 
 	return hermesRoleModels{
 		planner:       plannerModel,
 		executor:      executorModel,
 		heavyExecutor: heavyExecutorModel,
 		reviewer:      reviewModel,
+		reviewerNote:  reviewerNote,
 	}
 }
 
@@ -4166,6 +4242,9 @@ func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, p
 	executorModel := models.executor
 	heavyExecutorModel := models.heavyExecutor
 	reviewPhase := NewCLIReviewPhase(t.client, models.reviewer)
+	if models.reviewerNote != "" {
+		t.send(key, models.reviewerNote)
+	}
 
 	planFn := makePlanFn(t.client, plannerModel)
 
@@ -6036,7 +6115,7 @@ func reviewNotificationActionRows(key chatKey, t *TelegramBot, notification appe
 		rows = append(rows, []map[string]interface{}{
 			{
 				"text":          fmt.Sprintf("🔁 重跑低分 #%d", subTask.Index),
-				"callback_data": fmt.Sprintf("retry:confirm:index:%s:%d", taskID, subTask.Index),
+				"callback_data": fmt.Sprintf("retry:run:index:%s:%d", taskID, subTask.Index),
 			},
 		})
 	}
@@ -6143,6 +6222,19 @@ func (t *TelegramBot) sendRetryTaskMenu(key chatKey, taskID string) {
 		t.send(key, "❌ "+err.Error())
 		return
 	}
+	taskTitle := t.getLocalizedMessage(key.chatID, "menu_retry_task_title", map[string]string{"{id}": shortHermesTaskID(taskID)})
+	if len(selections) == 0 {
+		if diag, diagErr := store.retryNoLowScoreDiagnostic(ctx, taskID); diagErr == nil && strings.TrimSpace(diag) != "" {
+			t.sendMenuMessage(key, taskTitle+"\n\n"+diag, [][]map[string]interface{}{
+				{{"text": t.getLocalizedMessage(key.chatID, "menu_retry_back", nil), "callback_data": "retry:menu"}},
+			})
+			return
+		}
+		t.sendMenuMessage(key, taskTitle+"\n\n✅ 找不到低分 sub-task 可 retry。", [][]map[string]interface{}{
+			{{"text": t.getLocalizedMessage(key.chatID, "menu_retry_back", nil), "callback_data": "retry:menu"}},
+		})
+		return
+	}
 	rows := [][]map[string]interface{}{
 		{
 			{"text": t.getLocalizedMessage(key.chatID, "menu_retry_lowest", nil), "callback_data": "retry:confirm:lowest:" + taskID},
@@ -6153,12 +6245,11 @@ func (t *TelegramBot) sendRetryTaskMenu(key chatKey, taskID string) {
 		rows = append(rows, []map[string]interface{}{
 			{
 				"text":          fmt.Sprintf("#%d · %d/100 · %s", selection.DisplaySubTaskIdx, selection.SubTaskReview.Score, truncateForTelegram(selection.SubTask.Description, 30)),
-				"callback_data": fmt.Sprintf("retry:confirm:index:%s:%d", taskID, selection.DisplaySubTaskIdx),
+				"callback_data": fmt.Sprintf("retry:run:index:%s:%d", taskID, selection.DisplaySubTaskIdx),
 			},
 		})
 	}
 	rows = append(rows, []map[string]interface{}{{"text": t.getLocalizedMessage(key.chatID, "menu_retry_back", nil), "callback_data": "retry:menu"}})
-	taskTitle := t.getLocalizedMessage(key.chatID, "menu_retry_task_title", map[string]string{"{id}": shortHermesTaskID(taskID)})
 	t.sendMenuMessage(key, taskTitle, rows)
 }
 
@@ -6173,10 +6264,10 @@ func (t *TelegramBot) sendRetryConfirmation(key chatKey, mode, taskID string, id
 		label = t.getLocalizedMessage(key.chatID, "retry_label_all", nil)
 		runData = "retry:run:all:" + taskID
 	case "index":
-		label = t.getLocalizedMessage(key.chatID, "retry_label_index", map[string]string{"{idx}": fmt.Sprintf("%d", idx)})
+		label = t.getLocalizedMessage(key.chatID, "retry_label_index", map[string]string{"idx": fmt.Sprintf("%d", idx)})
 		runData = fmt.Sprintf("retry:run:index:%s:%d", taskID, idx)
 	}
-	confirmText := t.getLocalizedMessage(key.chatID, "menu_retry_confirm_text", map[string]string{"{label}": label})
+	confirmText := t.getLocalizedMessage(key.chatID, "menu_retry_confirm_text", map[string]string{"label": label})
 	t.sendMenuMessage(key, confirmText, [][]map[string]interface{}{
 		{
 			{"text": t.getLocalizedMessage(key.chatID, "menu_retry_confirm_btn", nil), "callback_data": runData},
@@ -7475,6 +7566,7 @@ func (t *TelegramBot) runAgentWithStopButton(key chatKey, agent *Agent, prompt s
 }
 
 func (t *TelegramBot) runAgentWithStopButtonMode(key chatKey, agent *Agent, prompt, mode string) (string, error) {
+	startTime := time.Now()
 	var statusMessageID int
 	var firstUpdate = true
 
@@ -7495,6 +7587,9 @@ func (t *TelegramBot) runAgentWithStopButtonMode(key chatKey, agent *Agent, prom
 		}
 	}
 	response, err := t.runAgentForStopButtonMode(key, agent, prompt, mode, updateCallback)
+	if err == nil {
+		t.scanAndSendRecentMediaFiles(key, agent.ProjectDir(), startTime)
+	}
 
 	// Remove stop button after completion
 	if statusMessageID != 0 {
@@ -7584,15 +7679,21 @@ func (t *TelegramBot) sendMediaFile(key chatKey, filePath, mediaType, caption st
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("file not found: %s", filePath)
+			return &mediaFileNotFoundError{path: filePath}
 		}
 		return fmt.Errorf("failed to stat file: %w", err)
+	}
+	if fileInfo.IsDir() {
+		return &mediaFileUnsupportedTypeError{mediaType: "directory"}
 	}
 
 	// 驗證檔案大小
 	maxSizeBytes := int64(t.config.Multimedia.MaxFileSizeMB) * 1024 * 1024
 	if fileInfo.Size() > maxSizeBytes {
-		return fmt.Errorf("file too large: %d bytes > %d MB limit", fileInfo.Size(), t.config.Multimedia.MaxFileSizeMB)
+		return &mediaFileTooLargeError{
+			sizeBytes: fileInfo.Size(),
+			limitMB:   t.config.Multimedia.MaxFileSizeMB,
+		}
 	}
 
 	// 打開檔案
@@ -7616,7 +7717,7 @@ func (t *TelegramBot) sendMediaFile(key chatKey, filePath, mediaType, caption st
 		apiMethod = "sendDocument"
 		formFieldName = "document"
 	default:
-		return fmt.Errorf("unsupported media type: %s", mediaType)
+		return &mediaFileUnsupportedTypeError{mediaType: mediaType}
 	}
 
 	// 構建 multipart form
@@ -7662,7 +7763,10 @@ func (t *TelegramBot) sendMediaFile(key chatKey, filePath, mediaType, caption st
 	req.Header.Set("Content-Type", contentType)
 	req.ContentLength = int64(b.Len())
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	client := t.mediaHTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 60 * time.Second}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
@@ -7678,6 +7782,8 @@ func (t *TelegramBot) sendMediaFile(key chatKey, filePath, mediaType, caption st
 		log.Printf("[telegram] ❌ API error: status=%d, body=%s", resp.StatusCode, string(body))
 		return fmt.Errorf("Telegram API error (status %d): %s", resp.StatusCode, string(body))
 	}
+
+	t.recordMediaDispatch(key, filePath, fileInfo, mediaType)
 
 	return nil
 }
@@ -7695,6 +7801,97 @@ func (t *TelegramBot) sendDocument(key chatKey, filePath, caption string) error 
 // sendVideo 發送影片
 func (t *TelegramBot) sendVideo(key chatKey, filePath, caption string) error {
 	return t.sendMediaFile(key, filePath, "video", caption)
+}
+
+func (t *TelegramBot) recordMediaDispatch(key chatKey, filePath string, info os.FileInfo, mediaType string) {
+	if t == nil || info == nil {
+		return
+	}
+
+	dispatchKey := mediaDispatchKey(filePath)
+	if dispatchKey == "" {
+		return
+	}
+
+	t.mediaSentMu.Lock()
+	defer t.mediaSentMu.Unlock()
+
+	if t.mediaSentHistory == nil {
+		t.mediaSentHistory = make(map[chatKey]map[string]mediaDispatchRecord)
+	}
+	if t.mediaSentHistory[key] == nil {
+		t.mediaSentHistory[key] = make(map[string]mediaDispatchRecord)
+	}
+	t.mediaSentHistory[key][dispatchKey] = mediaDispatchRecord{
+		SizeBytes: info.Size(),
+		ModUnixNs: info.ModTime().UnixNano(),
+		MediaType: mediaType,
+	}
+}
+
+func (t *TelegramBot) alreadyDispatchedMedia(key chatKey, filePath string, info os.FileInfo, mediaType string) bool {
+	if t == nil || info == nil {
+		return false
+	}
+
+	dispatchKey := mediaDispatchKey(filePath)
+	if dispatchKey == "" {
+		return false
+	}
+
+	t.mediaSentMu.Lock()
+	defer t.mediaSentMu.Unlock()
+
+	history := t.mediaSentHistory[key]
+	if history == nil {
+		return false
+	}
+	record, ok := history[dispatchKey]
+	if !ok {
+		return false
+	}
+	return record.SizeBytes == info.Size() &&
+		record.ModUnixNs == info.ModTime().UnixNano() &&
+		record.MediaType == mediaType
+}
+
+func mediaDispatchKey(filePath string) string {
+	filePath = strings.TrimSpace(filePath)
+	if filePath == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(filePath); err == nil {
+		return abs
+	}
+	return filepath.Clean(filePath)
+}
+
+func (t *TelegramBot) formatSendFileError(chatID int64, filePath string, err error) string {
+	var notFound *mediaFileNotFoundError
+	if errors.As(err, &notFound) {
+		return t.getLocalizedMessage(chatID, "send_file_not_found", map[string]string{
+			"{path}": filePath,
+		})
+	}
+
+	var tooLarge *mediaFileTooLargeError
+	if errors.As(err, &tooLarge) {
+		return t.getLocalizedMessage(chatID, "send_file_too_large", map[string]string{
+			"{size}":  formatFileSize(tooLarge.sizeBytes),
+			"{limit}": fmt.Sprintf("%d", tooLarge.limitMB),
+		})
+	}
+
+	var unsupported *mediaFileUnsupportedTypeError
+	if errors.As(err, &unsupported) {
+		return t.getLocalizedMessage(chatID, "send_file_unsupported_type", map[string]string{
+			"{type}": unsupported.mediaType,
+		})
+	}
+
+	return t.getLocalizedMessage(chatID, "send_file_error", map[string]string{
+		"{error}": err.Error(),
+	})
 }
 
 // processAgentResponse 解析 Agent 回應中的 [SEND_FILE:path] 標記並發送對應檔案。
@@ -7723,8 +7920,7 @@ func (t *TelegramBot) processAgentResponse(key chatKey, response string, project
 			mediaType := inferMediaType(filePath)
 			if err := t.sendMediaFile(key, filePath, mediaType, ""); err != nil {
 				log.Printf("[telegram] processAgentResponse: failed to send file %q: %v", filePath, err)
-				errMsg := t.getLocalizedMessage(key.chatID, "send_file_error", map[string]string{"{error}": err.Error()})
-				t.send(key, errMsg)
+				t.send(key, t.formatSendFileError(key.chatID, filePath, err))
 			} else {
 				log.Printf("[telegram] processAgentResponse: sent file %q as %s", filePath, mediaType)
 			}
@@ -7765,8 +7961,13 @@ func isPathAllowed(filePath, projectPath string) bool {
 
 	// 如果有 project path，也允許 project 目錄下的檔案
 	if projectPath != "" {
-		if strings.HasPrefix(normalizedPath, projectPath) {
-			return true
+		absProjectPath, err := filepath.Abs(projectPath)
+		if err == nil {
+			candidatePath := filepath.Clean(filepath.Join(absProjectPath, normalizedPath))
+			relPath, relErr := filepath.Rel(absProjectPath, candidatePath)
+			if relErr == nil && relPath != ".." && !strings.HasPrefix(relPath, ".."+string(os.PathSeparator)) {
+				return true
+			}
 		}
 	}
 
@@ -7787,6 +7988,113 @@ func inferMediaType(filePath string) string {
 	default:
 		return "document"
 	}
+}
+
+func supportedAutoMediaType(filePath string) (string, bool) {
+	switch strings.ToLower(filepath.Ext(filePath)) {
+	case ".png", ".jpg", ".jpeg", ".gif":
+		return "photo", true
+	case ".mp4", ".mov":
+		return "video", true
+	case ".pdf", ".txt", ".csv", ".md", ".json", ".yaml", ".yml", ".log", ".xml", ".toml":
+		return "document", true
+	default:
+		return "", false
+	}
+}
+
+func (t *TelegramBot) scanAndSendRecentMediaFiles(key chatKey, projectDir string, since time.Time) {
+	if t == nil {
+		return
+	}
+	projectDir = strings.TrimSpace(projectDir)
+	if projectDir == "" {
+		return
+	}
+
+	root, err := filepath.Abs(projectDir)
+	if err != nil {
+		root = filepath.Clean(projectDir)
+	}
+
+	candidates, err := t.collectRecentMediaCandidates(root, since)
+	if err != nil {
+		log.Printf("[telegram] auto media scan failed chat=%d thread=%d project=%s: %v", key.chatID, key.threadID, projectDir, err)
+		return
+	}
+
+	for _, candidate := range candidates {
+		if t.alreadyDispatchedMedia(key, candidate.Path, candidate.Info, candidate.MediaType) {
+			continue
+		}
+		if err := t.sendMediaFile(key, candidate.Path, candidate.MediaType, ""); err != nil {
+			log.Printf("[telegram] auto media send failed chat=%d thread=%d path=%s type=%s: %v", key.chatID, key.threadID, candidate.Path, candidate.MediaType, err)
+		}
+	}
+}
+
+func (t *TelegramBot) collectRecentMediaCandidates(root string, since time.Time) ([]mediaScanCandidate, error) {
+	candidates := make([]mediaScanCandidate, 0)
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "vendor":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		if !since.IsZero() && !info.ModTime().After(since) {
+			return nil
+		}
+
+		relPath, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil
+		}
+		relPath = filepath.ToSlash(relPath)
+		if !isPathAllowed(relPath, root) {
+			return nil
+		}
+
+		mediaType, ok := supportedAutoMediaType(relPath)
+		if !ok {
+			return nil
+		}
+
+		if t != nil && t.config != nil && t.config.Multimedia.MaxFileSizeMB > 0 {
+			maxSizeBytes := int64(t.config.Multimedia.MaxFileSizeMB) * 1024 * 1024
+			if info.Size() > maxSizeBytes {
+				return nil
+			}
+		}
+
+		candidates = append(candidates, mediaScanCandidate{
+			Path:      path,
+			MediaType: mediaType,
+			Info:      info,
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].Info.ModTime().Equal(candidates[j].Info.ModTime()) {
+			return candidates[i].Path < candidates[j].Path
+		}
+		return candidates[i].Info.ModTime().Before(candidates[j].Info.ModTime())
+	})
+
+	return candidates, nil
 }
 
 // handleSendFile 處理 /send-file 命令
@@ -7814,11 +8122,7 @@ func (t *TelegramBot) handleSendFile(key chatKey, filePath string) {
 
 	// 發送檔案
 	if err := t.sendMediaFile(key, filePath, mediaType, ""); err != nil {
-		msgKey := "send_file_error"
-		msg := t.getLocalizedMessage(key.chatID, msgKey, map[string]string{
-			"{error}": err.Error(),
-		})
-		t.send(key, msg)
+		t.send(key, t.formatSendFileError(key.chatID, filePath, err))
 		return
 	}
 
@@ -9957,6 +10261,50 @@ func (t *TelegramBot) handlePreviewCommand(key chatKey, urlStr string) {
 		// 降級：送文字卡片
 		t.send(key, caption)
 	}
+}
+
+var errPreviewURLMissing = errors.New("missing preview url")
+
+func previewUsageMessage() string {
+	return "❌ 使用方式：/preview <URL>\n例：/preview https://example.com\n或：/preview http://localhost:3939"
+}
+
+func parsePreviewCommandTarget(text string) (string, error) {
+	raw := strings.TrimSpace(strings.TrimPrefix(text, "/preview"))
+	if raw == "" {
+		return "", errPreviewURLMissing
+	}
+
+	fields := strings.Fields(raw)
+	if len(fields) == 0 {
+		return "", errPreviewURLMissing
+	}
+	if len(fields) > 1 {
+		return "", fmt.Errorf("URL 只能有一個參數")
+	}
+
+	targetURL := fields[0]
+	if err := validatePreviewURL(targetURL); err != nil {
+		return "", err
+	}
+	return targetURL, nil
+}
+
+func validatePreviewURL(urlStr string) error {
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return fmt.Errorf("URL 解析失敗: %w", err)
+	}
+	if u.Scheme == "" {
+		return fmt.Errorf("URL 必須包含 scheme (http/https)，例如：https://example.com")
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("僅支援 http/https，不支援 %s", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("URL 必須包含主機名")
+	}
+	return nil
 }
 
 // downloadImageToTemp 下載圖片到臨時目錄

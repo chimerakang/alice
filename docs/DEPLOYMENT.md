@@ -96,6 +96,14 @@ sudo systemctl status alice
 | `ALLOWED_IPS` | Allowed IP addresses | - | ❌ |
 | `DATA_RETENTION_DAYS` | Data retention period | `30` | ❌ |
 
+### Web Preview Notes
+
+- `/preview` 會透過 `npx playwright screenshot` 擷取截圖，因此主機需要可執行的 `Node.js` 與 `npx`。
+- 第一次在乾淨主機執行時，`npx` 可能需要連到 npm 下載 Playwright 套件與瀏覽器資源；若要避免首次請求才下載，請先執行 `npx --yes playwright install chromium`。
+- `/preview` 支援 `http://` 與 `https://`，包含外部網站與 `localhost` 類的本機服務。
+- `/preview` 的實際截圖 timeout 是 20 秒；若 Playwright CLI 在這段時間內沒有產出圖片，Bot 會回覆 `截圖逾時`。
+- 目前 repo 內沒有打包 Alice bot runtime 的 `Dockerfile`；`docker-compose.prod.yml` 只引用外部提供的 `alice:latest` image，所以若你採用容器部署，必須自行把 `Node.js`、`npx` 與 Playwright Chromium 一起包進該 image。
+
 ### Multi-Backend Hermes Configuration
 
 Use `ai_backend: "multi"` when you want a single Alice instance to serve both the default Claude tier and the GPT/Codex tier used by `/ghermes`.
@@ -356,6 +364,24 @@ export DATA_RETENTION_DAYS=30
    # Adjust limits
    export RATE_LIMIT_RPM=120
    ```
+
+4. **`/preview` 截圖失敗或逾時**
+   ```bash
+   # 確認 Node.js 與 npx 可用
+   node -v
+   npx --version
+
+   # 確認 Playwright CLI 可執行
+   npx --yes playwright --version
+
+   # 在乾淨主機或新 image 中預裝 Chromium，避免首次請求時才下載
+   npx --yes playwright install chromium
+
+   # 查看 bot log
+   docker-compose logs -f alice
+   ```
+
+   如果是第一次在乾淨主機執行，請確認機器可連外下載 Playwright 套件；若環境不允許連網，請在建置 image 或主機佈署階段先把相關依賴預裝好。
 
 ### Log Analysis
 

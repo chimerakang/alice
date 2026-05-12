@@ -65,6 +65,8 @@ Getting started is as simple as running a single Go command.
   npm install -g @anthropic-ai/claude-code
   claude auth
   ```
+- **Node.js 18+** installed and `npx` available on the host PATH. `/preview` 會透過 `npx playwright screenshot` 進行瀏覽器截圖。
+- 若是全新機器，第一次執行 `/preview` 時可能需要允許 `npx` 下載 Playwright 套件與瀏覽器資源；若不想在首次請求時下載，請先執行 `npx --yes playwright install chromium`。
 - A **Telegram Bot Token** from [@BotFather](https://t.me/BotFather)
 
 ### Installation
@@ -374,6 +376,18 @@ Bot 需要以下基本權限：
 | `/reset` | 清除對話歷史 |
 | `/status` | 查看目前狀態 |
 | `/usage` | 查看 token 用量 |
+| `/preview <URL>` | 產生網頁截圖預覽並直接回傳圖片 |
+
+### 網頁預覽
+
+`/preview` 會先驗證 URL，再交給 Bot 後端透過 Playwright CLI 擷取截圖，最後直接在 Telegram 顯示預覽圖。
+
+- 支援 `http://` 與 `https://` URL
+- 可直接預覽外部網站，例如 `https://example.com`
+- 也可預覽本機服務，例如 `http://localhost:3939`
+- 目前 repo 內的 `Dockerfile` 只用來封裝 dashboard；若你把 Alice bot 放進自己的容器，該 image 仍需另外提供 `Node.js`、`npx` 與 Playwright 的 Chromium 瀏覽器
+- 若 URL 缺少 scheme、格式無效、或截圖逾時，Bot 會回覆明確錯誤並降級成文字卡片
+- 單次 Playwright 截圖 timeout 為 20 秒，超時後會回報 `截圖逾時`
 
 直接傳送文字訊息就會啟動 Claude Code 來處理你的需求。
 
