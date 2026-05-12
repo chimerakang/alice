@@ -112,6 +112,7 @@ export function DecisionDetail({
   const currentIdx = decisions.findIndex((d) => d.id === decision.id);
   const prevDecision = currentIdx > 0 ? decisions[currentIdx - 1] : null;
   const nextDecision = currentIdx < decisions.length - 1 ? decisions[currentIdx + 1] : null;
+  const reviewExpectedSubTaskIds = (decision.unified_task?.sub_tasks || []).map((subTask) => subTask.id);
 
   // Load git diff when decision has a commit hash
   useEffect(() => {
@@ -380,7 +381,10 @@ export function DecisionDetail({
                     <p className="text-sm text-gray-300 whitespace-pre-wrap">
                       {review.feedback_text || t("timeline.detail.no_feedback")}
                     </p>
-                    <ReviewSubTaskTable subTaskResults={review.sub_task_results || []} />
+                    <ReviewSubTaskTable
+                      subTaskResults={review.sub_task_results || []}
+                      expectedSubTaskIds={reviewExpectedSubTaskIds}
+                    />
                   </div>
                 ))}
               </div>

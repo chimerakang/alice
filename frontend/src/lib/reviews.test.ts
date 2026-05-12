@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildReviewVerdictChartData, computeReviewSummary, normalizeStoredReview } from "./reviews";
+import { buildReviewVerdictChartData, computeReviewSummary, evaluateReviewSchemaCompleteness, normalizeStoredReview } from "./reviews";
 import type { DecisionLog, UnifiedReview } from "@/types/alice";
 
 function baseDecision(): DecisionLog {
@@ -116,5 +116,17 @@ describe("review summary metrics", () => {
     });
 
     expect(chart.map((entry) => entry.verdict)).toContain("block");
+  });
+
+  it("detects incomplete review schema when expected subtasks are missing", () => {
+    const result = evaluateReviewSchemaCompleteness(
+      ["subtask-a", "subtask-b", "subtask-c"],
+      [],
+    );
+
+    expect(result.state).toBe("incomplete");
+    expect(result.expectedCount).toBe(3);
+    expect(result.actualCount).toBe(0);
+    expect(result.missingSubTaskIds).toEqual(["subtask-a", "subtask-b", "subtask-c"]);
   });
 });

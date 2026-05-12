@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -10,8 +11,9 @@ import (
 )
 
 type retryCommandTestClient struct {
-	streamCalls int
-	planCalls   int
+	streamCalls     int
+	planCalls       int
+	reviewSubTaskID string
 }
 
 type blockingRetryClient struct {
@@ -36,7 +38,11 @@ func (c *retryCommandTestClient) CallStream(ctx context.Context, message, projec
 
 func (c *retryCommandTestClient) CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
 	c.planCalls++
-	reviewJSON := `{"verdict":"pass","overall_score":84,"feedback":"retry fixed validation","issue_tags":[],"sub_task_results":[{"score":84,"feedback":"ok","issue_tags":[]}]}`
+	subTaskID := c.reviewSubTaskID
+	if subTaskID == "" {
+		subTaskID = "task-retry:s2"
+	}
+	reviewJSON := fmt.Sprintf(`{"verdict":"pass","overall_score":84,"feedback":"retry fixed validation","issue_tags":[],"sub_task_results":[{"sub_task_id":%q,"score":84,"feedback":"ok","issue_tags":[]}]}`, subTaskID)
 	if onContent != nil {
 		onContent("text", reviewJSON)
 	}
@@ -391,7 +397,7 @@ func TestHandleRetryCommandIndexLowScoreExecutesRetry(t *testing.T) {
 	t.Cleanup(func() { globalStorage = oldStorage })
 
 	key := chatKey{chatID: 42, threadID: 7}
-	client := &retryCommandTestClient{}
+	client := &retryCommandTestClient{reviewSubTaskID: taskID + ":s2"}
 	bot := &TelegramBot{
 		config:       &Config{DefaultProjectDir: "/repo"},
 		client:       client,
@@ -478,6 +484,59 @@ func TestHandleRetryCommandIndexMissingSubTaskReturnsNotFound(t *testing.T) {
 	}
 }
 
+func TestHandleRetryCommandIndexWithoutSubTaskScoresShowsDiagnostic(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	taskID := "task-missing-subtask-scores"
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:         taskID,
+		ChatID:     42,
+		ThreadID:   7,
+		ProjectDir: "/repo",
+		Status:     "done",
+		StartedAt:  now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	for idx := 0; idx < 2; idx++ {
+		if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+			ID:          fmt.Sprintf("%s:s%d", taskID, idx+1),
+			TaskID:      taskID,
+			Idx:         idx,
+			Description: fmt.Sprintf("step %d", idx+1),
+			Status:      "done",
+			ResultText:  "done",
+			StartedAt:   now.Add(-30 * time.Minute),
+		}); err != nil {
+			t.Fatalf("UpsertUnifiedSubTask %d: %v", idx+1, err)
+		}
+	}
+	if _, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        taskID,
+		ReviewerModel: "gpt-5.5",
+		Verdict:       "partial",
+		OverallScore:  72,
+		FeedbackText:  "latest summary omitted per-subtask rows",
+		Source:        "review",
+		CreatedAt:     now.Add(-10 * time.Minute),
+	}); err != nil {
+		t.Fatalf("InsertUnifiedReviewResult latest without rows: %v", err)
+	}
+
+	oldStorage := globalStorage
+	globalStorage = s
+	t.Cleanup(func() { globalStorage = oldStorage })
+
+	key := chatKey{chatID: 42, threadID: 7}
+	bot := &TelegramBot{messageQueue: make(chan *TelegramMessage, 1)}
+	bot.handleRetryCommand(key, []string{"/retry", taskID, "2"})
+
+	text := waitRetryMessageContaining(t, bot, "沒有 per-subtask 分數")
+	if !strings.Contains(text, "⚠️ 最新 review") || !strings.Contains(text, "無法顯示低分 retry") {
+		t.Fatalf("missing-score retry should return diagnostic error: %q", text)
+	}
+}
+
 func TestSelectRetryTargetByIndexReportsMissingSubTask(t *testing.T) {
 	s := newTestSQLiteStorage(t)
 	seedRetryReview(t, s, "task-missing-index", 61, "initial")
@@ -491,28 +550,75 @@ func TestSelectRetryTargetByIndexReportsMissingSubTask(t *testing.T) {
 	}
 }
 
-func TestSelectRetryTargetByIndexReportsMissingLatestReviewRow(t *testing.T) {
+func TestSelectRetryTargetByIndexReportsMissingSubTaskScores(t *testing.T) {
 	s := newTestSQLiteStorage(t)
-	seedRetryReview(t, s, "task-missing-review-row", 61, "initial")
+	now := time.Now().UTC().Truncate(time.Second)
+	taskID := "task-missing-review-row"
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:        taskID,
+		ChatID:    42,
+		ThreadID:  7,
+		Status:    "done",
+		StartedAt: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	for idx := 0; idx < 2; idx++ {
+		if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+			ID:          fmt.Sprintf("%s:s%d", taskID, idx+1),
+			TaskID:      taskID,
+			Idx:         idx,
+			Description: fmt.Sprintf("step %d", idx+1),
+			Status:      "done",
+			ResultText:  "done",
+			StartedAt:   now.Add(-30 * time.Minute),
+		}); err != nil {
+			t.Fatalf("UpsertUnifiedSubTask %d: %v", idx+1, err)
+		}
+	}
 	if _, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
-		TaskID:        "task-missing-review-row",
+		TaskID:        taskID,
 		ReviewerModel: "gpt-5.5",
 		Verdict:       "partial",
 		OverallScore:  72,
 		FeedbackText:  "latest summary omitted per-subtask rows",
 		Source:        "review",
-		CreatedAt:     time.Now().UTC(),
+		CreatedAt:     now.Add(-10 * time.Minute),
 	}); err != nil {
 		t.Fatalf("InsertUnifiedReviewResult latest without rows: %v", err)
 	}
 
-	_, err := s.selectRetryTargetByIndex(context.Background(), "task-missing-review-row", 2)
+	_, err := s.selectRetryTargetByIndex(context.Background(), taskID, 2)
 	if err == nil {
-		t.Fatal("selectRetryTargetByIndex missing review row expected error")
+		t.Fatal("selectRetryTargetByIndex fallback should fail when rows are missing")
 	}
-	if !strings.Contains(err.Error(), "最新 review 沒有 sub-task #2 的評分資料") ||
-		!strings.Contains(err.Error(), "/retry task-mis all-failed") {
-		t.Fatalf("unexpected missing review row error: %v", err)
+	if !strings.Contains(err.Error(), "沒有保存 sub-task #2 的細項評分") {
+		t.Fatalf("unexpected missing-score diagnostic: %v", err)
+	}
+}
+
+func TestSelectRetryTargetByIndexRejectsLatestReviewWithoutSubTaskScores(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	taskID := "task-index-fallback-older-partial"
+	seedRetryReview(t, s, taskID, 76, "initial")
+	if _, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        taskID,
+		ReviewerModel: "gpt-5.4",
+		Verdict:       "pass",
+		OverallScore:  90,
+		FeedbackText:  "retry fixed another sub-task",
+		Source:        "retry",
+		CreatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("InsertUnifiedReviewResult newer pass without rows: %v", err)
+	}
+
+	_, err := s.selectRetryTargetByIndex(context.Background(), taskID, 2)
+	if err == nil {
+		t.Fatal("selectRetryTargetByIndex should reject latest review without subtask scores")
+	}
+	if !strings.Contains(err.Error(), "沒有保存 sub-task #2 的細項評分") {
+		t.Fatalf("unexpected missing-score diagnostic: %v", err)
 	}
 }
 
@@ -600,6 +706,100 @@ func TestSelectRetryTargetsAllFailedFiltersLikeRetryableLowScoreSet(t *testing.T
 	}
 	if !retrySelectionNeedsRetry(lowSelection) {
 		t.Fatalf("low-score index selection should be retryable: %+v", lowSelection)
+	}
+}
+
+func TestSelectRetryTargetsAllFailedUsesLatestScorePerSubTask(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	taskID := "task-all-failed-latest-per-subtask"
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:        taskID,
+		ChatID:    42,
+		ThreadID:  7,
+		Status:    "done",
+		StartedAt: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	for idx := 0; idx < 3; idx++ {
+		if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+			ID:          fmt.Sprintf("%s:s%d", taskID, idx+1),
+			TaskID:      taskID,
+			Idx:         idx,
+			Description: fmt.Sprintf("step %d", idx+1),
+			Status:      "done",
+			ResultText:  "done",
+			StartedAt:   now.Add(-30 * time.Minute),
+		}); err != nil {
+			t.Fatalf("UpsertUnifiedSubTask %d: %v", idx+1, err)
+		}
+	}
+	initialID, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        taskID,
+		ReviewerModel: "gpt-5.5",
+		Verdict:       "partial",
+		OverallScore:  84,
+		Source:        "initial",
+		CreatedAt:     now.Add(-10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("InsertUnifiedReviewResult initial: %v", err)
+	}
+	for _, row := range []struct {
+		subTaskID string
+		score     int
+	}{
+		{taskID + ":s1", 90},
+		{taskID + ":s2", 76},
+		{taskID + ":s3", 75},
+	} {
+		if err := s.InsertUnifiedReviewSubTaskResult(UnifiedReviewSubTaskResult{
+			ReviewID:  initialID,
+			SubTaskID: row.subTaskID,
+			Score:     row.score,
+			Feedback:  "initial review",
+		}); err != nil {
+			t.Fatalf("InsertUnifiedReviewSubTaskResult initial %s: %v", row.subTaskID, err)
+		}
+	}
+	retryID, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        taskID,
+		ReviewerModel: "gpt-5.4",
+		Verdict:       "pass",
+		OverallScore:  90,
+		Source:        "retry",
+		CreatedAt:     now.Add(-time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("InsertUnifiedReviewResult retry: %v", err)
+	}
+	if err := s.InsertUnifiedReviewSubTaskResult(UnifiedReviewSubTaskResult{
+		ReviewID:  retryID,
+		SubTaskID: taskID + ":s2",
+		Score:     90,
+		Feedback:  "fixed",
+	}); err != nil {
+		t.Fatalf("InsertUnifiedReviewSubTaskResult retry: %v", err)
+	}
+
+	selections, err := s.selectRetryTargetsAllFailed(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("selectRetryTargetsAllFailed: %v", err)
+	}
+	if len(selections) != 1 {
+		t.Fatalf("selection count = %d, want only still-low s3: %+v", len(selections), selections)
+	}
+	if selections[0].SubTask.ID != taskID+":s3" || selections[0].SubTaskReview.Score != 75 {
+		t.Fatalf("unexpected remaining failed selection: %+v", selections[0])
+	}
+
+	selection, err := s.selectRetryTargetLowest(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("selectRetryTargetLowest: %v", err)
+	}
+	if selection.SubTask.ID != taskID+":s3" {
+		t.Fatalf("lowest should skip fixed s2 and choose s3, got %+v", selection)
 	}
 }
 

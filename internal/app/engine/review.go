@@ -14,6 +14,8 @@ import (
 	"claude-tg-agent/internal/app/hermes"
 )
 
+var ErrIncompleteReviewSchema = errors.New("incomplete_review_schema")
+
 // ReviewVerdict is the normalized overall review outcome for strict review.
 // Legacy advisory verdicts (partial/fail) are kept for backward compatibility.
 type ReviewVerdict string
@@ -450,6 +452,9 @@ func (n ReviewNotification) TelegramText() string {
 		}
 	}
 	b.WriteString("\n重跑建議：" + n.RetryNote)
+	if len(n.SubTaskResults) == 0 {
+		b.WriteString("\n診斷：這份 review 沒有 per-subtask 分數，因此不會顯示低分 retry 控制。")
+	}
 	if n.TaskID != "" {
 		shortID := shortReviewTaskID(n.TaskID)
 		if len(n.SubTaskResults) > 0 {
@@ -630,6 +635,76 @@ func (r ReviewResult) Validate() error {
 		}
 	}
 	return nil
+}
+
+// ValidateForRequest enforces request-aware completeness on top of the base
+// review schema. When the request includes sub-task payload, the reviewer must
+// return one result per requested sub-task so downstream retry and dashboard
+// flows can trust the scores.
+func (r ReviewResult) ValidateForRequest(req ReviewRequest) error {
+	if err := r.Validate(); err != nil {
+		return err
+	}
+
+	expected := requestedReviewSubTasks(req)
+	if len(expected) == 0 {
+		return nil
+	}
+	if len(r.SubTaskResults) == 0 {
+		return fmt.Errorf("%w: expected sub_task_results for %d requested sub-task(s)", ErrIncompleteReviewSchema, len(expected))
+	}
+	if len(r.SubTaskResults) != len(expected) {
+		return fmt.Errorf("%w: expected %d sub_task_results, got %d", ErrIncompleteReviewSchema, len(expected), len(r.SubTaskResults))
+	}
+
+	expectedByID := make(map[string]ReviewSubTaskInput, len(expected))
+	for _, subTask := range expected {
+		id := strings.TrimSpace(subTask.ID)
+		if id == "" {
+			return fmt.Errorf("%w: request sub-task ID is empty", ErrIncompleteReviewSchema)
+		}
+		expectedByID[id] = subTask
+	}
+
+	for i, subTask := range r.SubTaskResults {
+		id := strings.TrimSpace(subTask.SubTaskID)
+		if id == "" {
+			return fmt.Errorf("%w: sub_task_results[%d] is missing sub_task_id", ErrIncompleteReviewSchema, i)
+		}
+		if _, ok := expectedByID[id]; !ok {
+			return fmt.Errorf("%w: unexpected sub_task_id %q", ErrIncompleteReviewSchema, id)
+		}
+		delete(expectedByID, id)
+	}
+
+	if len(expectedByID) > 0 {
+		missing := make([]string, 0, len(expectedByID))
+		for id := range expectedByID {
+			missing = append(missing, id)
+		}
+		sort.Strings(missing)
+		return fmt.Errorf("%w: missing sub_task_results for %s", ErrIncompleteReviewSchema, strings.Join(missing, ", "))
+	}
+
+	return nil
+}
+
+func requestedReviewSubTasks(req ReviewRequest) []ReviewSubTaskInput {
+	if len(req.SubTaskResults) > 0 {
+		out := make([]ReviewSubTaskInput, 0, len(req.SubTaskResults))
+		for _, subTask := range req.SubTaskResults {
+			out = append(out, ReviewSubTaskInput{
+				ID:        strings.TrimSpace(subTask.ID),
+				Index:     subTask.Index,
+				ToolHints: append([]string(nil), subTask.ToolHints...),
+			})
+		}
+		return out
+	}
+	if len(req.Plan) == 0 {
+		return nil
+	}
+	return ReviewInputsFromPlan(req.Plan)
 }
 
 var reviewJSONBlockRe = regexp.MustCompile("(?s)```(?:json)?\\s*\\n?(\\{.*?\\})\\s*```")

@@ -188,8 +188,17 @@ func (s *SQLiteStorage) selectRetryTargetLowest(ctx context.Context, taskID stri
 		JOIN review_subtask_results rs ON rs.review_id = rr.id
 		JOIN sub_tasks st ON st.id = rs.sub_task_id
 		WHERE rr.task_id = ?
-		ORDER BY rr.created_at DESC, rr.id DESC, rs.score ASC, st.idx ASC
-		LIMIT 1`, taskID)
+		  AND rs.score < ?
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM review_results newer_rr
+		    JOIN review_subtask_results newer_rs ON newer_rs.review_id = newer_rr.id
+		    WHERE newer_rr.task_id = rr.task_id
+		      AND newer_rs.sub_task_id = rs.sub_task_id
+		      AND (newer_rr.created_at > rr.created_at OR (newer_rr.created_at = rr.created_at AND newer_rr.id > rr.id))
+		  )
+		ORDER BY rs.score ASC, st.idx ASC
+		LIMIT 1`, taskID, appengine.SubTaskScoreFailingThreshold)
 }
 
 func (s *SQLiteStorage) selectRetryTargetByIndex(ctx context.Context, taskID string, displayIdx int) (retrySelection, error) {
@@ -214,34 +223,7 @@ func (s *SQLiteStorage) selectRetryTargetByIndex(ctx context.Context, taskID str
 		return retrySelection{}, err
 	}
 
-	var latestReviewID int64
-	err = s.db.QueryRowContext(ctx, `
-		SELECT id
-		FROM review_results
-		WHERE task_id = ?
-		ORDER BY created_at DESC, id DESC
-		LIMIT 1`, taskID).Scan(&latestReviewID)
-	if err == sql.ErrNoRows {
-		return retrySelection{}, fmt.Errorf("task %s 尚無 review 結果可 retry", shortHermesTaskID(taskID))
-	}
-	if err != nil {
-		return retrySelection{}, err
-	}
-
-	var reviewSubTaskID int64
-	err = s.db.QueryRowContext(ctx, `
-		SELECT id
-		FROM review_subtask_results
-		WHERE review_id = ? AND sub_task_id = ?
-		LIMIT 1`, latestReviewID, subTaskID).Scan(&reviewSubTaskID)
-	if err == sql.ErrNoRows {
-		return retrySelection{}, fmt.Errorf("最新 review 沒有 sub-task #%d 的評分資料，請改用通知列出的 #<n> 或 /retry %s all-failed", displayIdx, shortHermesTaskID(taskID))
-	}
-	if err != nil {
-		return retrySelection{}, err
-	}
-
-	return s.scanRetrySelection(ctx, `
+	row := s.db.QueryRowContext(ctx, `
 		SELECT t.id, t.chat_id, t.thread_id, t.project_dir, t.goal, t.engine, t.backend, t.status,
 		       t.github_issue_number, t.started_at, t.ended_at,
 		       t.total_input_tokens, t.total_output_tokens, t.total_cost_usd,
@@ -255,9 +237,56 @@ func (s *SQLiteStorage) selectRetryTargetByIndex(ctx context.Context, taskID str
 		JOIN tasks t ON t.id = rr.task_id
 		JOIN sub_tasks st ON st.task_id = t.id
 		JOIN review_subtask_results rs ON rs.review_id = rr.id AND rs.sub_task_id = st.id
-		WHERE rr.id = ? AND st.id = ?
+		WHERE rr.id = (
+			SELECT id
+			FROM review_results
+			WHERE task_id = ?
+			ORDER BY created_at DESC, id DESC
+			LIMIT 1
+		) AND st.id = ?
 		ORDER BY rr.created_at DESC, rr.id DESC
-		LIMIT 1`, latestReviewID, subTaskID)
+		LIMIT 1`, taskID, subTaskID)
+	selection, err := scanRetrySelectionRow(row)
+	if err == nil {
+		if err := s.populateRetryCount(ctx, &selection); err != nil {
+			return retrySelection{}, err
+		}
+		return selection, nil
+	}
+	if err != sql.ErrNoRows {
+		return retrySelection{}, err
+	}
+
+	return retrySelection{}, fmt.Errorf("最新 review 沒有保存 sub-task #%d 的細項評分，因此無法顯示低分 retry；請先讓 reviewer 回傳 sub_task_results 或重新複審", displayIdx)
+}
+
+func (s *SQLiteStorage) retryNoLowScoreDiagnostic(ctx context.Context, taskID string) (string, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return "", nil
+	}
+	var reviewID int64
+	var verdict string
+	var overallScore int
+	var subTaskCount int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT rr.id, rr.verdict, rr.overall_score, COUNT(rs.id)
+		FROM review_results rr
+		LEFT JOIN review_subtask_results rs ON rs.review_id = rr.id
+		WHERE rr.task_id = ?
+		GROUP BY rr.id, rr.verdict, rr.overall_score
+		ORDER BY rr.created_at DESC, rr.id DESC
+		LIMIT 1`, taskID).Scan(&reviewID, &verdict, &overallScore, &subTaskCount)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if subTaskCount == 0 {
+		return fmt.Sprintf("⚠️ 最新 review（verdict=%s, %d/100）沒有 per-subtask 分數，因此無法顯示低分 retry 控制；請先讓 reviewer 回傳 sub_task_results 或重新複審。", strings.TrimSpace(verdict), overallScore), nil
+	}
+	return "", nil
 }
 
 func (s *SQLiteStorage) selectRetryTargetsAllFailed(ctx context.Context, taskID string) ([]retrySelection, error) {
@@ -279,9 +308,17 @@ func (s *SQLiteStorage) selectRetryTargetsAllFailed(ctx context.Context, taskID 
 		JOIN tasks t ON t.id = rr.task_id
 		JOIN review_subtask_results rs ON rs.review_id = rr.id
 		JOIN sub_tasks st ON st.id = rs.sub_task_id
-		WHERE rr.id = (SELECT id FROM review_results WHERE task_id = ? ORDER BY created_at DESC, id DESC LIMIT 1)
-		  AND rs.score < 70
-		ORDER BY rs.score ASC, st.idx ASC`, taskID)
+		WHERE rr.task_id = ?
+		  AND rs.score < ?
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM review_results newer_rr
+		    JOIN review_subtask_results newer_rs ON newer_rs.review_id = newer_rr.id
+		    WHERE newer_rr.task_id = rr.task_id
+		      AND newer_rs.sub_task_id = rs.sub_task_id
+		      AND (newer_rr.created_at > rr.created_at OR (newer_rr.created_at = rr.created_at AND newer_rr.id > rr.id))
+		  )
+		ORDER BY rs.score ASC, st.idx ASC`, taskID, appengine.SubTaskScoreFailingThreshold)
 	if err != nil {
 		return nil, err
 	}
@@ -563,6 +600,13 @@ func (t *TelegramBot) handleRetryCommand(key chatKey, parts []string) {
 			err = fmt.Errorf("unknown retry mode %q", mode)
 		}
 		if err != nil {
+			if taskID != "" {
+				if diag, diagErr := store.retryNoLowScoreDiagnostic(selectCtx, taskID); diagErr == nil && strings.TrimSpace(diag) != "" {
+					t.send(key, diag)
+					jobErr = err
+					return
+				}
+			}
 			jobErr = err
 			t.send(key, "❌ "+err.Error())
 			return

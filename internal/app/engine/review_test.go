@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +128,48 @@ func TestReviewResultValidate(t *testing.T) {
 	}
 }
 
+func TestReviewResultValidateForRequestRequiresMatchingSubTaskResults(t *testing.T) {
+	req := ReviewRequest{
+		Plan: []hermes.SubTask{
+			{ID: "s1", Description: "alpha", Status: hermes.SubTaskDone},
+			{ID: "s2", Description: "beta", Status: hermes.SubTaskDone},
+			{ID: "s3", Description: "gamma", Status: hermes.SubTaskDone},
+		},
+		SubTaskResults: ReviewInputsFromPlan([]hermes.SubTask{
+			{ID: "s1", Description: "alpha", Status: hermes.SubTaskDone},
+			{ID: "s2", Description: "beta", Status: hermes.SubTaskDone},
+			{ID: "s3", Description: "gamma", Status: hermes.SubTaskDone},
+		}),
+	}
+
+	incomplete := ReviewResult{
+		Verdict:      VerdictPass,
+		OverallScore: 86,
+		Feedback:     "overall looks fine",
+	}
+	err := incomplete.ValidateForRequest(req)
+	if err == nil {
+		t.Fatal("ValidateForRequest(incomplete) expected error")
+	}
+	if !errors.Is(err, ErrIncompleteReviewSchema) {
+		t.Fatalf("expected incomplete schema error, got %v", err)
+	}
+
+	complete := ReviewResult{
+		Verdict:      VerdictPass,
+		OverallScore: 86,
+		Feedback:     "overall looks fine",
+		SubTaskResults: []ReviewSubTaskResult{
+			{SubTaskID: "s1", Score: 88, Feedback: "ok"},
+			{SubTaskID: "s2", Score: 84, Feedback: "ok"},
+			{SubTaskID: "s3", Score: 86, Feedback: "ok"},
+		},
+	}
+	if err := complete.ValidateForRequest(req); err != nil {
+		t.Fatalf("ValidateForRequest(complete): %v", err)
+	}
+}
+
 func TestParseReviewResult(t *testing.T) {
 	got, err := ParseReviewResult("```json\n{\"verdict\":\"pass\",\"overall_score\":90,\"feedback\":\"ok\",\"issue_tags\":[],\"sub_task_results\":[]}\n```")
 	if err != nil {
@@ -180,6 +223,22 @@ func TestBuildReviewNotificationAndTelegramText(t *testing.T) {
 	}
 	if strings.Index(text, "#2 s2") > strings.Index(text, "#3 s3") || strings.Index(text, "#3 s3") > strings.Index(text, "#1 s1") {
 		t.Fatalf("subtask scores were not sorted low-first:\n%s", text)
+	}
+}
+
+func TestReviewNotificationTelegramTextExplainsMissingSubTaskScores(t *testing.T) {
+	notification := BuildReviewNotification("task-missing-scores", ReviewResult{
+		Verdict:      VerdictPartial,
+		OverallScore: 72,
+		Feedback:     "overall review only",
+	})
+
+	text := notification.TelegramText()
+	if !strings.Contains(text, "沒有 per-subtask 分數") {
+		t.Fatalf("telegram text missing missing-score diagnostic:\n%s", text)
+	}
+	if strings.Contains(text, "all-failed") {
+		t.Fatalf("missing-score notification should not advertise low-score retry controls:\n%s", text)
 	}
 }
 

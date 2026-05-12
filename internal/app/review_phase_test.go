@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -94,5 +95,30 @@ func TestCLIReviewPhaseFallsBackToClientModel(t *testing.T) {
 	}
 	if review.ReviewerModel != "fallback-review-model" {
 		t.Fatalf("reviewer model = %q, want fallback client model", review.ReviewerModel)
+	}
+}
+
+func TestCLIReviewPhaseRejectsIncompleteSubTaskSchema(t *testing.T) {
+	phase := NewCLIReviewPhase(&recordingReviewClient{
+		callbackText: `{"verdict":"pass","overall_score":86,"feedback":"ok","issue_tags":[],"sub_task_results":[]}`,
+	}, "gpt-5.5")
+	_, err := phase.Review(context.Background(), appengine.ReviewRequest{
+		Goal: "驗證 incomplete schema 攔截",
+		Plan: []hermes.SubTask{
+			{ID: "s1", Description: "alpha", Status: hermes.SubTaskDone},
+			{ID: "s2", Description: "beta", Status: hermes.SubTaskDone},
+			{ID: "s3", Description: "gamma", Status: hermes.SubTaskDone},
+		},
+		SubTaskResults: appengine.ReviewInputsFromPlan([]hermes.SubTask{
+			{ID: "s1", Description: "alpha", Status: hermes.SubTaskDone},
+			{ID: "s2", Description: "beta", Status: hermes.SubTaskDone},
+			{ID: "s3", Description: "gamma", Status: hermes.SubTaskDone},
+		}),
+	})
+	if err == nil {
+		t.Fatal("Review expected incomplete schema error")
+	}
+	if !errors.Is(err, appengine.ErrIncompleteReviewSchema) {
+		t.Fatalf("expected incomplete schema error, got %v", err)
 	}
 }

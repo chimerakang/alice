@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { ChevronDown } from "lucide-react";
 import { clsx } from "clsx";
 import type { UnifiedReviewSubTaskResult } from "@/types/alice";
+import { evaluateReviewSchemaCompleteness } from "@/lib/reviews";
 
 function truncateSubTaskId(value: string, maxLength = 60): string {
   const normalized = value.trim();
@@ -12,15 +13,24 @@ function truncateSubTaskId(value: string, maxLength = 60): string {
 
 interface ReviewSubTaskTableProps {
   subTaskResults: UnifiedReviewSubTaskResult[];
+  expectedSubTaskIds?: string[];
   className?: string;
   retryEvidenceHref?: string;
 }
 
-export default function ReviewSubTaskTable({ subTaskResults, className, retryEvidenceHref }: ReviewSubTaskTableProps) {
+export default function ReviewSubTaskTable({
+  subTaskResults,
+  expectedSubTaskIds,
+  className,
+  retryEvidenceHref,
+}: ReviewSubTaskTableProps) {
   const { t } = useTranslation();
   const [expandedSubTasks, setExpandedSubTasks] = useState<string[]>([]);
+  const schemaCheck = evaluateReviewSchemaCompleteness(expectedSubTaskIds || [], subTaskResults);
+  const hasExpectedSubTasks = schemaCheck.expectedCount > 0;
+  const schemaIncomplete = schemaCheck.state === "incomplete";
 
-  if (subTaskResults.length === 0) {
+  if (!hasExpectedSubTasks && subTaskResults.length === 0) {
     return null;
   }
 
@@ -30,8 +40,43 @@ export default function ReviewSubTaskTable({ subTaskResults, className, retryEvi
     );
   };
 
+  const schemaMessage =
+    schemaIncomplete && hasExpectedSubTasks ? (
+      <div className="rounded-md border border-amber-700/60 bg-amber-950/25 p-3 text-xs text-amber-100">
+        <div className="mb-1 font-semibold uppercase tracking-wide text-amber-200">
+          {t("reviews.subtask_schema_incomplete_title")}
+        </div>
+        <div>
+          {t("reviews.subtask_schema_incomplete_body", {
+            expected: schemaCheck.expectedCount,
+            actual: schemaCheck.actualCount,
+          })}
+        </div>
+        {schemaCheck.missingSubTaskIds.length > 0 ? (
+          <div className="mt-1 font-mono text-[11px] text-amber-100/90">
+            {t("reviews.subtask_schema_missing_ids", {
+              ids: schemaCheck.missingSubTaskIds.join(", "),
+            })}
+          </div>
+        ) : null}
+        {schemaCheck.unexpectedSubTaskIds.length > 0 ? (
+          <div className="mt-1 font-mono text-[11px] text-amber-100/90">
+            {t("reviews.subtask_schema_unexpected_ids", {
+              ids: schemaCheck.unexpectedSubTaskIds.join(", "),
+            })}
+          </div>
+        ) : null}
+        <div className="mt-1 text-amber-200">{t("reviews.subtask_schema_retry_hint")}</div>
+      </div>
+    ) : null;
+
+  if (schemaIncomplete && subTaskResults.length === 0) {
+    return <div className={clsx("mt-4 space-y-2", className)}>{schemaMessage}</div>;
+  }
+
   return (
     <div className={clsx("mt-4 space-y-2", className)}>
+      {schemaMessage}
       <div className="text-xs text-gray-500 uppercase">{t("reviews.subtask_section_title")}</div>
       <div className="overflow-hidden rounded-md border border-gray-800/60">
         <table className="w-full border-collapse text-xs">
@@ -90,7 +135,7 @@ export default function ReviewSubTaskTable({ subTaskResults, className, retryEvi
                           <div className="text-[10px] uppercase text-gray-500 mb-1">{t("reviews.subtask_feedback")}</div>
                           <p className="text-sm text-gray-300 whitespace-pre-wrap">{subTask.feedback || "—"}</p>
                         </div>
-                        {isLowScore && retryEvidenceHref ? (
+                        {!schemaIncomplete && isLowScore && retryEvidenceHref ? (
                           <div className="mb-2">
                             <div className="text-[10px] uppercase text-gray-500 mb-1">{t("reviews.subtask_retry_action")}</div>
                             <a

@@ -49,6 +49,16 @@ export type ReviewVerdictChartItem = {
   color: string;
 };
 
+export type ReviewSchemaState = "complete" | "incomplete" | "not_applicable";
+
+export interface ReviewSchemaCheck {
+  state: ReviewSchemaState;
+  expectedCount: number;
+  actualCount: number;
+  missingSubTaskIds: string[];
+  unexpectedSubTaskIds: string[];
+}
+
 function normalizeVerdict(verdict?: string): "allow" | "pass" | "partial" | "fail" | "block" {
   if (verdict === "pass" || verdict === "fail" || verdict === "block" || verdict === "allow") return verdict;
   return "partial";
@@ -82,6 +92,50 @@ function buildReviewKey(review: {
     review.overall_score || 0,
     review.source || "live",
   ].join("|");
+}
+
+function normalizeSubTaskId(value: string): string {
+  return value.trim();
+}
+
+export function evaluateReviewSchemaCompleteness(
+  expectedSubTaskIds: string[],
+  subTaskResults: UnifiedReviewSubTaskResult[],
+): ReviewSchemaCheck {
+  const expected = Array.from(
+    new Set(expectedSubTaskIds.map(normalizeSubTaskId).filter((value) => value.length > 0)),
+  );
+  const actual = subTaskResults
+    .map((subTask) => normalizeSubTaskId(subTask.sub_task_id))
+    .filter((value) => value.length > 0);
+
+  if (expected.length === 0) {
+    return {
+      state: "not_applicable",
+      expectedCount: 0,
+      actualCount: actual.length,
+      missingSubTaskIds: [],
+      unexpectedSubTaskIds: [],
+    };
+  }
+
+  const expectedSet = new Set(expected);
+  const actualSet = new Set(actual);
+  const missingSubTaskIds = expected.filter((subTaskId) => !actualSet.has(subTaskId));
+  const unexpectedSubTaskIds = actual.filter((subTaskId) => !expectedSet.has(subTaskId));
+  const isComplete =
+    missingSubTaskIds.length === 0 &&
+    unexpectedSubTaskIds.length === 0 &&
+    actual.length === expected.length &&
+    actualSet.size === expectedSet.size;
+
+  return {
+    state: isComplete ? "complete" : "incomplete",
+    expectedCount: expected.length,
+    actualCount: actual.length,
+    missingSubTaskIds,
+    unexpectedSubTaskIds,
+  };
 }
 
 export function normalizeStoredReview(review: UnifiedReview, decision: DecisionLog): ReviewFeedItem {

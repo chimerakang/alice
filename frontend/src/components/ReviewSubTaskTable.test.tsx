@@ -29,11 +29,29 @@ describe("ReviewSubTaskTable", () => {
     expect(html).toBe("");
   });
 
+  it("renders an incomplete schema diagnostic when expected subtasks are missing", () => {
+    const html = renderToStaticMarkup(
+      <ReviewSubTaskTable
+        expectedSubTaskIds={["inspect-review-output", "verify-implementation", "capture-evidence"]}
+        subTaskResults={[]}
+      />
+    );
+
+    expect(html).toContain("Review schema 不完整");
+    expect(html).toContain("預期 3 筆 sub_task_results，但實際只有 0 筆。");
+    expect(html).toContain("缺少 subtask");
+    expect(html).toContain("inspect-review-output");
+    expect(html).toContain("verify-implementation");
+    expect(html).toContain("capture-evidence");
+    expect(html).not.toContain("Sub-task 評分");
+  });
+
   it("renders expanded feedback and issue tags for a sub-task row", () => {
     expandedSubTaskIds = ["inspect-review-output-and-verify-implementation-completeness"];
 
     const html = renderToStaticMarkup(
       <ReviewSubTaskTable
+        expectedSubTaskIds={["inspect-review-output-and-verify-implementation-completeness"]}
         subTaskResults={[
           {
             review_id: 7,

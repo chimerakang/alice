@@ -50,6 +50,9 @@ func (p *CLIReviewPhase) Review(ctx context.Context, req appengine.ReviewRequest
 	if err != nil {
 		return appengine.ReviewResult{}, err
 	}
+	if err := review.ValidateForRequest(req); err != nil {
+		return appengine.ReviewResult{}, err
+	}
 	review.ReviewerModel = p.model
 	review.InputTokens = resp.TotalInputTokensWithCache()
 	review.OutputTokens = resp.Usage.OutputTokens

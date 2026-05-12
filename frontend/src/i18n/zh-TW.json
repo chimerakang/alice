@@ -320,7 +320,12 @@
     "subtask_no_issue_tags": "沒有 issue tag",
     "subtask_retry_action": "Retry 動作",
     "subtask_retry_evidence": "Retry 證據",
-    "subtask_review_score": "review {{score}}/100"
+    "subtask_review_score": "review {{score}}/100",
+    "subtask_schema_incomplete_title": "Review schema 不完整",
+    "subtask_schema_incomplete_body": "預期 {{expected}} 筆 sub_task_results，但實際只有 {{actual}} 筆。",
+    "subtask_schema_missing_ids": "缺少 subtask：{{ids}}",
+    "subtask_schema_unexpected_ids": "多出的 subtask：{{ids}}",
+    "subtask_schema_retry_hint": "因為缺少 per-subtask 分數，這份 review 不會顯示低分 retry。"
   },
   "timeline": {
     "title": "Issue / Run 追蹤",

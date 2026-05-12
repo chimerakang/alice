@@ -320,7 +320,12 @@
     "subtask_no_issue_tags": "No issue tags",
     "subtask_retry_action": "Retry action",
     "subtask_retry_evidence": "Retry evidence",
-    "subtask_review_score": "review {{score}}/100"
+    "subtask_review_score": "review {{score}}/100",
+    "subtask_schema_incomplete_title": "Review schema incomplete",
+    "subtask_schema_incomplete_body": "Expected {{expected}} sub_task_results, but only got {{actual}}.",
+    "subtask_schema_missing_ids": "Missing subtasks: {{ids}}",
+    "subtask_schema_unexpected_ids": "Unexpected subtasks: {{ids}}",
+    "subtask_schema_retry_hint": "Because per-subtask scores are missing, this review will not show low-score retry controls."
   },
   "timeline": {
     "title": "Issues / Runs",

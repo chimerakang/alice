@@ -3,7 +3,16 @@ import type { ReactNode } from "react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import i18n from "@/i18n";
 import { DecisionDetail, findFocusedDecision } from "./Timeline";
-import type { DecisionLog, UnifiedReview } from "@/types/alice";
+import type { DecisionLog, UnifiedReview, UnifiedSubTask } from "@/types/alice";
+
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
+
+  return {
+    ...actual,
+    useNavigate: () => vi.fn(),
+  };
+});
 
 vi.mock("@/components/CollapsiblePanel", () => ({
   default: ({
@@ -33,7 +42,7 @@ beforeAll(async () => {
   await i18n.changeLanguage("zh-TW");
 });
 
-function buildDecision(reviews: UnifiedReview[]): DecisionLog {
+function buildDecision(reviews: UnifiedReview[], subTasks: UnifiedSubTask[] = []): DecisionLog {
   return {
     id: "decision-1",
     timestamp: "2026-04-26T12:00:00Z",
@@ -68,7 +77,7 @@ function buildDecision(reviews: UnifiedReview[]): DecisionLog {
       total_input_tokens: 10,
       total_output_tokens: 20,
       total_cost_usd: 0.01,
-      sub_tasks: [],
+      sub_tasks: subTasks,
       reviews,
     },
   } as DecisionLog;
@@ -138,6 +147,91 @@ describe("DecisionDetail", () => {
     );
 
     expect(html).not.toContain("Sub-task 評分");
+  });
+
+  it("shows an incomplete schema diagnostic when the review omits per-subtask scores", () => {
+    const html = renderToStaticMarkup(
+      <DecisionDetail
+        decision={buildDecision(
+          [
+            {
+              task_id: "task-1",
+              reviewer_model: "gpt-5.5",
+              verdict: "pass",
+              overall_score: 86,
+              feedback_text: "ok",
+              issue_tags: [],
+              input_tokens: 0,
+              output_tokens: 0,
+              cost_usd: 0,
+              created_at: "2026-04-26T12:00:00Z",
+              sub_task_results: [],
+            } as UnifiedReview,
+          ],
+          [
+            {
+              id: "subtask-a",
+              task_id: "task-1",
+              idx: 0,
+              description: "Check response shape",
+              model: "gpt-5.5",
+              status: "done",
+              result_text: "",
+              input_tokens: 0,
+              output_tokens: 0,
+              cost_usd: 0,
+              started_at: "2026-04-26T11:51:00Z",
+              routing_reason: "",
+              routing_latency_ms: 0,
+              tool_events: [],
+              artifacts: [],
+            },
+            {
+              id: "subtask-b",
+              task_id: "task-1",
+              idx: 1,
+              description: "Check retry coverage",
+              model: "gpt-5.5",
+              status: "done",
+              result_text: "",
+              input_tokens: 0,
+              output_tokens: 0,
+              cost_usd: 0,
+              started_at: "2026-04-26T11:52:00Z",
+              routing_reason: "",
+              routing_latency_ms: 0,
+              tool_events: [],
+              artifacts: [],
+            },
+            {
+              id: "subtask-c",
+              task_id: "task-1",
+              idx: 2,
+              description: "Check dashboard state",
+              model: "gpt-5.5",
+              status: "done",
+              result_text: "",
+              input_tokens: 0,
+              output_tokens: 0,
+              cost_usd: 0,
+              started_at: "2026-04-26T11:53:00Z",
+              routing_reason: "",
+              routing_latency_ms: 0,
+              tool_events: [],
+              artifacts: [],
+            },
+          ],
+        )}
+        decisions={[buildDecision([])]}
+        onClose={() => {}}
+        onNavigate={() => {}}
+        openReviewsByDefault={true}
+      />
+    );
+
+    expect(html).toContain("Review schema 不完整");
+    expect(html).toContain("預期 3 筆 sub_task_results，但實際只有 0 筆。");
+    expect(html).not.toContain("Retry 證據");
   });
 
   it("defaults the reviews panel open when focus navigation requests it", () => {

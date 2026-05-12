@@ -468,6 +468,7 @@ function TaskHistory({ taskId, task: sourceTask }: { taskId: string; task?: Herm
   const commitCount = decision?.git_state?.commit_hash ? 1 : 0;
   const latestReview = reviews[0] || null;
   const retryEvidenceHref = retryEvidenceLink(taskId);
+  const latestReviewExpectedSubTaskIds = (runTask?.sub_tasks || []).map((subTask) => subTask.id);
   const reviewSubTaskMap = new Map(
     (latestReview?.sub_task_results || []).map((subTask) => [subTask.sub_task_id, subTask] as const),
   );
@@ -809,7 +810,11 @@ function TaskHistory({ taskId, task: sourceTask }: { taskId: string; task?: Herm
                     ))}
                   </div>
                 )}
-                <ReviewSubTaskTable subTaskResults={review.sub_task_results || []} retryEvidenceHref={retryEvidenceHref} />
+                <ReviewSubTaskTable
+                  subTaskResults={review.sub_task_results || []}
+                  expectedSubTaskIds={latestReviewExpectedSubTaskIds}
+                  retryEvidenceHref={retryEvidenceHref}
+                />
               </div>
             ))
           )}
