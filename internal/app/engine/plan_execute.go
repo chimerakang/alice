@@ -1823,7 +1823,7 @@ func (e *PlanExecuteEngine) runReview(ctx context.Context, state hermes.TaskStat
 		}
 		return ReviewResult{}, err
 	}
-	if validateErr := result.Validate(); validateErr != nil {
+	if validateErr := result.ValidateForRequest(reviewReq); validateErr != nil {
 		log.Printf("[plan_execute] review invalid (skipping store): %v", validateErr)
 		if notify && e.cfg.OnReviewSkipped != nil {
 			e.cfg.OnReviewSkipped(ctx, state, validateErr)

@@ -84,38 +84,63 @@ type recordingReviewPhase struct {
 func (r *recordingReviewPhase) Review(ctx context.Context, req ReviewRequest) (ReviewResult, error) {
 	r.calls++
 	r.last = req
-	return ReviewResult{
+	result := ReviewResult{
 		ReviewerModel: "gpt-5.5",
 		Verdict:       VerdictPass,
 		OverallScore:  88,
 		Feedback:      "review ok",
-		SubTaskResults: []ReviewSubTaskResult{
-			{SubTaskID: "s1", Score: 90, Feedback: "good"},
-		},
-		InputTokens:  12,
-		OutputTokens: 8,
-		CostUSD:      0.42,
-	}, nil
+		InputTokens:   12,
+		OutputTokens:  8,
+		CostUSD:       0.42,
+	}
+	for _, subTask := range requestedReviewSubTasks(req) {
+		result.SubTaskResults = append(result.SubTaskResults, ReviewSubTaskResult{
+			SubTaskID: subTask.ID,
+			Score:     90,
+			Feedback:  "good",
+		})
+	}
+	return result, nil
 }
 
 type scriptedReviewPhase struct {
-	results []ReviewResult
-	calls   int
+	results         []ReviewResult
+	calls           int
+	allowIncomplete bool
 }
 
 func (s *scriptedReviewPhase) Review(ctx context.Context, req ReviewRequest) (ReviewResult, error) {
 	idx := s.calls
 	s.calls++
+	fill := func(result ReviewResult) ReviewResult {
+		if s.allowIncomplete || len(result.SubTaskResults) > 0 {
+			return result
+		}
+		requested := requestedReviewSubTasks(req)
+		if len(requested) == 0 {
+			return result
+		}
+		result.SubTaskResults = make([]ReviewSubTaskResult, 0, len(requested))
+		for _, subTask := range requested {
+			result.SubTaskResults = append(result.SubTaskResults, ReviewSubTaskResult{
+				SubTaskID: subTask.ID,
+				Score:     result.OverallScore,
+				Feedback:  result.Feedback,
+				IssueTags: append([]ReviewTag(nil), result.IssueTags...),
+			})
+		}
+		return result
+	}
 	if len(s.results) == 0 {
-		return ReviewResult{
+		return fill(ReviewResult{
 			Verdict:      VerdictPass,
 			OverallScore: 100,
-		}, nil
+		}), nil
 	}
 	if idx >= len(s.results) {
-		return s.results[len(s.results)-1], nil
+		return fill(s.results[len(s.results)-1]), nil
 	}
-	return s.results[idx], nil
+	return fill(s.results[idx]), nil
 }
 
 type recordingReviewStore struct {
@@ -958,6 +983,50 @@ func TestPlanExecuteEngineRunFromStateCompletePlanRunsFinalReview(t *testing.T) 
 	}
 	if len(history) == 0 || history[len(history)-1].Metadata.Reason != "resume_plan_complete_after_review" {
 		t.Fatalf("last snapshot should record review-aware resume completion: %#v", history)
+	}
+}
+
+func TestPlanExecuteEngineRunReviewRejectsIncompleteSubTaskSchema(t *testing.T) {
+	reviewPhase := &scriptedReviewPhase{
+		allowIncomplete: true,
+		results: []ReviewResult{{
+			ReviewerModel: "gpt-5.5",
+			Verdict:       VerdictPartial,
+			OverallScore:  84,
+			Feedback:      "overall only",
+		}},
+	}
+	reviewStore := &recordingReviewStore{}
+	var skipped error
+	engine := NewPlanExecuteEngine(PlanExecuteConfig{
+		ProjectDir:  "/repo",
+		ChatID:      42,
+		ReviewPhase: reviewPhase,
+		ReviewStore: reviewStore,
+		OnReviewSkipped: func(ctx context.Context, state hermes.TaskState, reason error) {
+			skipped = reason
+		},
+	}, nil, NewDirectEngine(&planExecuteRunner{}), hermes.NewMemoryTaskStore(), &planExecuteReporter{})
+
+	state := hermes.TaskState{
+		ID:         "task-incomplete-review",
+		ProjectDir: "/repo",
+		Goal:       "review task",
+		Plan: []hermes.SubTask{
+			{ID: "s1", Description: "first", Status: hermes.SubTaskDone, Result: "done"},
+			{ID: "s2", Description: "second", Status: hermes.SubTaskDone, Result: "done"},
+		},
+	}
+
+	_, err := engine.runReview(context.Background(), state, ReviewModePerTask, -1, "", true)
+	if !errors.Is(err, ErrIncompleteReviewSchema) {
+		t.Fatalf("runReview error = %v, want ErrIncompleteReviewSchema", err)
+	}
+	if reviewStore.calls != 0 {
+		t.Fatalf("review store calls = %d, want 0", reviewStore.calls)
+	}
+	if !errors.Is(skipped, ErrIncompleteReviewSchema) {
+		t.Fatalf("skipped reason = %v, want ErrIncompleteReviewSchema", skipped)
 	}
 }
 
