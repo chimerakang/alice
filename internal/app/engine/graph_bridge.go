@@ -337,6 +337,18 @@ func (e *PlanExecuteEngine) runViaGraphTask(ctx context.Context, taskID string, 
 	if err != nil {
 		return hermes.Snapshot{}, err
 	}
+	walker.OnNodeEvent = func(eventCtx context.Context, event graph.NodeEvent) {
+		e.emitRuntimeEvent(eventCtx, GraphNodeEvent(event.TaskID, event.Timestamp, GraphNodeEventPayload{
+			Node:       event.Node,
+			Status:     event.Status,
+			NextStep:   event.NextStep,
+			Reason:     event.Reason,
+			DurationMS: event.DurationMS,
+			StepIndex:  event.StepIndex,
+			Halt:       event.Halt,
+			Error:      event.Error,
+		}))
+	}
 	return walker.Run(ctx, taskID)
 }
 

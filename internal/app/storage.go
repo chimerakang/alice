@@ -37,6 +37,7 @@ type Storage interface {
 	InsertRuntimeEvent(event RuntimeEventRecord) error
 	GetRuntimeEvents(limit int, offset int) ([]RuntimeEventRecord, error)
 	GetRuntimeEventsByType(eventType string, limit int) ([]RuntimeEventRecord, error)
+	GetRuntimeEventsByTask(taskID string, eventType string, limit int, offset int) ([]RuntimeEventRecord, error)
 
 	// Performance Metrics
 	InsertPerformanceMetric(metric PerformanceMetrics) error
@@ -699,6 +700,35 @@ func (s *SQLiteStorage) GetRuntimeEventsByType(eventType string, limit int) ([]R
 		WHERE type = ?
 		ORDER BY timestamp DESC
 		LIMIT ?`, eventType, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRuntimeEvents(rows)
+}
+
+func (s *SQLiteStorage) GetRuntimeEventsByTask(taskID string, eventType string, limit int, offset int) ([]RuntimeEventRecord, error) {
+	taskID = strings.TrimSpace(taskID)
+	eventType = strings.TrimSpace(eventType)
+	if eventType != "" {
+		rows, err := s.db.Query(`
+			SELECT timestamp, type, chat_id, thread_id, task_id, issue_number, payload_json
+			FROM runtime_events
+			WHERE task_id = ? AND type = ?
+			ORDER BY timestamp DESC
+			LIMIT ? OFFSET ?`, taskID, eventType, limit, offset)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		return scanRuntimeEvents(rows)
+	}
+	rows, err := s.db.Query(`
+		SELECT timestamp, type, chat_id, thread_id, task_id, issue_number, payload_json
+		FROM runtime_events
+		WHERE task_id = ?
+		ORDER BY timestamp DESC
+		LIMIT ? OFFSET ?`, taskID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
@@ -2104,4 +2134,3 @@ func (s *SQLiteStorage) ListPromptClassifications(limit int) ([]PromptClassifica
 	}
 	return recs, rows.Err()
 }
-

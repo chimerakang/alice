@@ -1002,12 +1002,15 @@ func (wi *WebInterface) handleRuntimeEvents(w http.ResponseWriter, r *http.Reque
 		limit := parsePositiveIntParam(query.Get("limit"), 50)
 		offset := parsePositiveIntParam(query.Get("offset"), 0)
 		eventType := strings.TrimSpace(query.Get("type"))
+		taskID := strings.TrimSpace(query.Get("task_id"))
 
 		var (
 			events []RuntimeEventRecord
 			err    error
 		)
-		if eventType != "" {
+		if taskID != "" {
+			events, err = globalStorage.GetRuntimeEventsByTask(taskID, eventType, limit, offset)
+		} else if eventType != "" {
 			events, err = globalStorage.GetRuntimeEventsByType(eventType, limit)
 		} else {
 			events, err = globalStorage.GetRuntimeEvents(limit, offset)
@@ -1026,6 +1029,7 @@ func (wi *WebInterface) handleRuntimeEvents(w http.ResponseWriter, r *http.Reque
 			"limit":     limit,
 			"offset":    offset,
 			"type":      eventType,
+			"task_id":   taskID,
 			"timestamp": time.Now(),
 		})
 	})(w, r)

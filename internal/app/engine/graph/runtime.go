@@ -95,11 +95,31 @@ func (r *Registry) Lookup(step hermes.RuntimeStep) (Node, bool) {
 type Walker struct {
 	store    walkerStore
 	registry *Registry
+	// OnNodeEvent receives lightweight lifecycle events for each graph node
+	// dispatch. Production wiring persists these through runtime_events so the
+	// dashboard can render node-level traces without reading raw snapshots.
+	OnNodeEvent func(ctx context.Context, event NodeEvent)
 	// MaxSteps caps the number of dispatch iterations per Run() call as a
 	// defensive guard against an infinite-loop misconfiguration. 0 means
 	// unbounded (production default — the natural terminal state stops
 	// the walker; tests pass a small cap).
 	MaxSteps int
+}
+
+// NodeEvent is the graph runtime's node-level lifecycle trace. It intentionally
+// stays inside the graph package vocabulary; engine adapters translate it into
+// appengine.Event for persistence.
+type NodeEvent struct {
+	TaskID     string
+	Node       hermes.RuntimeStep
+	Status     string
+	NextStep   hermes.RuntimeStep
+	Reason     string
+	DurationMS int64
+	StepIndex  int
+	Halt       bool
+	Error      string
+	Timestamp  time.Time
 }
 
 // walkerStore is the storage surface Walker needs. Implemented by
@@ -244,8 +264,25 @@ func (w *Walker) Run(ctx context.Context, taskID string) (hermes.Snapshot, error
 			return snap, fmt.Errorf("%w: %q", ErrUnregisteredStep, snap.NextStep)
 		}
 
+		nodeStarted := time.Now()
+		w.emitNodeEvent(ctx, NodeEvent{
+			TaskID:    taskID,
+			Node:      snap.NextStep,
+			Status:    "started",
+			StepIndex: steps,
+			Timestamp: nodeStarted,
+		})
 		output, err := safeHandle(ctx, node, snap.State)
 		if err != nil {
+			w.emitNodeEvent(ctx, NodeEvent{
+				TaskID:     taskID,
+				Node:       snap.NextStep,
+				Status:     "failed",
+				DurationMS: time.Since(nodeStarted).Milliseconds(),
+				StepIndex:  steps,
+				Error:      err.Error(),
+				Timestamp:  time.Now(),
+			})
 			var panicErr *NodePanicError
 			if errors.As(err, &panicErr) {
 				// Persist a terminal snapshot so future Walker passes
@@ -289,11 +326,32 @@ func (w *Walker) Run(ctx context.Context, taskID string) (hermes.Snapshot, error
 		if err != nil {
 			return snap, fmt.Errorf("graph: commit after node %q: %w", snap.NextStep, err)
 		}
+		w.emitNodeEvent(ctx, NodeEvent{
+			TaskID:     taskID,
+			Node:       snap.NextStep,
+			Status:     "done",
+			NextStep:   next,
+			Reason:     reason,
+			DurationMS: time.Since(nodeStarted).Milliseconds(),
+			StepIndex:  steps,
+			Halt:       output.Halt,
+			Timestamp:  time.Now(),
+		})
 		lastSnapshot = committed
 		if next == hermes.RuntimeStepTerminal || output.Halt {
 			return committed, nil
 		}
 	}
+}
+
+func (w *Walker) emitNodeEvent(ctx context.Context, event NodeEvent) {
+	if w == nil || w.OnNodeEvent == nil {
+		return
+	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now()
+	}
+	w.OnNodeEvent(ctx, event)
 }
 
 func stateUpdatesSetStatus(updates []hermes.StateUpdate) bool {

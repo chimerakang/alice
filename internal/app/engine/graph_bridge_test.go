@@ -18,6 +18,7 @@ func TestRunViaGraph_DrivesPlannerExecutorTerminal(t *testing.T) {
 	store := hermes.NewMemoryTaskStore()
 	runner := &planExecuteRunner{}
 	reporter := &planExecuteReporter{}
+	var runtimeEvents []Event
 	planFn := func(ctx context.Context, message, projectDir, sessionID string) (hermes.CallPlanResult, error) {
 		return hermes.CallPlanResult{
 			Text: "```json\n" +
@@ -37,6 +38,9 @@ func TestRunViaGraph_DrivesPlannerExecutorTerminal(t *testing.T) {
 		MaxPlannerJSONRetries: 1,
 		Budget:                hermes.TokenBudget{MaxTotalTokens: 1000},
 		DisableReview:         true,
+		OnRuntimeEvent: func(ctx context.Context, event Event) {
+			runtimeEvents = append(runtimeEvents, event)
+		},
 	}, planFn, NewDirectEngine(runner), store, reporter)
 
 	cc := NewChatContext(42, 0, "/repo")
@@ -96,6 +100,29 @@ func TestRunViaGraph_DrivesPlannerExecutorTerminal(t *testing.T) {
 	}
 	if !plannerSeen || !executorSeen {
 		t.Fatalf("walker did not cover planner+executor: %#v", gotSteps)
+	}
+	graphStarted := false
+	graphDone := false
+	for _, event := range runtimeEvents {
+		if event.Type != "GraphNodeEvent" {
+			continue
+		}
+		payload, ok := event.Payload.(GraphNodeEventPayload)
+		if !ok {
+			t.Fatalf("GraphNodeEvent payload type = %T", event.Payload)
+		}
+		if event.TaskID != taskID || event.ChatID != 42 {
+			t.Fatalf("GraphNodeEvent did not inherit task/chat metadata: %#v", event)
+		}
+		if payload.Node == hermes.RuntimeStepPlanner && payload.Status == "started" {
+			graphStarted = true
+		}
+		if payload.Node == hermes.RuntimeStepExecutor && payload.Status == "done" && payload.NextStep != "" {
+			graphDone = true
+		}
+	}
+	if !graphStarted || !graphDone {
+		t.Fatalf("missing graph lifecycle events started=%v done=%v events=%#v", graphStarted, graphDone, runtimeEvents)
 	}
 }
 

@@ -40,6 +40,33 @@ type Event struct {
 	Timestamp time.Time
 }
 
+// GraphNodeEventPayload captures one LangGraph-style node lifecycle event.
+// It is intentionally compact so runtime_events can power a task graph view
+// without coupling dashboards to raw snapshot internals.
+type GraphNodeEventPayload struct {
+	Node       hermes.RuntimeStep `json:"node"`
+	Status     string             `json:"status"`
+	NextStep   hermes.RuntimeStep `json:"next_step,omitempty"`
+	Reason     string             `json:"reason,omitempty"`
+	DurationMS int64              `json:"duration_ms,omitempty"`
+	StepIndex  int                `json:"step_index,omitempty"`
+	Halt       bool               `json:"halt,omitempty"`
+	Error      string             `json:"error,omitempty"`
+}
+
+// GraphNodeEvent builds a normalized runtime event for graph node telemetry.
+func GraphNodeEvent(taskID string, at time.Time, payload GraphNodeEventPayload) Event {
+	if at.IsZero() {
+		at = time.Now()
+	}
+	return Event{
+		Type:      "GraphNodeEvent",
+		Timestamp: at,
+		TaskID:    taskID,
+		Payload:   payload,
+	}
+}
+
 // Command is the runtime output shape returned by an agent after handling an
 // event. Commands describe requested work; the runtime decides who executes it.
 type Command struct {

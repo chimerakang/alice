@@ -104,6 +104,41 @@ func TestWalker_DispatchesToRegisteredNodeAndStopsOnTerminal(t *testing.T) {
 	}
 }
 
+func TestWalker_EmitsNodeLifecycleEvents(t *testing.T) {
+	store := makeWalkerStore(t)
+	plannerNode := &recordingNode{
+		step: hermes.RuntimeStepPlanner,
+		outputs: []NodeOutput{{
+			NextStep: hermes.RuntimeStepTerminal,
+			Reason:   "planner_done",
+		}},
+	}
+	registry := NewRegistry()
+	registry.Register(plannerNode)
+
+	walker, err := NewWalker(store, registry)
+	if err != nil {
+		t.Fatalf("NewWalker: %v", err)
+	}
+	var events []NodeEvent
+	walker.OnNodeEvent = func(_ context.Context, event NodeEvent) {
+		events = append(events, event)
+	}
+
+	if _, err := walker.Run(context.Background(), "task-graph"); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("events len = %d, want start+done: %#v", len(events), events)
+	}
+	if events[0].Status != "started" || events[0].Node != hermes.RuntimeStepPlanner {
+		t.Fatalf("start event = %#v", events[0])
+	}
+	if events[1].Status != "done" || events[1].NextStep != hermes.RuntimeStepTerminal || events[1].Reason != "planner_done" {
+		t.Fatalf("done event = %#v", events[1])
+	}
+}
+
 func TestWalker_HaltStopsAfterCommit(t *testing.T) {
 	store := makeWalkerStore(t)
 	approvalNode := &recordingNode{

@@ -210,15 +210,16 @@ export const api = {
   },
 
   // ========== Runtime Events ==========
-  getRuntimeEvents: (params: { limit?: number; offset?: number; type?: string } = {}) => {
-    const { limit = 50, offset = 0, type } = params;
-    const qs = buildQuery({ limit, offset, type });
+  getRuntimeEvents: (params: { limit?: number; offset?: number; type?: string; taskId?: string } = {}) => {
+    const { limit = 50, offset = 0, type, taskId } = params;
+    const qs = buildQuery({ limit, offset, type, task_id: taskId });
     return fetchJson<{
       events?: RuntimeEventRecord[];
       total?: number;
       limit?: number;
       offset?: number;
       type?: string;
+      task_id?: string;
       timestamp?: string;
     }>(`/api/runtime/events${qs}`);
   },
