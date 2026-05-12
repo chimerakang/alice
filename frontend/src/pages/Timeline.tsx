@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import i18n from "@/i18n";
 import type { TimeRangeQuery } from "@/lib/api";
@@ -99,6 +99,7 @@ export function DecisionDetail({
   openReviewsByDefault?: boolean;
 }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
   const [diffLoading, setDiffLoading] = useState(false);
 
@@ -186,6 +187,13 @@ export function DecisionDetail({
           >
             {!hasError ? t("timeline.detail.success") : t("timeline.detail.has_errors")}
           </StatusBadge>
+          <button
+            type="button"
+            onClick={() => navigate(`/run-inspector?task_id=${encodeURIComponent(decision.id)}`)}
+            className="btn btn-secondary text-xs inline-flex items-center gap-1"
+          >
+            {t("hermes_tasks.open_inspector")}
+          </button>
         </div>
 
         <div className="p-6 space-y-6">

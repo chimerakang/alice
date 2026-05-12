@@ -1,16 +1,16 @@
 {
   "nav": {
     "section_overview": "Overview",
-    "section_quality": "Quality",
-    "section_system": "System",
+    "section_development_tracking": "Development Tracking",
+    "section_secondary": "Secondary Pages",
     "dashboard": "Dashboard",
-    "timeline": "Timeline",
+    "issues_runs": "Issues / Runs",
+    "run_inspector": "Run Inspector",
     "reviews": "Reviews",
     "analytics": "Analytics",
     "checkpoints": "Checkpoints",
     "performance": "Performance",
     "runtime": "Runtime",
-    "hermes_tasks": "Hermes Tasks",
     "memory": "Memory",
     "security": "Security"
   },
@@ -42,6 +42,53 @@
     "reset": "Reset filter"
   },
   "dashboard": {
+    "ia": {
+      "title": "Information Architecture",
+      "badge": "Primary focus",
+      "subtitle": "The home dashboard keeps development tracking first. Diagnostics and observability stay available, but they are organized below the issue and run flow.",
+      "blocks": {
+        "overview": {
+          "title": "Overview",
+          "description": "High-level health for the system and active work.",
+          "items": {
+            "hermes_runs": "Today / this week Hermes runs",
+            "health": "Success / partial / failed mix",
+            "blockers": "Open blockers, pending approval, unsynced checklist",
+            "trends": "Token / cost / cache trends only as supporting signals"
+          }
+        },
+        "issues_runs": {
+          "title": "Issues / Runs",
+          "description": "Issue-centric tracking for delivery and validation.",
+          "items": {
+            "issue_progress": "Issue number, title, status, checklist progress",
+            "latest_run": "Latest Hermes run status and retry count",
+            "review_verdict": "Reviewer score, verdict, and partial signals",
+            "evidence": "Commit, diff, checkpoint, and delivery evidence"
+          }
+        },
+        "run_inspector": {
+          "title": "Run Inspector",
+          "description": "Single-run diagnosis for why a run stalled or failed.",
+          "items": {
+            "summary_kpi": "Run summary KPI: tokens, cache hit, cost, duration",
+            "timeline": "Phase timeline and event log drilldown",
+            "subtasks": "Planner items, executor results, reviewer feedback, retries",
+            "diagnostics": "Checklist sync and IssueOps failures with explicit diagnostics"
+          }
+        },
+        "secondary": {
+          "title": "Secondary Pages",
+          "description": "Useful signals, but secondary to delivery tracking.",
+          "items": {
+            "runtime": "Runtime events",
+            "quality": "Quality analytics",
+            "checkpoints": "Checkpoint history",
+            "cost": "Token / cost analytics"
+          }
+        }
+      }
+    },
     "stats": {
       "sessions": "Sessions",
       "sessions_total": "{{count}} total",
@@ -270,12 +317,15 @@
     "subtask_col_score": "Score",
     "subtask_feedback": "Feedback",
     "subtask_issue_tags": "Issue Tags",
-    "subtask_no_issue_tags": "No issue tags"
+    "subtask_no_issue_tags": "No issue tags",
+    "subtask_retry_action": "Retry action",
+    "subtask_retry_evidence": "Retry evidence",
+    "subtask_review_score": "review {{score}}/100"
   },
   "timeline": {
-    "title": "AI Decision Timeline",
+    "title": "Issues / Runs",
     "header": {
-      "decisions_count": "{{count}} decisions"
+      "decisions_count": "{{count}} records"
     },
     "search_placeholder": "Search prompts, responses, tools...",
     "filters": {
@@ -623,8 +673,54 @@
     }
   },
   "hermes_tasks": {
-    "title": "Hermes Tasks",
-    "subtitle": "Full Hermes task history with Walker hop trajectory",
+    "title": "Run Inspector",
+    "subtitle": "Hermes run diagnostics with task, event, and snapshot drilldowns.",
+    "loading_inspector": "Loading inspector…",
+    "summary": {
+      "tokens": "Tokens",
+      "cost": "Cost",
+      "duration": "Duration",
+      "phases": "Phases",
+      "commits": "Commits",
+      "cache": "Cache hit",
+      "cache_unknown": "—"
+    },
+    "phase_timeline": "Phase timeline",
+    "checklist_status": "Checklist sync",
+    "checklist_status_values": {
+      "checklist_synced": "synced",
+      "checklist_unsynced": "unsynced"
+    },
+    "checklist_counts": "{{checked}} / {{total}} checked, {{unchecked}} open",
+    "no_checklist_reason": "No checklist sync reason recorded.",
+    "no_checklist_status": "No IssueOps checklist event yet.",
+    "issueops_diagnostics": "IssueOps diagnostics",
+    "issueops_checklist": "Checklist sync",
+    "issueops_close_guard": "Close guard",
+    "issueops_close_failed": "Close failure",
+    "issueops_idle": "No IssueOps diagnostics yet",
+    "issueops_no_diagnostics": "No checklist sync or close failure events yet.",
+    "retry_action_label": "Retry action",
+    "token_attribution": "Token attribution",
+    "token_attribution_model": "Model-level",
+    "token_attribution_phase": "Phase-level",
+    "token_attribution_empty": "No token attribution data yet.",
+    "run_links": "Run links",
+    "run_links_task": "Task {{taskId}}",
+    "evidence_artifacts": "{{count}} evidence artifacts",
+    "open_reviews": "Open reviews",
+    "open_issue_trace": "Open issue trace",
+    "open_inspector": "Open inspector",
+    "tab_subtasks": "Subtasks",
+    "tab_timeline": "Timeline",
+    "tab_events": "Graph events",
+    "tab_reviews": "Reviews / retry",
+    "tab_context": "Context",
+    "no_subtasks": "No sub-tasks yet (task may not have reached the planner).",
+    "no_phase_timeline": "No phase timeline yet.",
+    "no_graph_events": "No graph node events yet.",
+    "no_reviews": "No review data yet.",
+    "no_accumulated": "No accumulated content.",
     "empty": "No matching tasks",
     "status_executing": "Executing",
     "status_planning": "Planning",
@@ -644,6 +740,9 @@
     "subtask_show_full": "Show full result",
     "subtask_collapse": "Collapse",
     "subtask_retry_feedback": "Reviewer retry feedback",
+    "subtask_retry_action": "Retry action",
+    "subtask_retry_evidence": "Retry evidence",
+    "subtask_review_score": "review {{score}}/100",
     "panel_title": "Hermes tasks (active)",
     "interrupt_budget": "💸 Budget exceeded",
     "interrupt_failure_pause": "⏸ Sub-task failure",

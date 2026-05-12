@@ -33,23 +33,23 @@ const navSections = [
     labelKey: "nav.section_overview",
     items: [
       { to: "/", icon: LayoutDashboard, labelKey: "nav.dashboard" },
-      { to: "/timeline", icon: Clock, labelKey: "nav.timeline" },
     ],
   },
   {
-    labelKey: "nav.section_quality",
+    labelKey: "nav.section_development_tracking",
     items: [
+      { to: "/issues-runs", icon: Clock, labelKey: "nav.issues_runs" },
+      { to: "/run-inspector", icon: Pickaxe, labelKey: "nav.run_inspector" },
       { to: "/reviews", icon: MessageSquareText, labelKey: "nav.reviews" },
-      { to: "/quality", icon: Gauge, labelKey: "nav.analytics" },
     ],
   },
   {
-    labelKey: "nav.section_system",
+    labelKey: "nav.section_secondary",
     items: [
+      { to: "/quality", icon: Gauge, labelKey: "nav.analytics" },
       { to: "/checkpoints", icon: Camera, labelKey: "nav.checkpoints" },
       { to: "/performance", icon: BarChart3, labelKey: "nav.performance" },
       { to: "/runtime", icon: Activity, labelKey: "nav.runtime" },
-      { to: "/hermes-tasks", icon: Pickaxe, labelKey: "nav.hermes_tasks" },
       { to: "/memory", icon: BrainCircuit, labelKey: "nav.memory" },
       { to: "/security", icon: Shield, labelKey: "nav.security" },
     ],
@@ -133,12 +133,14 @@ function AppLayout() {
         <div className="max-w-7xl mx-auto p-6">
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/issues-runs" element={<Timeline />} />
             <Route path="/timeline" element={<Timeline />} />
             <Route path="/reviews" element={<Reviews />} />
             <Route path="/quality" element={<Quality />} />
             <Route path="/checkpoints" element={<Checkpoints />} />
             <Route path="/performance" element={<Performance />} />
             <Route path="/runtime" element={<Runtime />} />
+            <Route path="/run-inspector" element={<HermesTasks />} />
             <Route path="/hermes-tasks" element={<HermesTasks />} />
             <Route path="/memory" element={<Memory />} />
             <Route path="/security" element={<Security />} />

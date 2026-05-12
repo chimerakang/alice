@@ -25,6 +25,7 @@ import type {
   HermesSnapshotHop,
   HermesSubTaskView,
   HermesStats,
+  HermesTaskState,
 } from "@/types/alice";
 
 const BASE = "";
@@ -251,6 +252,7 @@ export const api = {
       total?: number;
       latest_plan?: HermesSubTaskView[];
       accumulated?: string;
+      task?: HermesTaskState;
     }>(`/api/hermes/snapshots?task_id=${encodeURIComponent(taskId)}`),
 
   // ========== Quality Analytics ==========

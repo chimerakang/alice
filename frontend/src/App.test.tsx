@@ -43,6 +43,10 @@ vi.mock("@/pages/Timeline", () => ({
   default: () => <div data-testid="timeline-page" />,
 }));
 
+vi.mock("@/pages/HermesTasks", () => ({
+  default: () => <div data-testid="hermes-tasks-page" />,
+}));
+
 vi.mock("@/pages/Reviews", () => ({
   default: () => <div data-testid="reviews-page" />,
 }));
@@ -71,6 +75,14 @@ describe("App", () => {
   it("wires the reviews page into the sidebar and router", () => {
     const html = renderToStaticMarkup(<App />);
 
+    expect(html).toContain('href="/issues-runs"');
+    expect(html).toContain("Issues / Runs");
+    expect(html).toContain('data-testid="route:/issues-runs"');
+    expect(html).toContain('data-testid="timeline-page"');
+    expect(html).toContain('href="/run-inspector"');
+    expect(html).toContain("Run Inspector");
+    expect(html).toContain('data-testid="route:/run-inspector"');
+    expect(html).toContain('data-testid="hermes-tasks-page"');
     expect(html).toContain('href="/reviews"');
     expect(html).toContain("Reviews");
     expect(html).toContain('data-testid="route:/reviews"');

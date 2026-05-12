@@ -330,6 +330,55 @@ export interface HermesStats {
   hops: Array<{ hops: number; tasks: number }>;
 }
 
+export interface HermesModelUsage {
+  model: string;
+  input_tokens: number;
+  uncached_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  output_tokens: number;
+  cost_usd: number;
+  call_count: number;
+}
+
+export interface HermesPhaseUsage {
+  phase: string;
+  model: string;
+  input_tokens: number;
+  uncached_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  output_tokens: number;
+  cost_usd: number;
+  call_count: number;
+}
+
+export interface HermesTokenBudget {
+  max_total_tokens: number;
+  max_wallclock_seconds: number;
+  used_tokens: number;
+  started_at: string;
+}
+
+export interface HermesTaskState {
+  id: string;
+  chat_id: number;
+  thread_id: number;
+  planner_session_id: string;
+  executor_session_id?: string;
+  project_dir: string;
+  goal: string;
+  current_idx: number;
+  accumulated: string;
+  status: string;
+  token_budget: HermesTokenBudget;
+  github_issue_number?: number;
+  model_usages: HermesModelUsage[];
+  phase_usages: HermesPhaseUsage[];
+  created_at: string;
+  updated_at: string;
+}
+
 // HermesSubTaskView is the per-sub-task slice returned by
 // /api/hermes/snapshots in the latest_plan field. Carries the actual
 // executor result + reviewer-driven retry feedback so the dashboard

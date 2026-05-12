@@ -13,9 +13,10 @@ function truncateSubTaskId(value: string, maxLength = 60): string {
 interface ReviewSubTaskTableProps {
   subTaskResults: UnifiedReviewSubTaskResult[];
   className?: string;
+  retryEvidenceHref?: string;
 }
 
-export default function ReviewSubTaskTable({ subTaskResults, className }: ReviewSubTaskTableProps) {
+export default function ReviewSubTaskTable({ subTaskResults, className, retryEvidenceHref }: ReviewSubTaskTableProps) {
   const { t } = useTranslation();
   const [expandedSubTasks, setExpandedSubTasks] = useState<string[]>([]);
 
@@ -45,11 +46,15 @@ export default function ReviewSubTaskTable({ subTaskResults, className }: Review
             {subTaskResults.map((subTask, index) => {
               const expanded = expandedSubTasks.includes(subTask.sub_task_id);
               const tags = subTask.issue_tags || [];
+              const isLowScore = subTask.score < 70;
 
               return (
                 <Fragment key={subTask.sub_task_id}>
                   <tr
-                    className="border-t border-gray-800/60 hover:bg-white/5 cursor-pointer align-top"
+                    className={clsx(
+                      "border-t border-gray-800/60 hover:bg-white/5 cursor-pointer align-top",
+                      isLowScore && "bg-red-950/10",
+                    )}
                     onClick={() => toggleSubTask(subTask.sub_task_id)}
                     aria-expanded={expanded}
                   >
@@ -81,10 +86,21 @@ export default function ReviewSubTaskTable({ subTaskResults, className }: Review
                   <tr className={clsx("border-t border-gray-800/40", !expanded && "hidden")}>
                     <td className="px-3 pb-3" colSpan={3}>
                       <div className="rounded-md border border-gray-800/60 bg-black/20 p-3">
-                      <div className="mb-2">
+                        <div className="mb-2">
                           <div className="text-[10px] uppercase text-gray-500 mb-1">{t("reviews.subtask_feedback")}</div>
                           <p className="text-sm text-gray-300 whitespace-pre-wrap">{subTask.feedback || "—"}</p>
                         </div>
+                        {isLowScore && retryEvidenceHref ? (
+                          <div className="mb-2">
+                            <div className="text-[10px] uppercase text-gray-500 mb-1">{t("reviews.subtask_retry_action")}</div>
+                            <a
+                              href={retryEvidenceHref}
+                              className="inline-flex items-center rounded-md border border-orange-700/60 bg-orange-950/30 px-2 py-1 text-xs text-orange-200 hover:border-orange-500 hover:text-orange-100"
+                            >
+                              {t("reviews.subtask_retry_evidence")}
+                            </a>
+                          </div>
+                        ) : null}
                         <div>
                           <div className="text-[10px] uppercase text-gray-500 mb-1">{t("reviews.subtask_issue_tags")}</div>
                           {tags.length > 0 ? (

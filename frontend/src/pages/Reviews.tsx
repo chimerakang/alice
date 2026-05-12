@@ -134,7 +134,7 @@ export function filterAndSortReviews(
 }
 
 export function buildTimelineFocusPath(taskId: string): string {
-  return `/timeline?focus=${encodeURIComponent(taskId)}`;
+  return `/issues-runs?focus=${encodeURIComponent(taskId)}`;
 }
 
 function SortButton({

@@ -1,16 +1,16 @@
 {
   "nav": {
     "section_overview": "總覽",
-    "section_quality": "品質",
-    "section_system": "系統",
+    "section_development_tracking": "開發追蹤",
+    "section_secondary": "次要頁面",
     "dashboard": "儀表板",
-    "timeline": "時間軸",
+    "issues_runs": "Issues / Runs",
+    "run_inspector": "Run Inspector",
     "reviews": "Review 紀錄",
     "analytics": "品質分析",
     "checkpoints": "檢查點",
     "performance": "效能",
     "runtime": "Runtime 事件",
-    "hermes_tasks": "Hermes 任務",
     "memory": "記憶體",
     "security": "安全"
   },
@@ -42,6 +42,53 @@
     "reset": "重設篩選條件"
   },
   "dashboard": {
+    "ia": {
+      "title": "資訊架構",
+      "badge": "主要焦點",
+      "subtitle": "首頁維持以開發追蹤為主。診斷與觀測資料仍可用，但會放在 issue 與 run 流程之下。",
+      "blocks": {
+        "overview": {
+          "title": "Overview",
+          "description": "系統健康與進行中的工作總覽。",
+          "items": {
+            "hermes_runs": "今天 / 本週的 Hermes runs",
+            "health": "成功 / 部分通過 / 失敗比例",
+            "blockers": "開放阻塞、等待核准、Checklist 未同步",
+            "trends": "Token / cost / cache 趨勢僅作輔助訊號"
+          }
+        },
+        "issues_runs": {
+          "title": "Issues / Runs",
+          "description": "以 Issue 為中心的交付與驗證追蹤。",
+          "items": {
+            "issue_progress": "Issue 編號、標題、狀態、Checklist 進度",
+            "latest_run": "最新 Hermes run 狀態與重跑次數",
+            "review_verdict": "Reviewer 分數、判定與 partial 訊號",
+            "evidence": "Commit、diff、checkpoint 與交付證據"
+          }
+        },
+        "run_inspector": {
+          "title": "Run Inspector",
+          "description": "單一 run 的診斷，確認為何卡住或失敗。",
+          "items": {
+            "summary_kpi": "Run 摘要 KPI：tokens、cache hit、cost、duration",
+            "timeline": "Phase timeline 與事件紀錄下鑽",
+            "subtasks": "Planner 項目、executor 結果、reviewer 回饋、重試歷程",
+            "diagnostics": "Checklist sync 與 IssueOps 失敗的明確診斷"
+          }
+        },
+        "secondary": {
+          "title": "次要頁面",
+          "description": "有用，但在交付追蹤之下。",
+          "items": {
+            "runtime": "Runtime 事件",
+            "quality": "品質分析",
+            "checkpoints": "檢查點歷史",
+            "cost": "Token / cost 分析"
+          }
+        }
+      }
+    },
     "stats": {
       "sessions": "Session 數",
       "sessions_total": "共 {{count}} 個",
@@ -270,12 +317,15 @@
     "subtask_col_score": "分數",
     "subtask_feedback": "回饋",
     "subtask_issue_tags": "Issue 標籤",
-    "subtask_no_issue_tags": "沒有 issue tag"
+    "subtask_no_issue_tags": "沒有 issue tag",
+    "subtask_retry_action": "Retry 動作",
+    "subtask_retry_evidence": "Retry 證據",
+    "subtask_review_score": "review {{score}}/100"
   },
   "timeline": {
-    "title": "AI 決策時間軸",
+    "title": "Issue / Run 追蹤",
     "header": {
-      "decisions_count": "{{count}} 個決策"
+      "decisions_count": "{{count}} 筆紀錄"
     },
     "search_placeholder": "搜尋提示詞、回應、工具...",
     "filters": {
@@ -623,8 +673,54 @@
     }
   },
   "hermes_tasks": {
-    "title": "Hermes 任務",
-    "subtitle": "完整 Hermes 任務歷史，含 Walker hop 軌跡",
+    "title": "Run Inspector",
+    "subtitle": "Hermes run 診斷，含任務、事件與 snapshot drilldown。",
+    "loading_inspector": "讀取 inspector…",
+    "summary": {
+      "tokens": "Tokens",
+      "cost": "成本",
+      "duration": "耗時",
+      "phases": "Phase 數",
+      "commits": "Commit",
+      "cache": "Cache hit",
+      "cache_unknown": "—"
+    },
+    "phase_timeline": "Phase timeline",
+    "checklist_status": "Checklist sync",
+    "checklist_status_values": {
+      "checklist_synced": "已同步",
+      "checklist_unsynced": "未同步"
+    },
+    "checklist_counts": "{{checked}} / {{total}} 已勾選，{{unchecked}} 個未開啟",
+    "no_checklist_reason": "沒有記錄 checklist sync 原因。",
+    "no_checklist_status": "尚未出現 IssueOps checklist 事件。",
+    "issueops_diagnostics": "IssueOps 診斷",
+    "issueops_checklist": "Checklist sync",
+    "issueops_close_guard": "關閉防線",
+    "issueops_close_failed": "關閉失敗",
+    "issueops_idle": "尚無 IssueOps 診斷",
+    "issueops_no_diagnostics": "尚未出現 checklist sync 或 close failure 事件。",
+    "retry_action_label": "Retry 動作",
+    "token_attribution": "Token 歸因",
+    "token_attribution_model": "模型層級",
+    "token_attribution_phase": "Phase 層級",
+    "token_attribution_empty": "目前還沒有 token 歸因資料。",
+    "run_links": "Run 連結",
+    "run_links_task": "Task {{taskId}}",
+    "evidence_artifacts": "{{count}} 個 evidence 產物",
+    "open_reviews": "開啟 reviews",
+    "open_issue_trace": "開啟 issue trace",
+    "open_inspector": "開啟 inspector",
+    "tab_subtasks": "子任務",
+    "tab_timeline": "時間軸",
+    "tab_events": "Graph 事件",
+    "tab_reviews": "Reviews / retry",
+    "tab_context": "Context",
+    "no_subtasks": "尚無子任務（任務可能還沒進到 planner）。",
+    "no_phase_timeline": "尚無 phase timeline。",
+    "no_graph_events": "尚無 graph node 事件。",
+    "no_reviews": "尚無 review 資料。",
+    "no_accumulated": "尚無 accumulated 內容。",
     "empty": "找不到符合的任務",
     "status_executing": "執行中",
     "status_planning": "規劃中",
@@ -644,6 +740,9 @@
     "subtask_show_full": "顯示完整內容",
     "subtask_collapse": "收合",
     "subtask_retry_feedback": "Reviewer 重試回饋",
+    "subtask_retry_action": "Retry 動作",
+    "subtask_retry_evidence": "Retry 證據",
+    "subtask_review_score": "review {{score}}/100",
     "panel_title": "Hermes 任務（未結束）",
     "interrupt_budget": "💸 預算耗盡",
     "interrupt_failure_pause": "⏸ 子任務失敗",

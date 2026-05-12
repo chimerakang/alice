@@ -297,20 +297,26 @@ func (wi *WebInterface) handleHermesSnapshots(w http.ResponseWriter, r *http.Req
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
 			return
 		}
+		task, taskErr := store.GetTask(taskID)
+		if taskErr != nil && taskErr != hermes.ErrNoTask {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": taskErr.Error()})
+			return
+		}
 		// Project to a slim shape — full state JSON is too large to
 		// stream for every hop and the dashboard only needs the path.
 		type hopView struct {
-			Step             int                      `json:"step"`
-			SnapshotID       string                   `json:"snapshot_id"`
-			ParentSnapshotID string                   `json:"parent_snapshot_id,omitempty"`
-			SourceNode       string                   `json:"source_node,omitempty"`
-			NextStep         string                   `json:"next_step,omitempty"`
-			Reason           string                   `json:"reason,omitempty"`
-			Status           string                   `json:"status,omitempty"`
-			CurrentIdx       int                      `json:"current_idx"`
-			HasInterrupt     bool                     `json:"has_interrupt,omitempty"`
-			InterruptReason  string                   `json:"interrupt_reason,omitempty"`
-			CreatedAt        string                   `json:"created_at"`
+			Step             int    `json:"step"`
+			SnapshotID       string `json:"snapshot_id"`
+			ParentSnapshotID string `json:"parent_snapshot_id,omitempty"`
+			SourceNode       string `json:"source_node,omitempty"`
+			NextStep         string `json:"next_step,omitempty"`
+			Reason           string `json:"reason,omitempty"`
+			Status           string `json:"status,omitempty"`
+			CurrentIdx       int    `json:"current_idx"`
+			HasInterrupt     bool   `json:"has_interrupt,omitempty"`
+			InterruptReason  string `json:"interrupt_reason,omitempty"`
+			CreatedAt        string `json:"created_at"`
 		}
 		out := make([]hopView, 0, len(hist))
 		for _, s := range hist {
@@ -373,6 +379,7 @@ func (wi *WebInterface) handleHermesSnapshots(w http.ResponseWriter, r *http.Req
 			"total":       len(out),
 			"latest_plan": latestPlan,
 			"accumulated": accumulated,
+			"task":        task,
 		})
 
 		log.Printf("[hermes.web] snapshot history task=%s hops=%d", taskID, len(out))
@@ -424,14 +431,14 @@ func (wi *WebInterface) handleHermesStats(w http.ResponseWriter, r *http.Request
 }
 
 type hermesStats struct {
-	WindowDays  int                  `json:"window_days"`
-	GeneratedAt string               `json:"generated_at"`
-	Totals      hermesStatusCounts   `json:"totals"`
-	Daily       []hermesDailyCounts  `json:"daily"`
-	SourceNodes map[string]int       `json:"source_nodes"`
-	FailureReasons map[string]int    `json:"failure_reasons"`
-	Phases      []hermesPhaseStats   `json:"phases"`
-	Hops        []hermesHopBucket    `json:"hops"`
+	WindowDays     int                 `json:"window_days"`
+	GeneratedAt    string              `json:"generated_at"`
+	Totals         hermesStatusCounts  `json:"totals"`
+	Daily          []hermesDailyCounts `json:"daily"`
+	SourceNodes    map[string]int      `json:"source_nodes"`
+	FailureReasons map[string]int      `json:"failure_reasons"`
+	Phases         []hermesPhaseStats  `json:"phases"`
+	Hops           []hermesHopBucket   `json:"hops"`
 }
 
 type hermesStatusCounts struct {
@@ -596,9 +603,9 @@ func buildHermesStats(db *sql.DB, days int) (*hermesStats, error) {
 		return nil, fmt.Errorf("phase agg: %w", err)
 	}
 	type phaseAcc struct {
-		calls    int
-		sumIn    int64
-		sumOut   int64
+		calls  int
+		sumIn  int64
+		sumOut int64
 	}
 	phases := map[string]*phaseAcc{}
 	for rows.Next() {

@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useAppStore } from "@/stores/appStore";
+import { dashboardIABlocks } from "@/lib/dashboardIA";
 import type {
   StatsResponse,
   DecisionLog,
@@ -98,6 +99,56 @@ function EmptyChart({ label }: { label: string }) {
   return (
     <div className="flex items-center justify-center h-[180px] text-sm text-gray-600">
       {label}
+    </div>
+  );
+}
+
+function InformationArchitectureCard() {
+  const { t } = useTranslation();
+
+  return (
+    <div className="card p-5">
+      <div className="flex flex-col gap-2 mb-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-gray-400">
+            {t("dashboard.ia.title")}
+          </h3>
+          <span className="text-[10px] uppercase tracking-[0.2em] text-gray-600">
+            {t("dashboard.ia.badge")}
+          </span>
+        </div>
+        <p className="text-sm text-gray-500 max-w-4xl">
+          {t("dashboard.ia.subtitle")}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+        {dashboardIABlocks.map((block) => (
+          <div key={block.key} className="rounded-xl border border-gray-800/80 bg-black/20 p-4">
+            <div className="flex items-start justify-between gap-3 mb-2">
+              <div>
+                <div className="text-[10px] uppercase tracking-[0.2em] text-gray-600 mb-1">
+                  {block.route}
+                </div>
+                <h4 className="text-sm font-medium text-white">
+                  {t(block.titleKey)}
+                </h4>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 leading-relaxed">
+              {t(block.descriptionKey)}
+            </p>
+            <ul className="mt-3 space-y-1.5">
+              {block.items.map((itemKey) => (
+                <li key={itemKey} className="flex items-start gap-2 text-xs text-gray-300">
+                  <span className="mt-1 h-1.5 w-1.5 rounded-full bg-primary shrink-0" />
+                  <span>{t(itemKey)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -395,7 +446,7 @@ function RecentDecisionsCard({ decisions }: { decisions: DecisionLog[] }) {
           {t("dashboard.recent_decisions.title")}
         </h3>
         <button
-          onClick={() => navigate("/timeline")}
+          onClick={() => navigate("/issues-runs")}
           className="text-xs text-primary hover:text-primary-light flex items-center gap-1 transition-colors"
         >
           {t("dashboard.recent_decisions.view_all")} <ArrowRight className="w-3 h-3" />
@@ -415,7 +466,7 @@ function RecentDecisionsCard({ decisions }: { decisions: DecisionLog[] }) {
             return (
               <button
                 key={d.id}
-                onClick={() => navigate("/timeline")}
+                onClick={() => navigate("/issues-runs")}
                 className="w-full text-left p-3 rounded-lg border border-gray-800/60 hover:border-gray-700 hover:bg-white/[0.02] transition-all group"
               >
                 <div className="flex items-start gap-2">
@@ -853,6 +904,8 @@ export default function Dashboard() {
       <div className="flex items-center justify-between">
         <DateRangeFilter onChange={handleDateRangeChange} compact />
       </div>
+
+      <InformationArchitectureCard />
 
       {/* ── Row 1: Metric Cards ── */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
