@@ -434,6 +434,7 @@ func validateDeliverableTraceability(goal string, tasks []SubTask) error {
 	}
 	readOnlyCount := 0
 	standaloneVerifyCount := 0
+	advertisedChecklistCount := countAdvertisedChecklistItems(goal)
 	for _, task := range tasks {
 		if isStandaloneReadOnlyTask(task) {
 			readOnlyCount++
@@ -445,10 +446,18 @@ func validateDeliverableTraceability(goal string, tasks []SubTask) error {
 	if readOnlyCount > 1 && readOnlyCount >= len(tasks)/2 {
 		return fmt.Errorf("incomplete traceability: too many standalone read/inspect sub-tasks (%d/%d); merge discovery into the deliverable sub-task that satisfies an acceptance criterion", readOnlyCount, len(tasks))
 	}
-	if standaloneVerifyCount > 1 {
+	maxStandaloneVerify := 1
+	if advertisedChecklistCount >= 10 {
+		maxStandaloneVerify = 3
+	}
+	if standaloneVerifyCount > maxStandaloneVerify {
 		return fmt.Errorf("over-split validation: %d standalone validation sub-tasks; fold validation into the related deliverable sub-task unless this is a final full-suite verification", standaloneVerifyCount)
 	}
 	return nil
+}
+
+func countAdvertisedChecklistItems(goal string) int {
+	return len(goalChecklistItemRe.FindAllStringSubmatch(goal, -1))
 }
 
 // Compress asks the Planner to condense the accumulated execution log and

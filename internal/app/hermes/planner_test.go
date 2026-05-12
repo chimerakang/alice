@@ -3,6 +3,7 @@ package hermes
 import (
 	"context"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -212,6 +213,102 @@ func TestValidatePlanQualityAllowsVerificationOnlyGoal(t *testing.T) {
 	}}
 	if err := validatePlanQuality("verify issue #57 is already completed", tasks); err != nil {
 		t.Fatalf("verification-only plan should be accepted: %v", err)
+	}
+}
+
+func TestValidatePlanQualityRejectsMultipleStandaloneValidationForSmallIssue(t *testing.T) {
+	goal := "[GitHub #12] 實作 auth fix\n" +
+		"- [ ] [item-1] update auth service\n" +
+		"- [ ] [item-2] add auth tests\n" +
+		"- [ ] [item-3] update auth docs\n"
+	tasks := []SubTask{
+		{
+			ID:               "s1",
+			Description:      "Update the auth service to fix refresh-token handling.",
+			ToolHints:        []string{"Read", "Edit"},
+			ChecklistItemIDs: []string{"item-1"},
+		},
+		{
+			ID:               "s2",
+			Description:      "Add focused auth tests for refresh-token handling.",
+			ToolHints:        []string{"Read", "Edit"},
+			ChecklistItemIDs: []string{"item-2"},
+		},
+		{
+			ID:               "s3",
+			Description:      "Update auth documentation for the refresh-token behavior.",
+			ToolHints:        []string{"Read", "Edit"},
+			ChecklistItemIDs: []string{"item-3"},
+		},
+		{
+			ID:          "s4",
+			Description: "Run go test ./internal/auth/... to verify the auth service.",
+			ToolHints:   []string{"Bash"},
+		},
+		{
+			ID:          "s5",
+			Description: "Run go test ./internal/app/... to confirm integration coverage.",
+			ToolHints:   []string{"Bash"},
+		},
+	}
+	err := validatePlanQuality(goal, tasks)
+	if err == nil {
+		t.Fatal("multiple standalone validation tasks should reject for small issues")
+	}
+	if !strings.Contains(err.Error(), "over-split validation") {
+		t.Fatalf("error = %v, want over-split validation", err)
+	}
+}
+
+func TestValidatePlanQualityAllowsSeveralStandaloneValidationForLargeChecklist(t *testing.T) {
+	var goal strings.Builder
+	goal.WriteString("[GitHub #109] [Phase 2] Self-hosted browser runtime\n")
+	for i := 1; i <= 25; i++ {
+		goal.WriteString("- [ ] [item-")
+		goal.WriteString(strconv.Itoa(i))
+		goal.WriteString("] acceptance item\n")
+	}
+	driverIDs := make([]string, 0, 19)
+	for i := 7; i <= 25; i++ {
+		driverIDs = append(driverIDs, "item-"+strconv.Itoa(i))
+	}
+	tasks := []SubTask{
+		{
+			ID:               "s1",
+			Description:      "Implement BrowseForge deployment wiring, browser runtime configuration, and profile storage, then run docker compose config to validate deployment syntax.",
+			ToolHints:        []string{"Read", "Edit", "Bash"},
+			ChecklistItemIDs: []string{"item-1", "item-2", "item-3"},
+		},
+		{
+			ID:               "s2",
+			Description:      "Implement the browser_runtime abstraction and login/session model, then run focused backend tests for the runtime package.",
+			ToolHints:        []string{"Read", "Edit", "Bash"},
+			ChecklistItemIDs: []string{"item-4", "item-5", "item-6"},
+		},
+		{
+			ID:               "s3",
+			Description:      "Implement the crawl job contract and Threads/Facebook/Instagram proof-of-concept drivers with normalized evidence output.",
+			ToolHints:        []string{"Read", "Edit", "Bash"},
+			ChecklistItemIDs: driverIDs,
+		},
+		{
+			ID:          "s4",
+			Description: "Run go test ./backend/... to validate backend runtime integration.",
+			ToolHints:   []string{"Bash"},
+		},
+		{
+			ID:          "s5",
+			Description: "Run docker compose config and smoke checks to validate BrowseForge deployment wiring.",
+			ToolHints:   []string{"Bash"},
+		},
+		{
+			ID:          "s6",
+			Description: "Run driver smoke tests for Threads, Facebook, and Instagram session reuse.",
+			ToolHints:   []string{"Bash"},
+		},
+	}
+	if err := validatePlanQuality(goal.String(), tasks); err != nil {
+		t.Fatalf("large checklist should allow up to three standalone validation tasks: %v", err)
 	}
 }
 
