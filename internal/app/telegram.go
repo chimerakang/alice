@@ -276,7 +276,7 @@ type hermesCoord struct {
 	failureDecisionCh chan appengine.FailurePauseChoice
 	failureCtx        *failurePauseCtx // metadata about the paused sub-task for UI rendering
 
-	// awaitingFailureHint is set when the operator clicked "✏️ 修正方向" and
+	// awaitingFailureHint is set when the operator clicked "💬 自訂提示" and
 	// the bot is waiting for a free-form text reply that will be packaged
 	// as the FailurePauseChoice.Hint. handleMessage intercepts the next
 	// non-command text and forwards it through failureDecisionCh.
@@ -291,6 +291,7 @@ type failurePauseCtx struct {
 	idx     int
 	total   int
 	subDesc string
+	errText string
 	graph   bool
 }
 
@@ -1106,7 +1107,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 	}
 
 	// Failure-pause hint capture: when the operator just clicked
-	// "✏️ 修正方向" the next text message is the hint for the retry, not a
+	// "💬 自訂提示" the next text message is the hint for the retry, not a
 	// new conversation turn. Forward it through the pause channel.
 	if !forceNormalChat && t.trySignalHermesFailureHint(key, text) {
 		return
@@ -6566,6 +6567,7 @@ func (t *TelegramBot) makeHermesFailureDecisionCallback(key chatKey, ch chan app
 				idx:     idx,
 				total:   total,
 				subDesc: sub.Description,
+				errText: errText,
 			}
 			hc.awaitingFailureHint = false
 		}
@@ -6590,6 +6592,9 @@ func (t *TelegramBot) makeHermesFailureDecisionCallback(key chatKey, ch chan app
 			{
 				{"text": "🔁 重試", "callback_data": fmt.Sprintf("hermes:fail:retry:%s:%d", taskID, idx)},
 				{"text": "✏️ 修正方向", "callback_data": fmt.Sprintf("hermes:fail:adjust:%s:%d", taskID, idx)},
+			},
+			{
+				{"text": "💬 自訂提示", "callback_data": fmt.Sprintf("hermes:fail:hint:%s:%d", taskID, idx)},
 			},
 			{
 				{"text": "⏭ 跳過", "callback_data": fmt.Sprintf("hermes:fail:skip:%s:%d", taskID, idx)},
@@ -6665,6 +6670,7 @@ func (t *TelegramBot) makeHermesGraphInterruptCallback(key chatKey) func(ctx con
 				idx:     idx,
 				total:   total,
 				subDesc: subDesc,
+				errText: errText,
 				graph:   true,
 			}
 			hc.awaitingFailureHint = false
@@ -6683,7 +6689,6 @@ func (t *TelegramBot) makeHermesGraphInterruptCallback(key chatKey) func(ctx con
 		btns := [][]map[string]interface{}{
 			{
 				{"text": "🔁 重試", "callback_data": fmt.Sprintf("hermes:fail:retry:%s:%d", taskID, idx)},
-				{"text": "✏️ 修正方向", "callback_data": fmt.Sprintf("hermes:fail:adjust:%s:%d", taskID, idx)},
 			},
 			{
 				{"text": "⏭ 跳過", "callback_data": fmt.Sprintf("hermes:fail:skip:%s:%d", taskID, idx)},
@@ -6877,14 +6882,15 @@ func (t *TelegramBot) NotifyPendingPause(chatID int64, threadID int, taskID stri
 //	        the still-in-progress sub-task (operator's intent).
 //
 // Constraints:
-//   - "adjust" path is not supported (needs hint-text exchange flow).
+//   - "adjust" / "hint" paths are not supported because post-restart
+//     custom hint state is not persisted.
 //   - Resume only proceeds when the task's latest snapshot carries an
 //     Interrupt — otherwise the task is not actually paused and we
 //     decline rather than risk re-running an already-finished task.
 //   - The chatKey from the click must match the task's recorded
 //     chat_id / thread_id. Cross-chat resume is not supported.
 func (t *TelegramBot) tryColdRestartFailureResume(key chatKey, queryID, action, taskIDStr, idxStr string) bool {
-	if action == "adjust" {
+	if action == "adjust" || action == "hint" {
 		return false
 	}
 	if t.taskSvc == nil {
@@ -7094,6 +7100,24 @@ func formatHermesFailurePauseDetail(errText string) string {
 	return strings.Join(parts, "\n\n")
 }
 
+func hermesFailureAutoRetryHint(errText string) string {
+	errText = strings.TrimSpace(errText)
+	if errText == "" {
+		return ""
+	}
+	reviewerText := ""
+	if _, after, ok := strings.Cut(errText, "\n\nReviewer feedback:"); ok {
+		reviewerText = strings.TrimSpace(after)
+	} else if strings.HasPrefix(errText, "Reviewer feedback:") {
+		reviewerText = strings.TrimSpace(strings.TrimPrefix(errText, "Reviewer feedback:"))
+	}
+	if reviewerText != "" {
+		return "請依照以下 reviewer feedback 修正後重新執行；不要只重述，必須補足 reviewer 指出的缺口與驗證證據：\n" +
+			truncateRunesText(reviewerText, 1400)
+	}
+	return "請依照以下失敗摘要修正後重新執行，補足缺口與驗證證據：\n" + truncateRunesText(errText, 1400)
+}
+
 func extractHermesExecutorSummary(text string) string {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -7159,13 +7183,13 @@ func (t *TelegramBot) handleHermesFailureDecisionCallback(key chatKey, queryID, 
 		if t.tryColdRestartFailureResume(key, queryID, action, taskID, idxStr) {
 			return true
 		}
-		// β6: adjust path is not supported in cold-restart because it
+		// β6: adjust / hint paths are not supported in cold-restart because they
 		// would require persisting awaiting-hint state across restarts.
 		// Surface a clear message instead of the generic "task not
 		// waiting" so the operator knows what to do.
-		if action == "adjust" {
-			t.answerCallbackQuery(queryID, "✏️ alice 重啟後 adjust 路徑暫不支援")
-			t.send(key, fmt.Sprintf("⚠️ alice 重啟後，「✏️ 修正方向」路徑暫不支援。請改點 retry / skip / abort，或使用 /resume %s retry|skip|abort 直接套用。", shortHermesTaskID(taskID)))
+		if action == "adjust" || action == "hint" {
+			t.answerCallbackQuery(queryID, "✏️ alice 重啟後提示路徑暫不支援")
+			t.send(key, fmt.Sprintf("⚠️ alice 重啟後，提示式重試路徑暫不支援。請改點 retry / skip / abort，或使用 /resume %s retry|skip|abort 直接套用。", shortHermesTaskID(taskID)))
 			return true
 		}
 		t.answerCallbackQuery(queryID, "❌ 任務不在等待狀態")
@@ -7185,8 +7209,8 @@ func (t *TelegramBot) handleHermesFailureDecisionCallback(key chatKey, queryID, 
 	graphPause := hc.failureCtx.graph
 
 	if graphPause {
-		if action == "adjust" {
-			t.answerCallbackQuery(queryID, "✏️ graph 暫停暫不支援修正方向")
+		if action == "adjust" || action == "hint" {
+			t.answerCallbackQuery(queryID, "✏️ graph 暫停暫不支援提示重試")
 			t.send(key, fmt.Sprintf("⚠️ graph-native 暫停目前先支援 retry / skip / abort。請改點上方按鈕，或使用 /resume %s retry|skip|abort。", shortHermesTaskID(taskID)))
 			return true
 		}
@@ -7198,16 +7222,35 @@ func (t *TelegramBot) handleHermesFailureDecisionCallback(key chatKey, queryID, 
 		return true
 	}
 
-	// "adjust" parks the pause in awaiting-hint mode and waits for the next
+	if action == "adjust" {
+		hint := hermesFailureAutoRetryHint(hc.failureCtx.errText)
+		if hint == "" {
+			hint = "請依照上方 reviewer feedback 修正缺口，補足驗證與 traceability 後重新回報。"
+		}
+		visible := fmt.Sprintf("✏️ 已收到，將依 reviewer feedback 重新執行子任務 %d/%d。", idx+1, total)
+		if subDesc != "" {
+			visible += "\n• " + truncateRunesText(subDesc, 180)
+		}
+		select {
+		case hc.failureDecisionCh <- appengine.FailurePauseChoice{Decision: appengine.FailureRetry, Hint: hint}:
+			t.answerCallbackQuery(queryID, "✏️ 依 review 修正")
+			t.send(key, visible)
+		default:
+			t.answerCallbackQuery(queryID, "（已收到上一次選擇）")
+		}
+		return true
+	}
+
+	// "hint" parks the pause in awaiting-hint mode and waits for the next
 	// text message in this chat. The choice is not sent to the channel yet;
 	// trySignalHermesFailureHint forwards it once the operator replies.
-	if action == "adjust" {
+	if action == "hint" {
 		t.hermesMu.Lock()
 		hc.awaitingFailureHint = true
 		hc.awaitingHintCancelTime = time.Now().Add(hermesFailureDecisionTimeout)
 		t.hermesMu.Unlock()
-		t.answerCallbackQuery(queryID, "✏️ 請輸入修正方向")
-		t.send(key, fmt.Sprintf("✏️ 請在這個 topic 輸入「修正方向」一句話（10 分鐘內）。\n收到後會以此為提示重新執行子任務 #%d。", hc.failureCtx.idx+1))
+		t.answerCallbackQuery(queryID, "💬 請輸入自訂提示")
+		t.send(key, fmt.Sprintf("💬 請在這個 topic 輸入自訂提示一句話（10 分鐘內）。\n收到後會以此為提示重新執行子任務 #%d。", hc.failureCtx.idx+1))
 		return true
 	}
 

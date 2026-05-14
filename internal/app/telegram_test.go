@@ -2825,6 +2825,101 @@ func TestHermesFailureRetryButtonSendsVisibleAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestHermesFailureAdjustButtonRetriesWithReviewerFeedback(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	failureCh := make(chan appengine.FailurePauseChoice, 1)
+	bot := &TelegramBot{
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {
+				enabled:           true,
+				failureDecisionCh: failureCh,
+				failureCtx: &failurePauseCtx{
+					taskID:  "ecd58b36-dbb4-442f-9e96-3ef844f5ac9b",
+					idx:     2,
+					total:   6,
+					subDesc: "Wire fingerprint persistence",
+					errText: `PARTIAL
+Executor summary here.
+
+Reviewer feedback:
+verdict: block
+block_tags: incomplete_traceability
+feedback: Please prove the scheduler reads and writes lead_source_crawl_states.dom_fingerprint end-to-end.`,
+				},
+			},
+		},
+		messageQueue: make(chan *TelegramMessage, 4),
+	}
+
+	if !bot.handleHermesFailureDecisionCallback(key, "query-1", "hermes:fail:adjust:ecd58b36-dbb4-442f-9e96-3ef844f5ac9b:2") {
+		t.Fatal("expected Hermes failure adjust callback to be handled")
+	}
+
+	select {
+	case choice := <-failureCh:
+		if choice.Decision != appengine.FailureRetry {
+			t.Fatalf("decision = %+v, want retry", choice)
+		}
+		if !strings.Contains(choice.Hint, "Please prove the scheduler reads and writes") ||
+			!strings.Contains(choice.Hint, "reviewer feedback") {
+			t.Fatalf("hint did not include reviewer feedback:\n%s", choice.Hint)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for adjust retry choice")
+	}
+
+	var sawCallbackAck, sawVisibleAck bool
+	deadline := time.After(time.Second)
+	for !sawCallbackAck || !sawVisibleAck {
+		select {
+		case msg := <-bot.messageQueue:
+			switch msg.Method {
+			case "answerCallbackQuery":
+				if text, _ := msg.Params["text"].(string); strings.Contains(text, "依 review 修正") {
+					sawCallbackAck = true
+				}
+			case "sendMessage":
+				text, _ := msg.Params["text"].(string)
+				if strings.Contains(text, "依 reviewer feedback 重新執行子任務 3/6") &&
+					strings.Contains(text, "Wire fingerprint persistence") {
+					sawVisibleAck = true
+				}
+				if strings.Contains(text, "請在這個 topic 輸入") {
+					t.Fatalf("adjust should not ask for extra text:\n%s", text)
+				}
+			}
+		case <-deadline:
+			t.Fatalf("missing ack messages: callback=%v visible=%v", sawCallbackAck, sawVisibleAck)
+		}
+	}
+}
+
+func TestHermesFailureHintButtonKeepsCustomTextFlow(t *testing.T) {
+	key := chatKey{chatID: 42, threadID: 7}
+	failureCh := make(chan appengine.FailurePauseChoice, 1)
+	bot := &TelegramBot{
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {
+				enabled:           true,
+				failureDecisionCh: failureCh,
+				failureCtx: &failurePauseCtx{
+					taskID: "ecd58b36-dbb4-442f-9e96-3ef844f5ac9b",
+					idx:    1,
+					total:  3,
+				},
+			},
+		},
+		messageQueue: make(chan *TelegramMessage, 4),
+	}
+
+	if !bot.handleHermesFailureDecisionCallback(key, "query-1", "hermes:fail:hint:ecd58b36-dbb4-442f-9e96-3ef844f5ac9b:1") {
+		t.Fatal("expected Hermes failure hint callback to be handled")
+	}
+	if !bot.hermesCoords[key].awaitingFailureHint {
+		t.Fatal("hint button should enter awaiting custom hint mode")
+	}
+}
+
 func TestFormatHermesFailurePauseDetailPrioritizesReviewerFeedback(t *testing.T) {
 	detail := formatHermesFailurePauseDetail(`PARTIAL
 我做了很多事情，前面有很多執行過程。
