@@ -8,10 +8,14 @@
   "multimedia": {
     "enable_photo_support": true,
     "enable_voice_support": true,
+    "enable_image_generation": false,
     "openai_api_key": "sk-xxxxx",
     "max_file_size_mb": 20,
     "temp_download_dir": "./temp/media",
-    "voice_to_text_provider": "openai_whisper"
+    "voice_to_text_provider": "openai_whisper",
+    "image_model": "gpt-image-2",
+    "image_size": "1024x1024",
+    "image_quality": "auto"
   },
 
   "enable_web_interface": true,

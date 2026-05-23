@@ -4,12 +4,16 @@ import "encoding/json"
 
 // MultimediaConfig 多媒體處理設定
 type MultimediaConfig struct {
-	EnablePhotoSupport  bool   `json:"enable_photo_support"`
-	EnableVoiceSupport  bool   `json:"enable_voice_support"`
-	OpenAIAPIKey        string `json:"openai_api_key"`
-	MaxFileSizeMB       int    `json:"max_file_size_mb"`
-	TempDownloadDir     string `json:"temp_download_dir"`
-	VoiceToTextProvider string `json:"voice_to_text_provider"`
+	EnablePhotoSupport     bool   `json:"enable_photo_support"`
+	EnableVoiceSupport     bool   `json:"enable_voice_support"`
+	EnableImageGeneration  bool   `json:"enable_image_generation"`
+	OpenAIAPIKey           string `json:"openai_api_key"`
+	MaxFileSizeMB          int    `json:"max_file_size_mb"`
+	TempDownloadDir        string `json:"temp_download_dir"`
+	VoiceToTextProvider    string `json:"voice_to_text_provider"`
+	ImageModel             string `json:"image_model"`
+	ImageSize              string `json:"image_size"`
+	ImageQuality           string `json:"image_quality"`
 }
 
 // RenderingConfig HTML 渲染設定

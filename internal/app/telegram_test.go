@@ -42,6 +42,59 @@ Assistant: 找到四個待修問題
 	}
 }
 
+func TestNormalizeImageGenerationQuality(t *testing.T) {
+	tests := []struct {
+		name    string
+		model   string
+		quality string
+		want    string
+	}{
+		{
+			name:  "default gpt image quality uses auto",
+			model: "gpt-image-2",
+			want:  "auto",
+		},
+		{
+			name:    "legacy standard maps to auto for gpt image models",
+			model:   "gpt-image-2",
+			quality: "standard",
+			want:    "auto",
+		},
+		{
+			name:    "legacy hd maps to high for gpt image models",
+			model:   "gpt-image-2",
+			quality: "hd",
+			want:    "high",
+		},
+		{
+			name:    "explicit supported quality is preserved",
+			model:   "gpt-image-2",
+			quality: "medium",
+			want:    "medium",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := normalizeImageGenerationQuality(tt.model, tt.quality); got != tt.want {
+				t.Fatalf("normalizeImageGenerationQuality(%q, %q) = %q, want %q", tt.model, tt.quality, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeImageGenerationModel(t *testing.T) {
+	if got := normalizeImageGenerationModel(""); got != "gpt-image-2" {
+		t.Fatalf("default image model = %q, want gpt-image-2", got)
+	}
+	if got := normalizeImageGenerationModel("  gpt-image-2  "); got != "gpt-image-2" {
+		t.Fatalf("trimmed image model = %q, want gpt-image-2", got)
+	}
+	if got := normalizeImageGenerationModel("dall-e-3"); got != "gpt-image-2" {
+		t.Fatalf("unsupported image model = %q, want gpt-image-2", got)
+	}
+}
+
 func TestExtractHermesActionableGoalFromContinuationPrompt(t *testing.T) {
 	goal := `[Hermes continuation]
 Mode: replan
@@ -4237,6 +4290,28 @@ func TestClassifyError_DelegatesTransientCategoriesToErrorclass(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := classifyError(tc.text); got != tc.want {
 				t.Errorf("classifyError(%q) = %q, want %q", tc.text, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseMRSelector(t *testing.T) {
+	cases := []struct {
+		input string
+		want  string
+	}{
+		{"/mr #129", "#129"},
+		{"/mr P15", "P15"},
+		{`/mr "P15 - Hermes Cleanup"`, "P15 - Hermes Cleanup"},
+		{"/mr", ""},
+		{"/mr ", ""},
+		{"/mr current", "current"},
+		{`/mr "quoted with spaces"`, "quoted with spaces"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			if got := parseMRSelector(tc.input); got != tc.want {
+				t.Errorf("parseMRSelector(%q) = %q, want %q", tc.input, got, tc.want)
 			}
 		})
 	}

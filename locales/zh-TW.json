@@ -221,6 +221,7 @@
     "help_tasks_desc": "/tasks — 查看待辦工作清單",
     "help_lang_desc": "/lang — 切換 Bot 語言",
     "help_send_file_desc": "/send-file <檔案路徑> — 發送工作目錄內的圖片/影片/文件",
+    "help_mr_desc": "/mr #<issue>|<title> — Hermes milestone review（唯讀）",
     "help_id_desc": "/id — 顯示當前 Chat ID 和 Thread ID",
     "id_info": "📋 Chat ID: `{chat_id}`\nThread ID: `{thread_id}`",
     "project_no_none": "無",
@@ -490,6 +491,12 @@
     "smart_intent_model_confirm": "🧭 確認切換模型到 **{mode}**？",
     "smart_intent_model_confirm_btn": "✅ 確認切換",
     "smart_intent_model_cancel_btn": "❌ 取消",
-    "smart_intent_model_all_btn": "查看所有模型"
+    "smart_intent_model_all_btn": "查看所有模型",
+    "image_gen_generating": "🎨 正在生成圖片，請稍候...",
+    "image_gen_failed": "🎨 圖片生成失敗：{error}",
+    "image_gen_send_failed": "🎨 圖片生成成功但發送失敗，請稍後再試。",
+    "image_gen_disabled": "🎨 圖片生成功能目前未啟用。請聯繫管理員開啟 `enable_image_generation` 設定。",
+    "image_gen_no_api_key": "🎨 圖片生成需要 OpenAI API Key，請聯繫管理員設定。",
+    "image_gen_usage": "🎨 用法：/image <圖片描述>\n範例：/image 火龍，水彩風格，奇幻場景"
   }
 }

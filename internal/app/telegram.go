@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -231,12 +232,13 @@ func (s *telegramProgressSink) OnSubTaskDone(idx int, result string) {}
 func (s *telegramProgressSink) OnComplete(summary string) {}
 
 const (
-	hermesPreviousContextHeader = "[Previous conversation context]"
-	hermesCurrentRequestHeader  = "[Current request]"
-	hermesContextMaxChars       = 2000
-	telegramAPITimeout          = 20 * time.Second
-	telegramLongPollTimeout     = 75 * time.Second
-	telegramDownloadTimeout     = 2 * time.Minute
+	hermesPreviousContextHeader  = "[Previous conversation context]"
+	hermesCurrentRequestHeader   = "[Current request]"
+	hermesContextMaxChars        = 2000
+	telegramAPITimeout           = 20 * time.Second
+	telegramLongPollTimeout      = 75 * time.Second
+	telegramDownloadTimeout      = 2 * time.Minute
+	openAIImageGenerationTimeout = 5 * time.Minute
 )
 
 var hermesFetchIssue = hermes.FetchIssue
@@ -588,6 +590,7 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "agents", "description": "View specialized agent list"},
 		{"command": "tasks", "description": "View to-do list"},
 		{"command": "close", "description": "Close a GitHub issue"},
+		{"command": "mr", "description": "Hermes milestone review"},
 		{"command": "lang", "description": "Switch bot language"},
 		{"command": "preview", "description": "Preview webpage screenshot"},
 		{"command": "send-file", "description": "Send a file from the project directory"},
@@ -1274,6 +1277,15 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		userMessage = "請用繁體中文回應。\n\n" + text
 	}
 
+	// Inject image generation capability hint when enabled.
+	if t.config.Multimedia.EnableImageGeneration && t.config.Multimedia.OpenAIAPIKey != "" {
+		hint := "[系統功能] 若需生成圖片，請在回應中輸出標記 [GENERATE_IMAGE:圖片描述|尺寸|品質]（尺寸與品質可省略，預設 1024x1024, auto），Alice 會自動呼叫 OpenAI Image API 生成並回傳圖片給使用者。\n\n"
+		if userLang == "en" {
+			hint = "[System capability] To generate an image, output the marker [GENERATE_IMAGE:description|size|quality] in your response (size and quality optional, defaults: 1024x1024, auto). Alice will call the OpenAI Image API and send the result to the user.\n\n"
+		}
+		userMessage = hint + userMessage
+	}
+
 	// Create enhanced update callback with stop button support
 	createUpdateCallback := func() func(string, bool) {
 		var firstUpdate = true
@@ -1472,6 +1484,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		help += t.getLocalizedMessage(key.chatID, "help_send_file_desc", nil) + "\n"
 		help += "/menu - 開啟視覺化操作選單\n"
 		help += "/strict - 切換 strict review mode\n"
+		help += t.getLocalizedMessage(key.chatID, "help_mr_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_id_desc", nil)
 		t.sendMarkdown(key, help)
 
@@ -1938,6 +1951,13 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		}
 		t.handleSendFile(key, filePath)
 
+	case "/image":
+		prompt := ""
+		if len(parts) > 1 {
+			prompt = strings.Join(parts[1:], " ")
+		}
+		t.handleImageCommand(key, prompt)
+
 	case "/test-photo":
 		// 測試命令：直接從本地發送照片
 		t.testPhotoUpload(key)
@@ -2012,9 +2032,128 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 	case "/retry":
 		t.handleRetryCommand(key, parts)
 
+	case "/mr":
+		t.handleMilestoneReviewCommand(key, text)
+
 	default:
 		t.send(key, t.getLocalizedMessage(key.chatID, "unknown_command", nil))
 	}
+}
+
+// parseMRSelector extracts the selector from a full /mr command text.
+// The selector is everything after "/mr " with outer double-quotes stripped.
+// Examples: "/mr #129" → "#129", "/mr P15" → "P15",
+// `/mr "P15 - Hermes Cleanup"` → "P15 - Hermes Cleanup".
+func parseMRSelector(text string) string {
+	idx := strings.Index(text, " ")
+	if idx < 0 {
+		return ""
+	}
+	sel := strings.TrimSpace(text[idx+1:])
+	if len(sel) >= 2 && sel[0] == '"' && sel[len(sel)-1] == '"' {
+		sel = sel[1 : len(sel)-1]
+	}
+	return strings.TrimSpace(sel)
+}
+
+// handleMilestoneReviewCommand runs a read-only Hermes milestone review for
+// a /mr <selector> command. Supported selectors: #N (issue number), milestone
+// title query (exact / prefix / contains). Read-only: no GitHub mutations.
+func (t *TelegramBot) handleMilestoneReviewCommand(key chatKey, text string) {
+	selector := parseMRSelector(text)
+	if selector == "" {
+		t.send(key, "用法：`/mr #<issue>` 或 `/mr <milestone-title>`\n\n例：`/mr #129` 或 `/mr P15`")
+		return
+	}
+
+	projectDir := t.getAgent(key).ProjectDir()
+
+	// Step 1: resolve milestone.
+	t.send(key, fmt.Sprintf("🔍 正在解析 milestone：`%s`…", selector))
+	resolveCtx, resolveCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer resolveCancel()
+
+	ms, err := hermes.ResolveGitHubMilestone(resolveCtx, projectDir, selector)
+	if err != nil {
+		t.send(key, formatMilestoneResolveError(err))
+		return
+	}
+
+	// Step 2: load all issues.
+	t.send(key, fmt.Sprintf("📥 載入 milestone *%s* 的所有 issues…", ms.Title))
+	loadCtx, loadCancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer loadCancel()
+
+	mrc, err := hermes.LoadMilestoneReviewContext(loadCtx, projectDir, ms)
+	if err != nil {
+		t.send(key, fmt.Sprintf("❌ 無法載入 milestone issues：%s", err.Error()))
+		return
+	}
+
+	// Step 3: run LLM review.
+	reviewModel := t.config.ModelRouting.DeepModel
+	if reviewModel == "" {
+		reviewModel = t.config.ModelRouting.SmartModel
+	}
+	if reviewModel == "" {
+		t.send(key, "❌ 未設定 deep_model，無法執行 milestone review。")
+		return
+	}
+
+	totalIssues := len(mrc.Issues)
+	t.send(key, fmt.Sprintf("🧠 正在用 `%s` 審查 %d 個 issues…", reviewModel, totalIssues))
+
+	callFn := makePlanFn(t.client, reviewModel)
+	reviewCtx, reviewCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer reviewCancel()
+
+	result, err := hermes.RunMilestoneReview(reviewCtx, callFn, projectDir, mrc)
+	if err != nil {
+		t.send(key, fmt.Sprintf("❌ Milestone review 失敗：%s", err.Error()))
+		return
+	}
+
+	// Step 4: format and send.
+	msg, err := hermes.FormatMilestoneReview(projectDir, ms, result)
+	if err != nil {
+		t.send(key, fmt.Sprintf("❌ 格式化 review 失敗：%s", err.Error()))
+		return
+	}
+	msg = t.processSendFileMarkers(key, msg, projectDir)
+	t.send(key, msg)
+}
+
+// formatMilestoneResolveError converts typed resolver errors into user-friendly
+// Telegram messages.
+func formatMilestoneResolveError(err error) string {
+	var noMS *hermes.ErrNoMilestoneOnIssue
+	if errors.As(err, &noMS) {
+		return fmt.Sprintf("⚠️ Issue #%d 沒有關聯的 milestone。\n\n請確認此 issue 已設定 milestone 後再試。", noMS.IssueNumber)
+	}
+	var notFound *hermes.ErrIssueNotFound
+	if errors.As(err, &notFound) {
+		return fmt.Sprintf("❌ 找不到 Issue #%d。", notFound.IssueNumber)
+	}
+	var noMatch *hermes.ErrNoMilestoneMatch
+	if errors.As(err, &noMatch) {
+		msg := fmt.Sprintf("❌ 找不到符合 `%s` 的 milestone。", noMatch.Query)
+		if len(noMatch.Available) > 0 {
+			msg += "\n\n目前開放的 milestones："
+			for _, m := range noMatch.Available {
+				msg += fmt.Sprintf("\n• %s", m.Title)
+			}
+		}
+		return msg
+	}
+	var ambiguous *hermes.ErrAmbiguousMilestone
+	if errors.As(err, &ambiguous) {
+		msg := fmt.Sprintf("⚠️ 查詢 `%s` 匹配到多個 milestones，請使用更精確的名稱重試：", ambiguous.Query)
+		for _, m := range ambiguous.Candidates {
+			msg += fmt.Sprintf("\n• %s", m.Title)
+		}
+		return msg
+	}
+	return fmt.Sprintf("❌ 無法解析 milestone：%s", err.Error())
 }
 
 var closeIssueURLPattern = regexp.MustCompile(`/issues/([0-9]+)(?:\b|$)`)
@@ -7937,10 +8076,16 @@ func (t *TelegramBot) formatSendFileError(chatID int64, filePath string, err err
 	})
 }
 
-// processAgentResponse 解析 Agent 回應中的 [SEND_FILE:path] 標記並發送對應檔案。
+// processAgentResponse 解析 Agent 回應中的 [SEND_FILE:path] 和 [GENERATE_IMAGE:prompt|size|quality] 標記。
 // 回傳移除標記後的純文字回應。
-// Agent 可在回應中包含 [SEND_FILE:temp/output.png] 來觸發自動上傳。
 func (t *TelegramBot) processAgentResponse(key chatKey, response string, projectPath string) string {
+	result := response
+	result = t.processGenerateImageMarkers(key, result)
+	result = t.processSendFileMarkers(key, result, projectPath)
+	return result
+}
+
+func (t *TelegramBot) processSendFileMarkers(key chatKey, response string, projectPath string) string {
 	const markerPrefix = "[SEND_FILE:"
 	const markerSuffix = "]"
 
@@ -7971,7 +8116,61 @@ func (t *TelegramBot) processAgentResponse(key chatKey, response string, project
 			log.Printf("[telegram] processAgentResponse: rejected path %q (not in allowed dirs)", filePath)
 		}
 
-		// 移除標記（含前後空白行）
+		result = strings.TrimSpace(result[:start]) + "\n" + strings.TrimSpace(result[end:])
+		result = strings.TrimSpace(result)
+	}
+	return result
+}
+
+func (t *TelegramBot) processGenerateImageMarkers(key chatKey, response string) string {
+	const markerPrefix = "[GENERATE_IMAGE:"
+	const markerSuffix = "]"
+
+	if !t.config.Multimedia.EnableImageGeneration {
+		return response
+	}
+	if t.config.Multimedia.OpenAIAPIKey == "" {
+		return response
+	}
+
+	result := response
+	for {
+		start := strings.Index(result, markerPrefix)
+		if start == -1 {
+			break
+		}
+		end := strings.Index(result[start:], markerSuffix)
+		if end == -1 {
+			break
+		}
+		end = start + end + len(markerSuffix)
+
+		inner := strings.TrimSpace(result[start+len(markerPrefix) : end-len(markerSuffix)])
+		parts := strings.SplitN(inner, "|", 3)
+		prompt := strings.TrimSpace(parts[0])
+		size := ""
+		quality := ""
+		if len(parts) >= 2 {
+			size = strings.TrimSpace(parts[1])
+		}
+		if len(parts) >= 3 {
+			quality = strings.TrimSpace(parts[2])
+		}
+
+		t.send(key, t.getLocalizedMessage(key.chatID, "image_gen_generating", nil))
+
+		imgPath, err := t.generateImage(context.Background(), prompt, size, quality)
+		if err != nil {
+			log.Printf("[telegram] processGenerateImageMarkers: %v", err)
+			msg := t.getLocalizedMessage(key.chatID, "image_gen_failed", map[string]string{"error": err.Error()})
+			t.send(key, msg)
+		} else {
+			if err := t.sendMediaFile(key, imgPath, "photo", ""); err != nil {
+				log.Printf("[telegram] processGenerateImageMarkers: send failed: %v", err)
+				t.send(key, t.getLocalizedMessage(key.chatID, "image_gen_send_failed", nil))
+			}
+		}
+
 		result = strings.TrimSpace(result[:start]) + "\n" + strings.TrimSpace(result[end:])
 		result = strings.TrimSpace(result)
 	}
@@ -9810,6 +10009,137 @@ func (t *TelegramBot) triageWithGPT4oMini(userMessage string) (string, error) {
 	// 如果回應不清楚，預設為 fast（保守選擇）
 	log.Printf("[telegram] AI router returned unclear response: %q, defaulting to fast", response)
 	return "fast", nil
+}
+
+// handleImageCommand 處理 /image <prompt> 指令，直接呼叫 OpenAI Image API。
+func (t *TelegramBot) handleImageCommand(key chatKey, prompt string) {
+	if !t.config.Multimedia.EnableImageGeneration {
+		t.send(key, t.getLocalizedMessage(key.chatID, "image_gen_disabled", nil))
+		return
+	}
+	if t.config.Multimedia.OpenAIAPIKey == "" {
+		t.send(key, t.getLocalizedMessage(key.chatID, "image_gen_no_api_key", nil))
+		return
+	}
+	if strings.TrimSpace(prompt) == "" {
+		t.send(key, t.getLocalizedMessage(key.chatID, "image_gen_usage", nil))
+		return
+	}
+
+	t.send(key, t.getLocalizedMessage(key.chatID, "image_gen_generating", nil))
+
+	imgPath, err := t.generateImage(context.Background(), prompt, "", "")
+	if err != nil {
+		log.Printf("[telegram] handleImageCommand: %v", err)
+		msg := t.getLocalizedMessage(key.chatID, "image_gen_failed", map[string]string{"error": err.Error()})
+		t.send(key, msg)
+		return
+	}
+	if err := t.sendMediaFile(key, imgPath, "photo", ""); err != nil {
+		log.Printf("[telegram] handleImageCommand: send failed: %v", err)
+		t.send(key, t.getLocalizedMessage(key.chatID, "image_gen_send_failed", nil))
+	}
+}
+
+// generateImage 呼叫 OpenAI Image Generation API，回傳本地圖片路徑。
+// marker 格式: [GENERATE_IMAGE:prompt|size|quality]  size/quality 可省略。
+func (t *TelegramBot) generateImage(ctx context.Context, prompt, size, quality string) (string, error) {
+	model := normalizeImageGenerationModel(t.config.Multimedia.ImageModel)
+	if size == "" {
+		size = "1024x1024"
+	}
+	if t.config.Multimedia.ImageSize != "" && size == "1024x1024" {
+		size = t.config.Multimedia.ImageSize
+	}
+	if t.config.Multimedia.ImageQuality != "" && quality == "" {
+		quality = t.config.Multimedia.ImageQuality
+	}
+	quality = normalizeImageGenerationQuality(model, quality)
+
+	body, err := json.Marshal(map[string]any{
+		"model":   model,
+		"prompt":  prompt,
+		"size":    size,
+		"quality": quality,
+		"n":       1,
+	})
+	if err != nil {
+		return "", fmt.Errorf("generateImage: marshal: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/images/generations", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("generateImage: new request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+t.config.Multimedia.OpenAIAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: openAIImageGenerationTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("generateImage: request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		errBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("generateImage: API error (status %d): %s", resp.StatusCode, string(errBody))
+	}
+
+	var result struct {
+		Data []struct {
+			B64JSON string `json:"b64_json"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("generateImage: decode response: %w", err)
+	}
+	if len(result.Data) == 0 || result.Data[0].B64JSON == "" {
+		return "", fmt.Errorf("generateImage: empty response data")
+	}
+
+	imgBytes, err := base64.StdEncoding.DecodeString(result.Data[0].B64JSON)
+	if err != nil {
+		return "", fmt.Errorf("generateImage: decode base64: %w", err)
+	}
+
+	dir := t.config.Multimedia.TempDownloadDir
+	if dir == "" {
+		dir = "temp/media"
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("generateImage: mkdir: %w", err)
+	}
+
+	outPath := filepath.Join(dir, fmt.Sprintf("img_%d.png", time.Now().UnixNano()))
+	if err := os.WriteFile(outPath, imgBytes, 0o644); err != nil {
+		return "", fmt.Errorf("generateImage: write file: %w", err)
+	}
+
+	log.Printf("[telegram] generateImage: saved %s (model=%s size=%s quality=%s)", outPath, model, size, quality)
+	return outPath, nil
+}
+
+func normalizeImageGenerationModel(model string) string {
+	model = strings.TrimSpace(model)
+	if strings.EqualFold(model, "gpt-image-2") {
+		return "gpt-image-2"
+	}
+	return "gpt-image-2"
+}
+
+func normalizeImageGenerationQuality(model, quality string) string {
+	model = strings.ToLower(strings.TrimSpace(model))
+	quality = strings.ToLower(strings.TrimSpace(quality))
+
+	switch quality {
+	case "", "standard":
+		return "auto"
+	case "hd":
+		return "high"
+	default:
+		return quality
+	}
 }
 
 // transcribeVoiceWithWhisper 使用 OpenAI Whisper API 轉錄語音

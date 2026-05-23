@@ -27,6 +27,17 @@ docker compose up -d --build dashboard
 - `8082`: Alice Bot (native Go)；`web_port` in `config.json` 必須維持 8082，nginx.conf 也硬編碼 proxy 到 `host.docker.internal:8082`
 - `3939`: Dashboard (Docker nginx)；使用者存取 `http://localhost:3939`
 
+## Response Markers
+
+Alice 的 bot layer 會解析以下 marker，並在回應中自動觸發對應動作：
+
+| Marker | 格式 | 說明 |
+|--------|------|------|
+| `[SEND_FILE:path]` | 相對路徑 | 發送工作目錄內的圖片/影片/文件給使用者 |
+| `[GENERATE_IMAGE:prompt\|size\|quality]` | size/quality 可省略 | 呼叫 OpenAI Image API 生成圖片並發送，預設 1024x1024, auto |
+
+範例：`[GENERATE_IMAGE:火龍，水彩風格，奇幻場景]`
+
 ## Safety
 
 1. **NEVER modify `config.json`**，它含 runtime secrets（tokens、API keys）。

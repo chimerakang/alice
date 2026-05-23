@@ -221,6 +221,7 @@
     "help_tasks_desc": "/tasks — View to-do list",
     "help_lang_desc": "/lang — Switch bot language",
     "help_send_file_desc": "/send-file <file_path> — Send an image/video/document from the project directory",
+    "help_mr_desc": "/mr #<issue>|<title> — Hermes milestone review (read-only)",
     "help_id_desc": "/id — Show current Chat ID and Thread ID",
     "id_info": "📋 Chat ID: `{chat_id}`\nThread ID: `{thread_id}`",
     "project_no_none": "None",
@@ -490,6 +491,12 @@
     "smart_intent_model_confirm": "🧭 Confirm switching model to **{mode}**?",
     "smart_intent_model_confirm_btn": "✅ Confirm",
     "smart_intent_model_cancel_btn": "❌ Cancel",
-    "smart_intent_model_all_btn": "View all models"
+    "smart_intent_model_all_btn": "View all models",
+    "image_gen_generating": "🎨 Generating image, please wait...",
+    "image_gen_failed": "🎨 Image generation failed: {error}",
+    "image_gen_send_failed": "🎨 Image generated but failed to send, please try again.",
+    "image_gen_disabled": "🎨 Image generation is not enabled. Ask admin to enable `enable_image_generation`.",
+    "image_gen_no_api_key": "🎨 Image generation requires an OpenAI API Key. Ask admin to configure it.",
+    "image_gen_usage": "🎨 Usage: /image <description>\nExample: /image fire dragon, watercolor style, fantasy scene"
   }
 }
