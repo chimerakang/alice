@@ -16,9 +16,10 @@ var ModelPricing = map[string]struct {
 	InputPerMTok  float64
 	OutputPerMTok float64
 }{
-	"haiku":  {1.00, 5.00},   // Default: Claude Haiku 4.5
-	"sonnet": {3.00, 15.00},  // Default: Claude Sonnet 4.6
-	"opus":   {15.00, 75.00}, // Default: Claude Opus 4.7
+	"haiku":     {1.00, 5.00},   // Default: Claude Haiku 4.5
+	"sonnet":    {3.00, 15.00},  // Default: Claude Sonnet 4.6
+	"opus":      {5.00, 25.00},  // Default: Claude Opus 4.7 / 4.8 (standard tier)
+	"opus_fast": {10.00, 50.00}, // Default: Claude Opus 4.8 Fast Mode (research preview; CLI headless flag pending — see #178)
 }
 
 // InitModelPricing 從 config 初始化模型費率
@@ -43,6 +44,12 @@ func InitModelPricing(config *ModelPricingConfig) {
 			InputPerMTok  float64
 			OutputPerMTok float64
 		}{config.Opus.Input, config.Opus.Output}
+	}
+	if config.OpusFast.Input > 0 {
+		ModelPricing["opus_fast"] = struct {
+			InputPerMTok  float64
+			OutputPerMTok float64
+		}{config.OpusFast.Input, config.OpusFast.Output}
 	}
 }
 
@@ -75,6 +82,7 @@ func EstimateClaudeCost(model string, inputTokens, cacheReadTokens, cacheCreatio
 // 例如:
 //
 //	claude-opus-4-6           → "opus"
+//	claude-opus-4-7-fast      → "opus_fast"
 //	claude-haiku-4-5-20251001 → "haiku"
 //	gpt-5.5-pro               → "gpt-5.5"
 //	gpt-5.3-codex             → "codex"
@@ -83,6 +91,8 @@ func EstimateClaudeCost(model string, inputTokens, cacheReadTokens, cacheCreatio
 func ExtractModelShortName(fullModelID string) string {
 	m := strings.ToLower(fullModelID)
 	switch {
+	case strings.Contains(m, "opus") && strings.Contains(m, "fast"):
+		return "opus_fast"
 	case strings.Contains(m, "opus"):
 		return "opus"
 	case strings.Contains(m, "sonnet"):
@@ -129,6 +139,7 @@ type PerformanceMetrics struct {
 	ProjectPath       string        `json:"project_path,omitempty"`
 	AgentType         string        `json:"agent_type,omitempty"`
 	Model             string        `json:"model,omitempty"` // NEW: "haiku", "sonnet", "opus"
+	FastMode          bool          `json:"fast_mode,omitempty"` // Opus Fast Mode tier (see #178)
 }
 
 // PerformanceAnalytics 效能分析數據

@@ -45,6 +45,13 @@ type ModelRoutingConfig struct {
 	SessionIdleTimeoutMin int    `json:"session_idle_timeout_min"`
 	StickyMode            bool   `json:"sticky_mode"`
 	SessionIdleTimeout    int    `json:"session_idle_timeout"`
+
+	// FastModeEnabled is the global gate for Opus Fast Mode (research preview).
+	// Currently inert at runtime — the Claude Code CLI does not yet expose a
+	// headless flag, so even with this flag on, subprocess calls stay on the
+	// standard tier. Cost and config plumbing land first so the Hermes
+	// planner/reviewer integration can flip a single switch later. See #178.
+	FastModeEnabled bool `json:"fast_mode_enabled"`
 }
 
 // UnmarshalJSON accepts both the original sticky_session/session_idle_timeout_min

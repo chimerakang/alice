@@ -40,7 +40,8 @@
     "codex_fast_model": "gpt-5.4-mini",
     "codex_smart_model": "gpt-5.4",
     "codex_deep_model": "gpt-5.5",
-    "use_gpt4o_mini_for_triage": false
+    "use_gpt4o_mini_for_triage": false,
+    "fast_mode_enabled": false
   },
 
   "model_pricing": {
@@ -53,8 +54,12 @@
       "output": 15.00
     },
     "opus": {
-      "input": 15.00,
-      "output": 75.00
+      "input": 5.00,
+      "output": 25.00
+    },
+    "opus_fast": {
+      "input": 10.00,
+      "output": 50.00
     }
   },
 
@@ -73,6 +78,8 @@
     "enabled": false,
     "strict_mode_enabled": false,
     "auto_route_complex": false,
+    "planner_fast_mode": false,
+    "reviewer_fast_mode": false,
     "budget": {
       "max_total_tokens": 500000,
       "max_wallclock_seconds": 3600

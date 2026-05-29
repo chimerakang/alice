@@ -30,6 +30,14 @@ type ModelPricingConfig struct {
 		Input  float64 `json:"input"`
 		Output float64 `json:"output"`
 	} `json:"opus"`
+	// OpusFast is the premium Fast Mode tier for Opus models (research preview).
+	// Pricing per Anthropic docs: Opus 4.8 fast = $10/$50 per MTok; Opus 4.6/4.7
+	// fast = $30/$150. Defaults follow 4.8. Currently unused at runtime — gated
+	// on Claude Code CLI exposing a headless fast-mode flag. See issue #178.
+	OpusFast struct {
+		Input  float64 `json:"input"`
+		Output float64 `json:"output"`
+	} `json:"opus_fast"`
 }
 
 type Config struct {
@@ -125,6 +133,14 @@ type HermesConfig struct {
 	// Model overrides (defaults to ModelRoutingConfig values when empty)
 	PlannerModel  string `json:"planner_model"`  // e.g. "claude-opus-4-7"
 	ExecutorModel string `json:"executor_model"` // e.g. "claude-haiku-4-5-20251001"
+
+	// Fast Mode toggles (per-phase; inert until Claude Code CLI exposes a
+	// headless fast-mode flag — see #178). Recommended targets: planner
+	// (pure reasoning, no tools) and reviewer (JSON-only output). Executor
+	// stays on standard tier because Fast Mode does not accelerate tool
+	// execution (file_patch / build / test dominate wall time).
+	PlannerFastMode  bool `json:"planner_fast_mode"`
+	ReviewerFastMode bool `json:"reviewer_fast_mode"`
 
 	// HeavyExecutorModel overrides ExecutorModel for sub-tasks classified as
 	// substantive code work (Edit/Write tool hints or implementation verbs in
@@ -283,8 +299,12 @@ func HermesDefaults(cfg HermesConfig) HermesConfig {
 	if cfg.Summary.CostRates == nil {
 		cfg.Summary.CostRates = make(map[string]CostRateConfig)
 		cfg.Summary.CostRates["claude-opus-4-7"] = CostRateConfig{
-			InputPerMToken:  15.0,
-			OutputPerMToken: 75.0,
+			InputPerMToken:  5.0,
+			OutputPerMToken: 25.0,
+		}
+		cfg.Summary.CostRates["claude-opus-4-7-fast"] = CostRateConfig{
+			InputPerMToken:  10.0,
+			OutputPerMToken: 50.0,
 		}
 		cfg.Summary.CostRates["claude-sonnet-4-6"] = CostRateConfig{
 			InputPerMToken:  3.0,
@@ -407,8 +427,10 @@ func LoadConfig() (*Config, error) {
 	config.ModelPricing.Haiku.Output = 5.00
 	config.ModelPricing.Sonnet.Input = 3.00
 	config.ModelPricing.Sonnet.Output = 15.00
-	config.ModelPricing.Opus.Input = 15.00
-	config.ModelPricing.Opus.Output = 75.00
+	config.ModelPricing.Opus.Input = 5.00
+	config.ModelPricing.Opus.Output = 25.00
+	config.ModelPricing.OpusFast.Input = 10.00
+	config.ModelPricing.OpusFast.Output = 50.00
 
 	// 優先從 config.json 讀取
 	if data, err := os.ReadFile("config.json"); err == nil {
