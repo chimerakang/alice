@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -365,13 +364,14 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 				} `json:"content"`
 			} `json:"message"`
 			// result fields
-			SessionID    string  `json:"session_id"`
-			IsError      bool    `json:"is_error"`
-			NumTurns     int     `json:"num_turns"`
-			Result       string  `json:"result"`
-			TotalCostUSD float64 `json:"total_cost_usd"`
-			DurationMs   int     `json:"duration_ms"`
-			Usage        struct {
+			SessionID        string          `json:"session_id"`
+			IsError          bool            `json:"is_error"`
+			NumTurns         int             `json:"num_turns"`
+			Result           string          `json:"result"`
+			StructuredOutput json.RawMessage `json:"structured_output"`
+			TotalCostUSD     float64         `json:"total_cost_usd"`
+			DurationMs       int             `json:"duration_ms"`
+			Usage            struct {
 				InputTokens              int `json:"input_tokens"`
 				OutputTokens             int `json:"output_tokens"`
 				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
@@ -496,12 +496,15 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 		model = modelOverride
 	}
 
-	mcpConfigPath, cleanupMCPConfig, err := writePlannerEmitPlanMCPConfig()
-	if err != nil {
-		return nil, fmt.Errorf("planner emit_plan mcp config: %w", err)
-	}
-	defer cleanupMCPConfig()
-
+	// Structured output via --json-schema replaces the legacy emit_plan MCP
+	// tool. Opus 4.8 frequently narrates a prose plan summary ("Plan emitted
+	// successfully…") instead of firing a tool call, which left the old MCP
+	// path with nothing to parse and failed after retries (#178; observed on
+	// /hermes #115, #374). --json-schema enforces the sub_tasks object at decode
+	// time, so the validated plan lands in the result event's structured_output
+	// regardless of any prose the model also emits. --strict-mcp-config with no
+	// --mcp-config keeps planning hermetic (no user MCP servers); --tools ""
+	// forbids tool execution during planning.
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
@@ -509,13 +512,13 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 		"--model", model,
 		"--dangerously-skip-permissions",
 		"--strict-mcp-config",
-		"--mcp-config", mcpConfigPath,
 		"--tools", "",
+		"--json-schema", plannerSubTasksJSONSchema,
 	}
 
-	// Cap Planner effort below Opus 4.8's "high" default so it fires the
-	// emit_plan tool instead of narrating a prose summary. "off"/"none" lets an
-	// operator opt out and inherit the model's surface default. See #178.
+	// Cap Planner effort below Opus 4.8's "high" default. High effort makes the
+	// model deliberate longer and lean harder into a prose summary; medium keeps
+	// it on-task. "off"/"none" lets an operator inherit the model's default. #178.
 	if effort := currentPlannerEffort(); effort != "" && effort != "off" && effort != "none" {
 		args = append(args, "--effort", effort)
 	}
@@ -558,6 +561,7 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 	var textBlocks []string
 	var emitPlanJSON string
 	var sawEmitPlan bool
+	var structuredPlanJSON string
 	var latestSessionID string
 
 	scanner := bufio.NewScanner(stdout)
@@ -581,13 +585,14 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 					Thinking string                 `json:"thinking"`
 				} `json:"content"`
 			} `json:"message"`
-			SessionID    string  `json:"session_id"`
-			IsError      bool    `json:"is_error"`
-			NumTurns     int     `json:"num_turns"`
-			Result       string  `json:"result"`
-			TotalCostUSD float64 `json:"total_cost_usd"`
-			DurationMs   int     `json:"duration_ms"`
-			Usage        struct {
+			SessionID        string          `json:"session_id"`
+			IsError          bool            `json:"is_error"`
+			NumTurns         int             `json:"num_turns"`
+			Result           string          `json:"result"`
+			StructuredOutput json.RawMessage `json:"structured_output"`
+			TotalCostUSD     float64         `json:"total_cost_usd"`
+			DurationMs       int             `json:"duration_ms"`
+			Usage            struct {
 				InputTokens              int `json:"input_tokens"`
 				OutputTokens             int `json:"output_tokens"`
 				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
@@ -649,17 +654,29 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 			if finalResp.SessionID == "" && latestSessionID != "" {
 				finalResp.SessionID = latestSessionID
 			}
+			// --json-schema enforces the sub_tasks object; the validated value
+			// arrives here even when the model also narrated prose in `result`.
+			if subTasks, ok := extractStructuredSubTasks(event.StructuredOutput); ok {
+				structuredPlanJSON = subTasks
+			}
 		}
 	}
 
 	if finalResp != nil {
 		finalResp.ThinkingContent = strings.Join(thinkingBlocks, "\n\n---\n\n")
-		if sawEmitPlan && emitPlanJSON != "" {
+		// Priority: --json-schema structured_output (robust against prose) >
+		// legacy emit_plan tool_use (kept as a fallback) > raw text. The
+		// downstream Planner parses a bare JSON array of sub-tasks from TextContent.
+		switch {
+		case structuredPlanJSON != "":
+			finalResp.TextContent = structuredPlanJSON
+			finalResp.Result = "emit_plan"
+		case sawEmitPlan && emitPlanJSON != "":
 			finalResp.TextContent = emitPlanJSON
 			if finalResp.Result == "" {
 				finalResp.Result = "emit_plan"
 			}
-		} else {
+		default:
 			finalResp.TextContent = strings.Join(textBlocks, "\n\n")
 		}
 	}
@@ -716,7 +733,38 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 	return finalResp, nil
 }
 
-const plannerEmitPlanServerName = "planner_emit_plan"
+// plannerSubTasksJSONSchema is passed to the CLI via --json-schema to force the
+// Planner's output into a {sub_tasks: [...]} object validated at decode time.
+// additionalProperties is true on each sub-task so optional fields the Planner
+// rules ask for (e.g. checklist_item_ids) pass through without schema churn.
+// See CallPlan + #178.
+const plannerSubTasksJSONSchema = `{"type":"object","additionalProperties":false,"properties":{"sub_tasks":{"type":"array","items":{"type":"object","additionalProperties":true,"properties":{"id":{"type":"string"},"description":{"type":"string"},"tool_hints":{"type":"array","items":{"type":"string"}}},"required":["id","description","tool_hints"]}}},"required":["sub_tasks"]}`
+
+// extractStructuredSubTasks pulls the sub_tasks array out of a --json-schema
+// structured_output payload and returns it as a bare JSON array string (the
+// shape the Planner's parser expects from TextContent). Returns ok=false when
+// the payload is empty, malformed, or carries no sub_tasks.
+func extractStructuredSubTasks(raw json.RawMessage) (string, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+	var wrapper struct {
+		SubTasks json.RawMessage `json:"sub_tasks"`
+	}
+	if err := json.Unmarshal(raw, &wrapper); err != nil {
+		return "", false
+	}
+	trimmed := strings.TrimSpace(string(wrapper.SubTasks))
+	if trimmed == "" || trimmed == "null" || trimmed == "[]" {
+		return "", false
+	}
+	return trimmed, true
+}
+
+// plannerEmitPlanToolName and the helpers below remain for the secondary
+// fallback path: if a future CLI build surfaces the plan via a tool_use block
+// (named emit_plan or *__emit_plan) rather than --json-schema structured_output,
+// CallPlan still captures it. The structured_output path (#178) is primary.
 const plannerEmitPlanToolName = "emit_plan"
 
 func isPlannerEmitPlanTool(name string) bool {
@@ -745,172 +793,6 @@ func marshalPlannerEmitPlanPayload(input map[string]interface{}) (string, bool) 
 	return string(raw), true
 }
 
-func writePlannerEmitPlanMCPConfig() (string, func(), error) {
-	dir, err := os.MkdirTemp("", "alice-planner-emit-plan-*")
-	if err != nil {
-		return "", nil, err
-	}
-
-	scriptPath := filepath.Join(dir, "emit_plan_mcp.py")
-	if err := os.WriteFile(scriptPath, []byte(plannerEmitPlanMCPScript), 0755); err != nil {
-		os.RemoveAll(dir)
-		return "", nil, err
-	}
-
-	configPath := filepath.Join(dir, "mcp.json")
-	config := map[string]any{
-		"mcpServers": map[string]any{
-			plannerEmitPlanServerName: map[string]any{
-				"command": "python3",
-				"args":    []string{"-u", scriptPath},
-			},
-		},
-	}
-	configBytes, err := json.Marshal(config)
-	if err != nil {
-		os.RemoveAll(dir)
-		return "", nil, err
-	}
-	if err := os.WriteFile(configPath, configBytes, 0644); err != nil {
-		os.RemoveAll(dir)
-		return "", nil, err
-	}
-
-	cleanup := func() {
-		_ = os.RemoveAll(dir)
-	}
-	return configPath, cleanup, nil
-}
-
-const plannerEmitPlanMCPScript = `#!/usr/bin/env python3
-import json
-import sys
-
-TOOL_NAME = "emit_plan"
-TOOL_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "sub_tasks": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": True,
-                "properties": {
-                    "id": {"type": "string"},
-                    "description": {"type": "string"},
-                    "tool_hints": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                },
-                "required": ["id", "description", "tool_hints"],
-            },
-        }
-    },
-    "required": ["sub_tasks"],
-}
-
-def send(obj):
-    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
-    sys.stdout.flush()
-
-def tool_response(arguments):
-    sub_tasks = arguments.get("sub_tasks")
-    if sub_tasks is None:
-        sub_tasks = arguments.get("subTasks")
-    if sub_tasks is None:
-        sub_tasks = arguments.get("plan")
-    if sub_tasks is None:
-        return {
-            "content": [{
-                "type": "text",
-                "text": "emit_plan tool received no sub_tasks array",
-            }],
-            "isError": True,
-        }
-    return {
-        "content": [{
-            "type": "text",
-            "text": json.dumps(sub_tasks, ensure_ascii=False),
-        }],
-        "structuredContent": {
-            "sub_tasks": sub_tasks,
-        },
-        "isError": False,
-    }
-
-for line in sys.stdin:
-    line = line.strip()
-    if not line:
-        continue
-    try:
-        msg = json.loads(line)
-    except json.JSONDecodeError:
-        continue
-
-    method = msg.get("method")
-    req_id = msg.get("id")
-    params = msg.get("params") or {}
-
-    if method == "initialize":
-        send({
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {
-                "protocolVersion": params.get("protocolVersion", "2025-03-26"),
-                "capabilities": {
-                    "tools": {
-                        "listChanged": False,
-                    }
-                },
-                "serverInfo": {
-                    "name": "alice-planner-emit-plan",
-                    "version": "1.0.0",
-                },
-            },
-        })
-    elif method == "tools/list":
-        send({
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": {
-                "tools": [{
-                    "name": TOOL_NAME,
-                    "description": "Emit the final Hermes sub-task array and stop planning.",
-                    "inputSchema": TOOL_SCHEMA,
-                }],
-            },
-        })
-    elif method == "tools/call":
-        if params.get("name") != TOOL_NAME:
-            send({
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {
-                    "code": -32602,
-                    "message": "Unknown tool",
-                },
-            })
-            continue
-        send({
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "result": tool_response(params.get("arguments") or {}),
-        })
-    elif method == "notifications/initialized":
-        continue
-    else:
-        if req_id is not None:
-            send({
-                "jsonrpc": "2.0",
-                "id": req_id,
-                "error": {
-                    "code": -32601,
-                    "message": "Method not found",
-                },
-            })
-`
 
 // Call 使用 Anthropic API 直接調用（APIClient 實現）
 func (a *APIClient) Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error) {

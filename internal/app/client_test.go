@@ -224,7 +224,7 @@ JSON
 	if strings.Contains(argv, prompt) {
 		t.Fatalf("CallPlan argv contains prompt; prompt should be sent via stdin: %s", argv)
 	}
-	for _, want := range []string{"--strict-mcp-config", "--mcp-config", "--tools"} {
+	for _, want := range []string{"--strict-mcp-config", "--tools", "--json-schema"} {
 		if !strings.Contains(argv, want) {
 			t.Fatalf("CallPlan argv missing %s: %s", want, argv)
 		}
@@ -235,5 +235,38 @@ JSON
 	}
 	if got := string(stdinBytes); got != prompt {
 		t.Fatalf("CallPlan stdin = %q, want prompt %q", got, prompt)
+	}
+}
+
+// TestCallPlanPrefersStructuredOutputOverProse covers the #178 fix: Opus 4.8
+// often narrates a prose plan summary in `result` instead of emitting a tool
+// call. The --json-schema structured_output must still yield the validated
+// sub_tasks, and it takes priority over any prose text.
+func TestCallPlanPrefersStructuredOutputOverProse(t *testing.T) {
+	script := `cat > /dev/null
+cat <<'JSON'
+{"type":"assistant","message":{"content":[{"type":"text","text":"Plan emitted successfully with all 2 sub-tasks."}]}}
+{"type":"result","session_id":"planner-structured","is_error":false,"num_turns":1,"result":"Plan emitted successfully with all 2 sub-tasks.","structured_output":{"sub_tasks":[{"id":"s1","description":"App-scope the entitlement schema and backfill","tool_hints":["Read","Edit","Bash"]},{"id":"s2","description":"Update admin handlers to require app context","tool_hints":["Edit","Bash"]}]},"usage":{"input_tokens":20,"output_tokens":9,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}
+JSON
+`
+	installFakeClaude(t, script)
+
+	client := &CLIClient{Model: "fake-model", MaxTurns: 50}
+	resp, err := client.CallPlan(context.Background(), "app-scope entitlements", t.TempDir(), "", "", nil)
+	if err != nil {
+		t.Fatalf("CallPlan() error = %v", err)
+	}
+	if resp.SessionID != "planner-structured" {
+		t.Fatalf("CallPlan() session = %q, want planner-structured", resp.SessionID)
+	}
+	var gotPlan []map[string]any
+	if err := json.Unmarshal([]byte(resp.TextContent), &gotPlan); err != nil {
+		t.Fatalf("CallPlan() text is not a JSON sub_tasks array (got prose instead?): %v\ntext=%q", err, resp.TextContent)
+	}
+	if len(gotPlan) != 2 {
+		t.Fatalf("CallPlan() plan length = %d, want 2", len(gotPlan))
+	}
+	if gotPlan[0]["id"] != "s1" || gotPlan[1]["id"] != "s2" {
+		t.Fatalf("CallPlan() plan ids = %v/%v, want s1/s2", gotPlan[0]["id"], gotPlan[1]["id"])
 	}
 }
