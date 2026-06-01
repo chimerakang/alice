@@ -163,8 +163,14 @@ func TestDefaultRulesContainKeyTerms(t *testing.T) {
 	pb := DefaultPromptBuilder()
 
 	planner := pb.ForRole(RolePlanner)
-	if !strings.Contains(planner, "emit_plan") {
-		t.Error("planner rules should mention emit_plan tool")
+	// The planner emits via --json-schema structured output, not the removed
+	// emit_plan MCP tool. Instructing the model to call a nonexistent tool made
+	// Opus 4.8 narrate "Plan emitted" instead of producing a plan. See #178.
+	if strings.Contains(planner, "emit_plan") {
+		t.Errorf("planner rules should not reference the removed emit_plan tool: %q", planner)
+	}
+	if !strings.Contains(planner, "structured output") {
+		t.Error("planner rules should mention structured output")
 	}
 	if !strings.Contains(planner, "sub_tasks") {
 		t.Error("planner rules should mention sub_tasks payload")

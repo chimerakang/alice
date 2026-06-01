@@ -15,14 +15,14 @@ const plannerSystemPrompt = `You are the Planner in a Hermes Brain-Executor syst
 Your job:
 1. Receive a goal from the user.
 2. Decide whether to decompose into sub-tasks OR return a single "execute directly" sub-task.
-3. Call the emit_plan tool with an object that contains a sub_tasks array. No prose before or after.
+3. Return your plan as the required structured output: an object with a sub_tasks array. No prose before or after — do NOT write a summary sentence like "Plan emitted"; that is not a plan.
 
 Each sub-task object must have:
   - "id": unique string (e.g. "s1", "s2")
   - "description": one sentence describing what to do
   - "tool_hints": array of Claude Code tool names the Executor will likely need
 
-Example tool input:
+Example structured output:
 {"sub_tasks":[
   {"id":"s1","description":"Read internal/auth/auth.go to understand current structure","tool_hints":["Read"]},
   {"id":"s2","description":"Write unit tests for auth.go in internal/auth/auth_test.go","tool_hints":["Edit","Bash"]},
@@ -102,7 +102,7 @@ Limits:
 - Maximum 15 sub-tasks per plan.
 - Prefer underdcomposition (fewer, larger tasks) over overcomposition (many, tiny tasks).
 
-Output ONLY the emit_plan tool call. No explanation, no preamble.`
+Return ONLY the sub_tasks structured output. No prose, no explanation, no preamble.`
 
 // jsonBlockRe extracts the first ```json ... ``` block from Planner output.
 var jsonBlockRe = regexp.MustCompile("(?s)```(?:json)?\\s*\\n?(\\[.*?\\])\\s*```")
@@ -215,13 +215,25 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 	if p.extraRules != "" {
 		systemSection = p.extraRules + "\n\n" + plannerSystemPrompt
 	}
-	prompt := systemSection + "\n\nGoal: " + goal
+	// basePrompt is the full, self-contained planner instruction. Retries re-send
+	// it (plus a corrective note) rather than a bare feedback line, so they no
+	// longer depend on resuming a prior session — see sessionArg below.
+	basePrompt := systemSection + "\n\nGoal: " + goal
+	prompt := basePrompt
+	// sessionArg controls CLI --resume. Attempt 1 may resume a seeded session,
+	// but every retry runs FRESH (sessionArg=""). Opus 4.8 sometimes ends a
+	// planning turn with a prose summary instead of emitting the structured
+	// sub_tasks; resuming that poisoned session anchors it to the same prose on
+	// the next turn, so the old "resume + short feedback" loop cascaded to total
+	// failure (observed on /hermes #115, #374). A fresh, self-contained retry
+	// breaks that groove. See #178.
+	sessionArg := p.sessionID
 	var lastText string
 	var totalIn, totalOut int
 	var totalCost float64
 
 	for attempt := 1; attempt <= p.maxRetries; attempt++ {
-		res, err := p.callFn(ctx, prompt, projectDir, p.sessionID)
+		res, err := p.callFn(ctx, prompt, projectDir, sessionArg)
 		if err != nil {
 			return nil, totalIn, totalOut, totalCost, fmt.Errorf("planner attempt %d: %w", attempt, err)
 		}
@@ -265,10 +277,11 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 					Violation:   err.Error(),
 				})
 				if decision.Retry {
-					prompt = fmt.Sprintf(
-						"Plan quality gate rejected attempt %d:\n%s\n\nFix the plan before execution. Group information gathering into deliverable sub-tasks, include code-changing work for implementation goals, and include concrete validation for changed code. Call emit_plan again with the corrected sub_tasks array.",
+					prompt = basePrompt + fmt.Sprintf(
+						"\n\n--- RETRY (attempt %d rejected) ---\nThe previous plan failed the quality gate:\n%s\n\nGroup information gathering into deliverable sub-tasks, include code-changing work for implementation goals, and include concrete validation for changed code. Respond with ONLY the sub_tasks structured output — no prose summary.",
 						attempt, err.Error(),
 					)
+					sessionArg = ""
 					continue
 				}
 				return nil, totalIn, totalOut, totalCost, fmt.Errorf("plan quality validation failed after retries: %w", err)
@@ -289,9 +302,11 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 		// sub-task or surfaces remaining work.
 		if parseErr == nil && len(tasks) == 0 {
 			if p.shouldRetry("planner_retry", attempt, "empty_plan").Retry {
-				prompt = "Your previous output described no sub-tasks. Every sub-task object MUST include all three required fields: `id` (string, e.g. \"verify-1\"), `description` (string), and `tool_hints` (array of strings). " +
-					"If the goal is already satisfied by the current state of the project, call emit_plan with a single verification sub-task inside sub_tasks: \"Verify the goal is already satisfied. Inspect the relevant files, run the relevant build/test/grep commands, and report concrete evidence (file paths, line numbers, command output).\" with tool_hints [\"Read\",\"Bash\"]. " +
-					"If there is real work remaining, call emit_plan again with those sub-tasks now. Do not send an empty sub_tasks array again."
+				prompt = basePrompt + "\n\n--- RETRY (empty plan) ---\n" +
+					"Your previous response produced no sub-tasks. Every sub-task object MUST include all three required fields: `id` (string, e.g. \"verify-1\"), `description` (string), and `tool_hints` (array of strings). " +
+					"If the goal is already satisfied by the current state of the project, return a single verification sub-task: \"Verify the goal is already satisfied. Inspect the relevant files, run the relevant build/test/grep commands, and report concrete evidence (file paths, line numbers, command output).\" with tool_hints [\"Read\",\"Bash\"]. " +
+					"If there is real work remaining, return those sub-tasks now. Respond with ONLY the sub_tasks structured output — no prose, and never an empty sub_tasks array."
+				sessionArg = ""
 				continue
 			}
 			return nil, totalIn, totalOut, totalCost, &ErrPlannerEmptyPlan{Goal: goal}
@@ -304,16 +319,16 @@ func (p *PlannerSession) Plan(ctx context.Context, goal, projectDir string) ([]S
 		if parseErr != nil {
 			parseErrMsg = parseErr.Error()
 		}
-		prompt = fmt.Sprintf(
-			"Error: emit_plan input parse failed on attempt %d: %s\n"+
-				"Your output was:\n%s\n\n"+
-				"Fix the schema. Every sub-task object MUST include all three required fields:\n"+
+		prompt = basePrompt + fmt.Sprintf(
+			"\n\n--- RETRY (attempt %d produced no usable plan: %s) ---\n"+
+				"Your previous response did not return the structured sub_tasks. Do NOT write a prose summary like \"Plan emitted\" — that is not a plan. "+
+				"Respond with ONLY the structured output: a sub_tasks array where every object has all three required fields:\n"+
 				"  - `id` (string, e.g. \"s1\")\n"+
 				"  - `description` (string)\n"+
-				"  - `tool_hints` (array of strings, e.g. [\"Read\", \"Bash\"])\n"+
-				"Call emit_plan again with the corrected sub_tasks array. No prose.",
-			attempt, parseErrMsg, res.Text,
+				"  - `tool_hints` (array of strings, e.g. [\"Read\", \"Bash\"])",
+			attempt, parseErrMsg,
 		)
+		sessionArg = ""
 	}
 
 	return nil, totalIn, totalOut, totalCost, &ErrPlannerJSONFailed{RawOutput: lastText}

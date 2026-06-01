@@ -8,18 +8,25 @@ import (
 	"testing"
 )
 
-func TestPlannerSessionResumesAcrossJSONRetries(t *testing.T) {
+// TestPlannerSessionRunsFreshOnJSONRetry pins the #178 fix: a JSON-parse retry
+// must NOT resume the prior session. Opus 4.8 sometimes ends a planning turn
+// with a prose summary instead of the structured sub_tasks; resuming that turn
+// anchors it to the same prose, cascading to total failure. Each retry therefore
+// runs fresh (sessionID="") with a self-contained prompt that re-states the goal.
+func TestPlannerSessionRunsFreshOnJSONRetry(t *testing.T) {
 	var gotSessionIDs []string
+	var gotMessages []string
 	calls := 0
 	planFn := func(ctx context.Context, message, projectDir, sessionID string) (CallPlanResult, error) {
 		gotSessionIDs = append(gotSessionIDs, sessionID)
+		gotMessages = append(gotMessages, message)
 		calls++
 		if calls == 1 {
-			return CallPlanResult{Text: "not json", SessionID: "planner-session-1"}, nil
+			return CallPlanResult{Text: "Plan emitted successfully.", SessionID: "planner-session-1"}, nil
 		}
 		return CallPlanResult{
 			Text:      "```json\n" + `[{"id":"s1","description":"Execute directly","tool_hints":["Read"]}]` + "\n```",
-			SessionID: "planner-session-1",
+			SessionID: "planner-session-2",
 		}, nil
 	}
 
@@ -27,11 +34,22 @@ func TestPlannerSessionResumesAcrossJSONRetries(t *testing.T) {
 	if _, _, _, _, err := planner.Plan(context.Background(), "implement feature", "/repo"); err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
-	if want := []string{"", "planner-session-1"}; !reflect.DeepEqual(gotSessionIDs, want) {
-		t.Fatalf("session ids = %#v, want %#v", gotSessionIDs, want)
+	// Both calls run fresh: attempt 1 from the (empty) seed, the retry NOT
+	// resuming attempt 1's "planner-session-1".
+	if want := []string{"", ""}; !reflect.DeepEqual(gotSessionIDs, want) {
+		t.Fatalf("session ids = %#v, want %#v (retry must not resume)", gotSessionIDs, want)
 	}
-	if got := planner.SessionID(); got != "planner-session-1" {
-		t.Fatalf("planner session = %q, want planner-session-1", got)
+	// The retry prompt must be self-contained — it re-states the goal because it
+	// can no longer rely on a resumed session holding it.
+	if len(gotMessages) < 2 || !strings.Contains(gotMessages[1], "implement feature") {
+		t.Fatalf("retry prompt not self-contained (missing goal): %q", gotMessages[1])
+	}
+	// The retry must not instruct the model to call the removed emit_plan tool.
+	if strings.Contains(gotMessages[1], "emit_plan") {
+		t.Fatalf("retry prompt still references emit_plan: %q", gotMessages[1])
+	}
+	if got := planner.SessionID(); got != "planner-session-2" {
+		t.Fatalf("planner session = %q, want planner-session-2", got)
 	}
 }
 

@@ -11,7 +11,7 @@
 
 ## 硬規則
 
-1. 呼叫 `emit_plan` tool，並把子任務陣列放在 `sub_tasks` 欄位。
+1. 把子任務陣列放在 `sub_tasks` 欄位，作為**結構化輸出（structured output）**回傳；不要寫「Plan emitted」之類的散文總結，那不是計畫。
 2. 每個子任務必須有 `id`、`description`、`tool_hints` 三個欄位。
 3. 最多 15 個子任務。
 4. 每個子任務必須能獨立執行（無隱式依賴上下文假設）。
@@ -58,15 +58,14 @@
    - **每個 unchecked 驗收項目至少要被一個子任務宣告涵蓋**，否則 Coordinator 會拒絕 plan 並要求重新規劃。
    - 不要把 ID 寫進 description；只放在 `checklist_item_ids` 欄位。
 
-## `emit_plan` 介面
+## 結構化輸出（structured output）介面
 
-- 呼叫 `emit_plan` 時，輸入必須是一個物件。
-- 物件裡的 `sub_tasks` 欄位必須是子任務陣列。
-- 不要輸出 fenced JSON 區塊，也不要在 tool call 前後加入前言。
+- 你的輸出必須是一個物件（JSON），其中 `sub_tasks` 欄位是子任務陣列。
+- 不要在結構化輸出前後加入任何前言、總結或散文。
 
 ## 失敗處理
 
-- `emit_plan` input schema 錯誤 → Coordinator 會重試並注入錯誤回饋，請根據回饋修正 `sub_tasks` schema。
+- `sub_tasks` 結構錯誤 → Coordinator 會重試並注入錯誤回饋，請根據回饋修正 `sub_tasks` 結構。
 - 子任務描述不夠具體 → Executor 會失敗，請讓描述包含明確的檔案路徑或操作目標。
 
 ## 禁止事項
