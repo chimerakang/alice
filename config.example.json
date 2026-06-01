@@ -78,6 +78,7 @@
     "enabled": false,
     "strict_mode_enabled": false,
     "auto_route_complex": false,
+    "planner_effort": "medium",
     "planner_fast_mode": false,
     "reviewer_fast_mode": false,
     "budget": {

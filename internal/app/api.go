@@ -87,6 +87,35 @@ func SetForcePromptCaching5m(v bool) {
 	forcePromptCaching5m.Store(v)
 }
 
+// defaultPlannerEffort is the CLI --effort level applied to the Planner phase
+// when config leaves it unset. "medium" deliberately undercuts Opus 4.8's
+// surface default of "high": the Planner only fills the emit_plan schema, and
+// high effort makes 4.8 over-reason into a prose summary instead of firing the
+// tool, which then fails JSON parsing. See HermesConfig.PlannerEffort + #178.
+const defaultPlannerEffort = "medium"
+
+// plannerEffort holds the process-wide Planner --effort level. Stored as a
+// string; empty or "off"/"none" means "omit the flag". Mirrors the
+// forcePromptCaching5m pattern: set once at startup from config.
+var plannerEffort atomic.Value
+
+// SetPlannerEffort sets the process-wide Planner --effort level used by
+// CallPlan. Wired at startup from HermesConfig.PlannerEffort; safe to call
+// multiple times.
+func SetPlannerEffort(level string) {
+	plannerEffort.Store(strings.TrimSpace(level))
+}
+
+// currentPlannerEffort returns the configured Planner effort level, falling
+// back to defaultPlannerEffort when unset.
+func currentPlannerEffort() string {
+	v, _ := plannerEffort.Load().(string)
+	if v == "" {
+		return defaultPlannerEffort
+	}
+	return v
+}
+
 // cleanEnvForCLI 返回不含 Claude Code 嵌套檢測環境變數的環境變數列表。
 // Claude Code 會設定 CLAUDECODE=1 等變數來防止嵌套啟動，必須清除。
 func cleanEnvForCLI() []string {
@@ -482,6 +511,13 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 		"--strict-mcp-config",
 		"--mcp-config", mcpConfigPath,
 		"--tools", "",
+	}
+
+	// Cap Planner effort below Opus 4.8's "high" default so it fires the
+	// emit_plan tool instead of narrating a prose summary. "off"/"none" lets an
+	// operator opt out and inherit the model's surface default. See #178.
+	if effort := currentPlannerEffort(); effort != "" && effort != "off" && effort != "none" {
+		args = append(args, "--effort", effort)
 	}
 
 	if sessionID != "" {

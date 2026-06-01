@@ -134,6 +134,15 @@ type HermesConfig struct {
 	PlannerModel  string `json:"planner_model"`  // e.g. "claude-opus-4-7"
 	ExecutorModel string `json:"executor_model"` // e.g. "claude-haiku-4-5-20251001"
 
+	// PlannerEffort caps the CLI --effort level for the Planner phase
+	// (low/medium/high/xhigh/max). Opus 4.8 defaults effort to "high" on every
+	// surface, which makes the Planner over-reason and emit a prose summary
+	// ("Plan emitted successfully…") instead of firing the emit_plan tool —
+	// the JSON parse then fails after retries. Planning is schema-filling, not
+	// deep reasoning, so a lower effort keeps the model on-task. Empty falls
+	// back to defaultPlannerEffort; "off"/"none" omits the flag entirely. See #178.
+	PlannerEffort string `json:"planner_effort"`
+
 	// Fast Mode toggles (per-phase; inert until Claude Code CLI exposes a
 	// headless fast-mode flag — see #178). Recommended targets: planner
 	// (pure reasoning, no tools) and reviewer (JSON-only output). Executor
@@ -281,6 +290,9 @@ func HermesDefaults(cfg HermesConfig) HermesConfig {
 	}
 	if cfg.MaxPlannerJSONRetries == 0 {
 		cfg.MaxPlannerJSONRetries = 3
+	}
+	if cfg.PlannerEffort == "" {
+		cfg.PlannerEffort = defaultPlannerEffort
 	}
 	if cfg.Preflight.CompletionThreshold == 0 {
 		cfg.Preflight.CompletionThreshold = 90
@@ -635,6 +647,12 @@ func Main() {
 		config.ModelPricing.Haiku.Input, config.ModelPricing.Haiku.Output,
 		config.ModelPricing.Sonnet.Input, config.ModelPricing.Sonnet.Output,
 		config.ModelPricing.Opus.Input, config.ModelPricing.Opus.Output)
+
+	// Planner effort: cap the CLI --effort for the planning phase below Opus
+	// 4.8's "high" surface default so it fires emit_plan rather than narrating
+	// a prose plan summary. See HermesConfig.PlannerEffort + #178.
+	SetPlannerEffort(HermesDefaults(config.Hermes).PlannerEffort)
+	log.Printf("   Hermes planner effort: %s", currentPlannerEffort())
 
 	// Walking-agent (issue #149) forces 5m prompt-cache TTL on every claude
 	// CLI invocation when enabled. Otherwise keep Anthropic's default
