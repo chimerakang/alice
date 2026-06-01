@@ -730,7 +730,85 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 		return finalResp, fmt.Errorf("CLI returned error: %s", detail)
 	}
 
+	// Salvage: Opus 4.8 sometimes narrates a prose plan ("Plan emitted: 8
+	// sub-tasks…") instead of calling the StructuredOutput tool, leaving
+	// structured_output empty. --json-schema is still an optional tool the model
+	// may skip, so a prompt alone cannot guarantee it. When we captured neither
+	// structured output nor an emit_plan tool_use but DID get prose, run one
+	// focused conversion pass that restructures that prose into sub_tasks. This
+	// makes planning robust to the narration instead of failing the whole task.
+	// See #178.
+	if structuredPlanJSON == "" && !(sawEmitPlan && emitPlanJSON != "") {
+		if prose := strings.TrimSpace(finalResp.TextContent); prose != "" {
+			if salvaged := c.salvagePlanFromProse(ctx, prose, projectDir, model); salvaged != "" {
+				log.Printf("[cli] CallPlan salvaged structured plan from prose (model narrated instead of emitting structured output)")
+				finalResp.TextContent = salvaged
+				finalResp.Result = "emit_plan"
+			}
+		}
+	}
+
 	return finalResp, nil
+}
+
+// salvagePlanFromProse converts a prose plan description into the sub_tasks
+// structured output via one focused, low-effort --json-schema pass. Used only
+// when the Planner narrated instead of emitting structured output (see
+// CallPlan). Returns a bare JSON sub_tasks array, or "" if salvage failed —
+// in which case the caller falls back to the normal planner retry.
+func (c *CLIClient) salvagePlanFromProse(ctx context.Context, prose, projectDir, model string) string {
+	convPrompt := "The text below describes a Hermes execution plan but was NOT returned as the required structured output. " +
+		"Convert it faithfully into the sub_tasks structure: one object per planned sub-task, each with `id`, `description`, and `tool_hints`. " +
+		"Do not invent, add, merge, or drop tasks — only restructure exactly what the text describes. Return ONLY the structured output.\n\n" +
+		"--- PLAN TEXT ---\n" + prose
+
+	args := []string{
+		"-p",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--model", model,
+		"--dangerously-skip-permissions",
+		"--strict-mcp-config",
+		"--tools", "",
+		"--json-schema", plannerSubTasksJSONSchema,
+		"--effort", "low", // mechanical restructuring; no deliberation needed
+	}
+
+	cmd, cancel := processCommand(ctx, ProcessOptions{
+		Dir:     projectDir,
+		Env:     cleanEnvForCLI(),
+		Timeout: defaultAgentProcessTimeout,
+	}, "claude", args...)
+	defer cancel()
+	cmd.Stdin = strings.NewReader(convPrompt)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return ""
+	}
+	if err := cmd.Start(); err != nil {
+		return ""
+	}
+
+	var salvaged string
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		var ev struct {
+			Type             string          `json:"type"`
+			StructuredOutput json.RawMessage `json:"structured_output"`
+		}
+		if json.Unmarshal(scanner.Bytes(), &ev) != nil {
+			continue
+		}
+		if ev.Type == "result" {
+			if subTasks, ok := extractStructuredSubTasks(ev.StructuredOutput); ok {
+				salvaged = subTasks
+			}
+		}
+	}
+	_ = cmd.Wait()
+	return salvaged
 }
 
 // plannerSubTasksJSONSchema is passed to the CLI via --json-schema to force the
