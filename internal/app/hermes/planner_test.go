@@ -104,6 +104,43 @@ func TestPlannerSessionUsesSeededSessionID(t *testing.T) {
 	}
 }
 
+func TestParsePlannerJSONAcceptsStructuredOutputObject(t *testing.T) {
+	tasks, err := parsePlannerJSON(`{"sub_tasks":[{"id":"s1","description":"Fix the app-scoped entitlement lookup and run focused backend tests.","tool_hints":["Read","Edit","Bash"],"checklist_item_ids":["item-7"]}]}`)
+	if err != nil {
+		t.Fatalf("parsePlannerJSON: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("tasks = %d, want 1", len(tasks))
+	}
+	if tasks[0].ID != "s1" || tasks[0].ChecklistItemIDs[0] != "item-7" {
+		t.Fatalf("task = %#v, want structured sub_task with checklist id", tasks[0])
+	}
+}
+
+func TestParsePlannerJSONAcceptsFencedStructuredOutputObject(t *testing.T) {
+	text := "```json\n" +
+		`{"sub_tasks":[{"id":"s1","description":"Execute the goal directly","tool_hints":["Read","Bash"]}]}` +
+		"\n```"
+	tasks, err := parsePlannerJSON(text)
+	if err != nil {
+		t.Fatalf("parsePlannerJSON: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].ID != "s1" {
+		t.Fatalf("tasks = %#v, want fenced structured-output object", tasks)
+	}
+}
+
+func TestParsePlannerJSONSkipsProseBeforeJSONValue(t *testing.T) {
+	tasks, err := parsePlannerJSON(`Plan returned for [GitHub #115] remaining work:
+{"sub_tasks":[{"id":"s1","description":"Update admin users to read app-scoped entitlements, then run go test ./internal/app/...","tool_hints":["Read","Edit","Bash"]}]}`)
+	if err != nil {
+		t.Fatalf("parsePlannerJSON: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].ID != "s1" {
+		t.Fatalf("tasks = %#v, want JSON value after prose", tasks)
+	}
+}
+
 func TestPlannerSessionRejectsSplitSingleActionAndRetries(t *testing.T) {
 	var prompts []string
 	calls := 0

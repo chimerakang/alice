@@ -270,3 +270,48 @@ JSON
 		t.Fatalf("CallPlan() plan ids = %v/%v, want s1/s2", gotPlan[0]["id"], gotPlan[1]["id"])
 	}
 }
+
+func TestCallPlanSalvagesProseWithLiteralJSONFallback(t *testing.T) {
+	dir := t.TempDir()
+	countPath := filepath.Join(dir, "count")
+	argvPath := filepath.Join(dir, "argv2.txt")
+	script := fmt.Sprintf(`count=0
+if [ -f %[1]q ]; then count=$(cat %[1]q); fi
+count=$((count + 1))
+printf '%%s' "$count" > %[1]q
+cat > /dev/null
+if [ "$count" = "1" ]; then
+cat <<'JSON'
+{"type":"assistant","message":{"content":[{"type":"text","text":"I've emitted the plan as structured output: 2 sub-tasks covering schema and admin UI."}]}}
+{"type":"result","session_id":"planner-prose","is_error":false,"num_turns":1,"result":"I've emitted the plan as structured output: 2 sub-tasks covering schema and admin UI.","usage":{"input_tokens":20,"output_tokens":9,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}
+JSON
+else
+printf '%%s\n' "$@" > %[2]q
+cat <<'JSON'
+{"type":"assistant","message":{"content":[{"type":"text","text":"[{\"id\":\"s1\",\"description\":\"Add the app-scoped entitlement schema and migration, then run backend migration tests.\",\"tool_hints\":[\"Read\",\"Edit\",\"Bash\"]},{\"id\":\"s2\",\"description\":\"Update the admin user UI to display app-scoped entitlement sources, then run the focused frontend tests.\",\"tool_hints\":[\"Read\",\"Edit\",\"Bash\"]}]"}]}}
+{"type":"result","session_id":"planner-fallback","is_error":false,"num_turns":1,"result":"fallback json emitted","usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}
+JSON
+fi
+`, countPath, argvPath)
+	installFakeClaude(t, script)
+
+	client := &CLIClient{Model: "fake-model", MaxTurns: 50}
+	resp, err := client.CallPlan(context.Background(), "plan issue #115", t.TempDir(), "", "", nil)
+	if err != nil {
+		t.Fatalf("CallPlan() error = %v", err)
+	}
+	var gotPlan []map[string]any
+	if err := json.Unmarshal([]byte(resp.TextContent), &gotPlan); err != nil {
+		t.Fatalf("CallPlan() salvaged text is not JSON: %v\ntext=%q", err, resp.TextContent)
+	}
+	if len(gotPlan) != 2 || gotPlan[0]["id"] != "s1" || gotPlan[1]["id"] != "s2" {
+		t.Fatalf("CallPlan() plan = %#v, want salvaged fallback plan", gotPlan)
+	}
+	argvBytes, err := os.ReadFile(argvPath)
+	if err != nil {
+		t.Fatalf("read fallback argv: %v", err)
+	}
+	if strings.Contains(string(argvBytes), "--json-schema") {
+		t.Fatalf("fallback argv should not use --json-schema: %s", string(argvBytes))
+	}
+}

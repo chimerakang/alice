@@ -23,9 +23,12 @@ func makePlanFn(client Client, model string) hermes.CallPlanFunc {
 		if callErr != nil {
 			return hermes.CallPlanResult{}, callErr
 		}
-		text := collected.String()
+		// CallPlan may replace TextContent after streaming completes, e.g. when
+		// structured_output or the literal-JSON salvage path yields a parseable
+		// plan. Prefer the final response over earlier streamed prose.
+		text := strings.TrimSpace(resp.TextContent)
 		if text == "" {
-			text = resp.TextContent
+			text = collected.String()
 		}
 		cost := resp.TotalCostUSD
 		if cost <= 0 {

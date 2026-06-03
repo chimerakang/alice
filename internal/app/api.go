@@ -740,8 +740,8 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 	// See #178.
 	if structuredPlanJSON == "" && !(sawEmitPlan && emitPlanJSON != "") {
 		if prose := strings.TrimSpace(finalResp.TextContent); prose != "" {
-			if salvaged := c.salvagePlanFromProse(ctx, prose, projectDir, model); salvaged != "" {
-				log.Printf("[cli] CallPlan salvaged structured plan from prose (model narrated instead of emitting structured output)")
+			if salvaged := c.salvagePlanFromProse(ctx, message, prose, projectDir, model); salvaged != "" {
+				log.Printf("[cli] CallPlan salvaged literal JSON plan from prose (model narrated instead of emitting structured output)")
 				finalResp.TextContent = salvaged
 				finalResp.Result = "emit_plan"
 			}
@@ -751,16 +751,22 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID
 	return finalResp, nil
 }
 
-// salvagePlanFromProse converts a prose plan description into the sub_tasks
-// structured output via one focused, low-effort --json-schema pass. Used only
-// when the Planner narrated instead of emitting structured output (see
-// CallPlan). Returns a bare JSON sub_tasks array, or "" if salvage failed —
-// in which case the caller falls back to the normal planner retry.
-func (c *CLIClient) salvagePlanFromProse(ctx context.Context, prose, projectDir, model string) string {
-	convPrompt := "The text below describes a Hermes execution plan but was NOT returned as the required structured output. " +
-		"Convert it faithfully into the sub_tasks structure: one object per planned sub-task, each with `id`, `description`, and `tool_hints`. " +
-		"Do not invent, add, merge, or drop tasks — only restructure exactly what the text describes. Return ONLY the structured output.\n\n" +
-		"--- PLAN TEXT ---\n" + prose
+// salvagePlanFromProse converts a narrated Planner response into literal JSON
+// text. It deliberately does NOT use --json-schema: the failure mode this
+// handles is Claude/CLI claiming it emitted structured output while not
+// surfacing structured_output to the caller. The fallback therefore asks for
+// plain text JSON and parses assistant/result text directly.
+func (c *CLIClient) salvagePlanFromProse(ctx context.Context, originalPrompt, prose, projectDir, model string) string {
+	if raw, ok := extractPlannerJSONText(prose); ok {
+		return raw
+	}
+	convPrompt := "The previous Hermes Planner response was prose, not parseable JSON:\n" +
+		prose + "\n\n" +
+		"Re-read the original Planner request below and produce the same plan as a LITERAL JSON ARRAY in your text response. " +
+		"Do not use hidden structured output, do not say the plan was emitted, and do not wrap the answer in Markdown unless the fence contains only the JSON array. " +
+		"Every array item must include `id`, `description`, and `tool_hints`; preserve any required `checklist_item_ids` fields from the original request.\n\n" +
+		"--- ORIGINAL PLANNER REQUEST ---\n" + originalPrompt + "\n\n" +
+		"--- FALLBACK RAW JSON MODE ---\nReturn ONLY the literal JSON array now."
 
 	args := []string{
 		"-p",
@@ -770,8 +776,7 @@ func (c *CLIClient) salvagePlanFromProse(ctx context.Context, prose, projectDir,
 		"--dangerously-skip-permissions",
 		"--strict-mcp-config",
 		"--tools", "",
-		"--json-schema", plannerSubTasksJSONSchema,
-		"--effort", "low", // mechanical restructuring; no deliberation needed
+		"--effort", "medium",
 	}
 
 	cmd, cancel := processCommand(ctx, ProcessOptions{
@@ -791,23 +796,51 @@ func (c *CLIClient) salvagePlanFromProse(ctx context.Context, prose, projectDir,
 	}
 
 	var salvaged string
+	var textBlocks []string
+	var resultText string
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		var ev struct {
-			Type             string          `json:"type"`
+			Type    string `json:"type"`
+			Message *struct {
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"message"`
+			Result           string          `json:"result"`
 			StructuredOutput json.RawMessage `json:"structured_output"`
 		}
 		if json.Unmarshal(scanner.Bytes(), &ev) != nil {
 			continue
 		}
-		if ev.Type == "result" {
+		switch ev.Type {
+		case "assistant":
+			if ev.Message != nil {
+				for _, c := range ev.Message.Content {
+					if c.Type == "text" && c.Text != "" {
+						textBlocks = append(textBlocks, c.Text)
+					}
+				}
+			}
+		case "result":
+			resultText = ev.Result
 			if subTasks, ok := extractStructuredSubTasks(ev.StructuredOutput); ok {
 				salvaged = subTasks
 			}
 		}
 	}
 	_ = cmd.Wait()
+	if salvaged != "" {
+		return salvaged
+	}
+	for _, candidate := range []string{strings.Join(textBlocks, "\n\n"), resultText} {
+		if raw, ok := extractPlannerJSONText(candidate); ok {
+			return raw
+		}
+	}
+	log.Printf("[cli] CallPlan prose salvage failed: prose=%q result=%q text_len=%d", truncStderr(prose), truncStderr(resultText), len(strings.Join(textBlocks, "\n\n")))
 	return salvaged
 }
 
@@ -837,6 +870,36 @@ func extractStructuredSubTasks(raw json.RawMessage) (string, bool) {
 		return "", false
 	}
 	return trimmed, true
+}
+
+// extractPlannerJSONText finds a literal JSON plan in plain assistant text and
+// normalizes {sub_tasks:[...]} objects to the bare array consumed downstream.
+func extractPlannerJSONText(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", false
+	}
+	for i, r := range text {
+		if r != '[' && r != '{' {
+			continue
+		}
+		var raw json.RawMessage
+		dec := json.NewDecoder(strings.NewReader(text[i:]))
+		if err := dec.Decode(&raw); err != nil || len(raw) == 0 {
+			continue
+		}
+		trimmed := strings.TrimSpace(string(raw))
+		if strings.HasPrefix(trimmed, "{") {
+			if subTasks, ok := extractStructuredSubTasks(json.RawMessage(trimmed)); ok {
+				return subTasks, true
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[") && trimmed != "[]" {
+			return trimmed, true
+		}
+	}
+	return "", false
 }
 
 // plannerEmitPlanToolName and the helpers below remain for the secondary
@@ -870,7 +933,6 @@ func marshalPlannerEmitPlanPayload(input map[string]interface{}) (string, bool) 
 	}
 	return string(raw), true
 }
-
 
 // Call 使用 Anthropic API 直接調用（APIClient 實現）
 func (a *APIClient) Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error) {

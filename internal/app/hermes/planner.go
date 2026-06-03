@@ -105,7 +105,7 @@ Limits:
 Return ONLY the sub_tasks structured output. No prose, no explanation, no preamble.`
 
 // jsonBlockRe extracts the first ```json ... ``` block from Planner output.
-var jsonBlockRe = regexp.MustCompile("(?s)```(?:json)?\\s*\\n?(\\[.*?\\])\\s*```")
+var jsonBlockRe = regexp.MustCompile("(?s)```(?:json)?\\s*\\n?([\\[{].*?[\\]}])\\s*```")
 
 // CallPlanResult is the value returned by a CallPlanFunc invocation.
 // CostUSD is the per-call USD cost reported by the CLI (or estimated for
@@ -493,15 +493,53 @@ func (p *PlannerSession) Compress(ctx context.Context, req CompressRequest, proj
 func parsePlannerJSON(text string) ([]SubTask, error) {
 	// Prefer the fenced block
 	if m := jsonBlockRe.FindStringSubmatch(text); len(m) > 1 {
-		return unmarshalSubTasks(m[1])
+		return unmarshalPlannerPayload(m[1])
 	}
-	// Fallback: first '[' … last ']'
-	if start := strings.IndexByte(text, '['); start >= 0 {
-		if end := strings.LastIndexByte(text, ']'); end > start {
-			return unmarshalSubTasks(text[start : end+1])
+	// Fallback: first decodable JSON value. This accepts both the legacy bare
+	// array and the structured-output object that the Planner rules request.
+	if raw, ok := firstJSONValue(text); ok {
+		return unmarshalPlannerPayload(raw)
+	}
+	return nil, fmt.Errorf("no JSON plan found in planner output")
+}
+
+func firstJSONValue(text string) (string, bool) {
+	for i, r := range text {
+		if r != '[' && r != '{' {
+			continue
+		}
+		var raw json.RawMessage
+		dec := json.NewDecoder(strings.NewReader(text[i:]))
+		if err := dec.Decode(&raw); err == nil && len(raw) > 0 {
+			return string(raw), true
 		}
 	}
-	return nil, fmt.Errorf("no JSON array found in planner output")
+	return "", false
+}
+
+func unmarshalPlannerPayload(raw string) ([]SubTask, error) {
+	raw = strings.TrimSpace(raw)
+	if strings.HasPrefix(raw, "{") {
+		var wrapper struct {
+			SubTasks      json.RawMessage `json:"sub_tasks"`
+			SubTasksCamel json.RawMessage `json:"subTasks"`
+			Plan          json.RawMessage `json:"plan"`
+		}
+		if err := json.Unmarshal([]byte(raw), &wrapper); err != nil {
+			return nil, fmt.Errorf("JSON object unmarshal: %w", err)
+		}
+		switch {
+		case len(wrapper.SubTasks) > 0:
+			return unmarshalSubTasks(string(wrapper.SubTasks))
+		case len(wrapper.SubTasksCamel) > 0:
+			return unmarshalSubTasks(string(wrapper.SubTasksCamel))
+		case len(wrapper.Plan) > 0:
+			return unmarshalSubTasks(string(wrapper.Plan))
+		default:
+			return nil, fmt.Errorf("JSON object missing sub_tasks")
+		}
+	}
+	return unmarshalSubTasks(raw)
 }
 
 func unmarshalSubTasks(raw string) ([]SubTask, error) {
