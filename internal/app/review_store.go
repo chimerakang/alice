@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,10 +52,14 @@ func (s *SQLiteStorage) StoreReviewWithSource(ctx context.Context, taskID string
 	if err != nil {
 		return err
 	}
+	subTaskIDs, err := reviewSubTaskStorageIDsTx(ctx, tx, taskID, review.SubTaskResults)
+	if err != nil {
+		return err
+	}
 	for idx, subTask := range review.SubTaskResults {
 		if err := insertUnifiedReviewSubTaskResultTx(tx, UnifiedReviewSubTaskResult{
 			ReviewID:  reviewID,
-			SubTaskID: reviewSubTaskStorageID(taskID, idx, subTask.SubTaskID),
+			SubTaskID: subTaskIDs[idx],
 			Score:     subTask.Score,
 			Feedback:  strings.TrimSpace(subTask.Feedback),
 			IssueTags: reviewTagsToStrings(subTask.IssueTags),
@@ -67,6 +72,78 @@ func (s *SQLiteStorage) StoreReviewWithSource(ctx context.Context, taskID string
 	}
 	s.broadcastUnifiedTask(taskID)
 	return nil
+}
+
+func reviewSubTaskStorageIDsTx(ctx context.Context, tx *sql.Tx, taskID string, results []appengine.ReviewSubTaskResult) ([]string, error) {
+	if len(results) == 0 {
+		return nil, nil
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, idx
+		FROM sub_tasks
+		WHERE task_id = ?`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byID := make(map[string]string)
+	byIndex := make(map[int]string)
+	for rows.Next() {
+		var id string
+		var idx int
+		if err := rows.Scan(&id, &idx); err != nil {
+			return nil, err
+		}
+		byID[id] = id
+		if suffix := strings.TrimPrefix(id, taskID+":"); suffix != id {
+			byID[suffix] = id
+		}
+		byIndex[idx] = id
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]string, len(results))
+	for idx, subTask := range results {
+		out[idx] = reviewSubTaskStorageID(taskID, idx, subTask.SubTaskID)
+		raw := strings.TrimSpace(subTask.SubTaskID)
+		if id, ok := byID[out[idx]]; ok {
+			out[idx] = id
+			continue
+		}
+		if id, ok := byID[raw]; ok {
+			out[idx] = id
+			continue
+		}
+		if displayIdx, ok := reviewSubTaskDisplayIndexFromID(raw); ok {
+			if id, ok := byIndex[displayIdx-1]; ok {
+				out[idx] = id
+				continue
+			}
+		}
+		if id, ok := byIndex[idx]; raw == "" && ok {
+			out[idx] = id
+		}
+	}
+	return out, nil
+}
+
+func reviewSubTaskDisplayIndexFromID(subTaskID string) (int, bool) {
+	value := strings.TrimSpace(subTaskID)
+	if value == "" {
+		return 0, false
+	}
+	if colon := strings.LastIndex(value, ":"); colon >= 0 {
+		value = value[colon+1:]
+	}
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(strings.TrimPrefix(value, "s"), "S")
+	if idx, err := strconv.Atoi(value); err == nil && idx > 0 {
+		return idx, true
+	}
+	return 0, false
 }
 
 func reviewSubTaskStorageID(taskID string, idx int, subTaskID string) string {

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -298,6 +299,58 @@ func TestStoreReviewWithSourceAcceptsNamespacedSubTaskID(t *testing.T) {
 	results := graphs[0].Reviews[0].SubTaskResults
 	if len(results) != 1 || results[0].SubTaskID != "task-retry-store:s4" {
 		t.Fatalf("unexpected retry subtask result: %+v", results)
+	}
+}
+
+func TestStoreReviewWithSourceMapsDisplayIndexToStoredSubTaskID(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	now := time.Now().UTC()
+	taskID := "task-review-display-index"
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:        taskID,
+		Goal:      "review with display index ids",
+		Engine:    "plan_execute",
+		Backend:   "codex",
+		Status:    "done",
+		StartedAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	for idx := 0; idx < 3; idx++ {
+		if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+			ID:          fmt.Sprintf("%s:s%d", taskID, idx+1),
+			TaskID:      taskID,
+			Idx:         idx,
+			Description: fmt.Sprintf("step %d", idx+1),
+			Status:      "done",
+			StartedAt:   now.Add(-30 * time.Second),
+		}); err != nil {
+			t.Fatalf("UpsertUnifiedSubTask %d: %v", idx+1, err)
+		}
+	}
+
+	if err := s.StoreReviewWithSource(context.Background(), taskID, appengine.ReviewResult{
+		ReviewerModel: "gpt-5.5",
+		Verdict:       appengine.VerdictPartial,
+		OverallScore:  75,
+		Feedback:      "display-index subtask ids",
+		SubTaskResults: []appengine.ReviewSubTaskResult{{
+			SubTaskID: "3",
+			Score:     60,
+			Feedback:  "needs runtime validation",
+			IssueTags: []appengine.ReviewTag{appengine.ReviewTagMissingRuntimeValidation},
+		}},
+	}, "review"); err != nil {
+		t.Fatalf("StoreReviewWithSource: %v", err)
+	}
+
+	graphs, err := s.ListUnifiedTaskGraphs(UnifiedTaskQuery{ID: taskID, Limit: 1})
+	if err != nil {
+		t.Fatalf("ListUnifiedTaskGraphs: %v", err)
+	}
+	results := graphs[0].Reviews[0].SubTaskResults
+	if len(results) != 1 || results[0].SubTaskID != taskID+":s3" || results[0].Score != 60 {
+		t.Fatalf("display-index review should map to stored s3 row: %+v", results)
 	}
 }
 

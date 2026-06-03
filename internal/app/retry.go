@@ -278,6 +278,9 @@ func (s *SQLiteStorage) retryNoLowScoreDiagnostic(ctx context.Context, taskID st
 	if taskID == "" {
 		return "", nil
 	}
+	if resolved, err := s.resolveRetryTaskID(ctx, taskID); err == nil {
+		taskID = resolved
+	}
 	var reviewID int64
 	var verdict string
 	var overallScore int

@@ -537,6 +537,40 @@ func TestHandleRetryCommandIndexWithoutSubTaskScoresShowsDiagnostic(t *testing.T
 	}
 }
 
+func TestRetryNoLowScoreDiagnosticResolvesTaskPrefix(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	taskID := "12345678-missing-subtask-scores"
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:        taskID,
+		ChatID:    42,
+		ThreadID:  7,
+		Status:    "done",
+		StartedAt: now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	if _, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        taskID,
+		ReviewerModel: "gpt-5.5",
+		Verdict:       "partial",
+		OverallScore:  75,
+		FeedbackText:  "summary without subtask rows",
+		Source:        "review",
+		CreatedAt:     now.Add(-10 * time.Minute),
+	}); err != nil {
+		t.Fatalf("InsertUnifiedReviewResult: %v", err)
+	}
+
+	diag, err := s.retryNoLowScoreDiagnostic(context.Background(), "12345678")
+	if err != nil {
+		t.Fatalf("retryNoLowScoreDiagnostic: %v", err)
+	}
+	if !strings.Contains(diag, "最新 review") || !strings.Contains(diag, "75/100") {
+		t.Fatalf("diagnostic should resolve short task id, got %q", diag)
+	}
+}
+
 func TestSelectRetryTargetByIndexReportsMissingSubTask(t *testing.T) {
 	s := newTestSQLiteStorage(t)
 	seedRetryReview(t, s, "task-missing-index", 61, "initial")
