@@ -47,7 +47,7 @@ type retryTaskCandidate struct {
 
 func retrySelectionNeedsRetry(selection retrySelection) bool {
 	verdict := strings.ToLower(strings.TrimSpace(selection.Review.Verdict))
-	return verdict == "partial" || verdict == "fail" || selection.SubTaskReview.Score < 70
+	return verdict == "partial" || verdict == "fail" || selection.SubTaskReview.Score < appengine.SubTaskScoreFailingThreshold
 }
 
 func decideSubTaskRetryRecovery(selection retrySelection) appengine.RecoveryDecision {
@@ -118,10 +118,18 @@ func (s *SQLiteStorage) selectRetryTargetLatest(ctx context.Context, key chatKey
 		JOIN tasks t ON t.id = rr.task_id
 		JOIN review_subtask_results rs ON rs.review_id = rr.id
 		JOIN sub_tasks st ON st.id = rs.sub_task_id
-		WHERE (rr.verdict IN ('partial', 'fail') OR rs.score < 70)
+		WHERE (rr.verdict IN ('partial', 'fail') OR rs.score < ?)
 		  AND t.chat_id = ? AND t.thread_id = ?
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM review_results newer_rr
+		    JOIN review_subtask_results newer_rs ON newer_rs.review_id = newer_rr.id
+		    WHERE newer_rr.task_id = rr.task_id
+		      AND newer_rs.sub_task_id = rs.sub_task_id
+		      AND (newer_rr.created_at > rr.created_at OR (newer_rr.created_at = rr.created_at AND newer_rr.id > rr.id))
+		  )
 		ORDER BY rr.created_at DESC, rr.id DESC, rs.score ASC, st.idx ASC
-		LIMIT 1`, key.chatID, key.threadID)
+		LIMIT 1`, appengine.SubTaskScoreFailingThreshold, key.chatID, key.threadID)
 }
 
 func (s *SQLiteStorage) selectRetryTaskCandidates(ctx context.Context, key chatKey, limit int) ([]retryTaskCandidate, error) {
@@ -130,23 +138,25 @@ func (s *SQLiteStorage) selectRetryTaskCandidates(ctx context.Context, key chatK
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT t.id, t.goal, t.github_issue_number,
-		       SUM(CASE WHEN rs.score < 70 THEN 1 ELSE 0 END),
+		       SUM(CASE WHEN rs.score < ? THEN 1 ELSE 0 END),
 		       MAX(rr.created_at)
 		FROM review_results rr
 		JOIN tasks t ON t.id = rr.task_id
 		JOIN review_subtask_results rs ON rs.review_id = rr.id
-		WHERE (rr.verdict IN ('partial', 'fail') OR rs.score < 70)
+		WHERE (rr.verdict IN ('partial', 'fail') OR rs.score < ?)
 		  AND t.chat_id = ? AND t.thread_id = ?
-		  AND rr.id = (
-		    SELECT rr2.id
-		    FROM review_results rr2
-		    WHERE rr2.task_id = t.id
-		    ORDER BY rr2.created_at DESC, rr2.id DESC
-		    LIMIT 1
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM review_results newer_rr
+		    JOIN review_subtask_results newer_rs ON newer_rs.review_id = newer_rr.id
+		    WHERE newer_rr.task_id = rr.task_id
+		      AND newer_rs.sub_task_id = rs.sub_task_id
+		      AND (newer_rr.created_at > rr.created_at OR (newer_rr.created_at = rr.created_at AND newer_rr.id > rr.id))
 		  )
 		GROUP BY t.id, t.goal, t.github_issue_number
+		HAVING SUM(CASE WHEN rs.score < ? THEN 1 ELSE 0 END) > 0
 		ORDER BY MAX(rr.created_at) DESC, t.id DESC
-		LIMIT ?`, key.chatID, key.threadID, limit)
+		LIMIT ?`, appengine.SubTaskScoreFailingThreshold, appengine.SubTaskScoreFailingThreshold, key.chatID, key.threadID, appengine.SubTaskScoreFailingThreshold, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -237,13 +247,16 @@ func (s *SQLiteStorage) selectRetryTargetByIndex(ctx context.Context, taskID str
 		JOIN tasks t ON t.id = rr.task_id
 		JOIN sub_tasks st ON st.task_id = t.id
 		JOIN review_subtask_results rs ON rs.review_id = rr.id AND rs.sub_task_id = st.id
-		WHERE rr.id = (
-			SELECT id
-			FROM review_results
-			WHERE task_id = ?
-			ORDER BY created_at DESC, id DESC
-			LIMIT 1
-		) AND st.id = ?
+		WHERE rr.task_id = ?
+		  AND st.id = ?
+		  AND NOT EXISTS (
+		    SELECT 1
+		    FROM review_results newer_rr
+		    JOIN review_subtask_results newer_rs ON newer_rs.review_id = newer_rr.id
+		    WHERE newer_rr.task_id = rr.task_id
+		      AND newer_rs.sub_task_id = rs.sub_task_id
+		      AND (newer_rr.created_at > rr.created_at OR (newer_rr.created_at = rr.created_at AND newer_rr.id > rr.id))
+		  )
 		ORDER BY rr.created_at DESC, rr.id DESC
 		LIMIT 1`, taskID, subTaskID)
 	selection, err := scanRetrySelectionRow(row)

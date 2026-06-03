@@ -597,7 +597,7 @@ func TestSelectRetryTargetByIndexReportsMissingSubTaskScores(t *testing.T) {
 	}
 }
 
-func TestSelectRetryTargetByIndexRejectsLatestReviewWithoutSubTaskScores(t *testing.T) {
+func TestSelectRetryTargetByIndexUsesLatestScoreForRequestedSubTask(t *testing.T) {
 	s := newTestSQLiteStorage(t)
 	taskID := "task-index-fallback-older-partial"
 	seedRetryReview(t, s, taskID, 76, "initial")
@@ -613,12 +613,109 @@ func TestSelectRetryTargetByIndexRejectsLatestReviewWithoutSubTaskScores(t *test
 		t.Fatalf("InsertUnifiedReviewResult newer pass without rows: %v", err)
 	}
 
-	_, err := s.selectRetryTargetByIndex(context.Background(), taskID, 2)
-	if err == nil {
-		t.Fatal("selectRetryTargetByIndex should reject latest review without subtask scores")
+	selection, err := s.selectRetryTargetByIndex(context.Background(), taskID, 2)
+	if err != nil {
+		t.Fatalf("selectRetryTargetByIndex should fall back to latest row for requested sub-task: %v", err)
 	}
-	if !strings.Contains(err.Error(), "沒有保存 sub-task #2 的細項評分") {
-		t.Fatalf("unexpected missing-score diagnostic: %v", err)
+	if selection.SubTask.ID != taskID+":s2" || selection.SubTaskReview.Score != 76 {
+		t.Fatalf("unexpected fallback selection: %+v", selection)
+	}
+}
+
+func TestRetrySelectionAfterSingleSubTaskRetryKeepsOtherLowScoresVisible(t *testing.T) {
+	s := newTestSQLiteStorage(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	taskID := "task-retry-keeps-other-lows"
+	if err := s.UpsertUnifiedTask(UnifiedTask{
+		ID:                taskID,
+		ChatID:            42,
+		ThreadID:          7,
+		ProjectDir:        "/repo",
+		GithubIssueNumber: 134,
+		Goal:              "two low subtasks",
+		Engine:            "plan_execute",
+		Backend:           "codex",
+		Status:            "done",
+		StartedAt:         now.Add(-time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertUnifiedTask: %v", err)
+	}
+	for idx := 0; idx < 6; idx++ {
+		if err := s.UpsertUnifiedSubTask(UnifiedSubTask{
+			ID:          fmt.Sprintf("%s:s%d", taskID, idx+1),
+			TaskID:      taskID,
+			Idx:         idx,
+			Description: fmt.Sprintf("step %d", idx+1),
+			Status:      "done",
+			ResultText:  "done",
+			StartedAt:   now.Add(-30 * time.Minute),
+		}); err != nil {
+			t.Fatalf("UpsertUnifiedSubTask %d: %v", idx+1, err)
+		}
+	}
+	initialID, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        taskID,
+		ReviewerModel: "gpt-5.5",
+		Verdict:       "partial",
+		OverallScore:  78,
+		Source:        "initial",
+		CreatedAt:     now.Add(-10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("InsertUnifiedReviewResult initial: %v", err)
+	}
+	for idx, score := range []int{90, 85, 85, 85, 75, 65} {
+		if err := s.InsertUnifiedReviewSubTaskResult(UnifiedReviewSubTaskResult{
+			ReviewID:  initialID,
+			SubTaskID: fmt.Sprintf("%s:s%d", taskID, idx+1),
+			Score:     score,
+			Feedback:  "initial review",
+		}); err != nil {
+			t.Fatalf("InsertUnifiedReviewSubTaskResult initial s%d: %v", idx+1, err)
+		}
+	}
+	retryID, err := s.InsertUnifiedReviewResult(UnifiedReviewResult{
+		TaskID:        taskID,
+		ReviewerModel: "gpt-5.4",
+		Verdict:       "pass",
+		OverallScore:  82,
+		Source:        "retry",
+		CreatedAt:     now.Add(-time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("InsertUnifiedReviewResult retry: %v", err)
+	}
+	if err := s.InsertUnifiedReviewSubTaskResult(UnifiedReviewSubTaskResult{
+		ReviewID:  retryID,
+		SubTaskID: taskID + ":s6",
+		Score:     82,
+		Feedback:  "fixed s6",
+	}); err != nil {
+		t.Fatalf("InsertUnifiedReviewSubTaskResult retry s6: %v", err)
+	}
+
+	byIndex, err := s.selectRetryTargetByIndex(context.Background(), taskID, 5)
+	if err != nil {
+		t.Fatalf("selectRetryTargetByIndex should still find s5: %v", err)
+	}
+	if byIndex.SubTask.ID != taskID+":s5" || byIndex.SubTaskReview.Score != 75 {
+		t.Fatalf("unexpected s5 retry selection: %+v", byIndex)
+	}
+
+	allFailed, err := s.selectRetryTargetsAllFailed(context.Background(), taskID)
+	if err != nil {
+		t.Fatalf("selectRetryTargetsAllFailed: %v", err)
+	}
+	if len(allFailed) != 1 || allFailed[0].SubTask.ID != taskID+":s5" {
+		t.Fatalf("all-failed should include only still-low s5: %+v", allFailed)
+	}
+
+	candidates, err := s.selectRetryTaskCandidates(context.Background(), chatKey{chatID: 42, threadID: 7}, 5)
+	if err != nil {
+		t.Fatalf("selectRetryTaskCandidates: %v", err)
+	}
+	if len(candidates) != 1 || candidates[0].ID != taskID || candidates[0].FailedCount != 1 {
+		t.Fatalf("candidate list should keep task visible with one remaining low score: %+v", candidates)
 	}
 }
 
