@@ -72,6 +72,7 @@
 - Codex executor 的主要工具是 `command_execution`，不是 Claude 的獨立讀寫工具。
 - 不要假設有檔案編輯 API、網頁抓取 API、或額外 MCP 工具。
 - Planner 階段沒有真正的 tool isolation；只能靠 prompt guard 約束，因此你的 JSON 必須自我約束且可直接執行。
+- 若使用者明確要求呼叫 image / AI 產圖，子任務必須保留這個要求並在 `tool_hints` 加入 `image_generation`；禁止規劃成 Python / Pillow / SVG / canvas 產圖，除非使用者明確指定本地程式化產生。影像生成能力不應限定於特定 Hermes tier 或模型模式。
 
 ## 失敗處理
 

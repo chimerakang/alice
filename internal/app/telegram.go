@@ -1803,6 +1803,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
 		}
+		t.disableHermesChatModeIfIdle(key)
 		agent := t.getAgent(key)
 		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.FastModel)
 		t.setUserModelPreference(key, "fast")
@@ -1818,6 +1819,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
 		}
+		t.disableHermesChatModeIfIdle(key)
 		agent := t.getAgent(key)
 		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.SmartModel)
 		t.setUserModelPreference(key, "smart")
@@ -1833,6 +1835,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
 		}
+		t.disableHermesChatModeIfIdle(key)
 		agent := t.getAgent(key)
 		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.DeepModel)
 		t.setUserModelPreference(key, "deep")
@@ -1851,6 +1854,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		if !t.codexTierAvailable(key) {
 			return
 		}
+		t.disableHermesChatModeIfIdle(key)
 		agent := t.getAgent(key)
 		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.CodexFastModel)
 		t.setUserModelPreference(key, "gpt-fast")
@@ -1869,6 +1873,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		if !t.codexTierAvailable(key) {
 			return
 		}
+		t.disableHermesChatModeIfIdle(key)
 		agent := t.getAgent(key)
 		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.CodexSmartModel)
 		t.setUserModelPreference(key, "gpt-smart")
@@ -1887,6 +1892,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		if !t.codexTierAvailable(key) {
 			return
 		}
+		t.disableHermesChatModeIfIdle(key)
 		agent := t.getAgent(key)
 		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.CodexDeepModel)
 		t.setUserModelPreference(key, "gpt-deep")
@@ -1923,6 +1929,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
 		}
+		t.disableHermesChatModeIfIdle(key)
 		t.setUserModelPreference(key, "plan")
 		agent := t.getAgent(key)
 		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.ExecuteModel)
@@ -2632,6 +2639,25 @@ func (t *TelegramBot) isHermesEnabled(key chatKey) bool {
 	hc := t.hermesCoords[key]
 	t.hermesMu.RUnlock()
 	return hc != nil && hc.enabled
+}
+
+// disableHermesChatModeIfIdle clears the sticky "plain text starts Hermes"
+// mode when the operator explicitly switches back to a normal model. A running
+// coordinator keeps ownership so model switches cannot orphan an active task.
+func (t *TelegramBot) disableHermesChatModeIfIdle(key chatKey) {
+	if t == nil {
+		return
+	}
+	t.hermesMu.Lock()
+	defer t.hermesMu.Unlock()
+	hc := t.hermesCoords[key]
+	if hc == nil {
+		return
+	}
+	if hc.coord != nil && hc.coord.IsRunning() {
+		return
+	}
+	hc.enabled = false
 }
 
 // trySignalBudgetContinue checks whether the coordinator for this chat is paused
@@ -4166,9 +4192,12 @@ func (t *TelegramBot) setHermesTier(key chatKey, tier string) {
 	t.hermesMu.Lock()
 	defer t.hermesMu.Unlock()
 
+	if t.hermesCoords == nil {
+		t.hermesCoords = make(map[chatKey]*hermesCoord)
+	}
 	hc := t.hermesCoords[key]
 	if hc == nil {
-		hc = &hermesCoord{enabled: true}
+		hc = &hermesCoord{}
 		t.hermesCoords[key] = hc
 	}
 	if hc.tier != tier {
@@ -4206,9 +4235,12 @@ func (t *TelegramBot) recordPlannerSession(key chatKey, tier, sessionID string) 
 	t.hermesMu.Lock()
 	defer t.hermesMu.Unlock()
 
+	if t.hermesCoords == nil {
+		t.hermesCoords = make(map[chatKey]*hermesCoord)
+	}
 	hc := t.hermesCoords[key]
 	if hc == nil {
-		hc = &hermesCoord{enabled: true}
+		hc = &hermesCoord{}
 		t.hermesCoords[key] = hc
 	}
 	if hc.tier != tier {
@@ -4244,9 +4276,12 @@ func (t *TelegramBot) recordExecutorSession(key chatKey, tier, sessionID string)
 	t.hermesMu.Lock()
 	defer t.hermesMu.Unlock()
 
+	if t.hermesCoords == nil {
+		t.hermesCoords = make(map[chatKey]*hermesCoord)
+	}
 	hc := t.hermesCoords[key]
 	if hc == nil {
-		hc = &hermesCoord{enabled: true}
+		hc = &hermesCoord{}
 		t.hermesCoords[key] = hc
 	}
 	if hc.tier != tier {
@@ -4554,7 +4589,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, p
 	}, planFn, direct, taskStore, reporter)
 
 	t.hermesMu.Lock()
-	t.hermesCoords[key] = &hermesCoord{coord: coord, enabled: true, continueCh: continueCh, failureDecisionCh: failureDecisionCh, oneShot: oneShot}
+	t.hermesCoords[key] = &hermesCoord{coord: coord, enabled: true, tier: tier, continueCh: continueCh, failureDecisionCh: failureDecisionCh, oneShot: oneShot}
 	t.hermesMu.Unlock()
 
 	if resumeTask != nil {

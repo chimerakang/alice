@@ -3573,6 +3573,23 @@ func TestHermesTierChangeClearsPlannerSessionCache(t *testing.T) {
 	}
 }
 
+func TestSetHermesTierDoesNotEnableChatMode(t *testing.T) {
+	key := chatKey{chatID: 99, threadID: 3}
+	bot := &TelegramBot{
+		config:       &Config{Hermes: HermesConfig{Enabled: true}},
+		hermesCoords: map[chatKey]*hermesCoord{},
+	}
+
+	bot.setHermesTier(key, "codex")
+
+	if bot.isHermesEnabled(key) {
+		t.Fatal("setHermesTier should not enable sticky Hermes chat mode")
+	}
+	if got := bot.hermesCoords[key].tier; got != "codex" {
+		t.Fatalf("tier = %q, want codex", got)
+	}
+}
+
 func TestHermesExecutorSessionCacheReusesSameTier(t *testing.T) {
 	key := chatKey{chatID: 42, threadID: 7}
 	bot := &TelegramBot{
@@ -3613,6 +3630,39 @@ func TestHermesTierChangeClearsExecutorSessionCache(t *testing.T) {
 	bot.recordExecutorSession(key, "claude", "exec-should-not-stick")
 	if got := bot.executorSessionForTier(key, "codex"); got != "" {
 		t.Fatalf("expected no executor session for codex tier after switch, got %q", got)
+	}
+}
+
+func TestDisableHermesChatModeIfIdlePreservesRunningCoordinator(t *testing.T) {
+	key := chatKey{chatID: 77, threadID: 3}
+	coord := &fakeInterruptibleCoord{running: true}
+	bot := &TelegramBot{
+		config: &Config{Hermes: HermesConfig{Enabled: true}},
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {coord: coord, enabled: true},
+		},
+	}
+
+	bot.disableHermesChatModeIfIdle(key)
+
+	if !bot.isHermesEnabled(key) {
+		t.Fatal("running Hermes coordinator should keep chat mode enabled")
+	}
+}
+
+func TestDisableHermesChatModeIfIdleClearsStickyMode(t *testing.T) {
+	key := chatKey{chatID: 77, threadID: 3}
+	bot := &TelegramBot{
+		config: &Config{Hermes: HermesConfig{Enabled: true}},
+		hermesCoords: map[chatKey]*hermesCoord{
+			key: {enabled: true},
+		},
+	}
+
+	bot.disableHermesChatModeIfIdle(key)
+
+	if bot.isHermesEnabled(key) {
+		t.Fatal("idle sticky Hermes chat mode should be disabled")
 	}
 }
 

@@ -58,6 +58,7 @@
    - 設定 / 前置作業可宣告 `"checklist_item_ids": []`，但**必須在 description 末尾用括號註明** `(no acceptance item; rationale: <原因>)`。
    - **每個 unchecked 驗收項目至少要被一個子任務宣告涵蓋**，否則 Coordinator 會拒絕 plan 並要求重新規劃。
    - 不要把 ID 寫進 description；只放在 `checklist_item_ids` 欄位。
+9. 若使用者明確要求呼叫 image / AI 產圖，子任務必須保留這個要求並在 `tool_hints` 加入目前環境的 image generation 能力；禁止規劃成 Python / Pillow / SVG / canvas 產圖，除非使用者明確指定本地程式化產生。影像生成能力不應限定於特定 Hermes tier 或模型模式。
 
 ## 結構化輸出（structured output）介面
 

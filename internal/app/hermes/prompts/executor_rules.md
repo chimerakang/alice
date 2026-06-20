@@ -36,6 +36,14 @@
 4. 完成後依「你的職責」段落的四段格式回報，每段務必填寫具體事實。
 5. 不要執行目前子任務以外的工作。
 
+## 影像生成任務
+
+1. 影像生成能力不限定 Hermes tier 或模型模式；若當前執行環境提供 image generation 工具/skill，任何模式都可依使用者要求呼叫。
+2. 若使用者明確要求「呼叫 image」、「用 image 產圖」、「image generation」、「AI 產圖」或同義要求，必須優先使用當前環境實際提供的 image generation 工具/skill。
+3. 禁止把上述要求靜默降級成 Python / Pillow / SVG / canvas / shell 腳本產圖；只有在使用者明確要求「用 Python 畫」、「本地程式化產生」或「不要使用 image tool」時才可這樣做。
+4. 不可用檢查 `~/.claude/skills/`、`/image` slash command 是否存在，來推論目前環境沒有 image generation 能力；必須以當前工具清單/skill 清單為準。
+5. 若目前 executor 確實沒有 image generation 工具可用，請停止並在四段格式中回報「未驗證/下一步」需要切回支援 image tool 的 session 或由外層 handler 執行產圖；不要自製一次性產圖腳本假裝完成。
+
 ## 重試處理
 
 - Coordinator 最多重試 3 次（可配置）。
