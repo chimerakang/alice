@@ -1,7 +1,7 @@
 # Master Tasks
 
 > Auto-generated from GitHub Issues.
-> Last updated: 2026-05-23
+> Last updated: 2026-05-29
 > Run `/task-sync` to regenerate.
 
 ## Status Legend
@@ -1283,7 +1283,7 @@
 | | — Read internal/app/hermes/coordinator.go and task_state.go to understand existing lifecycle events and TaskState.GithubIssueNumber field | | ✅ |
 | | — Read docs/MASTER_TASKS.md and .claude/skills/task-sync files to understand existing GitHub Issue workflow integration | | ✅ |
 | | — Create internal/app/hermes/github.go with IssueContext struct and FetchIssue(ctx, number) function that shells out to 'gh issue view N --json title,body,labels' | | ✅ |
-| | — Implement ParseChecklist helper in internal/app/hermes/github.go that extracts '- [ ]' and '- [x]' items from Issue body with line numbers for sync anchoring | | ☐ |
+| | — Implement ParseChecklist helper in internal/app/hermes/github.go that extracts '- [ ]' and '- [x]' items from Issue body with line numbers for sync anchoring | | ✅ |
 | | — Implement SyncChecklist(ctx, number, subtasks) in github.go that updates Issue body checking off completed SubTasks via 'gh issue edit N --body' | | ✅ |
 | | — Implement PostComment(ctx, number, event, payload) in github.go supporting start/complete/fail/budget_exceeded event templates with artifacts, tokens, wallclock | | ✅ |
 | | — Implement ApplyLabel(ctx, number, label) and CloseIssue(ctx, number) in github.go via 'gh issue edit --add-label' and 'gh issue close' | | ✅ |
@@ -1926,5 +1926,5 @@
 **Completed:** 94 ✅
 **In Progress:** 18 🔄
 
-**Last sync:** 2026-05-23 10:38 UTC
+**Last sync:** 2026-05-29 15:49 UTC
 

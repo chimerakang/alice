@@ -19,6 +19,82 @@ func writeExecutableScript(t *testing.T, dir, name, body string) string {
 	return path
 }
 
+// ── ghOutputWithRetry ─────────────────────────────────────────────────────────
+
+// fakeGHCounting installs a fake gh that records its call count in a file and
+// delegates behavior to the given script body (which can read $count).
+func fakeGHCounting(t *testing.T, body string) string {
+	t.Helper()
+	tmp := t.TempDir()
+	countFile := filepath.Join(tmp, "count")
+	script := `#!/bin/sh
+count_file="$FAKE_GH_COUNT"
+count=$(cat "$count_file" 2>/dev/null || echo 0)
+count=$((count + 1))
+printf '%s' "$count" >"$count_file"
+` + body
+	writeExecutableScript(t, tmp, "gh", script)
+	t.Setenv("PATH", tmp+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_GH_COUNT", countFile)
+	return countFile
+}
+
+func ghCallCount(t *testing.T, countFile string) string {
+	t.Helper()
+	b, err := os.ReadFile(countFile)
+	if err != nil {
+		t.Fatalf("read count file: %v", err)
+	}
+	return string(b)
+}
+
+func TestFetchIssueRetriesTransientFailure(t *testing.T) {
+	countFile := fakeGHCounting(t, `
+if [ "$count" -lt 2 ]; then
+  echo "HTTP 502: Bad Gateway (https://api.github.com/graphql)" >&2
+  exit 1
+fi
+printf '{"title":"ok after retry","state":"OPEN","body":"","labels":[],"comments":[]}\n'
+`)
+
+	oldBackoff := ghRetryBackoff
+	ghRetryBackoff = 10 * time.Millisecond
+	defer func() { ghRetryBackoff = oldBackoff }()
+
+	issue, err := FetchIssue(context.Background(), "", 7)
+	if err != nil {
+		t.Fatalf("FetchIssue should succeed after one retry: %v", err)
+	}
+	if issue.Title != "ok after retry" {
+		t.Fatalf("unexpected issue: %+v", issue)
+	}
+	if got := ghCallCount(t, countFile); got != "2" {
+		t.Fatalf("want 2 gh calls, got %s", got)
+	}
+}
+
+func TestFetchIssueNotFoundSkipsRetryAndEmbedsStderr(t *testing.T) {
+	countFile := fakeGHCounting(t, `
+echo "GraphQL: Could not resolve to an Issue or PullRequest with the number of 999. (repository.issue)" >&2
+exit 1
+`)
+
+	oldBackoff := ghRetryBackoff
+	ghRetryBackoff = 10 * time.Millisecond
+	defer func() { ghRetryBackoff = oldBackoff }()
+
+	_, err := FetchIssue(context.Background(), "", 999)
+	if err == nil {
+		t.Fatal("FetchIssue should fail")
+	}
+	if !strings.Contains(err.Error(), "Could not resolve to an Issue") {
+		t.Fatalf("error should embed gh stderr, got: %v", err)
+	}
+	if got := ghCallCount(t, countFile); got != "1" {
+		t.Fatalf("not-found should not retry; want 1 gh call, got %s", got)
+	}
+}
+
 // ── ExtractChecklist ──────────────────────────────────────────────────────────
 
 func TestExtractChecklist_Basic(t *testing.T) {

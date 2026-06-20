@@ -721,13 +721,10 @@ func ParseReviewResult(text string) (ReviewResult, error) {
 		// Model returned prose before the JSON object — extract the first {...} block.
 		if start := strings.Index(raw, "{"); start >= 0 {
 			raw = raw[start:]
-			if end := strings.LastIndex(raw, "}"); end >= 0 {
-				raw = raw[:end+1]
-			}
 		}
 	}
 	var result ReviewResult
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+	if err := json.NewDecoder(strings.NewReader(raw)).Decode(&result); err != nil {
 		return ReviewResult{}, err
 	}
 	if err := result.Validate(); err != nil {

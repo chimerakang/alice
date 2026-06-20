@@ -12,6 +12,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 )
 
 // Runner centralizes command execution policy for the bot runtime.
@@ -142,6 +143,7 @@ func (r *Runner) run(ctx context.Context, opts Options, combined bool, name stri
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			exitErr.Stderr = stderr.Bytes()
 		}
+		log.Printf("[%s] stderr corr=%s: %s", cmd.prefix, cmd.corrID, stderrSnippet(stderr.Bytes()))
 	}
 	if stdout.Truncated() {
 		output = append(output, []byte("\n[process output truncated]\n")...)
@@ -193,6 +195,24 @@ func (c *ProcessCmd) logDone(err error) {
 		}
 		log.Printf("[%s] done corr=%s cmd=%s exit=%d duration=%s", c.prefix, c.corrID, c.label, exitCode, time.Since(start).Round(time.Millisecond))
 	})
+}
+
+// stderrSnippetLimit caps how much captured stderr goes into the one-line
+// failure log; full stderr stays available on ExitError.Stderr.
+const stderrSnippetLimit = 500
+
+// stderrSnippet condenses captured stderr into a single log-friendly line.
+func stderrSnippet(b []byte) string {
+	s := strings.TrimSpace(string(b))
+	s = strings.ReplaceAll(s, "\n", " | ")
+	if len(s) > stderrSnippetLimit {
+		cut := stderrSnippetLimit
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut] + "…"
+	}
+	return s
 }
 
 func resolveTimeout(timeout time.Duration, binary string) time.Duration {

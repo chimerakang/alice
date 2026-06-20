@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -131,18 +130,14 @@ func FetchMilestones(ctx context.Context, projectDir string) ([]MilestoneItem, e
 // FetchIssueWithMilestone fetches a single issue including its milestone field.
 // Returns ErrIssueNotFound if gh reports the issue does not exist.
 func FetchIssueWithMilestone(ctx context.Context, projectDir string, issueNum int) (*IssueContext, *MilestoneItem, error) {
-	out, err := ghOutput(ctx, projectDir, ghTimeoutShort,
+	out, err := ghOutputWithRetry(ctx, projectDir, ghTimeoutShort,
 		"issue", "view", fmt.Sprintf("%d", issueNum),
 		"--json", "number,title,body,state,labels,comments,milestone",
 	)
 	if err != nil {
-		// Check both err.Error() and ExitError.Stderr so that real gh CLI
-		// error messages (written to stderr) trigger the typed sentinel.
-		msg := strings.ToLower(err.Error())
-		if exitErr, ok := err.(*exec.ExitError); ok && len(exitErr.Stderr) > 0 {
-			msg += " " + strings.ToLower(string(exitErr.Stderr))
-		}
-		if strings.Contains(msg, "not found") || strings.Contains(msg, "no such") || strings.Contains(msg, "could not resolve") {
+		// Errors from ghOutput already include gh's stderr in the message, so
+		// real gh CLI error text triggers the typed sentinel.
+		if isGHNotFoundErr(err) {
 			return nil, nil, &ErrIssueNotFound{IssueNumber: issueNum}
 		}
 		return nil, nil, fmt.Errorf("gh issue view %d: %w", issueNum, err)

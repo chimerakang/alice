@@ -855,8 +855,10 @@ func (t *TelegramBot) Start() {
 		}
 
 		var result struct {
-			OK     bool `json:"ok"`
-			Result []struct {
+			OK          bool   `json:"ok"`
+			ErrorCode   int    `json:"error_code"`
+			Description string `json:"description"`
+			Result      []struct {
 				UpdateID int `json:"update_id"`
 				Message  *struct {
 					MessageID       int  `json:"message_id"`
@@ -904,6 +906,19 @@ func (t *TelegramBot) Start() {
 		resp.Body.Close()
 
 		if !result.OK {
+			// A non-ok getUpdates is almost always 409 Conflict: another
+			// process is long-polling the SAME bot token. This used to be
+			// swallowed silently, so a competing poller made the bot look
+			// completely dead — no received messages, no errors, nothing in
+			// the log. Surface it, and back off so we neither tight-loop nor
+			// hammer the API while the conflict persists.
+			log.Printf("[telegram] getUpdates not ok: error_code=%d description=%q (another instance may be polling the same bot token)", result.ErrorCode, result.Description)
+			select {
+			case <-t.pollCtx.Done():
+				log.Printf("[telegram] polling stopped")
+				return
+			case <-time.After(3 * time.Second):
+			}
 			continue
 		}
 

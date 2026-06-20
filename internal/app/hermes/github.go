@@ -3,11 +3,14 @@ package hermes
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // IssueContext holds the GitHub Issue data fetched before starting a Hermes task.
@@ -129,9 +132,67 @@ func ghProcessOptions(projectDir string, timeout time.Duration) ProcessOptions {
 // ghOutput runs a gh subcommand rooted at projectDir so `gh` resolves the
 // correct repository from that directory's git remote. An empty projectDir
 // falls back to the bot's cwd (compatible with older single-project setups).
-// timeout=0 picks ghTimeoutNormal.
+// timeout=0 picks ghTimeoutNormal. Failures embed a trimmed stderr snippet in
+// the error message so logs and user-facing messages show the real gh failure
+// reason instead of a bare "exit status 1".
 func ghOutput(ctx context.Context, projectDir string, timeout time.Duration, args ...string) ([]byte, error) {
-	return runProcessOutput(ctx, ghProcessOptions(projectDir, timeout), "gh", args...)
+	out, err := runProcessOutput(ctx, ghProcessOptions(projectDir, timeout), "gh", args...)
+	if err != nil {
+		return out, ghErrorWithStderr(err)
+	}
+	return out, nil
+}
+
+// ghErrorMessageLimit caps the stderr snippet appended to gh errors; the
+// message may be relayed verbatim to Telegram so it must stay short.
+const ghErrorMessageLimit = 300
+
+// ghErrorWithStderr appends captured stderr to the error message while keeping
+// the original error in the chain for errors.As/Is checks.
+func ghErrorWithStderr(err error) error {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || len(exitErr.Stderr) == 0 {
+		return err
+	}
+	msg := strings.TrimSpace(string(exitErr.Stderr))
+	if len(msg) > ghErrorMessageLimit {
+		cut := ghErrorMessageLimit
+		for cut > 0 && !utf8.RuneStart(msg[cut]) {
+			cut--
+		}
+		msg = msg[:cut] + "…"
+	}
+	return fmt.Errorf("%w: %s", err, msg)
+}
+
+// isGHNotFoundErr reports whether a gh error indicates a missing issue or
+// repository (rather than a transient API/network failure). Works on errors
+// from ghOutput, whose messages already include gh's stderr.
+func isGHNotFoundErr(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "no such") ||
+		strings.Contains(msg, "could not resolve")
+}
+
+// ghRetryBackoff is the pause before the single retry in ghOutputWithRetry.
+// Variable so tests can shorten it.
+var ghRetryBackoff = 2 * time.Second
+
+// ghOutputWithRetry runs ghOutput and retries once after a short backoff on
+// transient failures (network blips, GitHub API 5xx). Not-found errors and
+// context cancellation fail immediately. Only safe for read-only gh commands.
+func ghOutputWithRetry(ctx context.Context, projectDir string, timeout time.Duration, args ...string) ([]byte, error) {
+	out, err := ghOutput(ctx, projectDir, timeout, args...)
+	if err == nil || isGHNotFoundErr(err) || ctx.Err() != nil {
+		return out, err
+	}
+	select {
+	case <-ctx.Done():
+		return out, err
+	case <-time.After(ghRetryBackoff):
+	}
+	return ghOutput(ctx, projectDir, timeout, args...)
 }
 
 func ghCombinedOutput(ctx context.Context, projectDir string, timeout time.Duration, args ...string) ([]byte, error) {
@@ -249,8 +310,10 @@ func FormatIssueList(items []IssueListItem) string {
 // FetchIssue calls `gh issue view N --json title,body,state,labels,comments` in projectDir
 // and returns parsed data. projectDir must match the chat's configured repo
 // so gh resolves the correct remote; empty string falls back to cwd.
+// Transient gh failures are retried once so a network blip does not abort a
+// Hermes start.
 func FetchIssue(ctx context.Context, projectDir string, number int) (*IssueContext, error) {
-	out, err := ghOutput(ctx, projectDir, ghTimeoutShort, "issue", "view",
+	out, err := ghOutputWithRetry(ctx, projectDir, ghTimeoutShort, "issue", "view",
 		fmt.Sprintf("%d", number),
 		"--json", "title,body,state,labels,comments",
 	)

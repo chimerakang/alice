@@ -176,18 +176,21 @@ func (c *CodexClient) runCodexStream(
 		streamErrMsg      string // captured from error / turn.failed events
 	)
 
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	// Read newline-delimited JSON with bufio.Reader.ReadBytes rather than
+	// bufio.Scanner: a single codex stream line can exceed Scanner's 4MB token
+	// cap (e.g. a large command_execution aggregated_output). Scan() would then
+	// fail with bufio.ErrTooLong, stop draining stdout, fill the OS pipe, and
+	// hang the codex process on write until the process timeout — freezing the
+	// Hermes sub-task. ReadBytes has no per-line size limit.
+	reader := bufio.NewReader(stdout)
+	processLine := func(line []byte) {
 		if len(line) == 0 {
-			continue
+			return
 		}
 
 		var ev codexEvent
 		if err := json.Unmarshal(line, &ev); err != nil {
-			continue
+			return
 		}
 
 		switch ev.Type {
@@ -208,7 +211,7 @@ func (c *CodexClient) runCodexStream(
 
 		case "item.completed":
 			if ev.Item == nil {
-				continue
+				return
 			}
 			switch ev.Item.Type {
 			case "agent_message":
@@ -239,6 +242,14 @@ func (c *CodexClient) runCodexStream(
 				cachedInputTokens += ev.Usage.CachedInputTokens
 				outputTokens += ev.Usage.OutputTokens
 			}
+		}
+	}
+
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		processLine(bytes.TrimRight(line, "\r\n"))
+		if readErr != nil {
+			break
 		}
 	}
 

@@ -2,6 +2,7 @@ package app
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -225,20 +226,31 @@ func (w *CodexSessionWatcher) processFile(ctx context.Context, path string) erro
 		return err
 	}
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	// Stream complete lines with bufio.Reader.ReadBytes instead of
+	// bufio.Scanner. Codex rollout files can contain single JSONL lines far
+	// larger than Scanner's token cap (4MB), which made Scan() fail with
+	// bufio.ErrTooLong. processFile then returned early WITHOUT advancing the
+	// offset, so every subsequent fsnotify Write re-scanned from the same
+	// position, failed identically, and spammed the log forever (alice.log
+	// grew past 450MB). ReadBytes has no per-line size limit and lets us
+	// advance the offset even past oversized lines.
+	reader := bufio.NewReader(f)
 	pos := offset
-	for scanner.Scan() {
-		lineBytes := append([]byte(nil), scanner.Bytes()...)
-		pos += int64(len(lineBytes)) + 1
-		payload, ok := w.parseLine(path, lineBytes)
+	for {
+		lineBytes, err := reader.ReadBytes('\n')
+		if err != nil {
+			// EOF mid-line: a partial line is still being written. Do not
+			// consume it — leave the offset before it so the next Write event
+			// re-reads the line once it is complete.
+			break
+		}
+		pos += int64(len(lineBytes))
+		line := bytes.TrimRight(lineBytes, "\r\n")
+		payload, ok := w.parseLine(path, line)
 		if !ok {
 			continue
 		}
 		recordCodexSessionUpdate(ctx, payload)
-	}
-	if err := scanner.Err(); err != nil {
-		return err
 	}
 
 	w.mu.Lock()

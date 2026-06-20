@@ -180,6 +180,33 @@ func TestParseReviewResult(t *testing.T) {
 	}
 }
 
+func TestParseReviewResultIgnoresTrailingOutput(t *testing.T) {
+	text := `{"verdict":"pass","overall_score":90,"feedback":"ok","issue_tags":[],"sub_task_results":[]}
+{"verdict":"partial","overall_score":72,"feedback":"duplicate","issue_tags":[],"sub_task_results":[]}`
+
+	got, err := ParseReviewResult(text)
+	if err != nil {
+		t.Fatalf("ParseReviewResult: %v", err)
+	}
+	if got.Verdict != VerdictPass || got.OverallScore != 90 {
+		t.Fatalf("unexpected result: %+v", got)
+	}
+}
+
+func TestParseReviewResultExtractsJSONWithTrailingProse(t *testing.T) {
+	text := `Review follows:
+{"verdict":"partial","overall_score":75,"feedback":"needs one more check","issue_tags":["missing_validation"],"sub_task_results":[]}
+Note: this sentence should not break parsing.`
+
+	got, err := ParseReviewResult(text)
+	if err != nil {
+		t.Fatalf("ParseReviewResult: %v", err)
+	}
+	if got.Verdict != VerdictPartial || got.OverallScore != 75 {
+		t.Fatalf("unexpected result: %+v", got)
+	}
+}
+
 func TestBuildReviewNotificationAndTelegramText(t *testing.T) {
 	review := ReviewResult{
 		ReviewerModel: "gpt-5.5",

@@ -186,13 +186,18 @@ func (c *EnhancedCLIClient) CallStreamWithFiles(ctx context.Context, message str
 	var thinkingBlocks []string
 	var textBlocks []string
 
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	// Read newline-delimited stream-json with bufio.Reader.ReadBytes rather
+	// than bufio.Scanner. The CLI can emit a single stream-json line larger
+	// than Scanner's 4MB token cap (e.g. a big tool result or file read).
+	// Scan() would then fail with bufio.ErrTooLong, the loop would stop
+	// reading stdout, the OS pipe would fill, and the CLI would block forever
+	// on write until the 15-min process timeout — exactly why Hermes sub-tasks
+	// could freeze with progress stuck at "[N/M]". ReadBytes has no per-line
+	// size limit, so oversized lines are read whole and drained.
+	reader := bufio.NewReader(stdout)
+	processLine := func(line []byte) {
 		if len(line) == 0 {
-			continue
+			return
 		}
 
 		var event struct {
@@ -222,13 +227,13 @@ func (c *EnhancedCLIClient) CallStreamWithFiles(ctx context.Context, message str
 		}
 
 		if err := json.Unmarshal(line, &event); err != nil {
-			continue // 忽略無法解析的行
+			return // 忽略無法解析的行
 		}
 
 		switch event.Type {
 		case "assistant":
 			if event.Message == nil {
-				continue
+				return
 			}
 			for _, c := range event.Message.Content {
 				switch c.Type {
@@ -267,6 +272,14 @@ func (c *EnhancedCLIClient) CallStreamWithFiles(ctx context.Context, message str
 			finalResp.Usage.OutputTokens = event.Usage.OutputTokens
 			finalResp.Usage.CacheReadInputTokens = event.Usage.CacheReadInputTokens
 			finalResp.Usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
+		}
+	}
+
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		processLine(bytes.TrimRight(line, "\r\n"))
+		if readErr != nil {
+			break
 		}
 	}
 
