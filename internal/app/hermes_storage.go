@@ -26,5 +26,8 @@ func buildHermesTaskStore() hermes.TaskStateStore {
 		log.Printf("[hermes] failed to create task store: %v", err)
 		return &hermes.NoopTaskStore{}
 	}
+	store.SetUnifiedTaskUpdateHook(func(taskID string) {
+		ss.broadcastUnifiedTask(taskID)
+	})
 	return store
 }

@@ -1,31 +1,63 @@
 import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
+import { useTranslation } from "react-i18next";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useAppStore } from "@/stores/appStore";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import Dashboard from "@/pages/Dashboard";
 import Timeline from "@/pages/Timeline";
+import Reviews from "@/pages/Reviews";
+import Quality from "@/pages/Quality";
 import Checkpoints from "@/pages/Checkpoints";
 import Performance from "@/pages/Performance";
 import Security from "@/pages/Security";
+import Memory from "@/pages/Memory";
+import Runtime from "@/pages/Runtime";
+import HermesTasks from "@/pages/HermesTasks";
 import {
   LayoutDashboard,
   Clock,
+  MessageSquareText,
+  Gauge,
   Camera,
   BarChart3,
   Shield,
+  BrainCircuit,
+  Activity,
+  Pickaxe,
   Wifi,
   WifiOff,
 } from "lucide-react";
 
-const navItems = [
-  { to: "/", icon: LayoutDashboard, label: "Dashboard" },
-  { to: "/timeline", icon: Clock, label: "Timeline" },
-  { to: "/checkpoints", icon: Camera, label: "Checkpoints" },
-  { to: "/performance", icon: BarChart3, label: "Performance" },
-  { to: "/security", icon: Shield, label: "Security" },
+const navSections = [
+  {
+    labelKey: "nav.section_overview",
+    items: [
+      { to: "/", icon: LayoutDashboard, labelKey: "nav.dashboard" },
+    ],
+  },
+  {
+    labelKey: "nav.section_development_tracking",
+    items: [
+      { to: "/issues-runs", icon: Clock, labelKey: "nav.issues_runs" },
+      { to: "/run-inspector", icon: Pickaxe, labelKey: "nav.run_inspector" },
+      { to: "/reviews", icon: MessageSquareText, labelKey: "nav.reviews" },
+    ],
+  },
+  {
+    labelKey: "nav.section_secondary",
+    items: [
+      { to: "/quality", icon: Gauge, labelKey: "nav.analytics" },
+      { to: "/checkpoints", icon: Camera, labelKey: "nav.checkpoints" },
+      { to: "/performance", icon: BarChart3, labelKey: "nav.performance" },
+      { to: "/runtime", icon: Activity, labelKey: "nav.runtime" },
+      { to: "/memory", icon: BrainCircuit, labelKey: "nav.memory" },
+      { to: "/security", icon: Shield, labelKey: "nav.security" },
+    ],
+  },
 ];
 
 function AppLayout() {
+  const { t } = useTranslation();
   const { wsConnected, handleWsEvent, setWsConnected } = useAppStore();
 
   useWebSocket({
@@ -50,23 +82,30 @@ function AppLayout() {
         </div>
 
         {/* Nav */}
-        <nav className="flex-1 py-4 px-3 space-y-1">
-          {navItems.map(({ to, icon: Icon, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === "/"}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${
-                  isActive
-                    ? "bg-primary/10 text-primary border border-primary/20"
-                    : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
-                }`
-              }
-            >
-              <Icon className="w-4 h-4" />
-              {label}
-            </NavLink>
+        <nav className="flex-1 py-4 px-3 space-y-4 overflow-y-auto">
+          {navSections.map((section) => (
+            <div key={section.labelKey} className="space-y-1">
+              <div className="px-3 pb-1 text-[10px] font-semibold tracking-wider uppercase text-gray-600">
+                {t(section.labelKey)}
+              </div>
+              {section.items.map(({ to, icon: Icon, labelKey }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  end={to === "/"}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${
+                      isActive
+                        ? "bg-primary/10 text-primary border border-primary/20"
+                        : "text-gray-400 hover:text-gray-200 hover:bg-white/5"
+                    }`
+                  }
+                >
+                  <Icon className="w-4 h-4" />
+                  {t(labelKey)}
+                </NavLink>
+              ))}
+            </div>
           ))}
         </nav>
 
@@ -77,12 +116,12 @@ function AppLayout() {
             {wsConnected ? (
               <>
                 <Wifi className="w-3.5 h-3.5 text-success" />
-                <span className="text-success">Connected</span>
+                <span className="text-success">{t("common.connected")}</span>
               </>
             ) : (
               <>
                 <WifiOff className="w-3.5 h-3.5 text-error" />
-                <span className="text-error">Disconnected</span>
+                <span className="text-error">{t("common.disconnected")}</span>
               </>
             )}
           </div>
@@ -94,9 +133,16 @@ function AppLayout() {
         <div className="max-w-7xl mx-auto p-6">
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/issues-runs" element={<Timeline />} />
             <Route path="/timeline" element={<Timeline />} />
+            <Route path="/reviews" element={<Reviews />} />
+            <Route path="/quality" element={<Quality />} />
             <Route path="/checkpoints" element={<Checkpoints />} />
             <Route path="/performance" element={<Performance />} />
+            <Route path="/runtime" element={<Runtime />} />
+            <Route path="/run-inspector" element={<HermesTasks />} />
+            <Route path="/hermes-tasks" element={<HermesTasks />} />
+            <Route path="/memory" element={<Memory />} />
             <Route path="/security" element={<Security />} />
           </Routes>
         </div>

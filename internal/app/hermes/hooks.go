@@ -4,10 +4,8 @@
 package hermes
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -156,6 +154,7 @@ func matchesDenyList(path string, patterns []string) (bool, string) {
 
 const goBuildMaxOutputLines = 50
 const goBuildTimeout = 2 * time.Minute
+const validatorOutputLimit = 256 * 1024
 
 // GoBuild returns a PostHook that runs "go build ./..." after any .go file is written.
 // workDir is the module root to run the build from.
@@ -165,17 +164,13 @@ func GoBuild(workDir string) PostHook {
 			return nil
 		}
 
-		buildCtx, cancel := context.WithTimeout(ctx, goBuildTimeout)
-		defer cancel()
-
-		cmd := exec.CommandContext(buildCtx, "go", "build", "./...")
-		cmd.Dir = workDir
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		cmd.Stderr = &out
-
-		if err := cmd.Run(); err != nil {
-			output := trimLines(out.String(), goBuildMaxOutputLines)
+		out, err := runProcessCombinedOutput(ctx, ProcessOptions{
+			Dir:         workDir,
+			Timeout:     goBuildTimeout,
+			OutputLimit: validatorOutputLimit,
+		}, "go", "build", "./...")
+		if err != nil {
+			output := trimLines(string(out), goBuildMaxOutputLines)
 			return factError("go build ./... failed: %s", output)
 		}
 		return nil
@@ -209,17 +204,13 @@ func TscCheck(workDir string) PostHook {
 			return nil
 		}
 
-		tscCtx, cancel := context.WithTimeout(ctx, tscTimeout)
-		defer cancel()
-
-		cmd := exec.CommandContext(tscCtx, "tsc", "--noEmit")
-		cmd.Dir = workDir
-		var out bytes.Buffer
-		cmd.Stdout = &out
-		cmd.Stderr = &out
-
-		if err := cmd.Run(); err != nil {
-			output := trimLines(out.String(), goBuildMaxOutputLines)
+		out, err := runProcessCombinedOutput(ctx, ProcessOptions{
+			Dir:         workDir,
+			Timeout:     tscTimeout,
+			OutputLimit: validatorOutputLimit,
+		}, "tsc", "--noEmit")
+		if err != nil {
+			output := trimLines(string(out), goBuildMaxOutputLines)
 			return factError("tsc --noEmit failed: %s", output)
 		}
 		return nil
@@ -259,16 +250,13 @@ func JsonLint(workDir string) PostHook {
 			return nil
 		}
 
-		jqCtx, cancel := context.WithTimeout(ctx, jsonLintTimeout)
-		defer cancel()
-
-		cmd := exec.CommandContext(jqCtx, "jq", "empty", path)
-		cmd.Dir = workDir
-		var out bytes.Buffer
-		cmd.Stderr = &out
-
-		if err := cmd.Run(); err != nil {
-			return factError("jq empty %s failed: %s", path, strings.TrimSpace(out.String()))
+		out, err := runProcessCombinedOutput(ctx, ProcessOptions{
+			Dir:         workDir,
+			Timeout:     jsonLintTimeout,
+			OutputLimit: validatorOutputLimit,
+		}, "jq", "empty", path)
+		if err != nil {
+			return factError("jq empty %s failed: %s", path, strings.TrimSpace(string(out)))
 		}
 		return nil
 	}

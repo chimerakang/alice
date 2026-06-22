@@ -1,4 +1,5 @@
 import { useMemo, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 
 interface CostSavingsReport {
@@ -29,17 +30,17 @@ const MODEL_CONFIG: Record<string, { color: string; icon: string; label: string 
   haiku: {
     color: "#10b981",
     icon: "🟢",
-    label: "Haiku (Fast)",
+    label: "haiku",
   },
   sonnet: {
     color: "#f59e0b",
     icon: "🟡",
-    label: "Sonnet (Standard)",
+    label: "sonnet",
   },
   opus: {
     color: "#ef4444",
     icon: "🔴",
-    label: "Opus (Deep)",
+    label: "opus",
   },
 };
 
@@ -53,6 +54,7 @@ interface ChartData {
 }
 
 export function ModelDistributionChart({ hours = 168 }: ModelDistributionChartProps) {
+  const { t } = useTranslation();
   const [report, setReport] = useState<CostSavingsReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,12 +67,12 @@ export function ModelDistributionChart({ hours = 168 }: ModelDistributionChartPr
     try {
       setLoading(true);
       const response = await fetch(`/api/costs/savings?hours=${hours}`);
-      if (!response.ok) throw new Error("Failed to fetch data");
+      if (!response.ok) throw new Error(t("savings.error.fetch_failed"));
       const data = await response.json();
       setReport(data);
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      setError(err instanceof Error ? err.message : t("savings.error.unknown"));
       setReport(null);
     } finally {
       setLoading(false);
@@ -88,7 +90,7 @@ export function ModelDistributionChart({ hours = 168 }: ModelDistributionChartPr
       };
 
       return {
-        name: config.label,
+        name: t(`dashboard.models.${config.label}`, { defaultValue: model }),
         value: data.calls,
         calls: data.calls,
         cost: data.actual_cost,
@@ -96,7 +98,7 @@ export function ModelDistributionChart({ hours = 168 }: ModelDistributionChartPr
         icon: config.icon,
       };
     });
-  }, [report]);
+  }, [report, t]);
 
   if (loading) {
     return (
@@ -110,8 +112,8 @@ export function ModelDistributionChart({ hours = 168 }: ModelDistributionChartPr
   if (error || !report || chartData.length === 0) {
     return (
       <div className="bg-gray-900/50 border border-gray-700 rounded-lg p-6">
-        <h3 className="text-sm font-medium text-gray-400 mb-4">Model Distribution</h3>
-        <p className="text-xs text-gray-500">No data available</p>
+        <h3 className="text-sm font-medium text-gray-400 mb-4">{t("dashboard.panels.model_distribution")}</h3>
+        <p className="text-xs text-gray-500">{t("common.no_data")}</p>
       </div>
     );
   }
@@ -119,8 +121,10 @@ export function ModelDistributionChart({ hours = 168 }: ModelDistributionChartPr
   return (
     <div className="bg-gray-900/50 border border-gray-700 rounded-lg p-6">
       <h3 className="text-sm font-medium text-white mb-4 flex items-center gap-2">
-        <span>🔄 Model Distribution</span>
-        <span className="text-xs text-gray-500">({report.total_requests} requests)</span>
+        <span>🔄 {t("dashboard.panels.model_distribution")}</span>
+        <span className="text-xs text-gray-500">
+          ({t("dashboard.panels.total_requests_short", { count: report.total_requests })})
+        </span>
       </h3>
 
       <ResponsiveContainer width="100%" height={300}>
@@ -160,10 +164,10 @@ export function ModelDistributionChart({ hours = 168 }: ModelDistributionChartPr
                     <span className="text-sm font-medium text-white">{data.name}</span>
                   </div>
                   <div className="text-xs text-gray-300">
-                    Calls: {data.calls}
+                    {t("dashboard.panels.calls")}: {data.calls}
                   </div>
                   <div className="text-xs text-gray-300">
-                    Cost: ${data.cost.toFixed(2)}
+                    {t("dashboard.panels.cost")}: ${data.cost.toFixed(2)}
                   </div>
                 </div>
               );
@@ -179,7 +183,9 @@ export function ModelDistributionChart({ hours = 168 }: ModelDistributionChartPr
               <span>{data.icon}</span>
               <span className="text-xs text-gray-400">{data.name}</span>
             </div>
-            <div className="text-xs font-semibold text-white">{data.calls} calls</div>
+            <div className="text-xs font-semibold text-white">
+              {t("dashboard.panels.calls_count", { count: data.calls })}
+            </div>
             <div className="text-xs text-gray-500">${data.cost.toFixed(2)}</div>
           </div>
         ))}

@@ -6,11 +6,17 @@ This document describes the Hermes task-state persistence layer implemented in `
 
 ## Overview
 
-Hermes operates two CLI sessions per task:
-- **Planner** — long-lived `--resume` session; owns the task breakdown
-- **Executor** — cold-started per sub-task; reads state from `TaskState`
+Hermes is Alice's long-task engine. In the current runtime architecture it
+should be treated as the **Task Agent** implementation, not as the owner of chat
+routing, backend session policy, or retry strategy.
 
-The state layer bridges these two sessions. The Planner writes the plan; the Executor reads only what it needs (goal, accumulated summary, current sub-task).
+Hermes may use multiple backend sessions per task:
+- **Planner** — owns task breakdown and may resume within a task/re-plan path.
+- **Executor** — executes sub-tasks through the shared execution path.
+- **Reviewer** — optional quality gate, treated as an execution/recovery phase.
+
+The state layer bridges these roles. The Planner writes the plan; the Executor
+reads only what it needs (goal, accumulated summary, current sub-task).
 
 ---
 
@@ -30,10 +36,12 @@ Top-level record for one Hermes planning session.
 | `CurrentIdx` | `int` | Index of the sub-task currently executing |
 | `Accumulated` | `string` | Rolling executor summary (see below) |
 | `Artifacts` | `[]Artifact` | Files changed by executors |
-| `Status` | `TaskStatus` | `planning / executing / validating / done / failed / interrupted` |
+| `Status` | `TaskStatus` | `planning / executing / done / failed / interrupted` |
 | `InterruptedBy` | `*int64` | Telegram message ID that triggered interrupt |
 | `TokenBudget` | `TokenBudget` | Task-level resource limits |
-| `InterruptPolicy` | `InterruptPolicy` | `queue / interrupt / inject` |
+
+`validating` is not a current public task state. Review/validation is a phase
+inside `executing`.
 
 ### SubTask
 
@@ -185,15 +193,16 @@ No full conversation history is injected — skills are loaded automatically by 
 
 ---
 
-## Interrupt Policies
+## Interrupt Handling
 
-Set via `hermes.interrupt_policy` in config (or per-task at creation time).
+Current Hermes behavior is fixed to the former `inject` policy: user feedback
+that arrives while a task is active is appended to task context and execution
+continues. Queue/abort/interrupt policy selection is no longer part of Hermes
+task state.
 
-| Policy | Behaviour |
-|---|---|
-| `queue` (default) | New user messages are held until the current sub-task completes |
-| `interrupt` | Current sub-task is cancelled; `MarkInterrupted(taskID, messageID)` is called; new message becomes a new task |
-| `inject` | New message is appended to `Accumulated` as feedback; execution continues |
+Future interrupt classification belongs to the Chat Agent FSM. Hermes should
+only receive explicit task events such as `UserFeedbackReceived` or
+`InterruptRequested`.
 
 ---
 

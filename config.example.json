@@ -8,15 +8,24 @@
   "multimedia": {
     "enable_photo_support": true,
     "enable_voice_support": true,
+    "enable_image_generation": false,
     "openai_api_key": "sk-xxxxx",
     "max_file_size_mb": 20,
     "temp_download_dir": "./temp/media",
-    "voice_to_text_provider": "openai_whisper"
+    "voice_to_text_provider": "openai_whisper",
+    "image_model": "gpt-image-2",
+    "image_size": "1024x1024",
+    "image_quality": "auto"
   },
 
   "enable_web_interface": true,
   "web_port": "8080",
   "web_static_dir": "./web",
+
+  "codex_interception": {
+    "enabled": false,
+    "sessions_dir": ""
+  },
 
   "enable_decision_logging": true,
   "decision_log_level": "detailed",
@@ -26,8 +35,13 @@
   "model_routing": {
     "enable_dynamic_routing": false,
     "fast_model": "claude-haiku-4-5-20251001",
+    "smart_model": "claude-sonnet-4-6",
     "deep_model": "claude-opus-4-7",
-    "use_gpt4o_mini_for_triage": false
+    "codex_fast_model": "gpt-5.4-mini",
+    "codex_smart_model": "gpt-5.4",
+    "codex_deep_model": "gpt-5.5",
+    "use_gpt4o_mini_for_triage": false,
+    "fast_mode_enabled": false
   },
 
   "model_pricing": {
@@ -40,11 +54,16 @@
       "output": 15.00
     },
     "opus": {
-      "input": 15.00,
-      "output": 75.00
+      "input": 5.00,
+      "output": 25.00
+    },
+    "opus_fast": {
+      "input": 10.00,
+      "output": 50.00
     }
   },
 
+  "ai_backend": "claude",
   "cli_timeout_minutes": 15,
 
   "enable_performance_monitoring": true,
@@ -54,6 +73,33 @@
   "database_path": "./data/alice.db",
   "data_retention_days": 30,
   "enable_data_cleanup": true,
+
+  "hermes": {
+    "enabled": false,
+    "strict_mode_enabled": false,
+    "auto_route_complex": false,
+    "planner_effort": "medium",
+    "planner_fast_mode": false,
+    "reviewer_fast_mode": false,
+    "budget": {
+      "max_total_tokens": 500000,
+      "max_wallclock_seconds": 3600
+    },
+    "preflight": {
+      "enabled": false,
+      "model": "claude-haiku-4-5-20251001",
+      "completion_threshold": 90,
+      "timeout_seconds": 20
+    },
+    "summary": {
+      "enabled": false,
+      "verbosity": "minimal",
+      "include_cost_estimate": false,
+      "targets": [
+        "telegram"
+      ]
+    }
+  },
 
   "security": {
     "enable_rate_limiting": true,

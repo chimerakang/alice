@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { devtools, persist } from "zustand/middleware";
+import i18n from "@/i18n";
 
 export type Language = "en" | "zh-TW";
 
@@ -25,7 +26,10 @@ export const useLanguageStore = create<LanguageState>()(
         isLoading: false,
         error: null,
 
-        setLanguage: (lang) => set({ language: lang }),
+        setLanguage: (lang) => {
+          set({ language: lang });
+          void i18n.changeLanguage(lang);
+        },
         setIsLoading: (loading) => set({ isLoading: loading }),
         setError: (error) => set({ error }),
       }),
@@ -54,10 +58,10 @@ export async function syncLanguagePreference(language: Language): Promise<void> 
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to sync language: ${response.statusText}`);
+      throw new Error("language_sync_failed");
     }
   } catch (error) {
-    console.error("Error syncing language preference:", error);
+    console.error("language_sync_failed", error);
     throw error;
   }
 }

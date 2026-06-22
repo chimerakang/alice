@@ -1,5 +1,6 @@
 import { Calendar, RotateCcw } from "lucide-react";
 import { useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { clsx } from "clsx";
 
 export interface DateRange {
@@ -8,17 +9,17 @@ export interface DateRange {
 }
 
 interface Preset {
-  label: string;
+  key: "1h" | "6h" | "24h" | "7d" | "30d" | "all";
   hours: number; // 0 = all time
 }
 
 const PRESETS: Preset[] = [
-  { label: "1h", hours: 1 },
-  { label: "6h", hours: 6 },
-  { label: "24h", hours: 24 },
-  { label: "7d", hours: 168 },
-  { label: "30d", hours: 720 },
-  { label: "All", hours: 0 },
+  { key: "1h", hours: 1 },
+  { key: "6h", hours: 6 },
+  { key: "24h", hours: 24 },
+  { key: "7d", hours: 168 },
+  { key: "30d", hours: 720 },
+  { key: "all", hours: 0 },
 ];
 
 interface DateRangeFilterProps {
@@ -40,13 +41,14 @@ export default function DateRangeFilter({
   className,
   compact = false,
 }: DateRangeFilterProps) {
-  const [activePreset, setActivePreset] = useState<string>("All");
+  const { t } = useTranslation();
+  const [activePreset, setActivePreset] = useState<string>("all");
   const [customStart, setCustomStart] = useState("");
   const [customEnd, setCustomEnd] = useState("");
 
   const applyPreset = useCallback(
     (preset: Preset) => {
-      setActivePreset(preset.label);
+      setActivePreset(preset.key);
       setCustomStart("");
       setCustomEnd("");
 
@@ -75,7 +77,7 @@ export default function DateRangeFilter({
   }, [customStart, customEnd, onChange]);
 
   const reset = useCallback(() => {
-    setActivePreset("All");
+    setActivePreset("all");
     setCustomStart("");
     setCustomEnd("");
     onChange({});
@@ -89,16 +91,16 @@ export default function DateRangeFilter({
       <div className="flex items-center gap-1">
         {PRESETS.map((p) => (
           <button
-            key={p.label}
+            key={p.key}
             onClick={() => applyPreset(p)}
             className={clsx(
               "px-2 py-0.5 text-xs rounded border transition-colors",
-              activePreset === p.label
+              activePreset === p.key
                 ? "bg-primary/15 text-primary border-primary/30"
                 : "text-gray-400 border-gray-700 hover:border-gray-600 hover:text-gray-300"
             )}
           >
-            {p.label}
+            {t(`date_range.presets.${p.key}`)}
           </button>
         ))}
       </div>
@@ -131,7 +133,7 @@ export default function DateRangeFilter({
             <button
               onClick={reset}
               className="p-1 text-gray-500 hover:text-gray-300 transition-colors"
-              title="Reset filter"
+              title={t("date_range.reset")}
             >
               <RotateCcw className="w-3.5 h-3.5" />
             </button>

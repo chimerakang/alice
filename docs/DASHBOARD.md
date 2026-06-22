@@ -288,7 +288,7 @@ wait
 - [ ] **User Management**: multi-user access with role-based permissions
 - [ ] **Custom Dashboards**: user-configurable widget layouts
 
-### **Phase 3: Enterprise Features**
+### **Phase 3: Advanced Team Features**
 - [ ] **SSO Integration**: enterprise authentication providers
 - [ ] **Multi-tenant Support**: isolated environments per organization
 - [ ] **Advanced Analytics**: ML-powered insights and predictions

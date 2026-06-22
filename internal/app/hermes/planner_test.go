@@ -1,0 +1,427 @@
+package hermes
+
+import (
+	"context"
+	"reflect"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+// TestPlannerSessionRunsFreshOnJSONRetry pins the #178 fix: a JSON-parse retry
+// must NOT resume the prior session. Opus 4.8 sometimes ends a planning turn
+// with a prose summary instead of the structured sub_tasks; resuming that turn
+// anchors it to the same prose, cascading to total failure. Each retry therefore
+// runs fresh (sessionID="") with a self-contained prompt that re-states the goal.
+func TestPlannerSessionRunsFreshOnJSONRetry(t *testing.T) {
+	var gotSessionIDs []string
+	var gotMessages []string
+	calls := 0
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (CallPlanResult, error) {
+		gotSessionIDs = append(gotSessionIDs, sessionID)
+		gotMessages = append(gotMessages, message)
+		calls++
+		if calls == 1 {
+			return CallPlanResult{Text: "Plan emitted successfully.", SessionID: "planner-session-1"}, nil
+		}
+		return CallPlanResult{
+			Text:      "```json\n" + `[{"id":"s1","description":"Execute directly","tool_hints":["Read"]}]` + "\n```",
+			SessionID: "planner-session-2",
+		}, nil
+	}
+
+	planner := NewPlannerSession(planFn, 2, "")
+	if _, _, _, _, err := planner.Plan(context.Background(), "implement feature", "/repo"); err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	// Both calls run fresh: attempt 1 from the (empty) seed, the retry NOT
+	// resuming attempt 1's "planner-session-1".
+	if want := []string{"", ""}; !reflect.DeepEqual(gotSessionIDs, want) {
+		t.Fatalf("session ids = %#v, want %#v (retry must not resume)", gotSessionIDs, want)
+	}
+	// The retry prompt must be self-contained — it re-states the goal because it
+	// can no longer rely on a resumed session holding it.
+	if len(gotMessages) < 2 || !strings.Contains(gotMessages[1], "implement feature") {
+		t.Fatalf("retry prompt not self-contained (missing goal): %q", gotMessages[1])
+	}
+	// The retry must not instruct the model to call the removed emit_plan tool.
+	if strings.Contains(gotMessages[1], "emit_plan") {
+		t.Fatalf("retry prompt still references emit_plan: %q", gotMessages[1])
+	}
+	if got := planner.SessionID(); got != "planner-session-2" {
+		t.Fatalf("planner session = %q, want planner-session-2", got)
+	}
+}
+
+func TestPlannerSessionUsesRecoveryDeciderForJSONRetry(t *testing.T) {
+	calls := 0
+	var recoveryReqs []PlannerRecoveryRequest
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (CallPlanResult, error) {
+		calls++
+		return CallPlanResult{Text: "not json"}, nil
+	}
+
+	planner := NewPlannerSession(planFn, 3, "")
+	planner.SetRecoveryDecider(func(req PlannerRecoveryRequest) PlannerRecoveryDecision {
+		recoveryReqs = append(recoveryReqs, req)
+		return PlannerRecoveryDecision{Retry: false, Reason: "test_denied"}
+	})
+	if _, _, _, _, err := planner.Plan(context.Background(), "implement feature", "/repo"); err == nil {
+		t.Fatal("Plan error = nil, want planner JSON failure")
+	}
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1 when recovery denies retry", calls)
+	}
+	if len(recoveryReqs) != 1 {
+		t.Fatalf("recovery requests = %d, want 1", len(recoveryReqs))
+	}
+	req := recoveryReqs[0]
+	if req.Mode != "planner_retry" || req.Attempt != 1 || req.MaxAttempts != 3 || req.Reason != "json_parse_failed" {
+		t.Fatalf("unexpected recovery request: %+v", req)
+	}
+}
+
+func TestPlannerSessionUsesSeededSessionID(t *testing.T) {
+	var gotSessionID string
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (CallPlanResult, error) {
+		gotSessionID = sessionID
+		return CallPlanResult{
+			Text:      "```json\n" + `[{"id":"s1","description":"Execute directly","tool_hints":["Read"]}]` + "\n```",
+			SessionID: "planner-session-next",
+		}, nil
+	}
+
+	planner := NewPlannerSession(planFn, 1, "")
+	planner.SetSessionID("planner-session-prev")
+	if _, _, _, _, err := planner.Plan(context.Background(), "implement feature", "/repo"); err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if gotSessionID != "planner-session-prev" {
+		t.Fatalf("call session = %q, want planner-session-prev", gotSessionID)
+	}
+	if got := planner.SessionID(); got != "planner-session-next" {
+		t.Fatalf("planner session = %q, want planner-session-next", got)
+	}
+}
+
+func TestParsePlannerJSONAcceptsStructuredOutputObject(t *testing.T) {
+	tasks, err := parsePlannerJSON(`{"sub_tasks":[{"id":"s1","description":"Fix the app-scoped entitlement lookup and run focused backend tests.","tool_hints":["Read","Edit","Bash"],"checklist_item_ids":["item-7"]}]}`)
+	if err != nil {
+		t.Fatalf("parsePlannerJSON: %v", err)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("tasks = %d, want 1", len(tasks))
+	}
+	if tasks[0].ID != "s1" || tasks[0].ChecklistItemIDs[0] != "item-7" {
+		t.Fatalf("task = %#v, want structured sub_task with checklist id", tasks[0])
+	}
+}
+
+func TestParsePlannerJSONAcceptsFencedStructuredOutputObject(t *testing.T) {
+	text := "```json\n" +
+		`{"sub_tasks":[{"id":"s1","description":"Execute the goal directly","tool_hints":["Read","Bash"]}]}` +
+		"\n```"
+	tasks, err := parsePlannerJSON(text)
+	if err != nil {
+		t.Fatalf("parsePlannerJSON: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].ID != "s1" {
+		t.Fatalf("tasks = %#v, want fenced structured-output object", tasks)
+	}
+}
+
+func TestParsePlannerJSONSkipsProseBeforeJSONValue(t *testing.T) {
+	tasks, err := parsePlannerJSON(`Plan returned for [GitHub #115] remaining work:
+{"sub_tasks":[{"id":"s1","description":"Update admin users to read app-scoped entitlements, then run go test ./internal/app/...","tool_hints":["Read","Edit","Bash"]}]}`)
+	if err != nil {
+		t.Fatalf("parsePlannerJSON: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].ID != "s1" {
+		t.Fatalf("tasks = %#v, want JSON value after prose", tasks)
+	}
+}
+
+func TestPlannerSessionRejectsSplitSingleActionAndRetries(t *testing.T) {
+	var prompts []string
+	calls := 0
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (CallPlanResult, error) {
+		prompts = append(prompts, message)
+		calls++
+		if calls == 1 {
+			return CallPlanResult{
+				Text: "```json\n" + `[
+{"id":"s1","description":"Read existing order e2e tests to understand the pattern","tool_hints":["Read"]},
+{"id":"s2","description":"Add one e2e test for the new field","tool_hints":["Edit"]},
+{"id":"s3","description":"Run go test ./internal/order/... to verify the new e2e test","tool_hints":["Bash"]}
+]` + "\n```",
+				SessionID: "planner-session-1",
+			}, nil
+		}
+		return CallPlanResult{
+			Text:      "```json\n" + `[{"id":"s1","description":"Add one e2e test for the new field: read the nearby test pattern, implement the test, then run go test ./internal/order/... to verify it passes.","tool_hints":["Read","Edit","Bash"]}]` + "\n```",
+			SessionID: "planner-session-1",
+		}, nil
+	}
+
+	planner := NewPlannerSession(planFn, 2, "")
+	tasks, _, _, _, err := planner.Plan(context.Background(), "補一個 order e2e 測試", "/repo")
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("tasks = %d, want 1: %#v", len(tasks), tasks)
+	}
+	if len(prompts) < 2 || !containsAny(prompts[1], "granularity violation", "grouping related read/modify/verify") {
+		t.Fatalf("retry prompt did not include granularity feedback:\n%v", prompts)
+	}
+}
+
+func TestPlannerSessionRejectsImplementationPlanWithoutMutation(t *testing.T) {
+	var prompts []string
+	var gates []PlanQualityGateEvent
+	calls := 0
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (CallPlanResult, error) {
+		prompts = append(prompts, message)
+		calls++
+		if calls == 1 {
+			return CallPlanResult{
+				Text: "```json\n" + `[
+{"id":"s1","description":"Read the auth service to understand the current implementation","tool_hints":["Read"]},
+{"id":"s2","description":"Run go test ./internal/auth/... and report the result","tool_hints":["Bash"]}
+]` + "\n```",
+			}, nil
+		}
+		return CallPlanResult{
+			Text: "```json\n" + `[
+{"id":"s1","description":"Fix the auth refresh-token bug in the service, update the focused tests, then run go test ./internal/auth/... to verify the fix.","tool_hints":["Read","Edit","Bash"]}
+]` + "\n```",
+		}, nil
+	}
+
+	planner := NewPlannerSession(planFn, 2, "")
+	planner.SetPlanQualityGateReporter(func(event PlanQualityGateEvent) {
+		gates = append(gates, event)
+	})
+	tasks, _, _, _, err := planner.Plan(context.Background(), "[GitHub #12] 修正 auth refresh-token bug", "/repo")
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+	if len(tasks) != 1 || !containsAny(tasks[0].Description, "Fix the auth refresh-token bug") {
+		t.Fatalf("unexpected tasks: %#v", tasks)
+	}
+	if len(prompts) < 2 || !containsAny(prompts[1], "Plan quality gate rejected", "missing implementation step") {
+		t.Fatalf("retry prompt did not include implementation feedback:\n%v", prompts)
+	}
+	if len(gates) != 2 {
+		t.Fatalf("quality gate events = %d, want 2: %#v", len(gates), gates)
+	}
+	if gates[0].Action != "replan" || gates[0].Reason != "plan_quality_rejected" || !containsAny(gates[0].Violation, "missing implementation step") {
+		t.Fatalf("first quality gate = %+v, want replan rejection", gates[0])
+	}
+	if gates[1].Action != "allow" || gates[1].Reason != "gate_passed" {
+		t.Fatalf("second quality gate = %+v, want allow", gates[1])
+	}
+}
+
+func TestPlannerSessionRejectsImplementationPlanWithoutValidation(t *testing.T) {
+	calls := 0
+	planFn := func(ctx context.Context, message, projectDir, sessionID string) (CallPlanResult, error) {
+		calls++
+		if calls == 1 {
+			return CallPlanResult{
+				Text: "```json\n" + `[
+{"id":"s1","description":"Update the tournament service to pass tv_blocks_json through create and update paths","tool_hints":["Read","Edit"]}
+]` + "\n```",
+			}, nil
+		}
+		return CallPlanResult{
+			Text: "```json\n" + `[
+{"id":"s1","description":"Update the tournament service to pass tv_blocks_json through create and update paths, then run go test ./internal/service/... to verify the mapping.","tool_hints":["Read","Edit","Bash"]}
+]` + "\n```",
+		}, nil
+	}
+
+	planner := NewPlannerSession(planFn, 2, "")
+	tasks, _, _, _, err := planner.Plan(context.Background(), "[GitHub #12] 實作 tv_blocks_json service mapping", "/repo")
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+	if len(tasks) != 1 || !containsAny(tasks[0].Description, "go test ./internal/service/...") {
+		t.Fatalf("unexpected tasks: %#v", tasks)
+	}
+}
+
+func TestValidatePlanQualityAllowsVerificationOnlyGoal(t *testing.T) {
+	tasks := []SubTask{{
+		ID:          "s1",
+		Description: "Run npm test, npm run build, and npm run lint to verify the existing ChatView implementation still passes.",
+		ToolHints:   []string{"Bash"},
+	}}
+	if err := validatePlanQuality("verify issue #57 is already completed", tasks); err != nil {
+		t.Fatalf("verification-only plan should be accepted: %v", err)
+	}
+}
+
+func TestValidatePlanQualityRejectsMultipleStandaloneValidationForSmallIssue(t *testing.T) {
+	goal := "[GitHub #12] 實作 auth fix\n" +
+		"- [ ] [item-1] update auth service\n" +
+		"- [ ] [item-2] add auth tests\n" +
+		"- [ ] [item-3] update auth docs\n"
+	tasks := []SubTask{
+		{
+			ID:               "s1",
+			Description:      "Update the auth service to fix refresh-token handling.",
+			ToolHints:        []string{"Read", "Edit"},
+			ChecklistItemIDs: []string{"item-1"},
+		},
+		{
+			ID:               "s2",
+			Description:      "Add focused auth tests for refresh-token handling.",
+			ToolHints:        []string{"Read", "Edit"},
+			ChecklistItemIDs: []string{"item-2"},
+		},
+		{
+			ID:               "s3",
+			Description:      "Update auth documentation for the refresh-token behavior.",
+			ToolHints:        []string{"Read", "Edit"},
+			ChecklistItemIDs: []string{"item-3"},
+		},
+		{
+			ID:          "s4",
+			Description: "Run go test ./internal/auth/... to verify the auth service.",
+			ToolHints:   []string{"Bash"},
+		},
+		{
+			ID:          "s5",
+			Description: "Run go test ./internal/app/... to confirm integration coverage.",
+			ToolHints:   []string{"Bash"},
+		},
+	}
+	err := validatePlanQuality(goal, tasks)
+	if err == nil {
+		t.Fatal("multiple standalone validation tasks should reject for small issues")
+	}
+	if !strings.Contains(err.Error(), "over-split validation") {
+		t.Fatalf("error = %v, want over-split validation", err)
+	}
+}
+
+func TestValidatePlanQualityAllowsSeveralStandaloneValidationForLargeChecklist(t *testing.T) {
+	var goal strings.Builder
+	goal.WriteString("[GitHub #109] [Phase 2] Self-hosted browser runtime\n")
+	for i := 1; i <= 25; i++ {
+		goal.WriteString("- [ ] [item-")
+		goal.WriteString(strconv.Itoa(i))
+		goal.WriteString("] acceptance item\n")
+	}
+	driverIDs := make([]string, 0, 19)
+	for i := 7; i <= 25; i++ {
+		driverIDs = append(driverIDs, "item-"+strconv.Itoa(i))
+	}
+	tasks := []SubTask{
+		{
+			ID:               "s1",
+			Description:      "Implement BrowseForge deployment wiring, browser runtime configuration, and profile storage, then run docker compose config to validate deployment syntax.",
+			ToolHints:        []string{"Read", "Edit", "Bash"},
+			ChecklistItemIDs: []string{"item-1", "item-2", "item-3"},
+		},
+		{
+			ID:               "s2",
+			Description:      "Implement the browser_runtime abstraction and login/session model, then run focused backend tests for the runtime package.",
+			ToolHints:        []string{"Read", "Edit", "Bash"},
+			ChecklistItemIDs: []string{"item-4", "item-5", "item-6"},
+		},
+		{
+			ID:               "s3",
+			Description:      "Implement the crawl job contract and Threads/Facebook/Instagram proof-of-concept drivers with normalized evidence output.",
+			ToolHints:        []string{"Read", "Edit", "Bash"},
+			ChecklistItemIDs: driverIDs,
+		},
+		{
+			ID:          "s4",
+			Description: "Run go test ./backend/... to validate backend runtime integration.",
+			ToolHints:   []string{"Bash"},
+		},
+		{
+			ID:          "s5",
+			Description: "Run docker compose config and smoke checks to validate BrowseForge deployment wiring.",
+			ToolHints:   []string{"Bash"},
+		},
+		{
+			ID:          "s6",
+			Description: "Run driver smoke tests for Threads, Facebook, and Instagram session reuse.",
+			ToolHints:   []string{"Bash"},
+		},
+	}
+	if err := validatePlanQuality(goal.String(), tasks); err != nil {
+		t.Fatalf("large checklist should allow up to three standalone validation tasks: %v", err)
+	}
+}
+
+func TestValidateChecklistDeclaration_NoMarkersBypass(t *testing.T) {
+	tasks := []SubTask{{ID: "s1", Description: "do work", ToolHints: []string{"Bash"}}}
+	if err := validateChecklistDeclaration("plain goal without markers", tasks); err != nil {
+		t.Fatalf("legacy goal without [item-N] markers should bypass: %v", err)
+	}
+}
+
+func TestValidateChecklistDeclaration_AllItemsCovered(t *testing.T) {
+	goal := "[GitHub #29] do something\n  - [ ] [item-3] verify build\n  - [ ] [item-5] add tests\n"
+	tasks := []SubTask{
+		{ID: "s1", Description: "fix and verify build", ChecklistItemIDs: []string{"item-3"}},
+		{ID: "s2", Description: "add tests for the fix", ChecklistItemIDs: []string{"item-5"}},
+	}
+	if err := validateChecklistDeclaration(goal, tasks); err != nil {
+		t.Fatalf("full coverage should pass: %v", err)
+	}
+}
+
+func TestValidateChecklistDeclaration_MultipleItemsPerSubTask(t *testing.T) {
+	goal := "[GitHub #80] - [ ] [item-2] X\n - [ ] [item-4] Y\n - [ ] [item-6] Z\n"
+	tasks := []SubTask{
+		{ID: "s1", Description: "do X+Y together", ChecklistItemIDs: []string{"item-2", "item-4"}},
+		{ID: "s2", Description: "do Z", ChecklistItemIDs: []string{"item-6"}},
+	}
+	if err := validateChecklistDeclaration(goal, tasks); err != nil {
+		t.Fatalf("multi-item declaration should pass: %v", err)
+	}
+}
+
+func TestValidateChecklistDeclaration_MissingCoverageRejected(t *testing.T) {
+	// Reproduces #29 / #167 pattern: planner produces fewer sub-tasks than
+	// checklist items has, leaving acceptance items uncovered.
+	goal := "[GitHub #167] - [ ] [item-1] A\n - [ ] [item-2] B\n - [ ] [item-3] C\n - [ ] [item-4] D\n - [ ] [item-5] E\n"
+	tasks := []SubTask{
+		{ID: "s1", Description: "do A", ChecklistItemIDs: []string{"item-1"}},
+		{ID: "s2", Description: "do B+C", ChecklistItemIDs: []string{"item-2", "item-3"}},
+		// items 4 and 5 have no coverage
+	}
+	err := validateChecklistDeclaration(goal, tasks)
+	if err == nil {
+		t.Fatal("missing coverage should reject")
+	}
+	if !strings.Contains(err.Error(), "item-4") || !strings.Contains(err.Error(), "item-5") {
+		t.Errorf("error should name missing items: %v", err)
+	}
+}
+
+func TestValidateChecklistDeclaration_SetupTaskWithEmptyArrayAllowed(t *testing.T) {
+	goal := "[GitHub #123] - [ ] [item-1] A\n - [ ] [item-2] B\n"
+	tasks := []SubTask{
+		{ID: "s0", Description: "scaffold migration (no acceptance item; rationale: prerequisite)", ChecklistItemIDs: []string{}},
+		{ID: "s1", Description: "do A", ChecklistItemIDs: []string{"item-1"}},
+		{ID: "s2", Description: "do B", ChecklistItemIDs: []string{"item-2"}},
+	}
+	if err := validateChecklistDeclaration(goal, tasks); err != nil {
+		t.Fatalf("setup task with empty declaration should not block: %v", err)
+	}
+}

@@ -10,9 +10,9 @@ import (
 
 // MessageContent 統一的訊息內容結構
 type MessageContent struct {
-	Text      string   `json:"text"`                // 文字內容
-	Images    []string `json:"images,omitempty"`    // 圖片檔案路徑列表
-	Caption   string   `json:"caption,omitempty"`   // 圖片說明文字
+	Text      string   `json:"text"`                 // 文字內容
+	Images    []string `json:"images,omitempty"`     // 圖片檔案路徑列表
+	Caption   string   `json:"caption,omitempty"`    // 圖片說明文字
 	MessageID string   `json:"message_id,omitempty"` // 訊息 ID
 }
 
@@ -92,11 +92,16 @@ func (ea *EnhancedAgent) processMultimodalMessage(ctx context.Context, content M
 
 // runWithFiles 使用 Claude Code CLI 的 --file 參數處理檔案
 func (ea *EnhancedAgent) runWithFiles(ctx context.Context, message string, imagePaths []string, onUpdate func(string, bool)) (string, error) {
-	// 類型斷言：確保 client 是 CLIClient
+	// runWithFiles requires EnhancedCLIClient for --file flag support.
+	// Other backends (CodexClient, APIClient) cannot pass image attachments —
+	// the images will be silently dropped, so we surface a notice to the user
+	// before falling back to a text-only Run.
 	cliClient, ok := ea.Agent.client.(*CLIClient)
 	if !ok {
-		// 如果不是 CLIClient（例如 APIClient），回退到普通 Run
-		log.Printf("[enhanced-agent] client is not CLIClient, falling back to regular Run")
+		log.Printf("[enhanced-agent] backend %T does not support file attachments; %d image(s) will be ignored", ea.Agent.client, len(imagePaths))
+		if onUpdate != nil && len(imagePaths) > 0 {
+			onUpdate("⚠️ 目前 AI backend 不支援圖片附件，僅以文字訊息處理。", false)
+		}
 		return ea.Agent.Run(message, onUpdate)
 	}
 
@@ -106,8 +111,9 @@ func (ea *EnhancedAgent) runWithFiles(ctx context.Context, message string, image
 	}
 
 	ps := ea.Agent.current()
+	sessionID := ps.ctx.Session(BackendClaude)
 	log.Printf("[enhanced-agent] calling CLI with %d files, session=%s, project=%s",
-		len(imagePaths), ps.sessionID, ea.Agent.projectDir)
+		len(imagePaths), sessionID, ea.Agent.projectDir)
 
 	if onUpdate != nil {
 		onUpdate("🤖 Claude 正在分析圖片內容...", false)
@@ -116,7 +122,7 @@ func (ea *EnhancedAgent) runWithFiles(ctx context.Context, message string, image
 	// 嘗試使用流式 API（如果支援的話）
 	if len(imagePaths) == 1 {
 		// 單張圖片，使用非流式 API 確保穩定性
-		resp, err := enhancedClient.CallWithFiles(ctx, message, imagePaths, ea.Agent.projectDir, ps.sessionID)
+		resp, err := enhancedClient.CallWithFiles(ctx, message, imagePaths, ea.Agent.projectDir, sessionID)
 		if err != nil {
 			return "", fmt.Errorf("enhanced CLI call error: %w", err)
 		}
@@ -124,11 +130,12 @@ func (ea *EnhancedAgent) runWithFiles(ctx context.Context, message string, image
 		if resp.IsError {
 			return "", fmt.Errorf("Claude analysis error: %s", resp.Result)
 		}
+		ps.ctx.SetSession(BackendClaude, resp.SessionID)
 
 		return resp.Result, nil
 	} else {
 		// 多張圖片，使用流式 API 提供進度回饋
-		resp, err := enhancedClient.CallStreamWithFiles(ctx, message, imagePaths, ea.Agent.projectDir, ps.sessionID,
+		resp, err := enhancedClient.CallStreamWithFiles(ctx, message, imagePaths, ea.Agent.projectDir, sessionID,
 			func(toolName string, toolInput map[string]interface{}) {
 				// 工具使用回調
 				if onUpdate != nil {
@@ -161,6 +168,7 @@ func (ea *EnhancedAgent) runWithFiles(ctx context.Context, message string, image
 		if resp.IsError {
 			return "", fmt.Errorf("Claude analysis error: %s", resp.Result)
 		}
+		ps.ctx.SetSession(BackendClaude, resp.SessionID)
 
 		return resp.Result, nil
 	}

@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	appengine "claude-tg-agent/internal/app/engine"
+	"claude-tg-agent/internal/app/security"
 )
 
 // WebSocketEvent 定義 WebSocket 事件的結構
@@ -309,24 +313,24 @@ func BroadcastPerformanceEvent(metric PerformanceMetrics) {
 	}
 
 	data := map[string]interface{}{
-		"api_latency_ms":        metric.APICallLatency.Milliseconds(),
-		"api_success":           metric.APICallSuccess,
-		"tool_execution_time":   metric.ToolExecutionTime.Milliseconds(),
-		"tool_execution_type":   metric.ToolExecutionType,
-		"tokens_used":           metric.TokensUsed,
-		"estimated_cost":        metric.EstimatedCost,
-		"memory_usage":          metric.MemoryUsage,
-		"error_type":            metric.ErrorType,
-		"chat_id":               metric.ChatID,
-		"agent_type":            metric.AgentType,
-		"timestamp":             metric.Timestamp,
+		"api_latency_ms":      metric.APICallLatency.Milliseconds(),
+		"api_success":         metric.APICallSuccess,
+		"tool_execution_time": metric.ToolExecutionTime.Milliseconds(),
+		"tool_execution_type": metric.ToolExecutionType,
+		"tokens_used":         metric.TokensUsed,
+		"estimated_cost":      metric.EstimatedCost,
+		"memory_usage":        metric.MemoryUsage,
+		"error_type":          metric.ErrorType,
+		"chat_id":             metric.ChatID,
+		"agent_type":          metric.AgentType,
+		"timestamp":           metric.Timestamp,
 	}
 
 	globalWebSocketHub.BroadcastEvent("performance_metric", data)
 }
 
 // BroadcastSecurityEvent 廣播安全事件
-func BroadcastSecurityEvent(event SecurityEvent) {
+func BroadcastSecurityEvent(event security.SecurityEvent) {
 	if globalWebSocketHub == nil {
 		return
 	}
@@ -362,10 +366,43 @@ func BroadcastAgentStatusEvent(chatID int64, status string, details map[string]i
 	globalWebSocketHub.BroadcastEvent("agent_status", data)
 }
 
+// BroadcastReviewEvent broadcasts a compact review summary to connected clients.
+func BroadcastReviewEvent(notification appengine.ReviewNotification) {
+	broadcastReviewEvent(notification, "initial")
+}
+
+func BroadcastReviewEventWithSource(notification appengine.ReviewNotification, source string) {
+	broadcastReviewEvent(notification, source)
+}
+
+func broadcastReviewEvent(notification appengine.ReviewNotification, source string) {
+	if globalWebSocketHub == nil {
+		return
+	}
+	if strings.TrimSpace(source) == "" {
+		source = "initial"
+	}
+
+	data := map[string]interface{}{
+		"task_id":          notification.TaskID,
+		"reviewer_model":   notification.ReviewerModel,
+		"verdict":          notification.Verdict,
+		"overall_score":    notification.OverallScore,
+		"issue_tags":       notification.IssueTags,
+		"advisory_retry":   notification.AdvisoryRetry,
+		"failing_subtasks": notification.FailingSubTasks,
+		"retry_note":       notification.RetryNote,
+		"source":           source,
+		"timestamp":        time.Now(),
+	}
+
+	globalWebSocketHub.BroadcastEvent("review_complete", data)
+}
+
 // generateClientID 生成客戶端 ID
 func generateClientID() string {
 	return time.Now().Format("20060102150405") + "-" +
-		   string(rune('A' + time.Now().Nanosecond()%26))
+		string(rune('A'+time.Now().Nanosecond()%26))
 }
 
 // GetWebSocketStats 獲取 WebSocket 統計資訊

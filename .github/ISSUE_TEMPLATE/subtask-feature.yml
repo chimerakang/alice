@@ -1,0 +1,84 @@
+name: 🟢 Feature Subtask
+description: 新增或擴展功能
+title: "feat: [功能描述]"
+labels: ["feature", "subtask"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # 🟢 Feature Subtask
+
+  - type: textarea
+    id: requirement
+    attributes:
+      label: "✅ 功能需求"
+      description: "清晰列舉此 subtask 要達成的功能"
+      placeholder: |
+        - 新增 POST /api/xxx endpoint
+        - 接受參數：field1, field2
+        - 返回：{ success: bool, data: {...} }
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: "✅ 驗收標準"
+      description: "複製對應的驗收標準模板，完成後逐項勾選"
+      value: |
+        ## Acceptance Criteria
+
+        ### 需求完整性
+        - [ ] 核心功能實現 (所有 requirement 列舉清楚)
+        - [ ] Edge case 考慮 (空值、大值、權限、國際化)
+
+        ### 代碼品質
+        - [ ] 主要邏輯有單元測試
+        - [ ] 端對端測試 / 手動驗證可用
+        - [ ] error message 使用 i18n key (不硬編碼)
+
+        ### 文檔完整
+        - [ ] 新 API / 命令已加入 CLAUDE.md
+        - [ ] 如有新概念，加進 docs/
+        - [ ] 困難決定有註釋說明為什麼
+
+        ### 用戶體驗
+        - [ ] 幫助文本清楚（如有新命令）
+        - [ ] UI 反應合理 (loading state / error state)
+        - [ ] 國際化支援 (中文/英文)
+
+        ### Code Quality
+        - [ ] 無新增 linting 警告
+        - [ ] 無硬編碼敏感資訊
+        - [ ] 代碼可獨立回退（無其他 issue 依賴）
+      required: true
+
+  - type: textarea
+    id: test-plan
+    attributes:
+      label: "🧪 測試計劃"
+      description: "如何驗證功能正確？"
+      placeholder: |
+        1. 手動步驟：...
+        2. 自動測試文件名：...
+        3. 邊界情況：...
+      required: true
+
+  - type: textarea
+    id: related-issues
+    attributes:
+      label: "相關 Issue"
+      description: "是否屬於某個 Epic？是否依賴或被其他 issue 依賴？"
+      placeholder: |
+        epic: #XXX
+        blocks: #YYY
+        depends on: #ZZZ
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: "📝 備註"
+      description: "任何其他相關資訊、設計決定或陷阱"
+      required: false

@@ -2,44 +2,51 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	appengine "claude-tg-agent/internal/app/engine"
+	"claude-tg-agent/internal/app/security"
 )
 
 // AgentInfo represents agent information for the API
 type AgentInfo struct {
-	ChatID       int64      `json:"chat_id"`
-	ThreadID     int        `json:"thread_id"`
-	ProjectDir   string     `json:"project_dir"`
-	SessionID    string     `json:"session_id"`
-	IsActive     bool       `json:"is_active"`
-	IsProcessing bool       `json:"is_processing"`
-	LastActivity time.Time  `json:"last_activity"`
-	CreatedAt    time.Time  `json:"created_at"`
-	ProjectCount int        `json:"project_count"`
-	Stats        TokenStats `json:"stats"`
+	ChatID         int64                       `json:"chat_id"`
+	ThreadID       int                         `json:"thread_id"`
+	ProjectDir     string                      `json:"project_dir"`
+	SessionID      string                      `json:"session_id"`
+	IsActive       bool                        `json:"is_active"`
+	IsProcessing   bool                        `json:"is_processing"`
+	Execution      appengine.ExecutionSnapshot `json:"execution"`
+	ExecutionState string                      `json:"execution_state"`
+	LastActivity   time.Time                   `json:"last_activity"`
+	CreatedAt      time.Time                   `json:"created_at"`
+	ProjectCount   int                         `json:"project_count"`
+	Stats          TokenStats                  `json:"stats"`
 }
 
 // DetailedStats represents enhanced statistics
 type DetailedStats struct {
-	ActiveSessions    int                   `json:"active_sessions"`
-	TotalSessions     int                   `json:"total_sessions"`
-	ToolsExecuted     int64                 `json:"tools_executed"`
-	TotalProjects     int                   `json:"total_projects"`
-	SuccessRate       float64               `json:"success_rate"`
-	UptimeSeconds     int64                 `json:"uptime_seconds"`
-	Timestamp         time.Time             `json:"timestamp"`
-	RecentAgents      []AgentInfo           `json:"recent_agents"`
-	TotalTokensUsed   int64                 `json:"total_tokens_used"`
-	TotalCostUSD      float64               `json:"total_cost_usd"`
+	ActiveSessions  int         `json:"active_sessions"`
+	TotalSessions   int         `json:"total_sessions"`
+	ToolsExecuted   int64       `json:"tools_executed"`
+	TotalProjects   int         `json:"total_projects"`
+	SuccessRate     float64     `json:"success_rate"`
+	UptimeSeconds   int64       `json:"uptime_seconds"`
+	Timestamp       time.Time   `json:"timestamp"`
+	RecentAgents    []AgentInfo `json:"recent_agents"`
+	TotalTokensUsed int64       `json:"total_tokens_used"`
+	TotalCostUSD    float64     `json:"total_cost_usd"`
 }
 
 // WebInterface manages the HTTP server and web dashboard functionality
@@ -101,6 +108,17 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/decisions/export", wi.handleExportDecisions)
 	mux.HandleFunc("/api/decisions/sources/stats", wi.handleSourceStats)
 	mux.HandleFunc("/api/decisions/sources/performance", wi.handleSourcePerformance)
+	mux.HandleFunc("/api/tasks", wi.handleUnifiedTasks)
+	mux.HandleFunc("/api/hermes/active", wi.handleHermesActive)
+	mux.HandleFunc("/api/hermes/resolve", wi.handleHermesResolve)
+	mux.HandleFunc("/api/hermes/tasks", wi.handleHermesTasks)
+	mux.HandleFunc("/api/hermes/snapshots", wi.handleHermesSnapshots)
+	mux.HandleFunc("/api/hermes/stats", wi.handleHermesStats)
+	mux.HandleFunc("/api/runtime/events", wi.handleRuntimeEvents)
+	mux.HandleFunc("/api/memory/preview", wi.handleMemoryPreview)
+	mux.HandleFunc("/api/quality/decomposition", wi.handleQualityDecomposition)
+	mux.HandleFunc("/api/quality/scores", wi.handleQualityScores)
+	mux.HandleFunc("/api/quality/insights", wi.handleQualityInsights)
 	mux.HandleFunc("/api/multiagent/status", wi.handleMultiAgentStatus)
 	mux.HandleFunc("/api/multiagent/stats", wi.handleMultiAgentStats)
 	mux.HandleFunc("/api/multiagent/agents", wi.handleMultiAgentAgents)
@@ -154,6 +172,9 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 
 	// Claude Code Hooks Integration
 	mux.HandleFunc("/api/hooks/claude-code", wi.handleClaudeCodeHook)
+	mux.HandleFunc("/api/hooks/user-prompt-submit", wi.handleUserPromptSubmit)
+	mux.HandleFunc("/api/hooks/codex-session-update", wi.handleCodexSessionUpdate)
+	mux.HandleFunc("/api/hooks/prompt-classifications", wi.handlePromptClassifications)
 
 	// Prometheus metrics endpoint
 	mux.HandleFunc("/metrics", wi.handlePrometheusMetrics)
@@ -161,11 +182,11 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	// 應用安全中間件
 	var handler http.Handler = mux
 
-	if globalSecurityManager != nil {
+	if security.Global() != nil {
 		// 依序應用中間件 (注意順序)
-		handler = globalSecurityManager.SecurityHeadersMiddleware(handler)
-		handler = globalSecurityManager.IPFilterMiddleware(handler)
-		handler = globalSecurityManager.RateLimitMiddleware(handler)
+		handler = security.Global().SecurityHeadersMiddleware(handler)
+		handler = security.Global().IPFilterMiddleware(handler)
+		handler = security.Global().RateLimitMiddleware(handler)
 	}
 
 	return handler
@@ -256,10 +277,96 @@ func (wi *WebInterface) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"status":    "healthy",
 			"timestamp": time.Now(),
 			"telegram":  "active",
+			"jobs":      globalJobTracker.Summary(),
+			"storage":   runtimeStorageHealth(),
+			"hermes":    runtimeHermesStatus(wi.bot),
 		}
 
 		json.NewEncoder(w).Encode(status)
 	})(w, r)
+}
+
+// runtimeHermesStatus surfaces Hermes feature toggles + walking-agent state
+// so dashboards / external probes can confirm whether walking is active and
+// at what watermark. Returns minimal info when bot or config is nil; never
+// includes credentials. Issue #149.
+func runtimeHermesStatus(bot *TelegramBot) map[string]interface{} {
+	out := map[string]interface{}{
+		"enabled": false,
+	}
+	if bot == nil || bot.config == nil {
+		return out
+	}
+	out["enabled"] = bot.config.Hermes.Enabled
+	out["strict_mode_enabled"] = bot.config.Hermes.StrictModeEnabled
+	out["auto_route_complex"] = bot.config.Hermes.AutoRouteComplex
+	out["walking_agent_enabled"] = bot.config.Hermes.WalkingAgentEnabled
+	maxCtx := bot.config.Hermes.WalkingAgentMaxContextTokens
+	if maxCtx <= 0 {
+		maxCtx = 120000
+	}
+	out["walking_agent_max_context_tokens"] = maxCtx
+	if bot.config.Hermes.ReviewTimeoutSeconds > 0 {
+		out["review_timeout_seconds"] = bot.config.Hermes.ReviewTimeoutSeconds
+	} else {
+		out["review_timeout_seconds"] = 120
+	}
+	return out
+}
+
+func runtimeStorageHealth() map[string]interface{} {
+	status := map[string]interface{}{
+		"enabled": globalStorage != nil,
+	}
+	if globalStorage == nil {
+		return status
+	}
+	if err := globalStorage.Health(); err != nil {
+		status["healthy"] = false
+		status["error"] = err.Error()
+		return status
+	}
+	status["healthy"] = true
+
+	sqliteStorage, ok := globalStorage.(*SQLiteStorage)
+	if !ok {
+		status["backend"] = "unknown"
+		return status
+	}
+	status["backend"] = "sqlite"
+	db, ok := sqliteStorage.GetDB().(*sql.DB)
+	if !ok {
+		status["backend_error"] = "sqlite db handle unavailable"
+		return status
+	}
+	if count, err := countRows(db, `SELECT COUNT(*) FROM tasks WHERE status IN ('planning','executing','validating')`); err == nil {
+		status["active_tasks"] = count
+	} else {
+		status["active_tasks_error"] = err.Error()
+	}
+	// After #169 slice 3d the legacy hermes_task_states.status column is no
+	// longer authoritative. Active-task count derives from the latest
+	// snapshot's denormalized state_status, falling back to the legacy
+	// column for tasks created before the first CommitRuntimeStep.
+	if count, err := countRows(db, `
+		SELECT COUNT(*) FROM hermes_task_states AS task
+		WHERE COALESCE((
+			SELECT s.state_status FROM hermes_snapshots s
+			WHERE s.task_id = task.id ORDER BY s.step DESC LIMIT 1
+		), task.status) IN ('planning','executing','validating')`); err == nil {
+		status["active_hermes_tasks"] = count
+	} else {
+		status["active_hermes_tasks_error"] = err.Error()
+	}
+	return status
+}
+
+func countRows(db *sql.DB, query string, args ...any) (int64, error) {
+	var count int64
+	if err := db.QueryRow(query, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // handleStats returns basic statistics about the agent
@@ -344,18 +451,21 @@ func (wi *WebInterface) getAllAgentsInfo() []AgentInfo {
 		if agent == nil {
 			continue
 		}
+		execution := agent.ExecutionSnapshot()
 
 		info := AgentInfo{
-			ChatID:       key.chatID,
-			ThreadID:     key.threadID,
-			ProjectDir:   agent.ProjectDir(),
-			SessionID:    agent.SessionID(),
-			IsActive:     agent.IsActive(),
-			IsProcessing: agent.IsProcessing(),
-			LastActivity: agent.LastActivity(),
-			CreatedAt:    agent.CreatedAt(),
-			ProjectCount: agent.ProjectCount(),
-			Stats:        agent.Stats(),
+			ChatID:         key.chatID,
+			ThreadID:       key.threadID,
+			ProjectDir:     agent.ProjectDir(),
+			SessionID:      agent.SessionID(),
+			IsActive:       agent.IsActive(),
+			IsProcessing:   agent.IsProcessing(),
+			Execution:      execution,
+			ExecutionState: string(execution.State),
+			LastActivity:   agent.LastActivity(),
+			CreatedAt:      agent.CreatedAt(),
+			ProjectCount:   agent.ProjectCount(),
+			Stats:          agent.Stats(),
 		}
 		agentInfos = append(agentInfos, info)
 	}
@@ -379,18 +489,21 @@ func (wi *WebInterface) getAgentInfo(chatID int64, threadID int) *AgentInfo {
 	if !exists || agent == nil {
 		return nil
 	}
+	execution := agent.ExecutionSnapshot()
 
 	return &AgentInfo{
-		ChatID:       chatID,
-		ThreadID:     threadID,
-		ProjectDir:   agent.ProjectDir(),
-		SessionID:    agent.SessionID(),
-		IsActive:     agent.IsActive(),
-		IsProcessing: agent.IsProcessing(),
-		LastActivity: agent.LastActivity(),
-		CreatedAt:    agent.CreatedAt(),
-		ProjectCount: agent.ProjectCount(),
-		Stats:        agent.Stats(),
+		ChatID:         chatID,
+		ThreadID:       threadID,
+		ProjectDir:     agent.ProjectDir(),
+		SessionID:      agent.SessionID(),
+		IsActive:       agent.IsActive(),
+		IsProcessing:   agent.IsProcessing(),
+		Execution:      execution,
+		ExecutionState: string(execution.State),
+		LastActivity:   agent.LastActivity(),
+		CreatedAt:      agent.CreatedAt(),
+		ProjectCount:   agent.ProjectCount(),
+		Stats:          agent.Stats(),
 	}
 }
 
@@ -402,13 +515,13 @@ func (wi *WebInterface) getBasicStats() map[string]interface{} {
 	return map[string]interface{}{
 		"active_sessions":   stats.ActiveSessions,
 		"tools_executed":    stats.ToolsExecuted,
-		"projects":         stats.TotalProjects,
-		"success_rate":     stats.SuccessRate,
-		"uptime_seconds":   stats.UptimeSeconds,
-		"timestamp":        stats.Timestamp,
-		"total_sessions":   stats.TotalSessions,
+		"projects":          stats.TotalProjects,
+		"success_rate":      stats.SuccessRate,
+		"uptime_seconds":    stats.UptimeSeconds,
+		"timestamp":         stats.Timestamp,
+		"total_sessions":    stats.TotalSessions,
 		"total_tokens_used": stats.TotalTokensUsed,
-		"total_cost_usd":   stats.TotalCostUSD,
+		"total_cost_usd":    stats.TotalCostUSD,
 	}
 }
 
@@ -447,17 +560,20 @@ func (wi *WebInterface) getDetailedStats() DetailedStats {
 
 		// Add to recent agents (limit to 5 most recent)
 		if len(recentAgents) < 5 {
+			execution := agent.ExecutionSnapshot()
 			info := AgentInfo{
-				ChatID:       key.chatID,
-				ThreadID:     key.threadID,
-				ProjectDir:   agent.ProjectDir(),
-				SessionID:    agent.SessionID(),
-				IsActive:     agent.IsActive(),
-				IsProcessing: agent.IsProcessing(),
-				LastActivity: agent.LastActivity(),
-				CreatedAt:    agent.CreatedAt(),
-				ProjectCount: agent.ProjectCount(),
-				Stats:        stats,
+				ChatID:         key.chatID,
+				ThreadID:       key.threadID,
+				ProjectDir:     agent.ProjectDir(),
+				SessionID:      agent.SessionID(),
+				IsActive:       agent.IsActive(),
+				IsProcessing:   agent.IsProcessing(),
+				Execution:      execution,
+				ExecutionState: string(execution.State),
+				LastActivity:   agent.LastActivity(),
+				CreatedAt:      agent.CreatedAt(),
+				ProjectCount:   agent.ProjectCount(),
+				Stats:          stats,
 			}
 			recentAgents = append(recentAgents, info)
 		}
@@ -522,6 +638,8 @@ func computeTrendsFromMetrics(metrics []PerformanceMetrics, hours int) map[strin
 	totalLatency := time.Duration(0)
 	totalTokens := 0
 	totalCost := 0.0
+	totalCacheRead := 0
+	totalCacheWrite := 0
 	successful := 0
 	hourlyStats := make(map[int]map[string]interface{})
 
@@ -529,6 +647,8 @@ func computeTrendsFromMetrics(metrics []PerformanceMetrics, hours int) map[strin
 		totalLatency += metric.APICallLatency
 		totalTokens += metric.TokensUsed
 		totalCost += metric.EstimatedCost
+		totalCacheRead += metric.CacheReadTokens
+		totalCacheWrite += metric.CacheWriteTokens
 		if metric.APICallSuccess {
 			successful++
 		}
@@ -540,6 +660,8 @@ func computeTrendsFromMetrics(metrics []PerformanceMetrics, hours int) map[strin
 				"latency_sum": time.Duration(0),
 				"tokens":      0,
 				"cost":        0.0,
+				"cache_read":  0,
+				"cache_write": 0,
 				"errors":      0,
 			}
 		}
@@ -548,19 +670,120 @@ func computeTrendsFromMetrics(metrics []PerformanceMetrics, hours int) map[strin
 		stats["latency_sum"] = stats["latency_sum"].(time.Duration) + metric.APICallLatency
 		stats["tokens"] = stats["tokens"].(int) + metric.TokensUsed
 		stats["cost"] = stats["cost"].(float64) + metric.EstimatedCost
+		stats["cache_read"] = stats["cache_read"].(int) + metric.CacheReadTokens
+		stats["cache_write"] = stats["cache_write"].(int) + metric.CacheWriteTokens
 		if !metric.APICallSuccess || metric.ErrorType != "" {
 			stats["errors"] = stats["errors"].(int) + 1
 		}
 	}
 
+	cacheHitRate := 0.0
+	if totalTokens > 0 {
+		cacheHitRate = float64(totalCacheRead) / float64(totalTokens) * 100
+	}
 	return map[string]interface{}{
-		"period_hours":     hours,
-		"data_points":      len(metrics),
-		"avg_latency_ms":   float64(totalLatency.Nanoseconds()) / float64(len(metrics)) / 1e6,
-		"total_tokens":     totalTokens,
-		"total_cost":       totalCost,
-		"success_rate":     float64(successful) / float64(len(metrics)) * 100,
-		"hourly_breakdown": hourlyStats,
+		"period_hours":       hours,
+		"data_points":        len(metrics),
+		"avg_latency_ms":     float64(totalLatency.Nanoseconds()) / float64(len(metrics)) / 1e6,
+		"total_tokens":       totalTokens,
+		"total_cost":         totalCost,
+		"cache_read_tokens":  totalCacheRead,
+		"cache_write_tokens": totalCacheWrite,
+		"cache_hit_rate":     cacheHitRate,
+		"cache_breakdown":    computeCacheBreakdown(metrics),
+		"success_rate":       float64(successful) / float64(len(metrics)) * 100,
+		"hourly_breakdown":   hourlyStats,
+	}
+}
+
+type cacheBreakdownRow struct {
+	Group                 string  `json:"group"`
+	Calls                 int     `json:"calls"`
+	Tokens                int     `json:"tokens"`
+	InputTokens           int     `json:"input_tokens"`
+	CacheReadTokens       int     `json:"cache_read_tokens"`
+	CacheWriteTokens      int     `json:"cache_write_tokens"`
+	OutputTokens          int     `json:"output_tokens"`
+	Cost                  float64 `json:"cost"`
+	CacheReadInputPercent float64 `json:"cache_read_input_percent"`
+	CacheReadTotalPercent float64 `json:"cache_read_total_percent"`
+}
+
+func computeCacheBreakdown(metrics []PerformanceMetrics) map[string][]cacheBreakdownRow {
+	return map[string][]cacheBreakdownRow{
+		"by_provider": sortedCacheBreakdown(metrics, func(m PerformanceMetrics) string {
+			return cacheProviderForModel(m.Model)
+		}, 0),
+		"by_model": sortedCacheBreakdown(metrics, func(m PerformanceMetrics) string {
+			model := strings.TrimSpace(m.Model)
+			if model == "" {
+				return "unknown"
+			}
+			return model
+		}, 0),
+		"by_project": sortedCacheBreakdown(metrics, func(m PerformanceMetrics) string {
+			project := strings.TrimSpace(m.ProjectPath)
+			if project == "" {
+				return "unknown"
+			}
+			return project
+		}, 10),
+	}
+}
+
+func sortedCacheBreakdown(metrics []PerformanceMetrics, groupFn func(PerformanceMetrics) string, limit int) []cacheBreakdownRow {
+	grouped := make(map[string]*cacheBreakdownRow)
+	for _, metric := range metrics {
+		group := groupFn(metric)
+		row := grouped[group]
+		if row == nil {
+			row = &cacheBreakdownRow{Group: group}
+			grouped[group] = row
+		}
+		row.Calls++
+		row.Tokens += metric.TokensUsed
+		row.InputTokens += metric.InputTokens
+		row.CacheReadTokens += metric.CacheReadTokens
+		row.CacheWriteTokens += metric.CacheWriteTokens
+		row.OutputTokens += metric.OutputTokens
+		row.Cost += metric.EstimatedCost
+	}
+
+	rows := make([]cacheBreakdownRow, 0, len(grouped))
+	for _, row := range grouped {
+		inputDenom := row.InputTokens + row.CacheReadTokens + row.CacheWriteTokens
+		if inputDenom > 0 {
+			row.CacheReadInputPercent = float64(row.CacheReadTokens) * 100 / float64(inputDenom)
+		}
+		if row.Tokens > 0 {
+			row.CacheReadTotalPercent = float64(row.CacheReadTokens) * 100 / float64(row.Tokens)
+		}
+		rows = append(rows, *row)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].Tokens == rows[j].Tokens {
+			return rows[i].Group < rows[j].Group
+		}
+		return rows[i].Tokens > rows[j].Tokens
+	})
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows
+}
+
+func cacheProviderForModel(model string) string {
+	short := ExtractModelShortName(model)
+	switch short {
+	case "haiku", "sonnet", "opus":
+		return "claude"
+	case "codex", "gpt-5.5", "gpt-5.4", "gpt-4o", "gpt-4.1", "gpt", "o3", "o4-mini":
+		return "codex"
+	default:
+		if strings.HasPrefix(short, "gpt-") {
+			return "codex"
+		}
+		return "unknown"
 	}
 }
 
@@ -763,6 +986,341 @@ func (wi *WebInterface) handleRecentDecisions(w http.ResponseWriter, r *http.Req
 	})(w, r)
 }
 
+func (wi *WebInterface) handleRuntimeEvents(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalStorage == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Storage is unavailable",
+			})
+			return
+		}
+
+		query := r.URL.Query()
+		limit := parsePositiveIntParam(query.Get("limit"), 50)
+		offset := parsePositiveIntParam(query.Get("offset"), 0)
+		eventType := strings.TrimSpace(query.Get("type"))
+		taskID := strings.TrimSpace(query.Get("task_id"))
+
+		var (
+			events []RuntimeEventRecord
+			err    error
+		)
+		if taskID != "" {
+			events, err = globalStorage.GetRuntimeEventsByTask(taskID, eventType, limit, offset)
+		} else if eventType != "" {
+			events, err = globalStorage.GetRuntimeEventsByType(eventType, limit)
+		} else {
+			events, err = globalStorage.GetRuntimeEvents(limit, offset)
+		}
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"events":    events,
+			"total":     len(events),
+			"limit":     limit,
+			"offset":    offset,
+			"type":      eventType,
+			"task_id":   taskID,
+			"timestamp": time.Now(),
+		})
+	})(w, r)
+}
+
+// handleUnifiedTasks returns task-centric execution graphs from the transitional
+// #114 schema: tasks -> sub_tasks -> tool_events/artifacts/reviews.
+func (wi *WebInterface) handleUnifiedTasks(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if globalStorage == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Storage is unavailable",
+			})
+			return
+		}
+
+		query, err := parseUnifiedTaskQuery(r)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		tasks, err := globalStorage.ListUnifiedTaskGraphs(query)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": fmt.Sprintf("Database query failed: %v", err),
+			})
+			return
+		}
+		total, err := globalStorage.CountUnifiedTasks(query)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": fmt.Sprintf("Database count failed: %v", err),
+			})
+			return
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"tasks":     tasks,
+			"total":     total,
+			"limit":     query.Limit,
+			"offset":    query.Offset,
+			"timestamp": time.Now(),
+		})
+	})(w, r)
+}
+
+type memoryPreviewSection struct {
+	Source   string `json:"source"`
+	Scope    string `json:"scope"`
+	Priority int    `json:"priority"`
+	Size     int    `json:"size"`
+	Preview  string `json:"preview"`
+}
+
+func (wi *WebInterface) handleMemoryPreview(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		req, err := parseMemoryPreviewRequest(r)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		var taskSource hermesMemoryTaskSource
+		if wi != nil && wi.bot != nil && wi.bot.taskSvc != nil {
+			taskSource = wi.bot.taskSvc
+		}
+		if wi != nil && wi.bot != nil {
+			ctx := wi.bot.getChatContext(chatKey{chatID: req.ChatID, threadID: req.ThreadID}, req.ProjectDir)
+			req.RecentMessages = ctx.RecentMessagesSnapshot()
+			if req.ProjectDir == "" {
+				req.ProjectDir = ctx.ProjectDir
+			}
+		}
+
+		resolver := NewMemoryResolverWithAllSources(taskSource, globalGeneralMemorySource(), defaultStaticHintSourceForProject(req.ProjectDir))
+		bundle, err := resolver.Resolve(r.Context(), req)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": err.Error(),
+			})
+			return
+		}
+
+		sections := make([]memoryPreviewSection, 0, len(bundle.Sections))
+		for _, section := range bundle.Sections {
+			text := strings.TrimSpace(section.Text)
+			sections = append(sections, memoryPreviewSection{
+				Source:   section.Source,
+				Scope:    section.Scope,
+				Priority: section.Priority,
+				Size:     len([]rune(text)),
+				Preview:  clampMemoryText(text, 500),
+			})
+		}
+		rendered := bundle.Render()
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"sections":         sections,
+			"section_count":    len(sections),
+			"rendered_size":    len([]rune(rendered)),
+			"rendered_preview": clampMemoryText(rendered, 1000),
+			"timestamp":        time.Now(),
+		})
+	})(w, r)
+}
+
+func parseMemoryPreviewRequest(r *http.Request) (MemoryRequest, error) {
+	q := r.URL.Query()
+	chatIDRaw := strings.TrimSpace(q.Get("chat_id"))
+	if chatIDRaw == "" {
+		return MemoryRequest{}, fmt.Errorf("chat_id is required")
+	}
+	chatID, err := strconv.ParseInt(chatIDRaw, 10, 64)
+	if err != nil || chatID == 0 {
+		return MemoryRequest{}, fmt.Errorf("chat_id must be a non-zero integer")
+	}
+
+	req := MemoryRequest{
+		ChatID:      chatID,
+		ProjectDir:  strings.TrimSpace(q.Get("project_dir")),
+		UserMessage: strings.TrimSpace(q.Get("message")),
+		Mode:        strings.TrimSpace(q.Get("mode")),
+	}
+	if req.Mode == "" {
+		req.Mode = "preview"
+	}
+	if raw := strings.TrimSpace(q.Get("thread_id")); raw != "" {
+		threadID, err := strconv.Atoi(raw)
+		if err != nil {
+			return MemoryRequest{}, fmt.Errorf("thread_id must be an integer")
+		}
+		req.ThreadID = threadID
+	}
+	if raw := strings.TrimSpace(q.Get("issue")); raw != "" {
+		issueNumber, err := strconv.Atoi(raw)
+		if err != nil || issueNumber <= 0 {
+			return MemoryRequest{}, fmt.Errorf("issue must be a positive integer")
+		}
+		req.IssueNumber = issueNumber
+	}
+	if raw := strings.TrimSpace(q.Get("budget")); raw != "" {
+		budget, err := strconv.Atoi(raw)
+		if err != nil || budget <= 0 {
+			return MemoryRequest{}, fmt.Errorf("budget must be a positive integer")
+		}
+		req.BudgetChars = budget
+	}
+	return req, nil
+}
+
+func (wi *WebInterface) handleQualityDecomposition(w http.ResponseWriter, r *http.Request) {
+	wi.handleQualityStats(w, r, func(window QualityWindow) (interface{}, error) {
+		return globalStorage.GetQualityDecompositionStats(window)
+	})
+}
+
+func (wi *WebInterface) handleQualityScores(w http.ResponseWriter, r *http.Request) {
+	wi.handleQualityStats(w, r, func(window QualityWindow) (interface{}, error) {
+		return globalStorage.GetQualityScoreStats(window)
+	})
+}
+
+func (wi *WebInterface) handleQualityInsights(w http.ResponseWriter, r *http.Request) {
+	wi.handleQualityStats(w, r, func(window QualityWindow) (interface{}, error) {
+		insights, err := globalStorage.GetQualityInsights(window)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]interface{}{
+			"window_start": window.Start,
+			"window_end":   window.End,
+			"insights":     insights,
+		}, nil
+	})
+}
+
+func (wi *WebInterface) handleQualityStats(w http.ResponseWriter, r *http.Request, load func(QualityWindow) (interface{}, error)) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if globalStorage == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{"error": "Storage is unavailable"})
+			return
+		}
+		window, err := ResolveQualityWindow(r.URL.Query().Get("window"), time.Now().UTC())
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]interface{}{"error": err.Error()})
+			return
+		}
+		payload, err := load(window)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": fmt.Sprintf("Quality query failed: %v", err),
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(payload)
+	})(w, r)
+}
+
+func parseUnifiedTaskQuery(r *http.Request) (UnifiedTaskQuery, error) {
+	query := UnifiedTaskQuery{
+		Limit:      parsePositiveIntQuery(r, "limit", 100),
+		Offset:     parseNonNegativeIntQuery(r, "offset", 0),
+		ID:         r.URL.Query().Get("task_id"),
+		ProjectDir: r.URL.Query().Get("project_dir"),
+		Status:     r.URL.Query().Get("status"),
+	}
+	if hasReview := r.URL.Query().Get("has_review"); hasReview != "" {
+		switch strings.ToLower(strings.TrimSpace(hasReview)) {
+		case "1", "true", "yes", "y":
+			value := true
+			query.HasReview = &value
+		case "0", "false", "no", "n":
+			value := false
+			query.HasReview = &value
+		default:
+			return query, fmt.Errorf("invalid has_review value: %q", hasReview)
+		}
+	}
+	if start := r.URL.Query().Get("start_time"); start != "" {
+		parsed, err := parseAPITime(start)
+		if err != nil {
+			return query, fmt.Errorf("invalid start_time format: %w", err)
+		}
+		query.StartTime = &parsed
+	}
+	if end := r.URL.Query().Get("end_time"); end != "" {
+		parsed, err := parseAPITime(end)
+		if err != nil {
+			return query, fmt.Errorf("invalid end_time format: %w", err)
+		}
+		query.EndTime = &parsed
+	}
+	return query, nil
+}
+
+func parsePositiveIntQuery(r *http.Request, key string, fallback int) int {
+	value := r.URL.Query().Get(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func parseNonNegativeIntQuery(r *http.Request, key string, fallback int) int {
+	value := r.URL.Query().Get(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed < 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func parseAPITime(value string) (time.Time, error) {
+	if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return parsed, nil
+	}
+	return time.Parse("2006-01-02T15:04:05Z", value)
+}
+
+func parsePositiveIntParam(value string, fallback int) int {
+	if parsed, err := strconv.Atoi(value); err == nil && parsed > 0 {
+		return parsed
+	}
+	return fallback
+}
+
 // handleDecisionsRange returns decision logs within a specified time range
 // Supports time-based filtering from frontend date picker components
 func (wi *WebInterface) handleDecisionsRange(w http.ResponseWriter, r *http.Request) {
@@ -876,8 +1434,8 @@ func (wi *WebInterface) handleSearchDecisions(w http.ResponseWriter, r *http.Req
 
 		decisions := globalDecisionLogger.SearchDecisions(projectPath, taskType, successOnly)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"decisions":    decisions,
-			"total":        len(decisions),
+			"decisions": decisions,
+			"total":     len(decisions),
 			"filters": map[string]interface{}{
 				"project_path": projectPath,
 				"task_type":    taskType,
@@ -1002,11 +1560,11 @@ func (wi *WebInterface) handleMultiAgentStats(w http.ResponseWriter, r *http.Req
 		}
 
 		response := map[string]interface{}{
-			"enabled":           globalAgentCoordinator.IsEnabled(),
-			"total_agents":      len(agents),
-			"active_agents":     activeAgents,
-			"total_tasks":       totalTasks,
-			"agent_details":     agents,
+			"enabled":       globalAgentCoordinator.IsEnabled(),
+			"total_agents":  len(agents),
+			"active_agents": activeAgents,
+			"total_tasks":   totalTasks,
+			"agent_details": agents,
 			"available_types": []string{
 				"General", "CodeReview", "Testing", "Documentation", "Deployment", "Debug",
 			},
@@ -1401,14 +1959,14 @@ func (wi *WebInterface) handleCostsSummary(w http.ResponseWriter, r *http.Reques
 
 		// Return response
 		response := map[string]interface{}{
-			"period_hours":        hours,
-			"start_time":          startTime.Format(time.RFC3339),
-			"end_time":            endTime.Format(time.RFC3339),
-			"total_cost":          totalCost,
-			"total_calls":         totalCalls,
-			"total_tokens":        totalTokens,
-			"avg_cost_per_call":   avgCostPerCall,
-			"by_model":            costsByModel,
+			"period_hours":      hours,
+			"start_time":        startTime.Format(time.RFC3339),
+			"end_time":          endTime.Format(time.RFC3339),
+			"total_cost":        totalCost,
+			"total_calls":       totalCalls,
+			"total_tokens":      totalTokens,
+			"avg_cost_per_call": avgCostPerCall,
+			"by_model":          costsByModel,
 		}
 
 		json.NewEncoder(w).Encode(response)
@@ -1465,7 +2023,7 @@ func (wi *WebInterface) handleSecurityEvents(w http.ResponseWriter, r *http.Requ
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		if globalSecurityManager == nil {
+		if security.Global() == nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"enabled": false,
 				"message": "Security management is disabled",
@@ -1487,7 +2045,7 @@ func (wi *WebInterface) handleSecurityEvents(w http.ResponseWriter, r *http.Requ
 		startTimeStr := query.Get("start_time")
 		endTimeStr := query.Get("end_time")
 
-		var events []SecurityEvent
+		var events []security.SecurityEvent
 		var err error
 
 		// Check if time range is provided
@@ -1501,27 +2059,27 @@ func (wi *WebInterface) handleSecurityEvents(w http.ResponseWriter, r *http.Requ
 				events, err = globalStorage.GetSecurityEventsByTimeRange(startTime, endTime, limit)
 				if err != nil {
 					log.Printf("Failed to get events by time range: %v", err)
-					events = []SecurityEvent{}
+					events = []security.SecurityEvent{}
 				}
 			} else {
 				// Fall back to manager if time parsing fails
-				events = globalSecurityManager.GetSecurityEvents(limit, severity)
+				events = security.Global().GetSecurityEvents(limit, severity)
 			}
 		} else if globalStorage != nil {
 			// Query all events from database (no time filter)
 			events, err = globalStorage.GetSecurityEvents(limit, 0)
 			if err != nil {
 				log.Printf("Failed to get events from database: %v", err)
-				events = globalSecurityManager.GetSecurityEvents(limit, severity)
+				events = security.Global().GetSecurityEvents(limit, severity)
 			}
 		} else {
 			// Fallback to manager
-			events = globalSecurityManager.GetSecurityEvents(limit, severity)
+			events = security.Global().GetSecurityEvents(limit, severity)
 		}
 
 		// Filter by severity if specified
 		if severity != "" && events != nil {
-			var filtered []SecurityEvent
+			var filtered []security.SecurityEvent
 			for _, e := range events {
 				if e.Severity == severity {
 					filtered = append(filtered, e)
@@ -1548,7 +2106,7 @@ func (wi *WebInterface) handleSecurityStats(w http.ResponseWriter, r *http.Reque
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		if globalSecurityManager == nil {
+		if security.Global() == nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"enabled": false,
 				"message": "Security management is disabled",
@@ -1642,7 +2200,7 @@ func (wi *WebInterface) handleSecurityStats(w http.ResponseWriter, r *http.Reque
 		}
 
 		// Fallback to manager stats (no time filter)
-		stats := globalSecurityManager.GetSecurityStats()
+		stats := security.Global().GetSecurityStats()
 		stats["enabled"] = true
 		stats["timestamp"] = time.Now()
 
@@ -1655,7 +2213,7 @@ func (wi *WebInterface) handleSecurityAudit(w http.ResponseWriter, r *http.Reque
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		if globalSecurityManager == nil {
+		if security.Global() == nil {
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"enabled": false,
 				"message": "Security management is disabled",
@@ -1664,16 +2222,16 @@ func (wi *WebInterface) handleSecurityAudit(w http.ResponseWriter, r *http.Reque
 		}
 
 		// Get events by severity
-		critical := globalSecurityManager.GetSecurityEvents(10, "critical")
-		high := globalSecurityManager.GetSecurityEvents(20, "high")
-		medium := globalSecurityManager.GetSecurityEvents(30, "medium")
-		low := globalSecurityManager.GetSecurityEvents(10, "low")
+		critical := security.Global().GetSecurityEvents(10, "critical")
+		high := security.Global().GetSecurityEvents(20, "high")
+		medium := security.Global().GetSecurityEvents(30, "medium")
+		low := security.Global().GetSecurityEvents(10, "low")
 
-		stats := globalSecurityManager.GetSecurityStats()
+		stats := security.Global().GetSecurityStats()
 
 		response := map[string]interface{}{
-			"enabled":    true,
-			"summary":    stats,
+			"enabled": true,
+			"summary": stats,
 			"events": map[string]interface{}{
 				"critical": critical,
 				"high":     high,
@@ -1807,8 +2365,8 @@ func generatePrometheusMetrics() string {
 	}
 
 	// Security metrics
-	if globalSecurityManager != nil {
-		stats := globalSecurityManager.GetSecurityStats()
+	if security.Global() != nil {
+		stats := security.Global().GetSecurityStats()
 
 		if totalEvents, ok := stats["total_events"].(int); ok {
 			metrics.WriteString("# HELP alice_security_events_total Total security events\n")
@@ -1934,11 +2492,11 @@ func (wi *WebInterface) handleListCheckpoints(w http.ResponseWriter, r *http.Req
 	}
 
 	response := map[string]interface{}{
-		"checkpoints":  checkpoints,
-		"total_count":  len(checkpoints),
-		"project_dir":  projectDir,
-		"limit":        limit,
-		"timestamp":    time.Now(),
+		"checkpoints": checkpoints,
+		"total_count": len(checkpoints),
+		"project_dir": projectDir,
+		"limit":       limit,
+		"timestamp":   time.Now(),
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
@@ -1999,11 +2557,11 @@ func (wi *WebInterface) handleCreateCheckpoint(w http.ResponseWriter, r *http.Re
 
 		// Parse request body
 		var req struct {
-			ProjectDir     string `json:"project_dir"`
-			Description    string `json:"description"`
-			SessionID      string `json:"session_id,omitempty"`
-			ChatID         int64  `json:"chat_id,omitempty"`
-			DecisionLogID  string `json:"decision_log_id,omitempty"`
+			ProjectDir    string `json:"project_dir"`
+			Description   string `json:"description"`
+			SessionID     string `json:"session_id,omitempty"`
+			ChatID        int64  `json:"chat_id,omitempty"`
+			DecisionLogID string `json:"decision_log_id,omitempty"`
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2034,7 +2592,7 @@ func (wi *WebInterface) handleCreateCheckpoint(w http.ResponseWriter, r *http.Re
 			TriggerManual,
 			req.SessionID,
 			req.ChatID,
-			"", // No dangerous operation for manual checkpoints
+			"",                // No dangerous operation for manual checkpoints
 			req.DecisionLogID, // Use decision_log_id from request
 		)
 		if err != nil {
@@ -2211,12 +2769,12 @@ func (wi *WebInterface) handleAgentReset(w http.ResponseWriter, r *http.Request)
 		// Broadcast WebSocket event for real-time monitoring
 		if globalWebSocketHub != nil {
 			resetEvent := map[string]interface{}{
-				"chat_id":               req.ChatID,
-				"thread_id":             req.ThreadID,
-				"previous_api_calls":    stats.APICallCount,
-				"previous_input_tokens": stats.TotalInputTokens,
+				"chat_id":                req.ChatID,
+				"thread_id":              req.ThreadID,
+				"previous_api_calls":     stats.APICallCount,
+				"previous_input_tokens":  stats.TotalInputTokens,
 				"previous_output_tokens": stats.TotalOutputTokens,
-				"timestamp":             time.Now(),
+				"timestamp":              time.Now(),
 			}
 			globalWebSocketHub.BroadcastEvent("agent_reset", resetEvent)
 		}
@@ -2237,6 +2795,7 @@ func (wi *WebInterface) handleAgentReset(w http.ResponseWriter, r *http.Request)
 		json.NewEncoder(w).Encode(response)
 	})(w, r)
 }
+
 // handleAgentSetProject switches an agent's project directory
 func (wi *WebInterface) handleAgentSetProject(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
@@ -2296,10 +2855,10 @@ func (wi *WebInterface) handleAgentSetProject(w http.ResponseWriter, r *http.Req
 		// Broadcast WebSocket event for real-time monitoring
 		if globalWebSocketHub != nil {
 			projectChangeEvent := map[string]interface{}{
-				"chat_id":               req.ChatID,
-				"thread_id":             req.ThreadID,
-				"previous_project_dir":  previousProjectDir,
-				"new_project_dir":       req.ProjectDir,
+				"chat_id":              req.ChatID,
+				"thread_id":            req.ThreadID,
+				"previous_project_dir": previousProjectDir,
+				"new_project_dir":      req.ProjectDir,
 			}
 
 			globalWebSocketHub.BroadcastEvent("agent_project_changed", projectChangeEvent)
@@ -2345,9 +2904,24 @@ func (wi *WebInterface) handleModelRoutingStatus(w http.ResponseWriter, r *http.
 			case "deep":
 				mode = "deep"
 				modelName = wi.bot.config.ModelRouting.DeepModel
-			default:
+			case "gpt-fast":
+				mode = "gpt-fast"
+				modelName = wi.bot.config.ModelRouting.CodexFastModel
+			case "gpt-smart":
+				mode = "gpt-smart"
+				modelName = wi.bot.config.ModelRouting.CodexSmartModel
+			case "gpt-deep":
+				mode = "gpt-deep"
+				modelName = wi.bot.config.ModelRouting.CodexDeepModel
+			case "plan":
+				mode = "plan"
+				modelName = fmt.Sprintf("%s → %s", wi.bot.config.ModelRouting.PlanModel, wi.bot.config.ModelRouting.ExecuteModel)
+			case "":
 				mode = "auto"
-				modelName = wi.bot.config.Model // Default model
+				modelName = wi.bot.config.Model
+			default:
+				mode = "custom"
+				modelName = pref
 			}
 
 			preferences[chatKey] = map[string]interface{}{
@@ -2391,7 +2965,7 @@ func (wi *WebInterface) handleModelRoutingSet(w http.ResponseWriter, r *http.Req
 		var req struct {
 			ChatID   int64  `json:"chat_id"`
 			ThreadID int    `json:"thread_id"`
-			Mode     string `json:"mode"` // "fast", "deep", or "auto"
+			Mode     string `json:"mode"` // "fast", "smart", "deep", "gpt-fast", "gpt-smart", "gpt-deep", "plan", "auto", or a model name
 		}
 
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -2399,9 +2973,9 @@ func (wi *WebInterface) handleModelRoutingSet(w http.ResponseWriter, r *http.Req
 			return
 		}
 
-		// Validate mode
-		if req.Mode != "fast" && req.Mode != "deep" && req.Mode != "auto" {
-			http.Error(w, "Invalid mode. Must be 'fast', 'deep', or 'auto'", http.StatusBadRequest)
+		req.Mode = strings.TrimSpace(req.Mode)
+		if req.Mode == "" {
+			http.Error(w, "mode is required", http.StatusBadRequest)
 			return
 		}
 
@@ -2426,9 +3000,24 @@ func (wi *WebInterface) handleModelRoutingSet(w http.ResponseWriter, r *http.Req
 		case "deep":
 			modeValue = "deep"
 			modelName = wi.bot.config.ModelRouting.DeepModel
+		case "gpt-fast":
+			modeValue = "gpt-fast"
+			modelName = wi.bot.config.ModelRouting.CodexFastModel
+		case "gpt-smart":
+			modeValue = "gpt-smart"
+			modelName = wi.bot.config.ModelRouting.CodexSmartModel
+		case "gpt-deep":
+			modeValue = "gpt-deep"
+			modelName = wi.bot.config.ModelRouting.CodexDeepModel
+		case "plan":
+			modeValue = "plan"
+			modelName = fmt.Sprintf("%s → %s", wi.bot.config.ModelRouting.PlanModel, wi.bot.config.ModelRouting.ExecuteModel)
 		case "auto":
 			modeValue = "" // Empty string means auto mode
 			modelName = wi.bot.config.Model
+		default:
+			modeValue = req.Mode
+			modelName = req.Mode
 		}
 
 		wi.bot.setUserModelPreference(key, modeValue)

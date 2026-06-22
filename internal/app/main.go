@@ -11,12 +11,14 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"claude-tg-agent/internal/app/security"
 )
 
 const Version = "1.0.1"
 
 type ModelPricingConfig struct {
-	Haiku  struct {
+	Haiku struct {
 		Input  float64 `json:"input"`  // per 1M tokens
 		Output float64 `json:"output"` // per 1M tokens
 	} `json:"haiku"`
@@ -28,6 +30,14 @@ type ModelPricingConfig struct {
 		Input  float64 `json:"input"`
 		Output float64 `json:"output"`
 	} `json:"opus"`
+	// OpusFast is the premium Fast Mode tier for Opus models (research preview).
+	// Pricing per Anthropic docs: Opus 4.8 fast = $10/$50 per MTok; Opus 4.6/4.7
+	// fast = $30/$150. Defaults follow 4.8. Currently unused at runtime — gated
+	// on Claude Code CLI exposing a headless fast-mode flag. See issue #178.
+	OpusFast struct {
+		Input  float64 `json:"input"`
+		Output float64 `json:"output"`
+	} `json:"opus_fast"`
 }
 
 type Config struct {
@@ -39,12 +49,12 @@ type Config struct {
 
 	// Web Interface Settings
 	EnableWebInterface bool   `json:"enable_web_interface"`
-	WebPort           string `json:"web_port"`
-	WebStaticDir      string `json:"web_static_dir"`
-	WebAPIToken       string `json:"web_api_token"` // Bearer token for control endpoints
+	WebPort            string `json:"web_port"`
+	WebStaticDir       string `json:"web_static_dir"`
+	WebAPIToken        string `json:"web_api_token"` // Bearer token for control endpoints
 
 	// Transparency Settings
-	EnableDecisionLogging bool `json:"enable_decision_logging"`
+	EnableDecisionLogging bool   `json:"enable_decision_logging"`
 	DecisionLogLevel      string `json:"decision_log_level"` // "off", "basic", "detailed"
 
 	// Multi-Agent Settings
@@ -55,13 +65,13 @@ type Config struct {
 	PerformanceMetricsRetention int  `json:"performance_metrics_retention"` // hours
 
 	// Security Settings
-	Security SecurityConfig `json:"security"`
+	Security security.SecurityConfig `json:"security"`
 
 	// Storage Settings
-	EnablePersistence   bool   `json:"enable_persistence"`
-	DatabasePath        string `json:"database_path"`
-	DataRetentionDays   int    `json:"data_retention_days"`
-	EnableDataCleanup   bool   `json:"enable_data_cleanup"`
+	EnablePersistence bool   `json:"enable_persistence"`
+	DatabasePath      string `json:"database_path"`
+	DataRetentionDays int    `json:"data_retention_days"`
+	EnableDataCleanup bool   `json:"enable_data_cleanup"`
 
 	// Multimedia Settings
 	Multimedia MultimediaConfig `json:"multimedia"`
@@ -69,11 +79,17 @@ type Config struct {
 	// HTML Rendering Settings
 	Rendering RenderingConfig `json:"rendering"`
 
+	// Codex CLI observe-only interception.
+	CodexInterception CodexInterceptionConfig `json:"codex_interception"`
+
 	// Model Routing Settings
 	ModelRouting ModelRoutingConfig `json:"model_routing"`
 
 	// Model Pricing Settings
 	ModelPricing ModelPricingConfig `json:"model_pricing"`
+
+	// AI Backend Selection: "claude" (default), "codex", "api"
+	AIBackend string `json:"ai_backend"`
 
 	// CLI Settings
 	MaxTurns          int `json:"max_turns"`           // max conversation turns per CLI invocation (default 50)
@@ -91,22 +107,96 @@ type HermesConfig struct {
 	Enabled bool              `json:"enabled"`
 	Hooks   HermesHooksConfig `json:"hooks"`
 
+	// StrictModeEnabled enables hard review gating by default.
+	StrictModeEnabled bool `json:"strict_mode_enabled"`
+
+	// ReviewTimeoutSeconds caps the per-review CLI call. 0 = use engine default
+	// (currently 120s). Operators bump this when reviewing on opus or with very
+	// large prompts; lower it when running haiku. See issue #147.
+	ReviewTimeoutSeconds int `json:"review_timeout_seconds"`
+
+	// WalkingAgentEnabled keeps the same Claude session alive across consecutive
+	// Executor sub-tasks of one Hermes task (when they share a model), instead of
+	// the legacy "clear session per sub-task" pattern. Saves cache_creation
+	// surcharge (1.25x rate) and cold-start latency. Round 2+ sub-tasks send
+	// only the new sub-task description; the session transcript carries goal +
+	// rules + prior sub-task outcomes. Falls back to a fresh session when the
+	// model changes (heavy <-> light executor) or accumulated context exceeds
+	// WalkingAgentMaxContextTokens. See issue #149 + docs/arch/hermes-walking-agent.md.
+	WalkingAgentEnabled bool `json:"walking_agent_enabled"`
+
+	// WalkingAgentMaxContextTokens is the watermark above which the walking
+	// session is force-cleared to avoid hitting the 200K context window. 0 =
+	// engine default 120000. See issue #149.
+	WalkingAgentMaxContextTokens int `json:"walking_agent_max_context_tokens"`
+
 	// Model overrides (defaults to ModelRoutingConfig values when empty)
 	PlannerModel  string `json:"planner_model"`  // e.g. "claude-opus-4-7"
 	ExecutorModel string `json:"executor_model"` // e.g. "claude-haiku-4-5-20251001"
 
+	// PlannerEffort caps the CLI --effort level for the Planner phase
+	// (low/medium/high/xhigh/max). Opus 4.8 defaults effort to "high" on every
+	// surface, which makes the Planner over-reason and emit a prose summary
+	// ("Plan emitted successfully…") instead of firing the emit_plan tool —
+	// the JSON parse then fails after retries. Planning is schema-filling, not
+	// deep reasoning, so a lower effort keeps the model on-task. Empty falls
+	// back to defaultPlannerEffort; "off"/"none" omits the flag entirely. See #178.
+	PlannerEffort string `json:"planner_effort"`
+
+	// Fast Mode toggles (per-phase; inert until Claude Code CLI exposes a
+	// headless fast-mode flag — see #178). Recommended targets: planner
+	// (pure reasoning, no tools) and reviewer (JSON-only output). Executor
+	// stays on standard tier because Fast Mode does not accelerate tool
+	// execution (file_patch / build / test dominate wall time).
+	PlannerFastMode  bool `json:"planner_fast_mode"`
+	ReviewerFastMode bool `json:"reviewer_fast_mode"`
+
+	// HeavyExecutorModel overrides ExecutorModel for sub-tasks classified as
+	// substantive code work (Edit/Write tool hints or implementation verbs in
+	// the description). Defaults to ModelRoutingConfig.SmartModel when empty.
+	// Set equal to ExecutorModel to disable the upgrade.
+	HeavyExecutorModel string `json:"heavy_executor_model"`
+
+	// Codex tier overrides — used by /ghermes to run Hermes on the GPT/Codex backend
+	// instead of Claude. Each falls back to ModelRoutingConfig.Codex*Model when empty.
+	CodexPlannerModel       string `json:"codex_planner_model"`
+	CodexExecutorModel      string `json:"codex_executor_model"`
+	CodexHeavyExecutorModel string `json:"codex_heavy_executor_model"`
+
 	// Retry limits
-	MaxRetriesPerSubtask    int `json:"max_retries_per_subtask"`    // default 3
-	MaxPlannerJSONRetries   int `json:"max_planner_json_retries"`   // default 3
+	MaxRetriesPerSubtask  int `json:"max_retries_per_subtask"`  // default 3
+	MaxPlannerJSONRetries int `json:"max_planner_json_retries"` // default 3
 
-	// Interrupt behaviour: "queue" | "interrupt" | "inject"
-	InterruptPolicy string `json:"interrupt_policy"` // default "queue"
+	// InterruptPolicy is retained as an unused field so existing config.json
+	// files load without "unknown field" errors. Behaviour is fixed at "inject"
+	// (incoming messages append to Accumulated as user feedback); the runtime
+	// no longer reads this value.
+	InterruptPolicy string `json:"interrupt_policy,omitempty"`
 
-	// Progress verbosity: "minimal" | "normal" | "verbose"
-	ProgressVerbosity string `json:"progress_verbosity"` // default "normal"
+	// ProgressVerbosity is retained as an unused field so existing config.json
+	// files load without "unknown field" errors. The reporter now emits a
+	// fixed, minimal sequence (plan summary + failure diagnostics + OnDone);
+	// operators rely on the dashboard for in-progress detail.
+	ProgressVerbosity string `json:"progress_verbosity,omitempty"`
+
+	// AutoRouteComplex enables Complexity Gate auto-routing: natural-language
+	// messages classified as complex start Hermes automatically without
+	// requiring the /hermes command. Moderate and trivial messages keep
+	// going through the regular model routing path.
+	AutoRouteComplex bool `json:"auto_route_complex"` // default false
 
 	// Resource limits
 	Budget HermesBudgetConfig `json:"budget"`
+
+	// Preflight optionally runs a cheap completion check before starting an
+	// issue-backed Hermes task. It can stop duplicate runs before planner/executor
+	// spend Opus/Sonnet-scale tokens.
+	Preflight HermesPreflightConfig `json:"preflight"`
+
+	// TaskRetry controls task-level re-plan retry on low review score.
+	// Disabled by default; opt in via "task_retry": {"enabled": true}.
+	// See engine.TaskRetryConfig for field semantics.
+	TaskRetry HermesTaskRetryConfig `json:"task_retry"`
 
 	// PromptsDir is the directory containing planner_rules.md and executor_rules.md.
 	// Defaults to "internal/app/hermes/prompts" relative to the working directory.
@@ -135,7 +225,7 @@ type GithubIntegrationConfig struct {
 	// FailureLabel is added to the Issue when Hermes execution fails.
 	FailureLabel string `json:"mark_failure_label"`
 
-	// TriggerTaskSync runs `gh` task-sync on Hermes completion (best-effort).
+	// TriggerTaskSync runs the local /task-sync maintenance command on Hermes completion (best-effort).
 	TriggerTaskSync bool `json:"trigger_task_sync_on_complete"`
 
 	// ComplexityBudgetMap maps complexity labels (e.g. "complexity:small") to budget overrides.
@@ -146,6 +236,28 @@ type GithubIntegrationConfig struct {
 type HermesBudgetConfig struct {
 	MaxTotalTokens      int `json:"max_total_tokens"`      // default 500000; 0 = unlimited
 	MaxWallclockSeconds int `json:"max_wallclock_seconds"` // default 600; 0 = unlimited
+}
+
+type HermesPreflightConfig struct {
+	Enabled             bool   `json:"enabled"`
+	Model               string `json:"model"`                // default ModelRouting.FastModel / Haiku
+	CompletionThreshold int    `json:"completion_threshold"` // default 90
+	TimeoutSeconds      int    `json:"timeout_seconds"`      // default 20
+	// Parallel runs the preflight Haiku check concurrently with the Planner
+	// (Phase 2.6.A, OpenAI Agents SDK `run_in_parallel=True` pattern).
+	// When tripwired (verdict says skip), the running task is interrupted.
+	// When false (default), preflight blocks before the Planner kicks off
+	// and its augmented goal is forwarded to the Planner.
+	Parallel bool `json:"parallel"`
+}
+
+// HermesTaskRetryConfig is the JSON-config mirror of engine.TaskRetryConfig.
+// Keep fields aligned with engine.TaskRetryConfig — telegram.go converts
+// between the two via direct type conversion.
+type HermesTaskRetryConfig struct {
+	Enabled        bool `json:"enabled"`          // default false
+	ScoreThreshold int  `json:"score_threshold"`  // default 60 (applied in engine)
+	MaxTaskRetries int  `json:"max_task_retries"` // default 1 (applied in engine)
 }
 
 // HermesHooksConfig controls which tool execution hooks are active.
@@ -164,11 +276,11 @@ type CostRateConfig struct {
 
 // HermesSummaryConfig controls task completion summary reporting.
 type HermesSummaryConfig struct {
-	Enabled            bool                       `json:"enabled"`             // whether to generate summaries
-	Verbosity          string                     `json:"verbosity"`           // "minimal" or "detailed"
-	IncludeCostEst     bool                       `json:"include_cost_estimate"`
-	Targets            []string                   `json:"targets"`             // where to push summaries ("telegram", "github")
-	CostRates          map[string]CostRateConfig `json:"cost_rates"`          // per-model pricing
+	Enabled        bool                      `json:"enabled"`   // whether to generate summaries
+	Verbosity      string                    `json:"verbosity"` // "minimal" or "detailed"
+	IncludeCostEst bool                      `json:"include_cost_estimate"`
+	Targets        []string                  `json:"targets"`    // where to push summaries ("telegram", "github")
+	CostRates      map[string]CostRateConfig `json:"cost_rates"` // per-model pricing
 }
 
 // HermesDefaults returns a HermesConfig with sensible defaults filled in.
@@ -179,18 +291,17 @@ func HermesDefaults(cfg HermesConfig) HermesConfig {
 	if cfg.MaxPlannerJSONRetries == 0 {
 		cfg.MaxPlannerJSONRetries = 3
 	}
-	if cfg.InterruptPolicy == "" {
-		cfg.InterruptPolicy = "queue"
+	if cfg.PlannerEffort == "" {
+		cfg.PlannerEffort = defaultPlannerEffort
 	}
-	if cfg.ProgressVerbosity == "" {
-		cfg.ProgressVerbosity = "normal"
+	if cfg.Preflight.CompletionThreshold == 0 {
+		cfg.Preflight.CompletionThreshold = 90
 	}
-	if cfg.Budget.MaxTotalTokens == 0 {
-		cfg.Budget.MaxTotalTokens = 500_000
+	if cfg.Preflight.TimeoutSeconds == 0 {
+		cfg.Preflight.TimeoutSeconds = 20
 	}
-	if cfg.Budget.MaxWallclockSeconds == 0 {
-		cfg.Budget.MaxWallclockSeconds = 600
-	}
+	// Budget defaults intentionally not filled in: 0 means unlimited and
+	// must flow through unchanged. Operators set explicit caps in config.json.
 	if cfg.Summary.Verbosity == "" {
 		cfg.Summary.Verbosity = "minimal"
 	}
@@ -200,8 +311,12 @@ func HermesDefaults(cfg HermesConfig) HermesConfig {
 	if cfg.Summary.CostRates == nil {
 		cfg.Summary.CostRates = make(map[string]CostRateConfig)
 		cfg.Summary.CostRates["claude-opus-4-7"] = CostRateConfig{
-			InputPerMToken:  15.0,
-			OutputPerMToken: 75.0,
+			InputPerMToken:  5.0,
+			OutputPerMToken: 25.0,
+		}
+		cfg.Summary.CostRates["claude-opus-4-7-fast"] = CostRateConfig{
+			InputPerMToken:  10.0,
+			OutputPerMToken: 50.0,
 		}
 		cfg.Summary.CostRates["claude-sonnet-4-6"] = CostRateConfig{
 			InputPerMToken:  3.0,
@@ -217,25 +332,25 @@ func HermesDefaults(cfg HermesConfig) HermesConfig {
 
 // BackendConfig configures execution backends
 type BackendConfig struct {
-	Default string             `json:"default"` // default backend name
+	Default string              `json:"default"` // default backend name
 	Docker  DockerBackendConfig `json:"docker"`
 	SSH     SSHBackendConfig    `json:"ssh"`
 }
 
 // DockerBackendConfig configures the Docker execution backend
 type DockerBackendConfig struct {
-	Enabled        bool   `json:"enabled"`
-	Image          string `json:"image"`
-	AutoCleanup    bool   `json:"auto_cleanup"`
-	Network        string `json:"network"`
-	MemoryLimit    string `json:"memory_limit"`
-	CPULimit       string `json:"cpu_limit"`
+	Enabled     bool   `json:"enabled"`
+	Image       string `json:"image"`
+	AutoCleanup bool   `json:"auto_cleanup"`
+	Network     string `json:"network"`
+	MemoryLimit string `json:"memory_limit"`
+	CPULimit    string `json:"cpu_limit"`
 }
 
 // SSHBackendConfig configures SSH execution backends
 type SSHBackendConfig struct {
-	Enabled bool                       `json:"enabled"`
-	Hosts   map[string]SSHHostConfig   `json:"hosts"`
+	Enabled bool                     `json:"enabled"`
+	Hosts   map[string]SSHHostConfig `json:"hosts"`
 }
 
 // SSHHostConfig configures a single SSH host
@@ -248,35 +363,35 @@ type SSHHostConfig struct {
 
 func LoadConfig() (*Config, error) {
 	config := &Config{
-		Model:                 "sonnet",
-		DefaultProjectDir:     ".",
-		WebPort:               "8080",
-		WebStaticDir:          "./static",
+		Model:                       "sonnet",
+		DefaultProjectDir:           ".",
+		WebPort:                     "8080",
+		WebStaticDir:                "./static",
 		EnableDecisionLogging:       true,
 		DecisionLogLevel:            "detailed",
-		EnableMultiAgent:            false, // Disabled by default (experimental)
-		EnablePerformanceMonitoring: true,  // Enabled by default
-		PerformanceMetricsRetention: 24,    // 24 hours default
-		EnablePersistence:           true,  // Enable SQLite persistence by default
+		EnableMultiAgent:            false,             // Disabled by default (experimental)
+		EnablePerformanceMonitoring: true,              // Enabled by default
+		PerformanceMetricsRetention: 24,                // 24 hours default
+		EnablePersistence:           true,              // Enable SQLite persistence by default
 		DatabasePath:                "./data/alice.db", // Default database path
-		DataRetentionDays:           30,    // Keep 30 days of data
-		EnableDataCleanup:           true,  // Enable automatic cleanup
-		Security: SecurityConfig{
+		DataRetentionDays:           30,                // Keep 30 days of data
+		EnableDataCleanup:           true,              // Enable automatic cleanup
+		Security: security.SecurityConfig{
 			EnableRateLimiting:    true,
-			RateLimitRPM:          120,  // 120 requests per minute (SPA makes many concurrent calls)
-			RateLimitBurst:        30,   // 30 burst capacity (SPA initial load ~15 parallel requests)
+			RateLimitRPM:          120, // 120 requests per minute (SPA makes many concurrent calls)
+			RateLimitBurst:        30,  // 30 burst capacity (SPA initial load ~15 parallel requests)
 			EnablePIIDetection:    true,
 			EnableAuditLogging:    true,
-			DataRetentionDays:     30,   // 30 days default
+			DataRetentionDays:     30,    // 30 days default
 			RequireAuthentication: false, // Disabled by default
-			SessionTimeoutMinutes: 60,   // 1 hour
-			MaxConcurrentSessions: 100,  // 100 concurrent sessions
+			SessionTimeoutMinutes: 60,    // 1 hour
+			MaxConcurrentSessions: 100,   // 100 concurrent sessions
 		},
 		Multimedia: MultimediaConfig{
 			EnablePhotoSupport:  true,
 			EnableVoiceSupport:  true,
-			MaxFileSizeMB:       20,             // 20MB limit
-			TempDownloadDir:     "./temp/media", // Temporary download directory
+			MaxFileSizeMB:       20,               // 20MB limit
+			TempDownloadDir:     "./temp/media",   // Temporary download directory
 			VoiceToTextProvider: "openai_whisper", // Default to OpenAI Whisper
 		},
 		Rendering: RenderingConfig{
@@ -302,15 +417,20 @@ func LoadConfig() (*Config, error) {
 			},
 		},
 		ModelRouting: ModelRoutingConfig{
-			EnableDynamicRouting: false, // Disabled by default
-			FastModel:            "claude-haiku-4-5-20251001",
-			SmartModel:           "claude-sonnet-4-6",           // /smart: balanced Sonnet
-			DeepModel:            "claude-opus-4-6",
-			PlanModel:            "claude-opus-4-6",            // OpusPlan: Opus for planning
-			ExecuteModel:         "claude-sonnet-4-5-20250929", // OpusPlan: Sonnet for execution
-			UseGPT4oMini:         false,
+			EnableDynamicRouting:  false, // Disabled by default
+			FastModel:             "claude-haiku-4-5-20251001",
+			SmartModel:            "claude-sonnet-4-6", // /smart: configured balanced model
+			DeepModel:             "claude-opus-4-6",
+			PlanModel:             "claude-opus-4-6",            // Plan/Execute: planning phase model
+			ExecuteModel:          "claude-sonnet-4-5-20250929", // Plan/Execute: execution phase model
+			CodexFastModel:        "gpt-5.4-mini",               // /gfast: fast GPT tier
+			CodexSmartModel:       "gpt-5.4",                    // /gsmart: balanced GPT tier
+			CodexDeepModel:        "gpt-5.5",                    // /gdeep: powerful GPT tier (gpt-5.5-pro is API-key-only)
+			UseGPT4oMini:          false,
 			StickySession:         true,
-			SessionIdleTimeoutMin: 5,
+			SessionIdleTimeoutMin: 1440, // 24h, see #170
+			StickyMode:            true,
+			SessionIdleTimeout:    1440,
 		},
 	}
 
@@ -319,8 +439,10 @@ func LoadConfig() (*Config, error) {
 	config.ModelPricing.Haiku.Output = 5.00
 	config.ModelPricing.Sonnet.Input = 3.00
 	config.ModelPricing.Sonnet.Output = 15.00
-	config.ModelPricing.Opus.Input = 15.00
-	config.ModelPricing.Opus.Output = 75.00
+	config.ModelPricing.Opus.Input = 5.00
+	config.ModelPricing.Opus.Output = 25.00
+	config.ModelPricing.OpusFast.Input = 10.00
+	config.ModelPricing.OpusFast.Output = 50.00
 
 	// 優先從 config.json 讀取
 	if data, err := os.ReadFile("config.json"); err == nil {
@@ -328,6 +450,7 @@ func LoadConfig() (*Config, error) {
 			return nil, fmt.Errorf("parse config.json: %w", err)
 		}
 	}
+	config.ModelRouting.Normalize()
 
 	// 環境變數覆蓋（方便 Docker 部署）
 	if v := os.Getenv("TELEGRAM_BOT_TOKEN"); v != "" {
@@ -502,6 +625,11 @@ func Main() {
 	if err != nil {
 		log.Fatalf("❌ Config error: %v", err)
 	}
+	runtimeLock, err := AcquireRuntimeLock(runtimeLockPath(config.DatabasePath))
+	if err != nil {
+		log.Fatalf("❌ Runtime lock error: %v", err)
+	}
+	defer runtimeLock.Close()
 
 	log.Printf("🚀 Starting Claude TG Agent (CLI mode)")
 	log.Printf("   Model: %s", config.Model)
@@ -519,6 +647,27 @@ func Main() {
 		config.ModelPricing.Haiku.Input, config.ModelPricing.Haiku.Output,
 		config.ModelPricing.Sonnet.Input, config.ModelPricing.Sonnet.Output,
 		config.ModelPricing.Opus.Input, config.ModelPricing.Opus.Output)
+
+	// Planner effort: cap the CLI --effort for the planning phase below Opus
+	// 4.8's "high" surface default so it fires emit_plan rather than narrating
+	// a prose plan summary. See HermesConfig.PlannerEffort + #178.
+	SetPlannerEffort(HermesDefaults(config.Hermes).PlannerEffort)
+	log.Printf("   Hermes planner effort: %s", currentPlannerEffort())
+
+	// Walking-agent (issue #149) forces 5m prompt-cache TTL on every claude
+	// CLI invocation when enabled. Otherwise keep Anthropic's default
+	// (currently 1h on most builds — 2x cache_write rate, fine for long
+	// interactive sessions but expensive for short sub-task workflows).
+	if config.Hermes.WalkingAgentEnabled {
+		SetForcePromptCaching5m(true)
+		log.Printf("   Hermes walking-agent: enabled (FORCE_PROMPT_CACHING_5M=1, max_context=%d)",
+			func() int {
+				if config.Hermes.WalkingAgentMaxContextTokens > 0 {
+					return config.Hermes.WalkingAgentMaxContextTokens
+				}
+				return 120000
+			}())
+	}
 
 	// Initialize Git integration
 	InitGitIntegration()
@@ -598,10 +747,20 @@ func Main() {
 	}
 
 	// Initialize security manager
-	if err := InitSecurity(config.Security); err != nil {
+	if err := security.Init(config.Security); err != nil {
 		log.Printf("❌ Security initialization failed: %v", err)
 		log.Fatalf("Unable to continue without security features")
 	}
+	// Wire persistence + broadcast callbacks to break the import cycle with app
+	security.OnPersistEvent = func(e security.SecurityEvent) {
+		if globalStorage == nil {
+			return
+		}
+		if err := globalStorage.InsertSecurityEvent(e); err != nil {
+			log.Printf("Warning: failed to persist security event to database: %v", err)
+		}
+	}
+	security.OnBroadcastEvent = BroadcastSecurityEvent
 	log.Printf("   Security features: rate limiting=%v, PII detection=%v, audit logging=%v",
 		config.Security.EnableRateLimiting,
 		config.Security.EnablePIIDetection,
@@ -638,23 +797,76 @@ func Main() {
 		)
 	}
 
-	// 環境自適應：選擇合適的客戶端
+	// 選擇 AI backend：ai_backend config 優先，其次環境自動偵測
 	var client Client
 
-	if isClaudeCodeEnvironment() {
-		log.Printf("[client-routing] Detected Claude Code environment - using Anthropic API")
+	// Resolve OpenAI key: prefer env, otherwise reuse the Whisper key from multimedia config.
+	openaiKey := os.Getenv("OPENAI_API_KEY")
+	openaiKeySource := "env"
+	if openaiKey == "" && config.Multimedia.OpenAIAPIKey != "" {
+		openaiKey = config.Multimedia.OpenAIAPIKey
+		openaiKeySource = "multimedia.openai_api_key"
+	}
+
+	switch config.AIBackend {
+	case "multi":
+		// MultiBackendClient: routes claude/* models to CLIClient, gpt-*/codex/* to CodexClient.
+		// Enables /gfast /gsmart /gdeep cross-backend tier switching in a single session.
+		log.Printf("[client-routing] Config ai_backend=multi - using MultiBackendClient dispatcher")
+		cliClient := NewClient(config.Model)
+		if config.MaxTurns > 0 {
+			cliClient.MaxTurns = config.MaxTurns
+		}
+		var codexClient *CodexClient
+		if openaiKey != "" {
+			codexClient = NewCodexClient(config.ModelRouting.CodexSmartModel, openaiKey)
+			log.Printf("[client-routing] MultiBackendClient: codex backend enabled (default model: %s, key from %s)", config.ModelRouting.CodexSmartModel, openaiKeySource)
+		} else {
+			log.Printf("[client-routing] MultiBackendClient: no OpenAI key (env OPENAI_API_KEY or multimedia.openai_api_key), codex tier disabled — /gfast /gsmart /gdeep will be rejected at runtime")
+		}
+		var apiClient *APIClient
+		if config.AnthropicKey != "" {
+			apiClient = NewAPIClient(config.AnthropicKey, config.Model)
+		}
+		client = NewMultiBackendClient(cliClient, codexClient, apiClient, cliClient)
+		log.Printf("[client-routing] Using MultiBackendClient (CLIClient default, max-turns=%d)", config.MaxTurns)
+	case "codex":
+		log.Printf("[client-routing] Config ai_backend=codex - using Codex CLI")
+		if openaiKey == "" {
+			log.Fatalf("❌ OpenAI API key not set! Codex requires either env OPENAI_API_KEY or config.multimedia.openai_api_key.")
+		}
+		client = NewCodexClient(config.Model, openaiKey)
+		log.Printf("[client-routing] Using CodexClient (Codex CLI, key from %s)", openaiKeySource)
+	case "api":
+		log.Printf("[client-routing] Config ai_backend=api - using Anthropic API direct")
 		if config.AnthropicKey == "" {
 			log.Fatalf("❌ Anthropic API Key not configured! Please set 'anthropic_key' in config.json")
 		}
 		client = NewAPIClient(config.AnthropicKey, config.Model)
 		log.Printf("[client-routing] Using APIClient (Anthropic API direct)")
-	} else {
-		log.Printf("[client-routing] Normal environment - using Claude Code CLI")
+	case "claude":
+		log.Printf("[client-routing] Config ai_backend=claude - using Claude Code CLI (explicit)")
 		client = NewClient(config.Model)
 		if cli, ok := client.(*CLIClient); ok && config.MaxTurns > 0 {
 			cli.MaxTurns = config.MaxTurns
 		}
 		log.Printf("[client-routing] Using CLIClient (Claude Code CLI, max-turns=%d)", config.MaxTurns)
+	default: // empty → auto-detect
+		if isClaudeCodeEnvironment() {
+			log.Printf("[client-routing] Detected Claude Code environment - using Anthropic API")
+			if config.AnthropicKey == "" {
+				log.Fatalf("❌ Anthropic API Key not configured! Please set 'anthropic_key' in config.json")
+			}
+			client = NewAPIClient(config.AnthropicKey, config.Model)
+			log.Printf("[client-routing] Using APIClient (Anthropic API direct)")
+		} else {
+			log.Printf("[client-routing] Normal environment - using Claude Code CLI")
+			client = NewClient(config.Model)
+			if cli, ok := client.(*CLIClient); ok && config.MaxTurns > 0 {
+				cli.MaxTurns = config.MaxTurns
+			}
+			log.Printf("[client-routing] Using CLIClient (Claude Code CLI, max-turns=%d)", config.MaxTurns)
+		}
 	}
 
 	tgBot, err := NewTelegramBot(config, client)
@@ -687,6 +899,30 @@ func Main() {
 	}
 	log.Printf("   Execution backends: %d registered (default=%s)", len(globalBackendManager.ListAll()), globalBackendManager.DefaultName())
 
+	appCtx, cancelApp := context.WithCancel(context.Background())
+	defer cancelApp()
+
+	if watcher, err := StartCodexSessionWatcher(appCtx, config.CodexInterception); err != nil {
+		log.Printf("⚠️ Warning: failed to start Codex session watcher: %v", err)
+	} else if watcher != nil {
+		log.Printf("   Codex session watcher: enabled")
+	}
+
+	// Sweep tasks whose human-in-the-loop pause outlived a previous alice
+	// process (e.g. restart while the operator was away). Without this,
+	// the legacy task table would show those tasks as still 'executing'
+	// even though no engine goroutine is running. See #169 slice 2 / #166.
+	if hermesStore, ok := buildHermesTaskStore().(staleInterruptStore); ok {
+		SweepStaleHermesInterrupts(appCtx, hermesStore)
+	}
+	// β5: surface tasks that are still legitimately paused (younger than
+	// 24h) by sending a Telegram reminder. Does not auto-decide for the
+	// operator — the original retry/skip/abort buttons (or /resume
+	// command) remain the canonical resolution path. See #169 slice β5.
+	if hermesStore, ok := buildHermesTaskStore().(pendingInterruptStore); ok {
+		RemindPendingPauses(appCtx, hermesStore, tgBot)
+	}
+
 	// Initialize Cron Scheduler
 	if config.EnablePersistence && globalStorage != nil {
 		globalCronScheduler = NewCronScheduler(tgBot, client)
@@ -699,18 +935,33 @@ func Main() {
 
 	// Start web interface if enabled
 	var webInterface *WebInterface
+	var webErrCh <-chan error
 	if config.EnableWebInterface {
 		webInterface = NewWebInterface(tgBot, config.WebPort, config.WebStaticDir, config.WebAPIToken)
+		errCh := make(chan error, 1)
+		webErrCh = errCh
 		go func() {
+			done := globalJobTracker.Start("web.server")
+			var jobErr error
+			defer func() { done(jobErr) }()
 			if err := webInterface.Start(); err != nil {
-				log.Printf("❌ Web server error: %v", err)
+				jobErr = err
+				errCh <- err
 			}
 		}()
+		select {
+		case err := <-errCh:
+			log.Fatalf("❌ Web interface failed to start: %v", err)
+		case <-time.After(500 * time.Millisecond):
+			log.Printf("   Web interface: listening on port %s", config.WebPort)
+		}
 	}
 
 	// Start periodic data cleanup if persistence is enabled
 	if config.EnablePersistence && config.EnableDataCleanup && globalStorage != nil {
 		go func() {
+			done := globalJobTracker.Start("cleanup.data")
+			defer done(nil)
 			ticker := time.NewTicker(24 * time.Hour) // Run cleanup daily
 			defer ticker.Stop()
 
@@ -720,6 +971,8 @@ func Main() {
 					if err := globalStorage.CleanupOldData(config.DataRetentionDays); err != nil {
 						log.Printf("❌ Data cleanup error: %v", err)
 					}
+				case <-appCtx.Done():
+					return
 				}
 			}
 		}()
@@ -729,6 +982,8 @@ func Main() {
 	// Start periodic multimedia file cleanup
 	if config.Multimedia.EnablePhotoSupport || config.Multimedia.EnableVoiceSupport {
 		go func() {
+			done := globalJobTracker.Start("cleanup.media")
+			defer done(nil)
 			ticker := time.NewTicker(6 * time.Hour) // Clean temp files every 6 hours
 			defer ticker.Stop()
 
@@ -736,6 +991,8 @@ func Main() {
 				select {
 				case <-ticker.C:
 					CleanupTempMediaFiles(config.Multimedia.TempDownloadDir, 1*time.Hour) // Remove files older than 1 hour
+				case <-appCtx.Done():
+					return
 				}
 			}
 		}()
@@ -743,14 +1000,27 @@ func Main() {
 	}
 
 	// Start Telegram bot in separate goroutine
-	go tgBot.Start()
+	go func() {
+		done := globalJobTracker.Start("telegram.polling")
+		defer done(nil)
+		tgBot.Start()
+	}()
 
 	// Wait for interrupt signals for graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
+	var shutdownReason string
+	select {
+	case sig := <-quit:
+		shutdownReason = fmt.Sprintf("signal %s", sig)
+	case err := <-webErrCh:
+		shutdownReason = fmt.Sprintf("web interface error: %v", err)
+	}
 
-	log.Println("🛑 Shutting down...")
+	log.Printf("🛑 Shutting down (%s)...", shutdownReason)
+
+	cancelApp()
+	tgBot.Stop()
 
 	// Stop cron scheduler
 	if globalCronScheduler != nil {

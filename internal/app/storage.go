@@ -10,11 +10,16 @@ import (
 	"strings"
 	"time"
 
+	"claude-tg-agent/internal/app/hermes"
+	"claude-tg-agent/internal/app/security"
+
 	_ "modernc.org/sqlite" // Pure Go SQLite driver (no CGO required)
 )
 
 // Storage interface 定義持久化操作
 type Storage interface {
+	UnifiedTaskStore
+
 	// Tool Executions
 	InsertToolExecution(exec ToolExecution) error
 	GetToolExecutions(limit int, offset int) ([]ToolExecution, error)
@@ -28,6 +33,12 @@ type Storage interface {
 	GetDecisionLogsByTimeRangeWithOffset(start, end time.Time, limit int, offset int, source string) ([]DecisionLog, error)
 	GetDecisionLogsByProject(projectPath string, limit int) ([]DecisionLog, error)
 
+	// Runtime Events
+	InsertRuntimeEvent(event RuntimeEventRecord) error
+	GetRuntimeEvents(limit int, offset int) ([]RuntimeEventRecord, error)
+	GetRuntimeEventsByType(eventType string, limit int) ([]RuntimeEventRecord, error)
+	GetRuntimeEventsByTask(taskID string, eventType string, limit int, offset int) ([]RuntimeEventRecord, error)
+
 	// Performance Metrics
 	InsertPerformanceMetric(metric PerformanceMetrics) error
 	GetPerformanceMetrics(limit int, offset int) ([]PerformanceMetrics, error)
@@ -40,10 +51,10 @@ type Storage interface {
 	GetCostSavingsByProject(projectPath string, hours int) (CostSavingsReport, error)
 
 	// Security Events
-	InsertSecurityEvent(event SecurityEvent) error
-	GetSecurityEvents(limit int, offset int) ([]SecurityEvent, error)
-	GetSecurityEventsByTimeRange(start, end time.Time, limit int) ([]SecurityEvent, error)
-	GetSecurityEventsBySeverity(severity string, limit int) ([]SecurityEvent, error)
+	InsertSecurityEvent(event security.SecurityEvent) error
+	GetSecurityEvents(limit int, offset int) ([]security.SecurityEvent, error)
+	GetSecurityEventsByTimeRange(start, end time.Time, limit int) ([]security.SecurityEvent, error)
+	GetSecurityEventsBySeverity(severity string, limit int) ([]security.SecurityEvent, error)
 
 	// Count Queries (for pagination)
 	GetToolExecutionsCount() (int64, error)
@@ -55,6 +66,8 @@ type Storage interface {
 	// Topic Settings
 	SaveTopicSetting(chatID int64, threadID int, projectDir string) error
 	GetTopicSetting(chatID int64, threadID int) (string, error)
+	SaveTopicModelPreference(chatID int64, threadID int, projectDir, modelPref string) error
+	GetTopicModelPreference(chatID int64, threadID int) (string, error)
 
 	// Chat Language Preferences
 	SaveChatLanguage(chatID int64, langCode string) error
@@ -108,9 +121,9 @@ func NewSQLiteStorage(dbPath string) (*SQLiteStorage, error) {
 	}
 
 	// 配置連接池以避免 SQLite 並發問題
-	db.SetMaxOpenConns(1)                   // SQLite 只允許一個寫入連接
-	db.SetMaxIdleConns(1)                   // 保持一個空閒連接
-	db.SetConnMaxLifetime(time.Hour)        // 連接最長存活時間
+	db.SetMaxOpenConns(1)            // SQLite 只允許一個寫入連接
+	db.SetMaxIdleConns(1)            // 保持一個空閒連接
+	db.SetConnMaxLifetime(time.Hour) // 連接最長存活時間
 
 	storage := &SQLiteStorage{
 		db:   db,
@@ -139,7 +152,7 @@ func (s *SQLiteStorage) execWithRetry(operation func() error) error {
 
 		// 檢查是否為 SQLite 忙碌錯誤
 		if strings.Contains(err.Error(), "database is locked") ||
-		   strings.Contains(err.Error(), "SQLITE_BUSY") {
+			strings.Contains(err.Error(), "SQLITE_BUSY") {
 			if i < maxRetries-1 { // 不是最後一次重試
 				time.Sleep(retryDelay * time.Duration(i+1)) // 遞增延遲
 				continue
@@ -232,9 +245,13 @@ func (s *SQLiteStorage) initTables() error {
 		api_call_latency_ms INTEGER,
 		api_call_success BOOLEAN,
 		tool_execution_time_ms INTEGER,
-		tool_execution_type TEXT,
-		tokens_used INTEGER,
-		estimated_cost REAL,
+			tool_execution_type TEXT,
+			tokens_used INTEGER,
+			input_tokens INTEGER DEFAULT 0,
+			cache_read_tokens INTEGER DEFAULT 0,
+			cache_write_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
+			estimated_cost REAL,
 		memory_usage BIGINT,
 		error_type TEXT,
 		chat_id INTEGER,
@@ -246,6 +263,24 @@ func (s *SQLiteStorage) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_performance_metrics_chat_id ON performance_metrics(chat_id);
 	CREATE INDEX IF NOT EXISTS idx_performance_metrics_tool_type ON performance_metrics(tool_execution_type);
 	CREATE INDEX IF NOT EXISTS idx_performance_metrics_model ON performance_metrics(model);
+	`
+
+	runtimeEventsSQL := `
+	CREATE TABLE IF NOT EXISTS runtime_events (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		timestamp DATETIME NOT NULL,
+		type TEXT NOT NULL,
+		chat_id INTEGER,
+		thread_id INTEGER,
+		task_id TEXT DEFAULT '',
+		issue_number INTEGER DEFAULT 0,
+		payload_json TEXT NOT NULL DEFAULT '{}',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+	CREATE INDEX IF NOT EXISTS idx_runtime_events_timestamp ON runtime_events(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_runtime_events_type ON runtime_events(type);
+	CREATE INDEX IF NOT EXISTS idx_runtime_events_task_id ON runtime_events(task_id);
+	CREATE INDEX IF NOT EXISTS idx_runtime_events_chat_id ON runtime_events(chat_id);
 	`
 
 	// Security Events 表
@@ -276,6 +311,7 @@ func (s *SQLiteStorage) initTables() error {
 		chat_id INTEGER NOT NULL,
 		thread_id INTEGER NOT NULL,
 		project_dir TEXT NOT NULL,
+		model_pref TEXT NOT NULL DEFAULT '',
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		PRIMARY KEY (chat_id, thread_id)
 	);
@@ -354,10 +390,29 @@ func (s *SQLiteStorage) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_enabled ON scheduled_tasks(enabled);
 	`
 
+	// Prompt Classifications 表 (Hermes 實驗 #104 — VS Code UserPromptSubmit 觀測)
+	promptClassificationsSQL := `
+	CREATE TABLE IF NOT EXISTS prompt_classifications (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		session_id TEXT NOT NULL,
+		timestamp DATETIME NOT NULL,
+		source TEXT NOT NULL,
+		cwd TEXT,
+		prompt_snippet TEXT,
+		prompt_length INTEGER,
+		classification TEXT NOT NULL,
+		matched_rule TEXT
+	);
+	CREATE INDEX IF NOT EXISTS idx_prompt_classifications_timestamp ON prompt_classifications(timestamp);
+	CREATE INDEX IF NOT EXISTS idx_prompt_classifications_classification ON prompt_classifications(classification);
+	CREATE INDEX IF NOT EXISTS idx_prompt_classifications_source ON prompt_classifications(source);
+	`
+
 	// 執行所有 SQL 語句
 	tables := []string{
 		toolExecutionsSQL,
 		decisionLogsSQL,
+		runtimeEventsSQL,
 		performanceMetricsSQL,
 		securityEventsSQL,
 		topicSettingsSQL,
@@ -365,12 +420,28 @@ func (s *SQLiteStorage) initTables() error {
 		autoSkillsSQL,
 		parallelExecutionsSQL,
 		scheduledTasksSQL,
+		promptClassificationsSQL,
 	}
 
 	for _, tableSQL := range tables {
 		if _, err := s.db.Exec(tableSQL); err != nil {
 			return fmt.Errorf("failed to create tables: %w", err)
 		}
+	}
+
+	if _, err := s.db.Exec(`ALTER TABLE topic_settings ADD COLUMN model_pref TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("failed to migrate topic settings model preference: %w", err)
+	}
+
+	if err := s.migrateUnifiedTaskTables(); err != nil {
+		return err
+	}
+	if err := s.backfillDecisionLogsToUnified(); err != nil {
+		log.Printf("[storage] decision_logs backfill warning: %v", err)
+	}
+	if err := s.stripLegacyLanguagePrefixes(); err != nil {
+		log.Printf("[storage] language-prefix strip warning: %v", err)
 	}
 
 	// Migration: add thinking_content column to decision_logs
@@ -413,6 +484,17 @@ func (s *SQLiteStorage) initTables() error {
 	_, err = s.db.Exec(`ALTER TABLE performance_metrics ADD COLUMN project_path TEXT DEFAULT ''`)
 	if err != nil && !strings.Contains(err.Error(), "duplicate column") {
 		log.Printf("Migration warning (performance_metrics.project_path): %v", err)
+	}
+	for _, stmt := range []string{
+		`ALTER TABLE performance_metrics ADD COLUMN input_tokens INTEGER DEFAULT 0`,
+		`ALTER TABLE performance_metrics ADD COLUMN cache_read_tokens INTEGER DEFAULT 0`,
+		`ALTER TABLE performance_metrics ADD COLUMN cache_write_tokens INTEGER DEFAULT 0`,
+		`ALTER TABLE performance_metrics ADD COLUMN output_tokens INTEGER DEFAULT 0`,
+	} {
+		_, err = s.db.Exec(stmt)
+		if err != nil && !strings.Contains(err.Error(), "duplicate column") {
+			log.Printf("Migration warning (performance_metrics cache columns): %v", err)
+		}
 	}
 
 	// Migration: add project_path column to tool_executions
@@ -571,7 +653,106 @@ func (s *SQLiteStorage) InsertDecisionLog(log DecisionLog) error {
 		gitCommitHash, gitBranch, log.ThinkingContent, source,
 		log.Model, log.RoutingReason, log.RoutingLatency)
 
+	if err != nil {
+		return err
+	}
+	if err := s.insertDecisionLogUnified(log); err != nil {
+		return fmt.Errorf("insert unified task: %w", err)
+	}
+	return nil
+}
+
+// ==================== Runtime Events ====================
+
+func (s *SQLiteStorage) InsertRuntimeEvent(event RuntimeEventRecord) error {
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now()
+	}
+	payloadJSON, err := json.Marshal(event.Payload)
+	if err != nil {
+		return fmt.Errorf("marshal runtime event payload: %w", err)
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO runtime_events
+		(timestamp, type, chat_id, thread_id, task_id, issue_number, payload_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		event.Timestamp, event.Type, event.ChatID, event.ThreadID, event.TaskID, event.Issue, string(payloadJSON))
 	return err
+}
+
+func (s *SQLiteStorage) GetRuntimeEvents(limit int, offset int) ([]RuntimeEventRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT timestamp, type, chat_id, thread_id, task_id, issue_number, payload_json
+		FROM runtime_events
+		ORDER BY timestamp DESC
+		LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRuntimeEvents(rows)
+}
+
+func (s *SQLiteStorage) GetRuntimeEventsByType(eventType string, limit int) ([]RuntimeEventRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT timestamp, type, chat_id, thread_id, task_id, issue_number, payload_json
+		FROM runtime_events
+		WHERE type = ?
+		ORDER BY timestamp DESC
+		LIMIT ?`, eventType, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRuntimeEvents(rows)
+}
+
+func (s *SQLiteStorage) GetRuntimeEventsByTask(taskID string, eventType string, limit int, offset int) ([]RuntimeEventRecord, error) {
+	taskID = strings.TrimSpace(taskID)
+	eventType = strings.TrimSpace(eventType)
+	if eventType != "" {
+		rows, err := s.db.Query(`
+			SELECT timestamp, type, chat_id, thread_id, task_id, issue_number, payload_json
+			FROM runtime_events
+			WHERE task_id = ? AND type = ?
+			ORDER BY timestamp DESC
+			LIMIT ? OFFSET ?`, taskID, eventType, limit, offset)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		return scanRuntimeEvents(rows)
+	}
+	rows, err := s.db.Query(`
+		SELECT timestamp, type, chat_id, thread_id, task_id, issue_number, payload_json
+		FROM runtime_events
+		WHERE task_id = ?
+		ORDER BY timestamp DESC
+		LIMIT ? OFFSET ?`, taskID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRuntimeEvents(rows)
+}
+
+func scanRuntimeEvents(rows *sql.Rows) ([]RuntimeEventRecord, error) {
+	var events []RuntimeEventRecord
+	for rows.Next() {
+		var event RuntimeEventRecord
+		var payloadJSON string
+		if err := rows.Scan(&event.Timestamp, &event.Type, &event.ChatID, &event.ThreadID, &event.TaskID, &event.Issue, &payloadJSON); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(payloadJSON) != "" {
+			_ = json.Unmarshal([]byte(payloadJSON), &event.Payload)
+		}
+		if event.Payload == nil {
+			event.Payload = map[string]interface{}{}
+		}
+		events = append(events, event)
+	}
+	return events, rows.Err()
 }
 
 // GetDecisionLogs 獲取決策記錄（分頁）
@@ -725,7 +906,10 @@ func (s *SQLiteStorage) GetDecisionLogCountBySessionID(sessionID string) (int64,
 
 // DeleteDecisionLogsBySessionID removes all decision logs for a given session_id (used for upsert on hook re-trigger)
 func (s *SQLiteStorage) DeleteDecisionLogsBySessionID(sessionID string) error {
-	_, err := s.db.Exec(`DELETE FROM decision_logs WHERE session_id = ?`, sessionID)
+	if _, err := s.db.Exec(`DELETE FROM decision_logs WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM tasks WHERE id LIKE ?`, "decision:"+sessionID+":%")
 	return err
 }
 
@@ -734,14 +918,16 @@ func (s *SQLiteStorage) DeleteDecisionLogsBySessionID(sessionID string) error {
 // InsertPerformanceMetric 插入效能指標
 func (s *SQLiteStorage) InsertPerformanceMetric(metric PerformanceMetrics) error {
 	_, err := s.db.Exec(`
-		INSERT INTO performance_metrics
-		(timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
-		 tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
-		 chat_id, project_path, agent_type, model)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			INSERT INTO performance_metrics
+			(timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
+			 tool_execution_type, tokens_used, input_tokens, cache_read_tokens,
+			 cache_write_tokens, output_tokens, estimated_cost, memory_usage, error_type,
+			 chat_id, project_path, agent_type, model)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		metric.Timestamp, metric.APICallLatency.Milliseconds(), metric.APICallSuccess,
 		metric.ToolExecutionTime.Milliseconds(), metric.ToolExecutionType,
-		metric.TokensUsed, metric.EstimatedCost, metric.MemoryUsage,
+		metric.TokensUsed, metric.InputTokens, metric.CacheReadTokens,
+		metric.CacheWriteTokens, metric.OutputTokens, metric.EstimatedCost, metric.MemoryUsage,
 		metric.ErrorType, metric.ChatID, metric.ProjectPath, metric.AgentType, metric.Model)
 
 	return err
@@ -750,9 +936,10 @@ func (s *SQLiteStorage) InsertPerformanceMetric(metric PerformanceMetrics) error
 // GetPerformanceMetrics 獲取效能指標（分頁）
 func (s *SQLiteStorage) GetPerformanceMetrics(limit int, offset int) ([]PerformanceMetrics, error) {
 	rows, err := s.db.Query(`
-		SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
-			   tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
-			   chat_id, COALESCE(project_path, '') as project_path, agent_type, COALESCE(model, '') as model
+			SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
+				   tool_execution_type, tokens_used, COALESCE(input_tokens, 0), COALESCE(cache_read_tokens, 0),
+				   COALESCE(cache_write_tokens, 0), COALESCE(output_tokens, 0), estimated_cost, memory_usage, error_type,
+				   chat_id, COALESCE(project_path, '') as project_path, agent_type, COALESCE(model, '') as model
 		FROM performance_metrics
 		ORDER BY timestamp DESC
 		LIMIT ? OFFSET ?`, limit, offset)
@@ -769,9 +956,10 @@ func (s *SQLiteStorage) GetPerformanceMetricsByTimeRange(start, end time.Time, l
 	startStr := formatTimeForSQLite(start)
 	endStr := formatTimeForSQLite(end)
 	rows, err := s.db.Query(`
-		SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
-			   tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
-			   chat_id, COALESCE(project_path, '') as project_path, agent_type, COALESCE(model, '') as model
+			SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
+				   tool_execution_type, tokens_used, COALESCE(input_tokens, 0), COALESCE(cache_read_tokens, 0),
+				   COALESCE(cache_write_tokens, 0), COALESCE(output_tokens, 0), estimated_cost, memory_usage, error_type,
+				   chat_id, COALESCE(project_path, '') as project_path, agent_type, COALESCE(model, '') as model
 		FROM performance_metrics
 		WHERE timestamp BETWEEN ? AND ?
 		ORDER BY timestamp DESC
@@ -787,9 +975,10 @@ func (s *SQLiteStorage) GetPerformanceMetricsByTimeRange(start, end time.Time, l
 // GetPerformanceMetricsByProject 按項目路徑獲取效能指標
 func (s *SQLiteStorage) GetPerformanceMetricsByProject(projectPath string, limit int, offset int) ([]PerformanceMetrics, error) {
 	rows, err := s.db.Query(`
-		SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
-			   tool_execution_type, tokens_used, estimated_cost, memory_usage, error_type,
-			   chat_id, COALESCE(project_path, '') as project_path, agent_type, COALESCE(model, '') as model
+			SELECT timestamp, api_call_latency_ms, api_call_success, tool_execution_time_ms,
+				   tool_execution_type, tokens_used, COALESCE(input_tokens, 0), COALESCE(cache_read_tokens, 0),
+				   COALESCE(cache_write_tokens, 0), COALESCE(output_tokens, 0), estimated_cost, memory_usage, error_type,
+				   chat_id, COALESCE(project_path, '') as project_path, agent_type, COALESCE(model, '') as model
 		FROM performance_metrics
 		WHERE project_path = ?
 		ORDER BY timestamp DESC
@@ -810,12 +999,12 @@ func (s *SQLiteStorage) GetPerformanceAnalytics(hours int) (PerformanceAnalytics
 	row := s.db.QueryRow(`
 		SELECT
 			COUNT(*) as total_requests,
-			AVG(CASE WHEN api_call_success THEN 1.0 ELSE 0.0 END) * 100.0 as success_rate,
-			AVG(api_call_latency_ms) as avg_api_latency_ms,
-			AVG(tool_execution_time_ms) as avg_tool_execution_ms,
-			SUM(tokens_used) as total_tokens,
-			SUM(estimated_cost) as total_cost,
-			MAX(memory_usage) as peak_memory,
+			COALESCE(AVG(CASE WHEN api_call_success THEN 1.0 ELSE 0.0 END) * 100.0, 0) as success_rate,
+			COALESCE(AVG(api_call_latency_ms), 0) as avg_api_latency_ms,
+			COALESCE(AVG(tool_execution_time_ms), 0) as avg_tool_execution_ms,
+			COALESCE(SUM(tokens_used), 0) as total_tokens,
+			COALESCE(SUM(estimated_cost), 0) as total_cost,
+			COALESCE(MAX(memory_usage), 0) as peak_memory,
 			COUNT(*) / CAST(? as REAL) as requests_per_hour
 		FROM performance_metrics
 		WHERE timestamp >= ?`, hours, sinceStr)
@@ -845,13 +1034,19 @@ func (s *SQLiteStorage) GetPerformanceAnalytics(hours int) (PerformanceAnalytics
 		WHERE timestamp >= ? AND error_type IS NOT NULL AND error_type != ''
 		GROUP BY error_type`, sinceStr)
 	if err == nil {
-		defer rows.Close()
 		for rows.Next() {
 			var errorType string
 			var count int64
 			if rows.Scan(&errorType, &count) == nil {
 				analytics.ErrorsByType[errorType] = count
 			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return analytics, err
+		}
+		if err := rows.Close(); err != nil {
+			return analytics, err
 		}
 	}
 
@@ -863,13 +1058,19 @@ func (s *SQLiteStorage) GetPerformanceAnalytics(hours int) (PerformanceAnalytics
 		WHERE timestamp >= ? AND tool_execution_type IS NOT NULL AND tool_execution_type != ''
 		GROUP BY tool_execution_type`, sinceStr)
 	if err == nil {
-		defer rows.Close()
 		for rows.Next() {
 			var toolType string
 			var count int64
 			if rows.Scan(&toolType, &count) == nil {
 				analytics.ToolUsageStats[toolType] = count
 			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return analytics, err
+		}
+		if err := rows.Close(); err != nil {
+			return analytics, err
 		}
 	}
 
@@ -905,7 +1106,6 @@ func (s *SQLiteStorage) GetToolExecutionStatsByTimeRange(start, end time.Time) (
 	if err != nil {
 		return stats, err
 	}
-	defer rows.Close()
 
 	hasData := false
 	for rows.Next() {
@@ -918,10 +1118,17 @@ func (s *SQLiteStorage) GetToolExecutionStatsByTimeRange(start, end time.Time) (
 		}
 
 		stats[toolType] = map[string]interface{}{
-			"count": count,
+			"count":              count,
 			"avg_execution_time": avgExecutionTime,
 		}
 		hasData = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return stats, err
+	}
+	if err := rows.Close(); err != nil {
+		return stats, err
 	}
 
 	// 如果 performance_metrics 表沒有數據，回退到 tool_executions 表
@@ -954,14 +1161,14 @@ func (s *SQLiteStorage) GetToolExecutionStatsByTimeRange(start, end time.Time) (
 			}
 
 			stats[toolType] = map[string]interface{}{
-				"count": count,
+				"count":              count,
 				"avg_execution_time": avgExecutionTime,
 			}
 		}
 		return stats, rows2.Err()
 	}
 
-	return stats, rows.Err()
+	return stats, nil
 }
 
 // GetCostSavings 計算指定時間範圍內的成本節省報告
@@ -1027,7 +1234,7 @@ func (s *SQLiteStorage) GetCostSavings(hours int) (CostSavingsReport, error) {
 		// 累計實際成本和請求數
 		report.TotalRequests += calls
 		report.ActualCost += cost
-		actualCostByModel[model] += cost  // 累加而不是覆盖！
+		actualCostByModel[model] += cost // 累加而不是覆盖！
 		callsByModel[model] += calls
 		report.RoutingMethodStat[routingReason] += calls
 
@@ -1200,7 +1407,8 @@ func (s *SQLiteStorage) scanPerformanceMetrics(rows *sql.Rows) ([]PerformanceMet
 
 		err := rows.Scan(&metric.Timestamp, &apiLatencyMs, &metric.APICallSuccess,
 			&toolExecutionMs, &metric.ToolExecutionType, &metric.TokensUsed,
-			&metric.EstimatedCost, &metric.MemoryUsage, &metric.ErrorType,
+			&metric.InputTokens, &metric.CacheReadTokens, &metric.CacheWriteTokens,
+			&metric.OutputTokens, &metric.EstimatedCost, &metric.MemoryUsage, &metric.ErrorType,
 			&metric.ChatID, &metric.ProjectPath, &metric.AgentType, &metric.Model)
 		if err != nil {
 			return nil, err
@@ -1218,7 +1426,7 @@ func (s *SQLiteStorage) scanPerformanceMetrics(rows *sql.Rows) ([]PerformanceMet
 // ==================== Security Events ====================
 
 // InsertSecurityEvent 插入安全事件
-func (s *SQLiteStorage) InsertSecurityEvent(event SecurityEvent) error {
+func (s *SQLiteStorage) InsertSecurityEvent(event security.SecurityEvent) error {
 	return s.execWithRetry(func() error {
 		detailsJSON, _ := json.Marshal(event.Details)
 
@@ -1236,7 +1444,7 @@ func (s *SQLiteStorage) InsertSecurityEvent(event SecurityEvent) error {
 }
 
 // GetSecurityEvents 獲取安全事件（分頁）
-func (s *SQLiteStorage) GetSecurityEvents(limit int, offset int) ([]SecurityEvent, error) {
+func (s *SQLiteStorage) GetSecurityEvents(limit int, offset int) ([]security.SecurityEvent, error) {
 	rows, err := s.db.Query(`
 		SELECT event_id, timestamp, event_type, severity, description, user_id,
 			   ip_address, user_agent, details_json, mitigated
@@ -1252,7 +1460,7 @@ func (s *SQLiteStorage) GetSecurityEvents(limit int, offset int) ([]SecurityEven
 }
 
 // GetSecurityEventsByTimeRange 按時間範圍獲取安全事件
-func (s *SQLiteStorage) GetSecurityEventsByTimeRange(start, end time.Time, limit int) ([]SecurityEvent, error) {
+func (s *SQLiteStorage) GetSecurityEventsByTimeRange(start, end time.Time, limit int) ([]security.SecurityEvent, error) {
 	startStr := formatTimeForSQLite(start)
 	endStr := formatTimeForSQLite(end)
 	rows, err := s.db.Query(`
@@ -1271,7 +1479,7 @@ func (s *SQLiteStorage) GetSecurityEventsByTimeRange(start, end time.Time, limit
 }
 
 // GetSecurityEventsBySeverity 按嚴重性獲取安全事件
-func (s *SQLiteStorage) GetSecurityEventsBySeverity(severity string, limit int) ([]SecurityEvent, error) {
+func (s *SQLiteStorage) GetSecurityEventsBySeverity(severity string, limit int) ([]security.SecurityEvent, error) {
 	rows, err := s.db.Query(`
 		SELECT event_id, timestamp, event_type, severity, description, user_id,
 			   ip_address, user_agent, details_json, mitigated
@@ -1288,10 +1496,10 @@ func (s *SQLiteStorage) GetSecurityEventsBySeverity(severity string, limit int) 
 }
 
 // scanSecurityEvents 掃描安全事件結果
-func (s *SQLiteStorage) scanSecurityEvents(rows *sql.Rows) ([]SecurityEvent, error) {
-	var events []SecurityEvent
+func (s *SQLiteStorage) scanSecurityEvents(rows *sql.Rows) ([]security.SecurityEvent, error) {
+	var events []security.SecurityEvent
 	for rows.Next() {
-		var event SecurityEvent
+		var event security.SecurityEvent
 		var detailsJSON string
 		var userID sql.NullInt64
 
@@ -1345,6 +1553,37 @@ func (s *SQLiteStorage) GetTopicSetting(chatID int64, threadID int) (string, err
 		return "", nil
 	}
 	return projectDir, err
+}
+
+// SaveTopicModelPreference 儲存 topic 的模型偏好；空字串代表自動模式
+func (s *SQLiteStorage) SaveTopicModelPreference(chatID int64, threadID int, projectDir, modelPref string) error {
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(`
+			INSERT INTO topic_settings (chat_id, thread_id, project_dir, model_pref, updated_at)
+			VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+			ON CONFLICT(chat_id, thread_id) DO UPDATE SET
+				project_dir = CASE
+					WHEN excluded.project_dir != '' THEN excluded.project_dir
+					ELSE topic_settings.project_dir
+				END,
+				model_pref = excluded.model_pref,
+				updated_at = CURRENT_TIMESTAMP`,
+			chatID, threadID, projectDir, modelPref)
+		return err
+	})
+}
+
+// GetTopicModelPreference 讀取 topic 的模型偏好，找不到時回傳空字串
+func (s *SQLiteStorage) GetTopicModelPreference(chatID int64, threadID int) (string, error) {
+	var modelPref string
+	err := s.db.QueryRow(`
+		SELECT model_pref FROM topic_settings
+		WHERE chat_id = ? AND thread_id = ?`,
+		chatID, threadID).Scan(&modelPref)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return modelPref, err
 }
 
 // ==================== Chat Language Preferences ====================
@@ -1810,5 +2049,88 @@ func InitStorage(dbPath string) error {
 
 	globalStorage = storage
 	log.Printf("Storage system initialized successfully")
+
+	// Zombie recovery: any task left in `executing` or `planning` from a prior
+	// process is dead because its goroutine died with that process. Without this
+	// sweep the dashboard and /retry routing keep treating those rows as
+	// active forever, and new identical-id retries collide with the stale
+	// state. Sweep both the legacy `tasks` table (unified #114 mirror) and
+	// `hermes_task_states` (engine source-of-truth).
+	if db, ok := storage.GetDB().(*sql.DB); ok {
+		now := time.Now().Format(time.RFC3339Nano)
+		if res, err := db.Exec(
+			`UPDATE tasks SET status='failed', ended_at=COALESCE(ended_at, ?) WHERE status IN ('executing','planning','validating')`,
+			now,
+		); err != nil {
+			log.Printf("[storage] zombie sweep tasks: %v", err)
+		} else if n, _ := res.RowsAffected(); n > 0 {
+			log.Printf("[storage] marked %d dangling tasks as failed (process restart recovery)", n)
+		}
+		// After #169 slice 3d the legacy hermes_task_states.status column
+		// is no longer authoritative — read paths derive status from the
+		// latest snapshot's denormalized state_status. Zombie sweep moves
+		// to a snapshot-aware path that writes both the legacy UPDATE
+		// (kept for any read still going through it) and a fresh failure
+		// snapshot via SweepZombieTasks.
+		if hermesStore, err := hermes.NewSQLiteTaskStore(db); err != nil {
+			log.Printf("[storage] zombie sweep init hermes store: %v", err)
+		} else if n, err := hermesStore.SweepZombieTasks("startup_zombie_sweep"); err != nil {
+			log.Printf("[storage] zombie sweep hermes_task_states: %v", err)
+		} else if n > 0 {
+			log.Printf("[storage] marked %d dangling hermes_task_states as failed (snapshot-aware)", n)
+		}
+		_ = now // legacy `tasks` table still uses the timestamp above
+	}
+
 	return nil
+}
+
+// PromptClassificationRecord is the row written by RecordPromptClassification.
+// It mirrors the prompt_classifications table, used by the Hermes UserPromptSubmit
+// observation experiment (#104).
+type PromptClassificationRecord struct {
+	SessionID      string
+	Timestamp      time.Time
+	Source         string
+	CWD            string
+	PromptSnippet  string
+	PromptLength   int
+	Classification string
+	MatchedRule    string
+}
+
+// RecordPromptClassification inserts one row into prompt_classifications.
+// Failures are surfaced to the caller so hook handlers can log them.
+func (s *SQLiteStorage) RecordPromptClassification(rec PromptClassificationRecord) error {
+	return s.execWithRetry(func() error {
+		_, err := s.db.Exec(`
+			INSERT INTO prompt_classifications
+				(session_id, timestamp, source, cwd, prompt_snippet, prompt_length, classification, matched_rule)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`, rec.SessionID, rec.Timestamp, rec.Source, rec.CWD, rec.PromptSnippet, rec.PromptLength, rec.Classification, rec.MatchedRule)
+		return err
+	})
+}
+
+// ListPromptClassifications returns the most recent rows from prompt_classifications, newest first.
+func (s *SQLiteStorage) ListPromptClassifications(limit int) ([]PromptClassificationRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT session_id, timestamp, source, cwd, prompt_snippet, prompt_length, classification, matched_rule
+		FROM prompt_classifications
+		ORDER BY timestamp DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var recs []PromptClassificationRecord
+	for rows.Next() {
+		var r PromptClassificationRecord
+		if err := rows.Scan(&r.SessionID, &r.Timestamp, &r.Source, &r.CWD, &r.PromptSnippet, &r.PromptLength, &r.Classification, &r.MatchedRule); err != nil {
+			return nil, err
+		}
+		recs = append(recs, r)
+	}
+	return recs, rows.Err()
 }

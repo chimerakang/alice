@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { devtools } from "zustand/middleware";
+import { unifiedTaskToDecision } from "@/lib/api";
 import type {
   AgentInfo,
   ToolExecution,
@@ -8,6 +9,9 @@ import type {
   GitState,
   SecurityEvent,
   WebSocketEvent,
+  UnifiedTask,
+  ReviewLiveEvent,
+  UnifiedReviewSubTaskResult,
 } from "@/types/alice";
 
 interface AppState {
@@ -41,6 +45,10 @@ interface AppState {
   // Security events
   securityEvents: SecurityEvent[];
   addSecurityEvent: (e: SecurityEvent) => void;
+
+  // Review events
+  reviewEvents: ReviewLiveEvent[];
+  addReviewEvent: (r: ReviewLiveEvent) => void;
 
   // WebSocket event buffer (for timeline)
   wsEvents: WebSocketEvent[];
@@ -98,6 +106,13 @@ export const useAppStore = create<AppState>()(
       securityEvents: [e, ...s.securityEvents].slice(0, 100),
     })),
 
+  // Reviews
+  reviewEvents: [],
+  addReviewEvent: (r) =>
+    set((s) => ({
+      reviewEvents: [r, ...s.reviewEvents].slice(0, 50),
+    })),
+
   // WS Events
   wsEvents: [],
   addWsEvent: (e) =>
@@ -115,6 +130,9 @@ export const useAppStore = create<AppState>()(
       case "tool_execution":
         state.addToolExecution(event.data as ToolExecution);
         break;
+      case "task_updated":
+        state.addDecision(unifiedTaskToDecision(event.data as UnifiedTask));
+        break;
       case "decision_complete":
         state.addDecision(event.data as DecisionLog);
         break;
@@ -126,6 +144,31 @@ export const useAppStore = create<AppState>()(
       case "security_alert":
         state.addSecurityEvent(event.data as SecurityEvent);
         break;
+      case "review_result":
+      case "review_complete": {
+        const data = event.data as Partial<ReviewLiveEvent> & {
+          feedback?: string;
+          sub_task_results?: UnifiedReviewSubTaskResult[];
+        };
+        const taskId = String(data.task_id || "").trim();
+        if (!taskId) break;
+        state.addReviewEvent({
+          task_id: taskId,
+          reviewer_model: String(data.reviewer_model || "").trim(),
+          verdict: String(data.verdict || "partial"),
+          overall_score: Number(data.overall_score || 0),
+          issue_tags: Array.isArray(data.issue_tags) ? data.issue_tags.map((tag) => String(tag)) : [],
+          advisory_retry: Boolean(data.advisory_retry),
+          failing_subtasks: Number(data.failing_subtasks || 0),
+          retry_note: data.retry_note ? String(data.retry_note) : "",
+          feedback_text: data.feedback_text ? String(data.feedback_text) : data.feedback ? String(data.feedback) : "",
+          timestamp: event.timestamp,
+          sub_task_results: Array.isArray(data.sub_task_results)
+            ? (data.sub_task_results as UnifiedReviewSubTaskResult[])
+            : [],
+        });
+        break;
+      }
       // performance_metric handled separately if needed
     }
   },

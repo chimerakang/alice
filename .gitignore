@@ -10,6 +10,8 @@ test-websocket
 # Config with secrets
 config.json
 config.json.backup
+config.json.bak
+config.json.bak.*
 .env
 
 # Database and data
@@ -35,9 +37,23 @@ secrets.yaml
 *.swp
 
 # Claude Code local config
-.claude/
+.claude/*
+!.claude/CLAUDE.md
+!.claude/commands/
+!.claude/commands/**
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/alice-add-tool/
+!.claude/skills/alice-add-tool/SKILL.md
+!.claude/skills/alice-i18n/
+!.claude/skills/alice-i18n/SKILL.md
+!.claude/skills/tasks/
+!.claude/skills/tasks/skill.md
+.claude/skills/*/CLAUDE.md
 **/CLAUDE.md
-!CLAUDE.md
+!/CLAUDE.md
+!.claude/CLAUDE.md
+!.claude/commands/CLAUDE.md
 
 # OS
 .DS_Store
@@ -45,3 +61,9 @@ secrets.yaml
 # Docker
 .dockerignore
 check_openai_usage.go
+.venv-spike/
+spike_walking_agent_go
+temp/media/
+
+# Stray vitest cache from running tests outside frontend/
+node_modules/

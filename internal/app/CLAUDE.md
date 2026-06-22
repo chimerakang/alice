@@ -1,70 +1,6 @@
 <claude-mem-context>
 # Recent Activity
 
-### Feb 16, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #3477 | 10:47 PM | 🔵 | Session Cleared on Model Change Causing Context Loss | ~373 |
-| #3474 | " | 🔵 | Agent Instances Created Once Per ChatKey and Persist Across Model Changes | ~443 |
-| #3472 | " | 🔵 | Model Switching Commands Only Update Preferences Without Agent Recreation | ~396 |
-| #3470 | " | 🔵 | Telegram Bot Architecture Uses Per-Chat Agent Instances | ~408 |
-| #3446 | 9:36 PM | 🔵 | CLI Response Includes Total Cost from Claude Code, Not Calculated Locally | ~446 |
-| #3436 | 9:34 PM | 🔵 | Three-Tier Model Routing System Determines Haiku Usage | ~400 |
-| #3435 | 9:33 PM | 🔵 | Database Schema Tracks Model-Specific Cost Data | ~379 |
-| #3434 | " | 🔵 | Haiku Token Cost Configuration Located | ~300 |
-| #3140 | 2:40 AM | 🔵 | Performance Monitoring API Call Recording Infrastructure | ~440 |
-| #3139 | " | 🔵 | Keyword-Based Task Routing Implementation in AgentCoordinator | ~575 |
-| #3138 | " | 🔵 | Task Routing Methods in AgentCoordinator | ~458 |
-| #3137 | 2:39 AM | 🔵 | Multi-Agent Specialization System with Agent Type Enumeration | ~509 |
-| #3136 | " | 🔵 | Comprehensive Model Selection Architecture Analysis Completed | ~656 |
-| #3134 | 2:38 AM | 🔵 | NewAgent Constructor Signature with CLIClient Dependency | ~422 |
-| #3133 | " | 🔵 | Single CLIClient Instantiation in Main Application Initialization | ~471 |
-| #3132 | " | 🔵 | Model Parameter Usage in CLI Command Construction | ~457 |
-| #3131 | " | 🔵 | Claude CLI Command Execution with Model Parameter Injection | ~502 |
-| #3130 | " | 🔵 | Agent Instantiation Points in Codebase | ~425 |
-| #3128 | 2:37 AM | 🔵 | CLIClient Injection Pattern in TelegramBot | ~431 |
-| #3127 | " | 🔵 | Model Reference Points in Telegram Bot Layer | ~410 |
-| #3126 | 2:36 AM | 🔵 | Telegram Message Handler Entry Point for User Requests | ~615 |
-
-### Feb 23, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #4901 | 3:17 PM | ✅ | CLI invocations now use sanitized environment to bypass nested execution detection | ~338 |
-| #4900 | " | 🔴 | Environment sanitization prevents Claude Code nested execution blocking | ~377 |
-| #4893 | 3:15 PM | 🔄 | Model selection now defers to configuration instead of hardcoded default | ~291 |
-
-### Feb 28, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #5537 | 8:37 PM | 🔵 | @mention command rejection logic found in Telegram handler | ~328 |
-| #5535 | 8:30 PM | ✅ | Committed Forum @mention Command Fix | ~293 |
-| #5532 | 8:28 PM | 🔴 | Fixed @mention Commands Not Working in Telegram Forums | ~371 |
-| #5529 | 8:27 PM | 🔵 | /help Command Handler Implementation Found | ~382 |
-
-### Mar 9, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #5908 | 1:32 PM | 🟣 | Implemented recoverActualThreadID function using single-topic heuristic | ~367 |
-| #5907 | " | ✅ | Added threadID recovery logic for @bot_name commands | ~326 |
-| #5890 | 1:29 PM | 🔵 | Telegram bot extracts threadID directly from MessageThreadID field | ~277 |
-
-### Mar 12, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #6278 | 2:12 PM | 🔵 | Photo Upload Implementation Details and Error Handling | ~399 |
-| #6277 | " | 🔵 | Located Photo Upload Functions in Telegram Bot Code | ~331 |
-| #6246 | 1:24 PM | 🔵 | Examined sendMediaFile implementation details | ~310 |
-| #6245 | " | 🔵 | Located sendMediaFile core upload function | ~237 |
-| #6244 | " | 🔵 | Examined media upload architecture and sendPhoto implementation | ~306 |
-| #6243 | 1:23 PM | 🔵 | Analyzed testPhotoUpload function implementation | ~284 |
-| #6242 | " | 🔵 | Examined /test-photo command implementation | ~219 |
-| #6241 | " | 🔵 | Identified photo upload functionality in Telegram bot | ~241 |
-
 ### Apr 21, 2026
 
 | ID | Time | T | Title | Read |
@@ -76,8 +12,72 @@
 | #8511 | 12:44 AM | 🔵 | Agent.Reset() implementation deletes projectState | ~486 |
 | #8510 | " | 🔵 | /reset command already provides session clearing functionality | ~435 |
 | #8509 | " | 🔵 | Reset command exists but no clear command | ~217 |
-| #8507 | 12:43 AM | 🔵 | ProjectState session tracking infrastructure exists | ~480 |
-| #8506 | 12:42 AM | 🔵 | Agent model override mechanism and default configuration | ~468 |
-| #8505 | " | 🔵 | Model routing architecture and user preference system analysis | ~559 |
-| #8504 | " | 🔵 | Issue #93: Model routing session context loss investigation | ~483 |
+
+### Apr 26, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #10516 | 4:43 PM | 🔵 | Hermes 上下文修復採文字橋接，未實作 Codex thread resume | ~410 |
+| #10512 | " | 🔴 | Hermes 模式跨輪對話上下文注入機制 | ~337 |
+
+### Apr 27, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #10998 | 4:48 PM | 🔵 | Review Persistence Layer Missing block_count and auto_fixed_count Fields | ~701 |
+| #10995 | " | 🔵 | UnifiedReviewResult Struct Definition Confirmed Without BLOCK Metrics | ~576 |
+| #10994 | 4:47 PM | 🔵 | PlannerRulesWeeklyReport Infrastructure Exists Without StrictReviewMode Metrics | ~709 |
+| #10988 | " | 🔵 | Review Results Schema Missing BLOCK Metrics Fields | ~556 |
+| #10977 | 4:46 PM | 🔵 | StrictReviewMode Activation Logic Implemented, Metrics Testing Gaps Identified | ~584 |
+| #10976 | " | 🔵 | StrictReviewMode Activation Already Implemented, Storage Metrics Missing | ~535 |
+| #10912 | 4:25 PM | 🟣 | StrictReviewMode BLOCK metrics monitoring and weekly reporting | ~403 |
+| #10896 | 4:07 PM | 🟣 | StrictReviewMode with opponent backend routing and BLOCK-retry flow | ~512 |
+| #10894 | 4:06 PM | 🟣 | StrictReviewMode activation surface testing implemented | ~287 |
+| #10855 | 3:33 PM | 🔵 | Comprehensive OpenAI Integration Research via Explore Agent | ~556 |
+| #10854 | " | 🔵 | Complete Architecture Understanding for DALL-E Integration | ~559 |
+| #10853 | 3:32 PM | 🔵 | OpenAI API Integration Pattern in Telegram Bot | ~497 |
+| #10852 | " | 🔵 | Existing OpenAI Integration in Alice Project | ~392 |
+
+### Apr 28, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #11692 | 10:35 PM | 🔵 | Root cause: codexPlanGuard conflicts with review JSON output requirement | ~429 |
+| #11691 | 10:34 PM | 🔵 | Diagnosed `/retry` command JSON parsing failure with GPT models | ~335 |
+| #11523 | 6:57 PM | 🔵 | Investigated topic-to-project mapping mechanism | ~257 |
+| #11521 | " | 🔵 | Investigated existing /tasks command implementation | ~242 |
+
+### Apr 29, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #12132 | 4:29 PM | 🔴 | Tasks callback handler now respects topic-specific project directory settings | ~312 |
+| #12130 | " | 🔵 | Tasks message handler integrates GitHub API with fallback to legacy MASTER_TASKS.md | ~409 |
+| #12129 | 4:28 PM | 🔵 | Tasks selector menu already implemented with GitHub issue list integration | ~377 |
+| #12126 | " | 🟣 | Telegram bot retry command guided builder with confirmation flow | ~308 |
+| #12127 | " | 🟣 | Model selector menu with visual current-selection indicator and Hermes tier switching | ~291 |
+| #12116 | 4:27 PM | 🔵 | Model selector integrates with persistent preference storage and tier management | ~477 |
+| #12113 | " | 🔵 | Model/backend selector menu already implemented with direct command routing | ~465 |
+| #12112 | 4:26 PM | 🟣 | Telegram bot visual menu system with guided retry command builder | ~215 |
+| #11732 | 1:35 AM | 🔴 | Fixed foreign key constraint failure in retry review storage | ~373 |
+| #11729 | 1:34 AM | 🔵 | Review subtask results table schema locations identified | ~294 |
+| #11724 | 1:33 AM | 🔵 | Review result storage mechanism with source tracking | ~327 |
+| #11721 | 1:30 AM | 🔵 | Retry command integration in Telegram bot interface | ~272 |
+| #11720 | " | 🔵 | Retry mechanism implementation for failed sub-tasks | ~533 |
+
+### May 8, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #15981 | 5:08 PM | 🔴 | Added double-quote escaping to Telegram HTML sanitization function | ~321 |
+| #15980 | " | 🔵 | Test suite validates Telegram HTML compliance and security boundaries | ~384 |
+| #15979 | 5:07 PM | 🔵 | Telegram HTML output validated against Bot API parse_mode specification | ~340 |
+| #15976 | " | 🔵 | Telegram Markdown renderer targets frontend parity not external "leaf" project | ~268 |
+| #15977 | " | 🟣 | Telegram Markdown renderer enhanced with italic, lists, and blockquote support | ~311 |
+| #15978 | " | 🟣 | Comprehensive test suite added for Telegram Markdown HTML conversion | ~314 |
+| #15975 | 5:03 PM | 🟣 | Added regex patterns for enhanced Telegram markdown rendering | ~362 |
+| #15973 | 5:00 PM | 🔵 | Clarified "leaf" reference in Alice codebase | ~277 |
+| #15974 | " | 🔵 | Identified markdown rendering capability gaps in Telegram backend | ~355 |
+| #15972 | " | 🔵 | Frontend "leaf" markdown implementation identified as react-markdown with GFM | ~576 |
+| #15971 | 4:59 PM | 🔵 | Telegram markdown render pipeline inventory | ~194 |
 </claude-mem-context>

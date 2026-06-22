@@ -6,21 +6,63 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"time"
 )
+
+// truncStderr clips stderr captures so log lines stay readable. Used only by
+// CallPlan diagnostics — it would never be called on hot paths.
+func truncStderr(s string) string {
+	const max = 500
+	s = strings.TrimSpace(s)
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
+func formatCLIStreamError(resp *CLIResponse, maxTurns int) string {
+	if resp == nil {
+		return "unknown stream error"
+	}
+	parts := []string{}
+	if detail := strings.TrimSpace(resp.Result); detail != "" {
+		parts = append(parts, detail)
+	} else {
+		parts = append(parts, "stream ended with is_error=true but no result text")
+	}
+	if resp.NumTurns > 0 {
+		if maxTurns > 0 {
+			parts = append(parts, fmt.Sprintf("turns=%d max_turns=%d", resp.NumTurns, maxTurns))
+			if resp.NumTurns >= maxTurns {
+				parts = append(parts, "likely exceeded --max-turns")
+			}
+		} else {
+			parts = append(parts, fmt.Sprintf("turns=%d", resp.NumTurns))
+		}
+	}
+	if resp.Subtype != "" {
+		parts = append(parts, "subtype="+resp.Subtype)
+	}
+	if partial := truncStderr(resp.TextContent); partial != "" {
+		parts = append(parts, "partial_text="+partial)
+	}
+	return strings.Join(parts, "; ")
+}
 
 // Client 定義統一的客戶端接口（支持 CLI 和 API）
 type Client interface {
 	Call(ctx context.Context, message, projectDir, sessionID, modelOverride string) (*CLIResponse, error)
 	CallStream(ctx context.Context, message, projectDir, sessionID, modelOverride string, onToolUse func(toolName string, toolInput map[string]interface{}), onContent func(contentType, text string)) (*CLIResponse, error)
-	// CallPlan invokes CLI with --max-turns 1 for planning phase (no tool execution).
-	CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error)
+	// CallPlan invokes CLI with planning safeguards. If sessionID is non-empty,
+	// implementations that support native resume should continue that session.
+	CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error)
 	GetModel() string
 }
 
@@ -30,14 +72,57 @@ type CLIClient struct {
 	MaxTurns int // max conversation turns per CLI invocation (default 50)
 }
 
+// forcePromptCaching5m, when true, makes cleanEnvForCLI inject
+// FORCE_PROMPT_CACHING_5M=1 into every claude-spawn env. Claude Code v2.1.108+
+// honours this and forces 5m cache TTL (1.25x rate) instead of its default 1h
+// (2x rate), which is the right default for short-lived Hermes workflows. See
+// issue #149 + docs/arch/hermes-walking-agent.md.
+var forcePromptCaching5m atomic.Bool
+
+// SetForcePromptCaching5m toggles process-wide injection of
+// FORCE_PROMPT_CACHING_5M=1 into the claude CLI env. Wired by the Hermes
+// walking-agent path; safe to call multiple times.
+func SetForcePromptCaching5m(v bool) {
+	forcePromptCaching5m.Store(v)
+}
+
+// defaultPlannerEffort is the CLI --effort level applied to the Planner phase
+// when config leaves it unset. "medium" deliberately undercuts Opus 4.8's
+// surface default of "high": the Planner only fills the emit_plan schema, and
+// high effort makes 4.8 over-reason into a prose summary instead of firing the
+// tool, which then fails JSON parsing. See HermesConfig.PlannerEffort + #178.
+const defaultPlannerEffort = "medium"
+
+// plannerEffort holds the process-wide Planner --effort level. Stored as a
+// string; empty or "off"/"none" means "omit the flag". Mirrors the
+// forcePromptCaching5m pattern: set once at startup from config.
+var plannerEffort atomic.Value
+
+// SetPlannerEffort sets the process-wide Planner --effort level used by
+// CallPlan. Wired at startup from HermesConfig.PlannerEffort; safe to call
+// multiple times.
+func SetPlannerEffort(level string) {
+	plannerEffort.Store(strings.TrimSpace(level))
+}
+
+// currentPlannerEffort returns the configured Planner effort level, falling
+// back to defaultPlannerEffort when unset.
+func currentPlannerEffort() string {
+	v, _ := plannerEffort.Load().(string)
+	if v == "" {
+		return defaultPlannerEffort
+	}
+	return v
+}
+
 // cleanEnvForCLI 返回不含 Claude Code 嵌套檢測環境變數的環境變數列表。
 // Claude Code 會設定 CLAUDECODE=1 等變數來防止嵌套啟動，必須清除。
 func cleanEnvForCLI() []string {
 	blocked := map[string]bool{
-		"CLAUDECODE":                          true,
-		"CLAUDE_CODE_ENTRYPOINT":              true,
+		"CLAUDECODE":             true,
+		"CLAUDE_CODE_ENTRYPOINT": true,
 		"CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING": true,
-		"CLAUDE_AGENT_SDK_VERSION":            true,
+		"CLAUDE_AGENT_SDK_VERSION":                  true,
 	}
 	var env []string
 	for _, e := range os.Environ() {
@@ -47,6 +132,9 @@ func cleanEnvForCLI() []string {
 		}
 	}
 	env = append(env, "ALICE_SKIP_HOOKS=1")
+	if forcePromptCaching5m.Load() {
+		env = append(env, "FORCE_PROMPT_CACHING_5M=1")
+	}
 	return env
 }
 
@@ -62,10 +150,25 @@ type CLIResponse struct {
 	DurationMs      int     `json:"duration_ms"`
 	ThinkingContent string  `json:"thinking_content"` // accumulated thinking blocks
 	TextContent     string  `json:"text_content"`     // accumulated text blocks
-	Usage           struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+	// Usage mirrors Anthropic's message.usage. input_tokens carries only the
+	// uncached portion; cache_read_input_tokens (0.1x rate) and
+	// cache_creation_input_tokens (1.25x rate) account for prompt-cache
+	// activity. See issue #148. For Codex backends cache_read_input_tokens
+	// carries cached_input_tokens; cache_creation is unused.
+	Usage struct {
+		InputTokens              int `json:"input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	} `json:"usage"`
+}
+
+// TotalInputTokensWithCache returns the full Anthropic input volume:
+// uncached input + cache reads + cache creations. Use this when you want
+// to know how many tokens hit the model context, not just billable
+// uncached tokens. See issue #148.
+func (u CLIResponse) TotalInputTokensWithCache() int {
+	return u.Usage.InputTokens + u.Usage.CacheReadInputTokens + u.Usage.CacheCreationInputTokens
 }
 
 func NewClient(model string) *CLIClient {
@@ -130,11 +233,11 @@ func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID, mo
 
 	args = append(args, message)
 
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = projectDir
-	cmd.Env = cleanEnvForCLI()
-
-	output, err := cmd.Output()
+	output, err := runProcessOutput(ctx, ProcessOptions{
+		Dir:     projectDir,
+		Env:     cleanEnvForCLI(),
+		Timeout: defaultAgentProcessTimeout,
+	}, "claude", args...)
 	if err != nil {
 		if ctx.Err() == context.Canceled {
 			return nil, fmt.Errorf("agent aborted by user")
@@ -163,7 +266,7 @@ func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID, mo
 
 	// Record performance metrics
 	latency := time.Since(startTime)
-	totalTokens := resp.Usage.InputTokens + resp.Usage.OutputTokens
+	totalTokens := resp.Usage.InputTokens + resp.Usage.CacheReadInputTokens + resp.Usage.CacheCreationInputTokens + resp.Usage.OutputTokens
 	errorType := ""
 	if resp.IsError {
 		errorType = "cli_error"
@@ -178,7 +281,8 @@ func (c *CLIClient) Call(ctx context.Context, message, projectDir, sessionID, mo
 		}
 	}
 
-	RecordAPICall(latency, !resp.IsError, totalTokens, resp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(model))
+	RecordAPICallWithCache(latency, !resp.IsError, totalTokens, resp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(model),
+		resp.Usage.InputTokens, resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens, resp.Usage.OutputTokens)
 
 	if resp.IsError {
 		return &resp, fmt.Errorf("CLI returned error: %s", resp.Result)
@@ -215,9 +319,12 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 
 	args = append(args, message)
 
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = projectDir
-	cmd.Env = cleanEnvForCLI()
+	cmd, cancel := processCommand(ctx, ProcessOptions{
+		Dir:     projectDir,
+		Env:     cleanEnvForCLI(),
+		Timeout: defaultAgentProcessTimeout,
+	}, "claude", args...)
+	defer cancel()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -257,15 +364,18 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 				} `json:"content"`
 			} `json:"message"`
 			// result fields
-			SessionID    string  `json:"session_id"`
-			IsError      bool    `json:"is_error"`
-			NumTurns     int     `json:"num_turns"`
-			Result       string  `json:"result"`
-			TotalCostUSD float64 `json:"total_cost_usd"`
-			DurationMs   int     `json:"duration_ms"`
-			Usage        struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
+			SessionID        string          `json:"session_id"`
+			IsError          bool            `json:"is_error"`
+			NumTurns         int             `json:"num_turns"`
+			Result           string          `json:"result"`
+			StructuredOutput json.RawMessage `json:"structured_output"`
+			TotalCostUSD     float64         `json:"total_cost_usd"`
+			DurationMs       int             `json:"duration_ms"`
+			Usage            struct {
+				InputTokens              int `json:"input_tokens"`
+				OutputTokens             int `json:"output_tokens"`
+				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 			} `json:"usage"`
 		}
 
@@ -312,6 +422,8 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 			}
 			finalResp.Usage.InputTokens = event.Usage.InputTokens
 			finalResp.Usage.OutputTokens = event.Usage.OutputTokens
+			finalResp.Usage.CacheReadInputTokens = event.Usage.CacheReadInputTokens
+			finalResp.Usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
 		}
 	}
 
@@ -346,7 +458,7 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 
 	// Record performance metrics
 	latency := time.Since(startTime)
-	totalTokens := finalResp.Usage.InputTokens + finalResp.Usage.OutputTokens
+	totalTokens := finalResp.Usage.InputTokens + finalResp.Usage.CacheReadInputTokens + finalResp.Usage.CacheCreationInputTokens + finalResp.Usage.OutputTokens
 	errorType := ""
 	if finalResp.IsError {
 		errorType = "cli_stream_error"
@@ -361,19 +473,22 @@ func (c *CLIClient) CallStream(ctx context.Context, message, projectDir, session
 		}
 	}
 
-	RecordAPICall(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(model))
+	RecordAPICallWithCache(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(model),
+		finalResp.Usage.InputTokens, finalResp.Usage.CacheReadInputTokens, finalResp.Usage.CacheCreationInputTokens, finalResp.Usage.OutputTokens)
 
 	if finalResp.IsError {
-		return finalResp, fmt.Errorf("CLI returned error: %s", finalResp.Result)
+		return finalResp, fmt.Errorf("CLI returned error: %s", formatCLIStreamError(finalResp, c.MaxTurns))
 	}
 
 	return finalResp, nil
 }
 
-// CallPlan invokes Claude Code CLI with --max-turns 1 for planning-only phase.
-// No session resume — always starts a fresh session for the plan.
+// CallPlan invokes Claude Code CLI in planning mode.
+// It loads a temporary MCP server that exposes emit_plan and treats that
+// tool use as the structural end of planning.
+// If sessionID is non-empty, resumes that native Planner session.
 // No tool execution callbacks — planning phase should only think, not act.
-func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
 	startTime := time.Now()
 
 	model := c.Model
@@ -381,20 +496,53 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOver
 		model = modelOverride
 	}
 
+	// Structured output via --json-schema replaces the legacy emit_plan MCP
+	// tool. Opus 4.8 frequently narrates a prose plan summary ("Plan emitted
+	// successfully…") instead of firing a tool call, which left the old MCP
+	// path with nothing to parse and failed after retries (#178; observed on
+	// /hermes #115, #374). --json-schema enforces the sub_tasks object at decode
+	// time, so the validated plan lands in the result event's structured_output
+	// regardless of any prose the model also emits. --strict-mcp-config with no
+	// --mcp-config keeps planning hermetic (no user MCP servers); --tools ""
+	// forbids tool execution during planning.
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
 		"--verbose",
 		"--model", model,
 		"--dangerously-skip-permissions",
-		"--max-turns", "1",
+		"--strict-mcp-config",
+		"--tools", "",
+		"--json-schema", plannerSubTasksJSONSchema,
 	}
 
-	args = append(args, message)
+	// Cap Planner effort below Opus 4.8's "high" default. High effort makes the
+	// model deliberate longer and lean harder into a prose summary; medium keeps
+	// it on-task. "off"/"none" lets an operator inherit the model's default. #178.
+	if effort := currentPlannerEffort(); effort != "" && effort != "off" && effort != "none" {
+		args = append(args, "--effort", effort)
+	}
 
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = projectDir
-	cmd.Env = cleanEnvForCLI()
+	if sessionID != "" {
+		args = append(args, "--resume", sessionID)
+	}
+
+	// Diagnostic dump — when CallPlan fails with empty stderr, we want to be
+	// able to replay the exact prompt offline. The file is overwritten each
+	// call so /tmp doesn't fill up.
+	log.Printf("[cli] CallPlan prompt: model=%s projectDir=%s len=%d", model, projectDir, len(message))
+	if dumpErr := os.WriteFile("/tmp/alice_callplan_last.txt", []byte(message), 0644); dumpErr != nil {
+		log.Printf("[cli] CallPlan prompt dump failed: %v", dumpErr)
+	}
+
+	cmd, cancel := processCommand(ctx, ProcessOptions{
+		Dir:     projectDir,
+		Env:     cleanEnvForCLI(),
+		Timeout: defaultAgentProcessTimeout,
+	}, "claude", args...)
+	defer cancel()
+
+	cmd.Stdin = strings.NewReader(message)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -411,6 +559,10 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOver
 	var finalResp *CLIResponse
 	var thinkingBlocks []string
 	var textBlocks []string
+	var emitPlanJSON string
+	var sawEmitPlan bool
+	var structuredPlanJSON string
+	var latestSessionID string
 
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -426,25 +578,33 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOver
 			Subtype string `json:"subtype"`
 			Message *struct {
 				Content []struct {
-					Type     string `json:"type"`
-					Text     string `json:"text"`
-					Thinking string `json:"thinking"`
+					Type     string                 `json:"type"`
+					Name     string                 `json:"name"`
+					Input    map[string]interface{} `json:"input"`
+					Text     string                 `json:"text"`
+					Thinking string                 `json:"thinking"`
 				} `json:"content"`
 			} `json:"message"`
-			SessionID    string  `json:"session_id"`
-			IsError      bool    `json:"is_error"`
-			NumTurns     int     `json:"num_turns"`
-			Result       string  `json:"result"`
-			TotalCostUSD float64 `json:"total_cost_usd"`
-			DurationMs   int     `json:"duration_ms"`
-			Usage        struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
+			SessionID        string          `json:"session_id"`
+			IsError          bool            `json:"is_error"`
+			NumTurns         int             `json:"num_turns"`
+			Result           string          `json:"result"`
+			StructuredOutput json.RawMessage `json:"structured_output"`
+			TotalCostUSD     float64         `json:"total_cost_usd"`
+			DurationMs       int             `json:"duration_ms"`
+			Usage            struct {
+				InputTokens              int `json:"input_tokens"`
+				OutputTokens             int `json:"output_tokens"`
+				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 			} `json:"usage"`
 		}
 
 		if err := json.Unmarshal(line, &event); err != nil {
 			continue
+		}
+		if event.SessionID != "" {
+			latestSessionID = event.SessionID
 		}
 
 		switch event.Type {
@@ -466,6 +626,13 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOver
 								onContent("text", c.Text)
 							}
 						}
+					case "tool_use":
+						if isPlannerEmitPlanTool(c.Name) {
+							if payload, ok := marshalPlannerEmitPlanPayload(c.Input); ok {
+								emitPlanJSON = payload
+								sawEmitPlan = true
+							}
+						}
 					}
 				}
 			}
@@ -482,50 +649,289 @@ func (c *CLIClient) CallPlan(ctx context.Context, message, projectDir, modelOver
 			}
 			finalResp.Usage.InputTokens = event.Usage.InputTokens
 			finalResp.Usage.OutputTokens = event.Usage.OutputTokens
+			finalResp.Usage.CacheReadInputTokens = event.Usage.CacheReadInputTokens
+			finalResp.Usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
+			if finalResp.SessionID == "" && latestSessionID != "" {
+				finalResp.SessionID = latestSessionID
+			}
+			// --json-schema enforces the sub_tasks object; the validated value
+			// arrives here even when the model also narrated prose in `result`.
+			if subTasks, ok := extractStructuredSubTasks(event.StructuredOutput); ok {
+				structuredPlanJSON = subTasks
+			}
 		}
 	}
 
 	if finalResp != nil {
 		finalResp.ThinkingContent = strings.Join(thinkingBlocks, "\n\n---\n\n")
-		finalResp.TextContent = strings.Join(textBlocks, "\n\n")
+		// Priority: --json-schema structured_output (robust against prose) >
+		// legacy emit_plan tool_use (kept as a fallback) > raw text. The
+		// downstream Planner parses a bare JSON array of sub-tasks from TextContent.
+		switch {
+		case structuredPlanJSON != "":
+			finalResp.TextContent = structuredPlanJSON
+			finalResp.Result = "emit_plan"
+		case sawEmitPlan && emitPlanJSON != "":
+			finalResp.TextContent = emitPlanJSON
+			if finalResp.Result == "" {
+				finalResp.Result = "emit_plan"
+			}
+		default:
+			finalResp.TextContent = strings.Join(textBlocks, "\n\n")
+		}
 	}
 
-	if err := cmd.Wait(); err != nil {
+	waitErr := cmd.Wait()
+	if waitErr != nil {
 		if ctx.Err() == context.Canceled {
 			return nil, fmt.Errorf("agent aborted by user")
 		}
 		if finalResp != nil {
-			log.Printf("[cli] CallPlan CLI exited with error but streaming captured result (is_error=%v)", finalResp.IsError)
+			log.Printf("[cli] CallPlan CLI exited with error but streaming captured result (is_error=%v, exit=%v, stderr=%q)", finalResp.IsError, waitErr, truncStderr(stderrBuf.String()))
 			if !finalResp.IsError {
 				finalResp.IsError = true
 			}
 		} else {
-			if _, ok := err.(*exec.ExitError); ok {
-				return nil, fmt.Errorf("claude CLI error: %s", stderrBuf.String())
+			if _, ok := waitErr.(*exec.ExitError); ok {
+				return nil, fmt.Errorf("claude CLI error (exit=%v): %s", waitErr, stderrBuf.String())
 			}
-			return nil, fmt.Errorf("claude CLI exec: %w", err)
+			return nil, fmt.Errorf("claude CLI exec: %w", waitErr)
 		}
 	}
 
 	if finalResp == nil {
-		return nil, fmt.Errorf("no result event in stream output")
+		return nil, fmt.Errorf("no result event in stream output (stderr=%q)", truncStderr(stderrBuf.String()))
 	}
 
 	// Record performance metrics
 	latency := time.Since(startTime)
-	totalTokens := finalResp.Usage.InputTokens + finalResp.Usage.OutputTokens
+	totalTokens := finalResp.Usage.InputTokens + finalResp.Usage.CacheReadInputTokens + finalResp.Usage.CacheCreationInputTokens + finalResp.Usage.OutputTokens
 	errorType := ""
 	if finalResp.IsError {
 		errorType = "cli_plan_error"
 	}
 
-	RecordAPICall(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, 0, projectDir, errorType, ExtractModelShortName(model))
+	RecordAPICallWithCache(latency, !finalResp.IsError, totalTokens, finalResp.TotalCostUSD, 0, projectDir, errorType, ExtractModelShortName(model),
+		finalResp.Usage.InputTokens, finalResp.Usage.CacheReadInputTokens, finalResp.Usage.CacheCreationInputTokens, finalResp.Usage.OutputTokens)
 
 	if finalResp.IsError {
-		return finalResp, fmt.Errorf("CLI returned error: %s", finalResp.Result)
+		// Result is sometimes empty when the CLI errors before producing
+		// content; surface stderr and the wait-error to give the user a hint.
+		detail := strings.TrimSpace(finalResp.Result)
+		if detail == "" {
+			detail = strings.TrimSpace(stderrBuf.String())
+		}
+		if detail == "" && waitErr != nil {
+			detail = waitErr.Error()
+		}
+		if detail == "" {
+			detail = "(empty CLI error — check claude CLI auth, network, or prompt size)"
+		}
+		return finalResp, fmt.Errorf("CLI returned error: %s", detail)
+	}
+
+	// Salvage: Opus 4.8 sometimes narrates a prose plan ("Plan emitted: 8
+	// sub-tasks…") instead of calling the StructuredOutput tool, leaving
+	// structured_output empty. --json-schema is still an optional tool the model
+	// may skip, so a prompt alone cannot guarantee it. When we captured neither
+	// structured output nor an emit_plan tool_use but DID get prose, run one
+	// focused conversion pass that restructures that prose into sub_tasks. This
+	// makes planning robust to the narration instead of failing the whole task.
+	// See #178.
+	if structuredPlanJSON == "" && !(sawEmitPlan && emitPlanJSON != "") {
+		if prose := strings.TrimSpace(finalResp.TextContent); prose != "" {
+			if salvaged := c.salvagePlanFromProse(ctx, message, prose, projectDir, model); salvaged != "" {
+				log.Printf("[cli] CallPlan salvaged literal JSON plan from prose (model narrated instead of emitting structured output)")
+				finalResp.TextContent = salvaged
+				finalResp.Result = "emit_plan"
+			}
+		}
 	}
 
 	return finalResp, nil
+}
+
+// salvagePlanFromProse converts a narrated Planner response into literal JSON
+// text. It deliberately does NOT use --json-schema: the failure mode this
+// handles is Claude/CLI claiming it emitted structured output while not
+// surfacing structured_output to the caller. The fallback therefore asks for
+// plain text JSON and parses assistant/result text directly.
+func (c *CLIClient) salvagePlanFromProse(ctx context.Context, originalPrompt, prose, projectDir, model string) string {
+	if raw, ok := extractPlannerJSONText(prose); ok {
+		return raw
+	}
+	convPrompt := "The previous Hermes Planner response was prose, not parseable JSON:\n" +
+		prose + "\n\n" +
+		"Re-read the original Planner request below and produce the same plan as a LITERAL JSON ARRAY in your text response. " +
+		"Do not use hidden structured output, do not say the plan was emitted, and do not wrap the answer in Markdown unless the fence contains only the JSON array. " +
+		"Every array item must include `id`, `description`, and `tool_hints`; preserve any required `checklist_item_ids` fields from the original request.\n\n" +
+		"--- ORIGINAL PLANNER REQUEST ---\n" + originalPrompt + "\n\n" +
+		"--- FALLBACK RAW JSON MODE ---\nReturn ONLY the literal JSON array now."
+
+	args := []string{
+		"-p",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--model", model,
+		"--dangerously-skip-permissions",
+		"--strict-mcp-config",
+		"--tools", "",
+		"--effort", "medium",
+	}
+
+	cmd, cancel := processCommand(ctx, ProcessOptions{
+		Dir:     projectDir,
+		Env:     cleanEnvForCLI(),
+		Timeout: defaultAgentProcessTimeout,
+	}, "claude", args...)
+	defer cancel()
+	cmd.Stdin = strings.NewReader(convPrompt)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return ""
+	}
+	if err := cmd.Start(); err != nil {
+		return ""
+	}
+
+	var salvaged string
+	var textBlocks []string
+	var resultText string
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		var ev struct {
+			Type    string `json:"type"`
+			Message *struct {
+				Content []struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"message"`
+			Result           string          `json:"result"`
+			StructuredOutput json.RawMessage `json:"structured_output"`
+		}
+		if json.Unmarshal(scanner.Bytes(), &ev) != nil {
+			continue
+		}
+		switch ev.Type {
+		case "assistant":
+			if ev.Message != nil {
+				for _, c := range ev.Message.Content {
+					if c.Type == "text" && c.Text != "" {
+						textBlocks = append(textBlocks, c.Text)
+					}
+				}
+			}
+		case "result":
+			resultText = ev.Result
+			if subTasks, ok := extractStructuredSubTasks(ev.StructuredOutput); ok {
+				salvaged = subTasks
+			}
+		}
+	}
+	_ = cmd.Wait()
+	if salvaged != "" {
+		return salvaged
+	}
+	for _, candidate := range []string{strings.Join(textBlocks, "\n\n"), resultText} {
+		if raw, ok := extractPlannerJSONText(candidate); ok {
+			return raw
+		}
+	}
+	log.Printf("[cli] CallPlan prose salvage failed: prose=%q result=%q text_len=%d", truncStderr(prose), truncStderr(resultText), len(strings.Join(textBlocks, "\n\n")))
+	return salvaged
+}
+
+// plannerSubTasksJSONSchema is passed to the CLI via --json-schema to force the
+// Planner's output into a {sub_tasks: [...]} object validated at decode time.
+// additionalProperties is true on each sub-task so optional fields the Planner
+// rules ask for (e.g. checklist_item_ids) pass through without schema churn.
+// See CallPlan + #178.
+const plannerSubTasksJSONSchema = `{"type":"object","additionalProperties":false,"properties":{"sub_tasks":{"type":"array","items":{"type":"object","additionalProperties":true,"properties":{"id":{"type":"string"},"description":{"type":"string"},"tool_hints":{"type":"array","items":{"type":"string"}}},"required":["id","description","tool_hints"]}}},"required":["sub_tasks"]}`
+
+// extractStructuredSubTasks pulls the sub_tasks array out of a --json-schema
+// structured_output payload and returns it as a bare JSON array string (the
+// shape the Planner's parser expects from TextContent). Returns ok=false when
+// the payload is empty, malformed, or carries no sub_tasks.
+func extractStructuredSubTasks(raw json.RawMessage) (string, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+	var wrapper struct {
+		SubTasks json.RawMessage `json:"sub_tasks"`
+	}
+	if err := json.Unmarshal(raw, &wrapper); err != nil {
+		return "", false
+	}
+	trimmed := strings.TrimSpace(string(wrapper.SubTasks))
+	if trimmed == "" || trimmed == "null" || trimmed == "[]" {
+		return "", false
+	}
+	return trimmed, true
+}
+
+// extractPlannerJSONText finds a literal JSON plan in plain assistant text and
+// normalizes {sub_tasks:[...]} objects to the bare array consumed downstream.
+func extractPlannerJSONText(text string) (string, bool) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "", false
+	}
+	for i, r := range text {
+		if r != '[' && r != '{' {
+			continue
+		}
+		var raw json.RawMessage
+		dec := json.NewDecoder(strings.NewReader(text[i:]))
+		if err := dec.Decode(&raw); err != nil || len(raw) == 0 {
+			continue
+		}
+		trimmed := strings.TrimSpace(string(raw))
+		if strings.HasPrefix(trimmed, "{") {
+			if subTasks, ok := extractStructuredSubTasks(json.RawMessage(trimmed)); ok {
+				return subTasks, true
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[") && trimmed != "[]" {
+			return trimmed, true
+		}
+	}
+	return "", false
+}
+
+// plannerEmitPlanToolName and the helpers below remain for the secondary
+// fallback path: if a future CLI build surfaces the plan via a tool_use block
+// (named emit_plan or *__emit_plan) rather than --json-schema structured_output,
+// CallPlan still captures it. The structured_output path (#178) is primary.
+const plannerEmitPlanToolName = "emit_plan"
+
+func isPlannerEmitPlanTool(name string) bool {
+	name = strings.TrimSpace(name)
+	return name == plannerEmitPlanToolName || strings.HasSuffix(name, "__"+plannerEmitPlanToolName)
+}
+
+func marshalPlannerEmitPlanPayload(input map[string]interface{}) (string, bool) {
+	if len(input) == 0 {
+		return "", false
+	}
+	payload, ok := input["sub_tasks"]
+	if !ok {
+		payload, ok = input["subTasks"]
+	}
+	if !ok {
+		payload, ok = input["plan"]
+	}
+	if !ok {
+		return "", false
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", false
+	}
+	return string(raw), true
 }
 
 // Call 使用 Anthropic API 直接調用（APIClient 實現）
@@ -603,6 +1009,8 @@ func (a *APIClient) Call(ctx context.Context, message, projectDir, sessionID, mo
 
 	// Record performance metrics
 	latency := time.Since(startTime)
+	// APIClient path uses raw Anthropic SDK; cache fields aren't parsed here yet
+	// (separate work). Total reflects only uncached + output for now.
 	totalTokens := apiResp.Usage.InputTokens + apiResp.Usage.OutputTokens
 
 	// 計算成本（$3 input, $15 output per million tokens）
@@ -619,23 +1027,20 @@ func (a *APIClient) Call(ctx context.Context, message, projectDir, sessionID, mo
 		}
 	}
 
-	RecordAPICall(latency, true, totalTokens, totalCost, chatID, projectDir, "", ExtractModelShortName(model))
+	RecordAPICallWithCache(latency, true, totalTokens, totalCost, chatID, projectDir, "", ExtractModelShortName(model),
+		apiResp.Usage.InputTokens, 0, 0, apiResp.Usage.OutputTokens)
 
-	return &CLIResponse{
+	cliResp := &CLIResponse{
 		Type:            "text",
 		Result:          textContent,
 		TotalCostUSD:    totalCost,
 		DurationMs:      int(latency.Milliseconds()),
 		ThinkingContent: "",
 		TextContent:     textContent,
-		Usage: struct {
-			InputTokens  int `json:"input_tokens"`
-			OutputTokens int `json:"output_tokens"`
-		}{
-			InputTokens:  apiResp.Usage.InputTokens,
-			OutputTokens: apiResp.Usage.OutputTokens,
-		},
-	}, nil
+	}
+	cliResp.Usage.InputTokens = apiResp.Usage.InputTokens
+	cliResp.Usage.OutputTokens = apiResp.Usage.OutputTokens
+	return cliResp, nil
 }
 
 // CallStream 使用 Anthropic API 的流式調用（APIClient 實現）
@@ -656,10 +1061,11 @@ func (a *APIClient) CallStream(ctx context.Context, message, projectDir, session
 	return resp, nil
 }
 
-// CallPlan 使用 Anthropic API 的計劃調用（APIClient 實現）
-// 直接調用 Call，不使用 session resume
-func (a *APIClient) CallPlan(ctx context.Context, message, projectDir, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
-	resp, err := a.Call(ctx, message, projectDir, "", modelOverride)
+// CallPlan 使用 Anthropic API 的計劃調用（APIClient 實現）。
+// APIClient does not persist native sessions; sessionID is accepted for Client
+// interface compatibility and metrics attribution.
+func (a *APIClient) CallPlan(ctx context.Context, message, projectDir, sessionID, modelOverride string, onContent func(contentType, text string)) (*CLIResponse, error) {
+	resp, err := a.Call(ctx, message, projectDir, sessionID, modelOverride)
 	if err != nil {
 		return nil, err
 	}

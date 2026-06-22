@@ -83,6 +83,66 @@ func TestLoadPromptBuilder_MissingDirFallsBack(t *testing.T) {
 	}
 }
 
+func TestLoadPromptBuilderForTier_CodexPrefersVariant(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(dir, "planner_rules.md"), []byte("default planner"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "planner_rules_codex.md"), []byte("codex planner"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "executor_rules.md"), []byte("default executor"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "executor_rules_codex.md"), []byte("codex executor"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pb := LoadPromptBuilderForTier(dir, "codex")
+	if got := pb.ForRole(RolePlanner); got != "codex planner" {
+		t.Errorf("planner rules = %q, want codex variant", got)
+	}
+	if got := pb.ForRole(RoleExecutor); got != "codex executor" {
+		t.Errorf("executor rules = %q, want codex variant", got)
+	}
+}
+
+func TestLoadPromptBuilderForTier_CodexDoesNotFallBackToClaudeFiles(t *testing.T) {
+	// The two tiers describe different runtime tool surfaces (Claude has
+	// Read/Edit/file_patch; Codex has only command_execution) and the
+	// rules for tool_hints contradict each other. Codex tier must NOT
+	// silently load the Claude-tier files — that would feed Codex
+	// invalid tool hints. When the codex-specific file is missing, the
+	// loader falls through to the embedded defaults instead.
+	dir := t.TempDir()
+
+	if err := os.WriteFile(filepath.Join(dir, "planner_rules.md"), []byte("claude tier planner"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "executor_rules.md"), []byte("claude tier executor"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pb := LoadPromptBuilderForTier(dir, "codex")
+	if got := pb.ForRole(RolePlanner); got == "claude tier planner" {
+		t.Errorf("planner rules leaked Claude-tier content into Codex: %q", got)
+	}
+	if got := pb.ForRole(RoleExecutor); got == "claude tier executor" {
+		t.Errorf("executor rules leaked Claude-tier content into Codex: %q", got)
+	}
+	// Embedded defaults should be in effect.
+	if got := pb.ForRole(RolePlanner); got == "" {
+		t.Error("planner rules empty; embedded default not loaded")
+	}
+	if got := pb.ForRole(RolePlanner); strings.Contains(got, "emit_plan") {
+		t.Errorf("codex planner fallback should not require unavailable emit_plan tool: %q", got)
+	}
+	if got := pb.ForRole(RolePlanner); !strings.Contains(got, "JSON") {
+		t.Errorf("codex planner fallback should require JSON output: %q", got)
+	}
+}
+
 func TestRole_String(t *testing.T) {
 	tests := []struct {
 		role Role
@@ -103,8 +163,23 @@ func TestDefaultRulesContainKeyTerms(t *testing.T) {
 	pb := DefaultPromptBuilder()
 
 	planner := pb.ForRole(RolePlanner)
-	if !strings.Contains(planner, "JSON") {
-		t.Error("planner rules should mention JSON format requirement")
+	// The planner emits via --json-schema structured output, not the removed
+	// emit_plan MCP tool. Instructing the model to call a nonexistent tool made
+	// Opus 4.8 narrate "Plan emitted" instead of producing a plan. See #178.
+	if strings.Contains(planner, "emit_plan") {
+		t.Errorf("planner rules should not reference the removed emit_plan tool: %q", planner)
+	}
+	if !strings.Contains(planner, "structured output") {
+		t.Error("planner rules should mention structured output")
+	}
+	if !strings.Contains(planner, "sub_tasks") {
+		t.Error("planner rules should mention sub_tasks payload")
+	}
+	if !strings.Contains(planner, "SINGLE-ACTION RULE") {
+		t.Error("planner rules should mention SINGLE-ACTION RULE")
+	}
+	if !strings.Contains(planner, "補 1 個測試") {
+		t.Error("planner rules should mention single-action examples")
 	}
 	if !strings.Contains(planner, "config.json") {
 		t.Error("planner rules should mention config.json protection")

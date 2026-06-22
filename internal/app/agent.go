@@ -2,46 +2,74 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
+
+	appengine "claude-tg-agent/internal/app/engine"
+	"claude-tg-agent/internal/app/hermes"
+	"claude-tg-agent/internal/app/security"
 )
+
+// directPlanViaGraph reports whether the direct-chat plan/execute path
+// (Class A in #171) should dispatch via the Walker-driven RunViaGraph
+// instead of the legacy Run(). Gated on ALICE_DIRECT_PLAN_VIA_GRAPH so
+// we can flip it per-deploy without a rebuild and revert if a
+// regression slips through bake-in. Default off until the rollout is
+// observed clean.
+func directPlanViaGraph() bool {
+	v := strings.TrimSpace(strings.ToLower(os.Getenv("ALICE_DIRECT_PLAN_VIA_GRAPH")))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
 
 // TokenStats tracks cumulative token usage for an agent session.
 type TokenStats struct {
-	TotalInputTokens  int64   // 累計 input tokens
-	TotalOutputTokens int64   // 累計 output tokens
-	TotalCostUSD      float64 // 累計費用（Max 訂閱下為 0）
-	APICallCount      int     // CLI 呼叫次數
-	Model             string  // NEW: 使用的模型（haiku, sonnet, opus）
+	TotalInputTokens         int64   // uncached input tokens
+	TotalCacheReadTokens     int64   // cache_read input tokens (0.1x rate)
+	TotalCacheCreationTokens int64   // cache_creation input tokens (1.25x rate at 5m, 2.0x at 1h)
+	TotalOutputTokens        int64   // 累計 output tokens
+	TotalCostUSD             float64 // 累計費用（Max 訂閱下為 0）
+	APICallCount             int     // CLI 呼叫次數
+	Model                    string  // NEW: 使用的模型（haiku, sonnet, opus）
+}
+
+// TotalInputTokensInclCache returns the API-side input volume Anthropic
+// actually saw, summing uncached + cache_read + cache_creation. This is the
+// number that matches Anthropic platform billing — TotalInputTokens alone is
+// only the uncached residual. See issue #148.
+func (s TokenStats) TotalInputTokensInclCache() int64 {
+	return s.TotalInputTokens + s.TotalCacheReadTokens + s.TotalCacheCreationTokens
 }
 
 // CostSavingsReport 成本節省報告（用於 Dashboard 展示）
 type CostSavingsReport struct {
-	PeriodHours       int                            `json:"period_hours"`
-	StartTime         time.Time                      `json:"start_time"`
-	EndTime           time.Time                      `json:"end_time"`
-	ActualCost        float64                        `json:"actual_cost"`        // 實際花費
-	DefaultModelCost  float64                        `json:"default_model_cost"` // 假設全用預設模型花費
-	SavingsCost       float64                        `json:"savings_cost"`       // 節省金額
-	SavingsPercent    float64                        `json:"savings_percent"`    // 節省百分比
-	TotalRequests     int                            `json:"total_requests"`
-	ByModel           map[string]ModelCostBreakdown  `json:"by_model"`
-	RoutingMethodStat map[string]int                 `json:"routing_method_stat"`
+	PeriodHours       int                           `json:"period_hours"`
+	StartTime         time.Time                     `json:"start_time"`
+	EndTime           time.Time                     `json:"end_time"`
+	ActualCost        float64                       `json:"actual_cost"`        // 實際花費
+	DefaultModelCost  float64                       `json:"default_model_cost"` // 假設全用預設模型花費
+	SavingsCost       float64                       `json:"savings_cost"`       // 節省金額
+	SavingsPercent    float64                       `json:"savings_percent"`    // 節省百分比
+	TotalRequests     int                           `json:"total_requests"`
+	ByModel           map[string]ModelCostBreakdown `json:"by_model"`
+	RoutingMethodStat map[string]int                `json:"routing_method_stat"`
 }
 
 // ModelCostBreakdown 按模型的成本分解
 type ModelCostBreakdown struct {
-	Calls           int     `json:"calls"`
-	ActualCost      float64 `json:"actual_cost"`
-	WouldHaveCost   float64 `json:"would_have_cost"`   // 假設用預設模型的成本
-	Saved           float64 `json:"saved"`             // 節省金額
-	InputTokens     int     `json:"input_tokens"`
-	OutputTokens    int     `json:"output_tokens"`
+	Calls         int     `json:"calls"`
+	ActualCost    float64 `json:"actual_cost"`
+	WouldHaveCost float64 `json:"would_have_cost"` // 假設用預設模型的成本
+	Saved         float64 `json:"saved"`           // 節省金額
+	InputTokens   int     `json:"input_tokens"`
+	OutputTokens  int     `json:"output_tokens"`
 }
 
 // ToolExecution represents a single tool execution event
@@ -74,9 +102,9 @@ type DecisionLog struct {
 	TokensUsed      TokenStats             `json:"tokens_used"`
 	GitCommitHash   string                 `json:"git_commit_hash,omitempty"`
 	GitBranch       string                 `json:"git_branch,omitempty"`
-	Source          string                 `json:"source"` // "telegram", "terminal", "vscode", "unknown"
-	Model           string                 `json:"model"` // NEW: "haiku", "sonnet", "opus"
-	RoutingReason   string                 `json:"routing_reason"` // NEW: "user_command", "ai_router", "static_rule", "default"
+	Source          string                 `json:"source"`             // "telegram", "terminal", "vscode", "unknown"
+	Model           string                 `json:"model"`              // NEW: "haiku", "sonnet", "opus"
+	RoutingReason   string                 `json:"routing_reason"`     // NEW: "user_command", "ai_router", "static_rule", "default"
 	RoutingLatency  int                    `json:"routing_latency_ms"` // NEW: 路由判斷耗時 (ms)
 }
 
@@ -240,11 +268,17 @@ func (dl *DecisionLogger) LogDecision(decision DecisionLog) {
 
 	// 如果有 SQLite 儲存，將決策記錄寫入資料庫
 	if globalStorage != nil {
-		go func() {
-			if err := globalStorage.InsertDecisionLog(decision); err != nil {
+		storage := globalStorage
+		go func(storage Storage) {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("Warning: failed to persist decision log to database: panic: %v", r)
+				}
+			}()
+			if err := storage.InsertDecisionLog(decision); err != nil {
 				log.Printf("Warning: failed to persist decision log to database: %v", err)
 			}
-		}()
+		}(storage)
 	}
 
 	// 廣播決策事件到 WebSocket 客戶端
@@ -328,48 +362,161 @@ func (dl *DecisionLogger) SearchDecisions(projectPath string, taskType string, s
 	return results
 }
 
-// contextMessage 保存單輪對話（用於 context bridge）
-type contextMessage struct {
-	Role    string // "user" or "assistant"
-	Content string // truncated to 500 chars
-}
-
 // projectState 保存單一專案的對話狀態
 type projectState struct {
-	sessionID        string
+	ctx              *ChatContext
 	stats            TokenStats
-	lastActivity     time.Time
-	createdAt        time.Time
-	lastTotalCostUSD float64          // CLI's cumulative cost from last call (for delta calculation)
-	recentMessages   []contextMessage // last 5 exchanges for context bridge on model switch
+	lastTotalCostUSD float64 // CLI's cumulative cost from last call within lastCostSession
+	lastCostSession  string  // session id that lastTotalCostUSD belongs to (#148)
+}
+
+// recordCallCost computes the per-call USD cost honouring CLI session
+// boundaries (TotalCostUSD is session-cumulative, so a different session id
+// resets the baseline) and falling back to a token×rate estimate when the
+// CLI reported $0 (typical under Claude Max subscription) or when the
+// session-relative delta would be negative. Updates lastTotalCostUSD /
+// lastCostSession before returning. See issue #148 (1B + 1D).
+func (ps *projectState) recordCallCost(resp *CLIResponse, model string) float64 {
+	if ps == nil || resp == nil {
+		return 0
+	}
+	var deltaCost float64
+	sameSession := resp.SessionID != "" && resp.SessionID == ps.lastCostSession
+	if sameSession {
+		deltaCost = resp.TotalCostUSD - ps.lastTotalCostUSD
+	} else {
+		// New (or empty) session: cumulative starts fresh, so the current
+		// TotalCostUSD is itself the per-call cost — not a delta against the
+		// previous session's total.
+		deltaCost = resp.TotalCostUSD
+	}
+	if deltaCost <= 0 {
+		// Either Max-sub returned $0, or the session boundary check missed
+		// something and we got a negative delta. In both cases fall back to a
+		// token×rate estimate so the dashboard doesn't see $0 / negative cost.
+		estimate := EstimateClaudeCost(
+			model,
+			resp.Usage.InputTokens,
+			resp.Usage.CacheReadInputTokens,
+			resp.Usage.CacheCreationInputTokens,
+			resp.Usage.OutputTokens,
+		)
+		if deltaCost < 0 {
+			log.Printf("[agent] cost delta negative (total=%.4f last=%.4f same_session=%v); using estimate=%.4f",
+				resp.TotalCostUSD, ps.lastTotalCostUSD, sameSession, estimate)
+		}
+		deltaCost = estimate
+	}
+	ps.lastTotalCostUSD = resp.TotalCostUSD
+	ps.lastCostSession = resp.SessionID
+	return deltaCost
 }
 
 type Agent struct {
-	client                Client
-	projectDir            string
-	projects              map[string]*projectState // projectDir → state
-	chatID                int64                    // Telegram chat ID
-	threadID              int                      // Telegram thread ID (for forum topics)
-	currentModelOverride  string                   // Current model override for this agent (for dynamic routing)
-	lastUsedModel         string                   // Last model used (for session continuity)
-	enablePlanMode        bool                     // OpusPlan: enable two-phase plan+execute
-	planModel             string                   // OpusPlan: model for planning phase (e.g. Opus)
-	executeModel          string                   // OpusPlan: model for execution phase (e.g. Sonnet)
-	cliTimeoutMinutes int // CLI 執行逾時（分鐘），0=無限制
+	client               Client
+	projectDir           string
+	projects             map[string]*projectState // projectDir → state
+	chatID               int64                    // Telegram chat ID
+	threadID             int                      // Telegram thread ID (for forum topics)
+	currentModelOverride string                   // Current model override for this agent (for dynamic routing)
+	lastUsedModel        string                   // Last model used (for session continuity)
+	chatContext          *ChatContext             // Shared conversation state across Agent/Hermes
+	enablePlanMode       bool                     // enable two-phase plan+execute
+	planModel            string                   // model for planning phase
+	executeModel         string                   // model for execution phase
+	cliTimeoutMinutes    int                      // CLI 執行逾時（分鐘），0=無限制
+	stickySession        bool                     // keep model/session during active conversations
+	sessionIdleTimeout   time.Duration            // idle duration after which routing starts fresh
+	runMu                sync.Mutex               // serializes CLI runs for shared agent/session state
 	// Abort control
 	cancelFunc context.CancelFunc // 取消正在執行的 CLI 子程序
 	cancelMu   sync.Mutex         // 保護 cancelFunc 的併發存取
-	processing bool               // 是否正在處理請求
+	execution  *appengine.ExecutionLifecycle
+
+	// Per-call metrics — populated at the end of every Run/runDirect.
+	// Read via LastCallMetrics() so PlanExecuteEngine can attribute Executor
+	// tokens to the actual model used (otherwise per-model breakdown only
+	// captures the Planner and labels Executor work as "Unknown").
+	lastCallMu         sync.Mutex
+	lastCallModel      string
+	lastCallInputT     int
+	lastCallOutputT    int
+	lastCallCost       float64 // per-call USD cost (from ps.recordCallCost) for #148 1E
+	lastCallCacheRead  int     // cache_read_input_tokens of last call (#149 watermark)
+	lastCallCacheWrite int     // cache_creation_input_tokens of last call (#149 watermark)
+
+	// suppressMemoryBridge skips the general-memory + recent-message bridge
+	// injected on session/model switches. Hermes Executor calls already carry
+	// their full context (goal + accumulated + current sub-task) inside the
+	// prompt, and the bridge cards re-inject prior runs' Hermes prompts back
+	// into the new prompt — recursive bloat that pushes codex over its
+	// "Prompt is too long" limit by mid-task. The Hermes runner toggles this
+	// around each Run call.
+	suppressMemoryBridge bool
+}
+
+// SetSuppressMemoryBridge controls whether the next Run call skips the general
+// memory + recent-message bridge injected on model/session switches. Used by
+// the Hermes Executor runner to avoid re-injecting prior Hermes prompts as
+// "Persisted general work memory" — that path causes prompt bloat to
+// accumulate exponentially across sub-tasks.
+func (a *Agent) SetSuppressMemoryBridge(v bool) {
+	a.suppressMemoryBridge = v
 }
 
 func NewAgent(client Client, projectDir string, chatID int64, threadID int) *Agent {
-	return &Agent{
-		client:     client,
-		projectDir: projectDir,
-		projects:   make(map[string]*projectState),
-		chatID:     chatID,
-		threadID:   threadID,
+	return NewAgentWithContext(client, NewChatContext(chatID, threadID, projectDir))
+}
+
+func NewAgentWithContext(client Client, chatCtx *ChatContext) *Agent {
+	if chatCtx == nil {
+		chatCtx = NewChatContext(0, 0, "")
 	}
+	return &Agent{
+		client:             client,
+		projectDir:         chatCtx.ProjectDir,
+		projects:           make(map[string]*projectState),
+		chatID:             chatCtx.ChatID,
+		threadID:           chatCtx.ThreadID,
+		chatContext:        chatCtx,
+		stickySession:      true,
+		sessionIdleTimeout: 24 * time.Hour,
+		execution:          appengine.NewExecutionLifecycle(),
+	}
+}
+
+func (a *Agent) executionLifecycle() *appengine.ExecutionLifecycle {
+	if a.execution == nil {
+		a.execution = appengine.NewExecutionLifecycle()
+	}
+	return a.execution
+}
+
+func (a *Agent) transitionExecution(to appengine.ExecutionState, reason string) {
+	if err := a.executionLifecycle().Transition(to, reason); err == nil {
+		return
+	}
+	switch to {
+	case appengine.ExecutionStateStarting:
+		snapshot := a.executionLifecycle().Snapshot()
+		if snapshot.Terminal {
+			_ = a.executionLifecycle().Transition(appengine.ExecutionStateStarting, reason)
+		}
+	case appengine.ExecutionStateStreaming:
+		_ = a.executionLifecycle().Transition(appengine.ExecutionStateStarting, reason+"_start")
+		_ = a.executionLifecycle().Transition(appengine.ExecutionStateStreaming, reason)
+	}
+}
+
+func (a *Agent) finishExecutionError(err error, reason string) {
+	if err == nil {
+		return
+	}
+	if errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "agent aborted by user") {
+		a.transitionExecution(appengine.ExecutionStateCancelled, reason+"_cancelled")
+		return
+	}
+	a.transitionExecution(appengine.ExecutionStateFailed, reason+"_failed")
 }
 
 // Abort 中斷正在執行的 agent 任務，回傳是否成功中斷
@@ -377,6 +524,7 @@ func (a *Agent) Abort() bool {
 	a.cancelMu.Lock()
 	defer a.cancelMu.Unlock()
 	if a.cancelFunc != nil {
+		a.transitionExecution(appengine.ExecutionStateCancelling, "agent_abort")
 		a.cancelFunc()
 		a.cancelFunc = nil
 		return true
@@ -388,7 +536,13 @@ func (a *Agent) Abort() bool {
 func (a *Agent) IsProcessing() bool {
 	a.cancelMu.Lock()
 	defer a.cancelMu.Unlock()
-	return a.processing
+	return a.executionLifecycle().IsProcessing()
+}
+
+func (a *Agent) ExecutionSnapshot() appengine.ExecutionSnapshot {
+	a.cancelMu.Lock()
+	defer a.cancelMu.Unlock()
+	return a.executionLifecycle().Snapshot()
 }
 
 // SetModelOverride 設定此 agent 的模型覆蓋（用於動態路由）
@@ -396,16 +550,117 @@ func (a *Agent) SetModelOverride(model string) {
 	a.currentModelOverride = model
 }
 
-// SetPlanMode 啟用或停用 OpusPlan 兩階段模式
+// SetRoutingConfig applies sticky routing behavior to direct Agent runs.
+func (a *Agent) SetRoutingConfig(cfg ModelRoutingConfig) {
+	a.stickySession = cfg.StickyEnabled()
+	timeoutMin := cfg.IdleTimeoutMinutes()
+	a.sessionIdleTimeout = time.Duration(timeoutMin) * time.Minute
+}
+
+// SetPlanMode 啟用或停用 Plan/Execute 兩階段模式
 func (a *Agent) SetPlanMode(enabled bool, planModel, executeModel string) {
 	a.enablePlanMode = enabled
 	a.planModel = planModel
 	a.executeModel = executeModel
 }
 
-// IsPlanMode 回報是否啟用 OpusPlan 模式
+// IsPlanMode 回報是否啟用 Plan/Execute 模式
 func (a *Agent) IsPlanMode() bool {
 	return a.enablePlanMode
+}
+
+// LastUsedModel returns the model used by the most recent successful or
+// in-flight direct run. Empty means the agent has no sticky model yet.
+func (a *Agent) LastUsedModel() string {
+	return a.lastUsedModel
+}
+
+func (a *Agent) activeStickyModel(ps *projectState) string {
+	if !a.stickySession || ps == nil || ps.ctx == nil || a.lastUsedModel == "" {
+		return ""
+	}
+	if ps.ctx.Session(BackendKindForModel(a.lastUsedModel)) == "" {
+		return ""
+	}
+	return a.lastUsedModel
+}
+
+func (a *Agent) activeContinuationModel(ps *projectState, userMessage string) string {
+	if ps == nil || ps.ctx == nil || a.lastUsedModel == "" || !isContinuationMessage(userMessage) {
+		return ""
+	}
+	if ps.ctx.Session(BackendKindForModel(a.lastUsedModel)) == "" {
+		return ""
+	}
+	return a.lastUsedModel
+}
+
+func (a *Agent) expireIdleStickySession(ps *projectState, now time.Time) {
+	if !a.stickySession || ps == nil || ps.ctx == nil || a.lastUsedModel == "" {
+		return
+	}
+	timeout := a.sessionIdleTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	if ps.ctx.Session(BackendKindForModel(a.lastUsedModel)) == "" {
+		return
+	}
+	if ps.ctx.LastActivity.IsZero() || now.Sub(ps.ctx.LastActivity) <= timeout {
+		return
+	}
+	// Clear the backend session ID only — keep RecentMsgs so the memory
+	// bridge can still inject the user's last conversation when the next
+	// message arrives. Session lifecycle and conversation memory are
+	// different concerns and should not expire together (#170).
+	log.Printf("[agent] sticky session expired after %s idle; clearing backend session (memory preserved)", now.Sub(ps.ctx.LastActivity).Round(time.Second))
+	ps.ctx.ClearSession(BackendKindForModel(a.lastUsedModel))
+	a.lastUsedModel = ""
+}
+
+func (a *Agent) decideDirectModel(ps *projectState, userMessage string) appengine.SessionRunDecision {
+	req := appengine.SessionRunRequest{
+		OverrideModel:     a.currentModelOverride,
+		StickyModel:       a.activeStickyModel(ps),
+		ContinuationModel: a.activeContinuationModel(ps, userMessage),
+		DefaultModel:      a.client.GetModel(),
+	}
+	if req.OverrideModel == "" && req.StickyModel == "" && req.ContinuationModel == "" {
+		startRouting := time.Now()
+		req.RoutedModel, req.RoutedReason = a.selectModel(userMessage)
+		req.RoutedLatencyMS = int(time.Since(startRouting).Milliseconds())
+	}
+	return appengine.DecideSessionRun(req)
+}
+
+func (a *Agent) decideDirectSession(ps *projectState, selectedModel string) appengine.SessionRunDecision {
+	req := appengine.SessionRunRequest{
+		OverrideModel: selectedModel,
+	}
+	if ps != nil && ps.ctx != nil {
+		req.PreviousBackend = ps.ctx.LastBackend
+		req.BackendSessions = ps.ctx.Sessions
+	}
+	return appengine.DecideSessionRun(req)
+}
+
+func (a *Agent) decideDirectRun(ps *projectState, userMessage string) appengine.SessionRunDecision {
+	req := appengine.SessionRunRequest{
+		OverrideModel:     a.currentModelOverride,
+		StickyModel:       a.activeStickyModel(ps),
+		ContinuationModel: a.activeContinuationModel(ps, userMessage),
+		DefaultModel:      a.client.GetModel(),
+	}
+	if ps != nil && ps.ctx != nil {
+		req.PreviousBackend = ps.ctx.LastBackend
+		req.BackendSessions = ps.ctx.Sessions
+	}
+	if req.OverrideModel == "" && req.StickyModel == "" && req.ContinuationModel == "" {
+		startRouting := time.Now()
+		req.RoutedModel, req.RoutedReason = a.selectModel(userMessage)
+		req.RoutedLatencyMS = int(time.Since(startRouting).Milliseconds())
+	}
+	return appengine.DecideSessionRun(req)
 }
 
 // opusPlanPrompt 產生計劃階段的 prompt 包裝
@@ -449,8 +704,103 @@ func (a *Agent) selectModel(userMessage string) (model string, routingReason str
 		return bestMatch.Model, "static_rule"
 	}
 
-	// 返回預設模型 (Sonnet)
+	// 返回預設模型
 	return "sonnet", "default"
+}
+
+func isContinuationMessage(message string) bool {
+	trimmed := strings.TrimSpace(message)
+	if trimmed == "" {
+		return false
+	}
+	if strings.Contains(trimmed, "```") {
+		return false
+	}
+
+	runeCount := len([]rune(trimmed))
+	lower := strings.ToLower(trimmed)
+
+	optionReferencePatterns := []*regexp.Regexp{
+		regexp.MustCompile(`(?i)(處理完|处理完|選|选|做|方案|選項|选项|option)\s*[a-z]\b`),
+		regexp.MustCompile(`(?i)\b[a-z]\s*(的話|的话|這個|这个|那個|那个|方案|選項|选项)`),
+	}
+	for _, pattern := range optionReferencePatterns {
+		if pattern.MatchString(lower) {
+			return true
+		}
+	}
+	for _, phrase := range []string{"第一個", "第一个", "第二個", "第二个", "第三個", "第三个", "前者", "後者", "后者"} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+
+	explicitPrefixes := []string{
+		"但是", "但", "那", "繼續", "继续", "還有", "还有", "所以",
+		"另外", "接著", "然後", "再來", "而且", "不過", "可是",
+		"but", "and", "also", "continue", "what about",
+		"furthermore", "moreover", "then", "next", "additionally",
+	}
+	for _, prefix := range explicitPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+
+	explicitContains := []string{
+		"那", "呢", "繼續", "继续", "還有", "还有",
+	}
+	for _, phrase := range explicitContains {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+
+	pronounPhrases := []string{
+		"這個", "这个", "那個", "那个", "它", "這", "这",
+		"這樣", "这样", "那樣", "那样", "這裡", "这里", "那裡", "那里",
+	}
+	for _, phrase := range pronounPhrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+
+	englishPronouns := []string{"this", "that", "it", "them", "those", "these"}
+	for _, word := range englishPronouns {
+		if regexp.MustCompile(`\b` + regexp.QuoteMeta(word) + `\b`).MatchString(lower) {
+			return true
+		}
+	}
+
+	shortQuestionPrefixes := []string{"為什麼", "为什么", "怎麼", "怎么", "如何", "哪裡", "哪里", "什麼時候", "什么时候", "why", "how", "where", "when"}
+	if runeCount < 30 {
+		for _, prefix := range shortQuestionPrefixes {
+			if strings.HasPrefix(lower, prefix) {
+				return true
+			}
+		}
+		shortQuestionPhrases := []string{"有沒有", "有没有", "是否", "是不是", "了嗎", "了吗", "了沒", "了没"}
+		for _, phrase := range shortQuestionPhrases {
+			if strings.Contains(lower, phrase) {
+				return true
+			}
+		}
+	}
+
+	exactWords := []string{
+		"好", "是", "對", "行", "嗯", "去", "做", "試試",
+		"好啊", "好的", "好了", "可以", "繼續", "繼續吧", "繼續做", "繼續進行", "請繼續",
+		"修正", "下一步", "之後", "做吧", "沒問題",
+		"ok", "yes", "y", "go", "sure", "continue", "proceed", "fix", "fix it", "next",
+	}
+	for _, word := range exactWords {
+		if lower == word {
+			return true
+		}
+	}
+
+	return runeCount < 15
 }
 
 // current 取得目前專案的狀態，不存在則建立
@@ -458,18 +808,24 @@ func (a *Agent) current() *projectState {
 	if ps, ok := a.projects[a.projectDir]; ok {
 		return ps
 	}
-	now := time.Now()
+	if a.chatContext == nil {
+		a.chatContext = NewChatContext(a.chatID, a.threadID, a.projectDir)
+	}
+	a.chatContext.ProjectDir = a.projectDir
 	ps := &projectState{
-		createdAt:    now,
-		lastActivity: now,
+		ctx: a.chatContext,
 	}
 	a.projects[a.projectDir] = ps
 	return ps
 }
 
-// Run sends a message to Claude Code CLI and returns the response text.
+// Run sends a message through the configured AI client and returns the response text.
 // onUpdate(msg, silent): silent=false for initial status, silent=true for tool updates.
 func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, error) {
+	a.runMu.Lock()
+	defer a.runMu.Unlock()
+
+	originalUserMessage := userMessage
 	startTime := time.Now()
 
 	// 設定 context with timeout (可透過 config 調整，預設 15 分鐘，0=無限制)
@@ -482,58 +838,69 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 	}
 	a.cancelMu.Lock()
 	a.cancelFunc = cancel
-	a.processing = true
+	a.transitionExecution(appengine.ExecutionStateStarting, "agent_run")
 	a.cancelMu.Unlock()
 	defer func() {
 		a.cancelMu.Lock()
 		a.cancelFunc = nil
-		a.processing = false
 		a.cancelMu.Unlock()
 		cancel()
 	}()
 
-	if onUpdate != nil {
-		onUpdate("🔧 Claude Code processing...", false)
-	}
-
 	ps := a.current()
+	_ = ps.ctx.TransitionState(appengine.ChatStateBusy, "agent_run")
+	finalChatState := appengine.ChatStateIdle
+	defer func() {
+		_ = ps.ctx.TransitionState(finalChatState, "agent_run_done")
+	}()
+	a.expireIdleStickySession(ps, startTime)
 
-	// Handle model selection with three-tier routing priority
-	var routingReason string
-	var routingLatency int
-	selectedModel := ""
-
-	// Priority 1: User command override
-	if a.currentModelOverride != "" {
-		selectedModel = a.currentModelOverride
-		routingReason = "user_command"
-		routingLatency = 0
-	} else {
-		// Priority 2: Static rules-based routing
-		startRouting := time.Now()
-		selectedModel, routingReason = a.selectModel(userMessage)
-		routingLatency = int(time.Since(startRouting).Milliseconds())
+	runDecision := a.decideDirectRun(ps, userMessage)
+	selectedModel := runDecision.Model
+	routingReason := runDecision.RoutingReason
+	routingLatency := runDecision.LatencyMS
+	if routingReason == "static_rule" || routingReason == "default" {
 		msgPreview := userMessage
 		if len(msgPreview) > 50 {
 			msgPreview = msgPreview[:50]
 		}
 		log.Printf("[telegram] model routing: message=%q selected=%s reason=%s latency=%dms", msgPreview, selectedModel, routingReason, routingLatency)
 	}
+	if onUpdate != nil {
+		onUpdate(processingStatusForModel(selectedModel), false)
+	}
+	selectedBackend := runDecision.Backend
+	previousBackend := runDecision.PreviousBackend
 
-	// If model changed, inject context bridge then start fresh session
-	if selectedModel != "" && selectedModel != a.lastUsedModel && a.lastUsedModel != "" {
-		bridge := buildContextBridge(ps.recentMessages)
-		if bridge != "" {
-			userMessage = bridge + userMessage
-			log.Printf("[agent] context bridge injected (%d recent messages)", len(ps.recentMessages))
+	// If model changed, bridge recent messages. Native sessions are kept per
+	// backend; same-backend model changes still start a fresh session.
+	// Hermes execution suppresses the bridge: the Hermes Executor prompt
+	// already carries goal + accumulated + current sub-task, and bridge cards
+	// re-inject prior Hermes prompts as "Persisted general work memory",
+	// causing prompt bloat to grow exponentially across sub-tasks.
+	if selectedModel != a.lastUsedModel && a.lastUsedModel != "" {
+		if !a.suppressMemoryBridge {
+			bridge := a.resolveAgentMemoryBridge(ctx, ps, userMessage, "direct_model_switch")
+			if bridge != "" {
+				userMessage = bridge + userMessage
+				log.Printf("[agent] context bridge injected (%d recent messages)", len(ps.ctx.RecentMsgs))
+			}
+		} else {
+			log.Printf("[agent] context bridge skipped (Hermes Executor)")
 		}
-		ps.sessionID = "" // Force new session when model changes
+		if selectedBackend == previousBackend {
+			ps.ctx.ClearSession(selectedBackend)
+		}
+	}
+	if !a.suppressMemoryBridge && shouldInjectContinuationBridge(userMessage) {
+		bridge := a.resolveAgentMemoryBridge(ctx, ps, userMessage, "direct_continuation")
+		if bridge != "" && !strings.HasPrefix(userMessage, bridge) {
+			userMessage = bridge + userMessage
+			log.Printf("[agent] continuation context bridge injected (%d recent messages)", len(ps.ctx.RecentMsgs))
+		}
 	}
 	a.lastUsedModel = selectedModel
-	if a.lastUsedModel == "" {
-		a.lastUsedModel = a.client.GetModel() // Use default if no model selected
-		routingReason = "default"
-	}
+	ps.ctx.LastBackend = selectedBackend
 
 	// Inject matching auto-skills into user message as context
 	if globalSkillManager != nil {
@@ -545,7 +912,8 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		}
 	}
 
-	log.Printf("[agent] calling CLI (stream), session=%s, project=%s, model=%s routing_reason=%s", ps.sessionID, a.projectDir, a.lastUsedModel, routingReason)
+	sessionID := runDecision.SessionID
+	log.Printf("[agent] calling CLI (stream), session=%s, project=%s, model=%s routing_reason=%s", sessionID, a.projectDir, a.lastUsedModel, routingReason)
 
 	// Pre-generate decision ID so checkpoints created during streaming
 	// can reference the decision that will be created after streaming completes.
@@ -560,7 +928,14 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
-			backoff := time.Duration(attempt*15) * time.Second
+			a.transitionExecution(appengine.ExecutionStateRetrying, "agent_retry")
+			recovery := appengine.DecideRecovery(appengine.RecoveryRequest{
+				Mode:        "direct_stream",
+				Attempt:     attempt - 1,
+				MaxAttempts: maxRetries,
+				ErrorText:   err.Error(),
+			})
+			backoff := recovery.RetryAfter
 			log.Printf("[agent] retry %d/%d after %v (previous error: %v)", attempt, maxRetries, backoff, err)
 			if onUpdate != nil {
 				onUpdate(fmt.Sprintf("🔄 重試中 (%d/%d)...", attempt, maxRetries), false)
@@ -573,49 +948,60 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 			toolCallsForDecision = nil
 		}
 
-		resp, err = a.client.CallStream(ctx, userMessage, a.projectDir, ps.sessionID, a.lastUsedModel, func(toolName string, toolInput map[string]interface{}) {
-		// Check if we should create a checkpoint before executing this tool
-		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
+		a.transitionExecution(appengine.ExecutionStateStreaming, "agent_stream")
+		resp, userMessage, sessionID, err = a.callStreamWithResumeBridge(ctx, ps, userMessage, selectedBackend, sessionID, a.lastUsedModel, func(toolName string, toolInput map[string]interface{}) {
+			// Check if we should create a checkpoint before executing this tool
+			a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
 
-		// Log tool execution start
-		globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID, a.projectDir)
+			// Log tool execution start
+			globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID, a.projectDir)
 
-		// Track this tool call for decision logging
-		toolExecution := ToolExecution{
-			Timestamp:   time.Now(),
-			ToolName:    toolName,
-			Input:       toolInput,
-			Status:      "executed", // Mark as executed immediately for decision log
-			ChatID:      a.chatID,
-			ThreadID:    a.threadID,
-			ProjectPath: a.projectDir,
-		}
-		toolCallsForDecision = append(toolCallsForDecision, toolExecution)
-
-		if onUpdate != nil {
-			msg := formatToolUpdate(toolName, toolInput)
-			if msg != "" {
-				onUpdate(msg, true)
+			// Track this tool call for decision logging
+			toolExecution := ToolExecution{
+				Timestamp:   time.Now(),
+				ToolName:    toolName,
+				Input:       toolInput,
+				Status:      "executed", // Mark as executed immediately for decision log
+				ChatID:      a.chatID,
+				ThreadID:    a.threadID,
+				ProjectPath: a.projectDir,
 			}
-		}
-	}, func(contentType, text string) {
-		if onUpdate == nil || text == "" {
-			return
-		}
-		switch contentType {
-		case "thinking", "text":
-			// Don't send streaming previews - full response is sent at completion
-		}
-	})
+			toolCallsForDecision = append(toolCallsForDecision, toolExecution)
+
+			if onUpdate != nil {
+				msg := formatToolUpdate(toolName, toolInput)
+				if msg != "" {
+					onUpdate(msg, true)
+				}
+			}
+		}, func(contentType, text string) {
+			if onUpdate == nil || text == "" {
+				return
+			}
+			switch contentType {
+			case "thinking", "text":
+				// Don't send streaming previews - full response is sent at completion
+			}
+		})
 
 		if err == nil {
 			break
 		}
 
-		if isRetryableError(err) && attempt < maxRetries {
+		recoveryReq := appengine.RecoveryRequest{
+			Mode:        "direct_stream",
+			Attempt:     attempt,
+			MaxAttempts: maxRetries,
+			ErrorText:   err.Error(),
+		}
+		recovery := appengine.DecideRecovery(recoveryReq)
+		appengine.LogRecoveryDecision(recoveryReq, recovery)
+		recordRecoveryDecision(ctx, recoveryReq, recovery, chatKey{chatID: a.chatID, threadID: a.threadID}, "", 0)
+		if recovery.Action == appengine.RecoveryActionRetry {
 			log.Printf("[agent] retryable error detected: %v", err)
 			if resp != nil && resp.SessionID != "" {
-				ps.sessionID = resp.SessionID
+				ps.ctx.SetSession(selectedBackend, resp.SessionID)
+				sessionID = resp.SessionID
 			}
 			continue
 		}
@@ -629,52 +1015,188 @@ func (a *Agent) Run(userMessage string, onUpdate func(string, bool)) (string, er
 		if resp != nil {
 			partialText = resp.TextContent
 			if resp.SessionID != "" {
-				ps.sessionID = resp.SessionID
+				ps.ctx.SetSession(selectedBackend, resp.SessionID)
 			}
-			deltaCost = resp.TotalCostUSD - ps.lastTotalCostUSD
-			ps.lastTotalCostUSD = resp.TotalCostUSD
+			deltaCost = ps.recordCallCost(resp, a.lastUsedModel)
 
 			ps.stats.APICallCount++
 			ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
+			ps.stats.TotalCacheReadTokens += int64(resp.Usage.CacheReadInputTokens)
+			ps.stats.TotalCacheCreationTokens += int64(resp.Usage.CacheCreationInputTokens)
 			ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
 			ps.stats.TotalCostUSD += deltaCost
-			ps.lastActivity = time.Now()
+			ps.ctx.LastActivity = time.Now()
 		}
 		a.logDecision(userMessage, partialText, toolCallsForDecision, startTime, resp, err, routingReason, routingLatency, deltaCost)
+		a.finishExecutionError(err, "agent_run")
 		return partialText, fmt.Errorf("CLI call failed: %w", err)
 	}
 
 	// 保存 session ID 以便下次 --resume
-	ps.sessionID = resp.SessionID
+	ps.ctx.SetSession(selectedBackend, resp.SessionID)
 
-	// Calculate cost delta (CLI's TotalCostUSD is session-cumulative)
-	deltaCost := resp.TotalCostUSD - ps.lastTotalCostUSD
-	ps.lastTotalCostUSD = resp.TotalCostUSD
+	deltaCost := ps.recordCallCost(resp, a.lastUsedModel)
 
 	// 更新統計
 	ps.stats.APICallCount++
 	ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
+	ps.stats.TotalCacheReadTokens += int64(resp.Usage.CacheReadInputTokens)
+	ps.stats.TotalCacheCreationTokens += int64(resp.Usage.CacheCreationInputTokens)
 	ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
 	ps.stats.TotalCostUSD += deltaCost
-	ps.lastActivity = time.Now()
+	ps.ctx.LastActivity = time.Now()
 
-	log.Printf("[agent] done: turns=%d tokens_in=%d tokens_out=%d cost=$%.4f (delta from $%.4f) session=%s",
-		resp.NumTurns, resp.Usage.InputTokens, resp.Usage.OutputTokens,
+	log.Printf("[agent] done: turns=%d tokens_in=%d cache_read=%d cache_write=%d tokens_out=%d cost=$%.4f (delta from $%.4f) session=%s",
+		resp.NumTurns,
+		resp.Usage.InputTokens,
+		resp.Usage.CacheReadInputTokens,
+		resp.Usage.CacheCreationInputTokens,
+		resp.Usage.OutputTokens,
 		deltaCost, resp.TotalCostUSD, resp.SessionID)
 
 	// Log decision for transparency (success case)
 	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil, routingReason, routingLatency, deltaCost)
 
 	// Save exchange to recentMessages for context bridge on future model switches
-	addToRecentMessages(ps, userMessage, resp.Result)
+	addToRecentMessages(ps, originalUserMessage, resp.Result)
+	if appengine.AssistantAwaitsInput(resp.Result) {
+		finalChatState = appengine.ChatStateAwaitingInput
+	}
+
+	a.recordLastCallMetrics(a.lastUsedModel, resp.Usage.InputTokens, resp.Usage.OutputTokens, deltaCost)
+	a.recordLastCallCacheMetrics(resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
+	a.transitionExecution(appengine.ExecutionStateSucceeded, "agent_run_succeeded")
 
 	return resp.Result, nil
 }
 
-// RunWithPlan executes a two-phase OpusPlan workflow:
-// Phase 1: Call plan model (Opus) with --max-turns 1 to produce a plan
-// Phase 2: Call execute model (Sonnet) with the plan as context to execute
+// recordLastCallMetrics stores the model, token, and cost totals from the
+// most recent CLI call so DirectEngine can pull them via LastCallMetrics().
+// cost is the per-call USD value computed by ps.recordCallCost (#148 1B/1D),
+// which honours session boundaries and falls back to a token×rate estimate
+// when the CLI returned $0 under Max subscription.
+func (a *Agent) recordLastCallMetrics(model string, inTokens, outTokens int, cost float64) {
+	a.lastCallMu.Lock()
+	defer a.lastCallMu.Unlock()
+	a.lastCallModel = model
+	a.lastCallInputT = inTokens
+	a.lastCallOutputT = outTokens
+	a.lastCallCost = cost
+	// Cache fields cleared when a record is taken; recordLastCallCacheMetrics
+	// fills them on the same call. Order at call-sites: cost first, cache
+	// second (so we don't see a stale cache_read mismatched with new model).
+	a.lastCallCacheRead = 0
+	a.lastCallCacheWrite = 0
+}
+
+// recordLastCallCacheMetrics records cache_read + cache_write for the most
+// recent CLI call. Hermes walking-agent's watermark uses this to estimate
+// transcript size — see issue #149.
+func (a *Agent) recordLastCallCacheMetrics(cacheRead, cacheWrite int) {
+	a.lastCallMu.Lock()
+	defer a.lastCallMu.Unlock()
+	a.lastCallCacheRead = cacheRead
+	a.lastCallCacheWrite = cacheWrite
+}
+
+// LastCacheMetrics returns cache_read + cache_write tokens from the most
+// recent CLI call. Implements engine.DirectRunnerCacheMetrics so the engine
+// can compute transcript size for the walking-agent watermark.
+func (a *Agent) LastCacheMetrics() (cacheRead, cacheWrite int) {
+	a.lastCallMu.Lock()
+	defer a.lastCallMu.Unlock()
+	return a.lastCallCacheRead, a.lastCallCacheWrite
+}
+
+// LastCallMetrics returns the model, token, and cost totals from the most
+// recent Agent CLI call. Returns zero values when no call has been made yet.
+// Used by engine.DirectEngine via the DirectRunnerMetrics type assertion to
+// attribute Hermes Executor usage to the right model in #148 summaries.
+func (a *Agent) LastCallMetrics() (model string, inTokens, outTokens int, cost float64) {
+	a.lastCallMu.Lock()
+	defer a.lastCallMu.Unlock()
+	return a.lastCallModel, a.lastCallInputT, a.lastCallOutputT, a.lastCallCost
+}
+
+func (a *Agent) callStreamWithResumeBridge(
+	ctx context.Context,
+	ps *projectState,
+	message string,
+	backend BackendKind,
+	sessionID, model string,
+	onToolUse func(toolName string, toolInput map[string]interface{}),
+	onContent func(contentType, text string),
+) (*CLIResponse, string, string, error) {
+	resp, err := a.client.CallStream(ctx, message, a.projectDir, sessionID, model, onToolUse, onContent)
+	if err == nil || sessionID == "" || !errors.Is(err, ErrSessionUnavailable) {
+		return resp, message, sessionID, err
+	}
+
+	if ps != nil && ps.ctx != nil {
+		ps.ctx.ClearSession(backend)
+	}
+
+	bridge := ""
+	if ps != nil && ps.ctx != nil && !a.suppressMemoryBridge {
+		bridge = a.resolveAgentMemoryBridge(ctx, ps, message, "direct_resume_fallback")
+	}
+	if bridge == "" {
+		log.Printf("[agent] codex resume fallback: session %q unavailable; retrying with fresh session without bridge (no recent messages)", sessionID)
+		resp, err = a.client.CallStream(ctx, message, a.projectDir, "", model, onToolUse, onContent)
+		return resp, message, "", err
+	}
+
+	bridgedMessage := bridge + message
+	log.Printf("[agent] codex resume fallback: session %q unavailable; bridge injected (%d recent messages)", sessionID, len(ps.ctx.RecentMsgs))
+	resp, err = a.client.CallStream(ctx, bridgedMessage, a.projectDir, "", model, onToolUse, onContent)
+	return resp, bridgedMessage, "", err
+}
+
+func (a *Agent) resolveAgentMemoryBridge(ctx context.Context, ps *projectState, userMessage, mode string) string {
+	if ps == nil || ps.ctx == nil {
+		return ""
+	}
+	_, hasIssueScope := ParseIssueNumber(userMessage)
+	decision := appengine.DecideSessionPolicy(appengine.SessionPolicyRequest{
+		Mode:          mode,
+		HasIssueScope: hasIssueScope,
+	})
+	resolver := newMemoryResolverForSessionPolicy(nil, ps.ctx.ProjectDir, decision)
+	recentMessages := ps.ctx.RecentMessagesSnapshot()
+	if !decision.AllowRecentMemory {
+		recentMessages = nil
+	}
+	bundle, err := resolver.Resolve(ctx, MemoryRequest{
+		ChatID:         ps.ctx.ChatID,
+		ThreadID:       ps.ctx.ThreadID,
+		ProjectDir:     ps.ctx.ProjectDir,
+		UserMessage:    userMessage,
+		Mode:           mode,
+		BudgetChars:    defaultMemoryBudgetChars,
+		RecentMessages: recentMessages,
+	})
+	if err != nil {
+		log.Printf("[agent] memory bridge resolve failed mode=%s chat=%d thread=%d: %v", mode, ps.ctx.ChatID, ps.ctx.ThreadID, err)
+		return ""
+	}
+	return bundle.Render()
+}
+
+func shouldInjectContinuationBridge(userMessage string) bool {
+	if !isContinuationMessage(userMessage) {
+		return false
+	}
+	_, hasIssue := ParseIssueNumber(userMessage)
+	return !hasIssue
+}
+
+// RunWithPlan executes a two-phase Plan/Execute workflow:
+// Phase 1: Call the planner model with --max-turns 1 to produce a plan.
+// Phase 2: Call the executor model with the plan as context to execute.
 func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (string, error) {
+	a.runMu.Lock()
+	defer a.runMu.Unlock()
+
 	startTime := time.Now()
 
 	var ctx context.Context
@@ -686,179 +1208,189 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 	}
 	a.cancelMu.Lock()
 	a.cancelFunc = cancel
-	a.processing = true
+	a.transitionExecution(appengine.ExecutionStateStarting, "agent_plan_run")
 	a.cancelMu.Unlock()
 	defer func() {
 		a.cancelMu.Lock()
 		a.cancelFunc = nil
-		a.processing = false
 		a.cancelMu.Unlock()
 		cancel()
 	}()
 
-	ps := a.current()
-
-	// ========== Phase 1: Planning (Opus, --max-turns 1) ==========
-	if onUpdate != nil {
-		onUpdate("🧠 Phase 1: Planning with Opus...", false)
+	planFn := func(ctx context.Context, _ string, projectDir, sessionID string) (hermes.CallPlanResult, error) {
+		if onUpdate != nil {
+			onUpdate(fmt.Sprintf("🧠 Phase 1: Planning with %s...", modelStatusName(a.planModel)), false)
+		}
+		log.Printf("[agent] plan/execute via PlanExecuteEngine: calling plan model=%s, project=%s", a.planModel, projectDir)
+		planResp, err := a.client.CallPlan(ctx, opusPlanPrompt(userMessage), projectDir, sessionID, a.planModel, func(contentType, text string) {
+			if onUpdate != nil && contentType == "text" && text != "" {
+				preview := text
+				if len(preview) > 100 {
+					preview = preview[:100] + "..."
+				}
+				onUpdate(fmt.Sprintf("🧠 Planning: %s", preview), true)
+			}
+		})
+		if err != nil {
+			return hermes.CallPlanResult{}, err
+		}
+		planText := planResp.Result
+		if planText == "" {
+			planText = planResp.TextContent
+		}
+		desc := fmt.Sprintf("Follow this execution plan to complete the original request.\n\nPlan:\n%s\n\nOriginal user request:\n%s", planText, userMessage)
+		raw, _ := json.Marshal([]hermes.SubTask{{
+			ID:          "s1",
+			Description: desc,
+			Status:      hermes.SubTaskPending,
+		}})
+		cost := planResp.TotalCostUSD
+		if cost <= 0 {
+			cost = EstimateClaudeCost(
+				a.planModel,
+				planResp.Usage.InputTokens,
+				planResp.Usage.CacheReadInputTokens,
+				planResp.Usage.CacheCreationInputTokens,
+				planResp.Usage.OutputTokens,
+			)
+		}
+		return hermes.CallPlanResult{
+			Text:         "```json\n" + string(raw) + "\n```",
+			SessionID:    planResp.SessionID,
+			InputTokens:  planResp.TotalInputTokensWithCache(),
+			OutputTokens: planResp.Usage.OutputTokens,
+			CostUSD:      cost,
+		}, nil
 	}
 
-	planPrompt := opusPlanPrompt(userMessage)
-
-	log.Printf("[agent] OpusPlan phase 1: calling plan model=%s, project=%s", a.planModel, a.projectDir)
-
-	planResp, planErr := a.client.CallPlan(ctx, planPrompt, a.projectDir, a.planModel, func(contentType, text string) {
-		// Stream thinking/text from plan phase
-		if onUpdate != nil && contentType == "text" && text != "" {
-			preview := text
-			if len(preview) > 100 {
-				preview = preview[:100] + "..."
+	direct := appengine.NewDirectEngine(&metricsForwardingRunner{
+		run: func(msg string, update func(string, bool)) (string, error) {
+			if onUpdate != nil {
+				onUpdate(fmt.Sprintf("⚡ Phase 2: Executing with %s...", modelStatusName(a.executeModel)), false)
 			}
-			onUpdate(fmt.Sprintf("🧠 Planning: %s", preview), true)
-		}
+			return a.runDirect(ctx, msg, update, startTime)
+		},
+		metrics:      a.LastCallMetrics,
+		cacheMetrics: a.LastCacheMetrics,
 	})
+	store := hermes.NewMemoryTaskStore()
+	engine := appengine.NewPlanExecuteEngine(appengine.PlanExecuteConfig{
+		PlannerModel:          a.planModel,
+		ProjectDir:            a.projectDir,
+		ChatID:                a.chatID,
+		ThreadID:              a.threadID,
+		MaxPlannerJSONRetries: 1,
+		Budget:                hermes.TokenBudget{},
+		OnRuntimeEvent:        recordRuntimeEvent,
+	}, planFn, direct, store, &hermes.NoopProgressReporter{})
 
-	if planErr != nil {
-		log.Printf("[agent] OpusPlan phase 1 failed: %v", planErr)
-		// Fallback: run normally without plan
+	var (
+		result appengine.Result
+		err    error
+	)
+	if directPlanViaGraph() {
+		log.Printf("[agent] plan/execute via RunViaGraphResult (ALICE_DIRECT_PLAN_VIA_GRAPH=on)")
+		result, err = engine.RunViaGraphResult(ctx, userMessage, a.chatContext, nil)
+	} else {
+		result, err = engine.Run(ctx, userMessage, a.chatContext, nil)
+	}
+	if err != nil {
+		log.Printf("[agent] plan/execute via PlanExecuteEngine failed: %v", err)
+		recoveryReq := appengine.RecoveryRequest{
+			Mode:      "plan_execute",
+			ErrorText: err.Error(),
+			Fallback:  "direct",
+		}
+		recovery := appengine.DecideRecovery(recoveryReq)
+		appengine.LogRecoveryDecision(recoveryReq, recovery)
+		recordRecoveryDecision(ctx, recoveryReq, recovery, chatKey{chatID: a.chatID, threadID: a.threadID}, "", 0)
 		if onUpdate != nil {
 			onUpdate("⚠️ Plan phase failed, falling back to direct execution...", false)
 		}
-		return a.runDirect(ctx, userMessage, onUpdate, startTime)
-	}
-
-	planText := planResp.Result
-	if planText == "" {
-		planText = planResp.TextContent
-	}
-
-	log.Printf("[agent] OpusPlan phase 1 complete: plan_tokens_in=%d plan_tokens_out=%d plan_cost=$%.4f",
-		planResp.Usage.InputTokens, planResp.Usage.OutputTokens, planResp.TotalCostUSD)
-
-	// Track plan phase cost
-	planCost := planResp.TotalCostUSD
-	planInputTokens := int64(planResp.Usage.InputTokens)
-	planOutputTokens := int64(planResp.Usage.OutputTokens)
-
-	// ========== Phase 2: Execution (Sonnet, with plan context) ==========
-	if onUpdate != nil {
-		onUpdate("⚡ Phase 2: Executing with Sonnet...", false)
-	}
-
-	// Inject plan as context for execution phase
-	executeMessage := fmt.Sprintf(`[Execution Plan from Opus — follow this plan to complete the task]
-
-%s
-
----
-
-Original user request: %s
-
-Execute the plan above. Follow the steps precisely.`, planText, userMessage)
-
-	// Force new session for execution phase (different model)
-	ps.sessionID = ""
-	a.lastUsedModel = a.executeModel
-
-	log.Printf("[agent] OpusPlan phase 2: calling execute model=%s, project=%s", a.executeModel, a.projectDir)
-
-	// Pre-generate decision ID
-	currentDecisionID := generateDecisionID(a.chatID, a.threadID, startTime)
-	var toolCallsForDecision []ToolExecution
-
-	execResp, execErr := a.client.CallStream(ctx, executeMessage, a.projectDir, ps.sessionID, a.executeModel, func(toolName string, toolInput map[string]interface{}) {
-		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
-		globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID, a.projectDir)
-
-		toolExecution := ToolExecution{
-			Timestamp:   time.Now(),
-			ToolName:    toolName,
-			Input:       toolInput,
-			Status:      "executed",
-			ChatID:      a.chatID,
-			ThreadID:    a.threadID,
-			ProjectPath: a.projectDir,
+		if recovery.Action == appengine.RecoveryActionFallback {
+			return a.runDirect(ctx, userMessage, onUpdate, startTime)
 		}
-		toolCallsForDecision = append(toolCallsForDecision, toolExecution)
-
-		if onUpdate != nil {
-			msg := formatToolUpdate(toolName, toolInput)
-			if msg != "" {
-				onUpdate(msg, true)
-			}
-		}
-	}, func(contentType, text string) {
-		// Don't send streaming previews
-	})
-
-	// Merge costs from both phases
-	var totalResp *CLIResponse
-	if execResp != nil {
-		totalResp = execResp
-		ps.sessionID = execResp.SessionID
-
-		// Calculate execution phase cost (this is a new session, so TotalCostUSD is session-only)
-		execCost := execResp.TotalCostUSD
-		ps.lastTotalCostUSD = execResp.TotalCostUSD
-
-		// Merge both phases into stats
-		ps.stats.APICallCount += 2 // plan + execute
-		ps.stats.TotalInputTokens += planInputTokens + int64(execResp.Usage.InputTokens)
-		ps.stats.TotalOutputTokens += planOutputTokens + int64(execResp.Usage.OutputTokens)
-		ps.stats.TotalCostUSD += planCost + execCost
-		ps.lastActivity = time.Now()
-
-		log.Printf("[agent] OpusPlan complete: plan_cost=$%.4f exec_cost=$%.4f total_cost=$%.4f exec_turns=%d",
-			planCost, execCost, planCost+execCost, execResp.NumTurns)
-
-		// Log decision with merged stats
-		a.logDecision(userMessage, execResp.Result, toolCallsForDecision, startTime, execResp, execErr, "opus_plan", 0, planCost+execCost)
-	} else if execErr != nil {
-		// Execution failed but we have plan cost to track
-		ps.stats.APICallCount++
-		ps.stats.TotalInputTokens += planInputTokens
-		ps.stats.TotalOutputTokens += planOutputTokens
-		ps.stats.TotalCostUSD += planCost
-		ps.lastActivity = time.Now()
-
-		a.logDecision(userMessage, "", toolCallsForDecision, startTime, nil, execErr, "opus_plan", 0, planCost)
-		return "", fmt.Errorf("OpusPlan execution phase failed: %w", execErr)
+		a.finishExecutionError(err, "agent_plan_run")
+		return "", err
 	}
+	a.transitionExecution(appengine.ExecutionStateSucceeded, "agent_plan_run_succeeded")
+	return result.Text, nil
+}
 
-	if execErr != nil {
-		partialText := ""
-		if totalResp != nil {
-			partialText = totalResp.TextContent
-		}
-		return partialText, fmt.Errorf("OpusPlan execution phase failed: %w", execErr)
+type directRunnerFunc func(string, func(string, bool)) (string, error)
+
+func (f directRunnerFunc) Run(userMessage string, onUpdate func(string, bool)) (string, error) {
+	return f(userMessage, onUpdate)
+}
+
+func processingStatusForModel(model string) string {
+	switch BackendKindForModel(model) {
+	case BackendCodex:
+		return fmt.Sprintf("🔧 GPT/Codex processing with %s...", modelStatusName(model))
+	default:
+		return fmt.Sprintf("🔧 Claude processing with %s...", modelStatusName(model))
 	}
+}
 
-	// Save exchange to recentMessages
-	addToRecentMessages(ps, userMessage, execResp.Result)
+func modelStatusName(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return "default model"
+	}
+	return model
+}
 
-	return execResp.Result, nil
+// metricsForwardingRunner wraps a function-style runner together with a
+// metrics provider (typically *Agent). DirectEngine uses LastCallMetrics()
+// to attribute Executor tokens to the actual model — without this wrapper
+// the per-model breakdown would lose every Executor call.
+type metricsForwardingRunner struct {
+	run          func(string, func(string, bool)) (string, error)
+	metrics      func() (string, int, int, float64)
+	cacheMetrics func() (int, int)
+}
+
+func (r *metricsForwardingRunner) Run(msg string, onUpdate func(string, bool)) (string, error) {
+	return r.run(msg, onUpdate)
+}
+
+func (r *metricsForwardingRunner) LastCallMetrics() (string, int, int, float64) {
+	if r.metrics == nil {
+		return "", 0, 0, 0
+	}
+	return r.metrics()
+}
+
+func (r *metricsForwardingRunner) LastCacheMetrics() (int, int) {
+	if r.cacheMetrics == nil {
+		return 0, 0
+	}
+	return r.cacheMetrics()
 }
 
 // runDirect is the standard single-phase execution (fallback when plan phase fails)
 func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func(string, bool), startTime time.Time) (string, error) {
-	if onUpdate != nil {
-		onUpdate("🔧 Claude Code processing...", false)
-	}
-
 	ps := a.current()
 
 	selectedModel := a.executeModel
 	if selectedModel == "" {
 		selectedModel = a.client.GetModel()
 	}
+	if onUpdate != nil {
+		onUpdate(processingStatusForModel(selectedModel), false)
+	}
 	a.lastUsedModel = selectedModel
+	selectedBackend := BackendKindForModel(selectedModel)
+	ps.ctx.LastBackend = selectedBackend
 
-	log.Printf("[agent] runDirect: session=%s, project=%s, model=%s", ps.sessionID, a.projectDir, selectedModel)
+	sessionID := ps.ctx.Session(selectedBackend)
+	log.Printf("[agent] runDirect: session=%s, project=%s, model=%s", sessionID, a.projectDir, selectedModel)
+	a.transitionExecution(appengine.ExecutionStateStreaming, "agent_run_direct_stream")
 
 	currentDecisionID := generateDecisionID(a.chatID, a.threadID, startTime)
 	var toolCallsForDecision []ToolExecution
 
-	resp, err := a.client.CallStream(ctx, userMessage, a.projectDir, ps.sessionID, selectedModel, func(toolName string, toolInput map[string]interface{}) {
+	resp, userMessage, sessionID, err := a.callStreamWithResumeBridge(ctx, ps, userMessage, selectedBackend, sessionID, selectedModel, func(toolName string, toolInput map[string]interface{}) {
 		a.checkAndCreateCheckpoint(toolName, toolInput, currentDecisionID)
 		globalToolLogger.LogToolStart(toolName, toolInput, a.chatID, a.threadID, a.projectDir)
 
@@ -887,68 +1419,53 @@ func (a *Agent) runDirect(ctx context.Context, userMessage string, onUpdate func
 		if resp != nil {
 			partialText = resp.TextContent
 			if resp.SessionID != "" {
-				ps.sessionID = resp.SessionID
+				ps.ctx.SetSession(selectedBackend, resp.SessionID)
 			}
-			deltaCost = resp.TotalCostUSD - ps.lastTotalCostUSD
-			ps.lastTotalCostUSD = resp.TotalCostUSD
+			deltaCost = ps.recordCallCost(resp, selectedModel)
 			ps.stats.APICallCount++
 			ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
+			ps.stats.TotalCacheReadTokens += int64(resp.Usage.CacheReadInputTokens)
+			ps.stats.TotalCacheCreationTokens += int64(resp.Usage.CacheCreationInputTokens)
 			ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
 			ps.stats.TotalCostUSD += deltaCost
-			ps.lastActivity = time.Now()
+			ps.ctx.LastActivity = time.Now()
 		}
 		a.logDecision(userMessage, partialText, toolCallsForDecision, startTime, resp, err, "opus_plan_fallback", 0, deltaCost)
+		a.finishExecutionError(err, "agent_run_direct")
 		return partialText, fmt.Errorf("CLI call failed: %w", err)
 	}
 
-	ps.sessionID = resp.SessionID
-	deltaCost := resp.TotalCostUSD - ps.lastTotalCostUSD
-	ps.lastTotalCostUSD = resp.TotalCostUSD
+	ps.ctx.SetSession(selectedBackend, resp.SessionID)
+	deltaCost := ps.recordCallCost(resp, selectedModel)
 	ps.stats.APICallCount++
 	ps.stats.TotalInputTokens += int64(resp.Usage.InputTokens)
+	ps.stats.TotalCacheReadTokens += int64(resp.Usage.CacheReadInputTokens)
+	ps.stats.TotalCacheCreationTokens += int64(resp.Usage.CacheCreationInputTokens)
 	ps.stats.TotalOutputTokens += int64(resp.Usage.OutputTokens)
 	ps.stats.TotalCostUSD += deltaCost
-	ps.lastActivity = time.Now()
+	ps.ctx.LastActivity = time.Now()
 
 	a.logDecision(userMessage, resp.Result, toolCallsForDecision, startTime, resp, nil, "opus_plan_fallback", 0, deltaCost)
 	addToRecentMessages(ps, userMessage, resp.Result)
+
+	a.recordLastCallMetrics(selectedModel, resp.Usage.InputTokens, resp.Usage.OutputTokens, deltaCost)
+	a.recordLastCallCacheMetrics(resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
+	a.transitionExecution(appengine.ExecutionStateSucceeded, "agent_run_direct_succeeded")
 
 	return resp.Result, nil
 }
 
 // isRetryableError determines if a CLI error is transient and worth retrying.
 func isRetryableError(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := err.Error()
-	return strings.Contains(s, "rate limit") ||
-		strings.Contains(s, "429") ||
-		strings.Contains(s, "overloaded") ||
-		strings.Contains(s, "529") ||
-		strings.Contains(s, "temporary") ||
-		strings.Contains(s, "connection reset") ||
-		strings.Contains(s, "EOF")
+	return appengine.IsRetryableRecoveryError(err)
 }
 
 // addToRecentMessages 儲存最近一輪對話（最多保留 5 輪）
 func addToRecentMessages(ps *projectState, userMsg, assistantMsg string) {
-	const maxLen = 500
-	truncate := func(s string) string {
-		runes := []rune(s)
-		if len(runes) > maxLen {
-			return string(runes[:maxLen]) + "..."
-		}
-		return s
+	if ps == nil || ps.ctx == nil {
+		return
 	}
-	ps.recentMessages = append(ps.recentMessages,
-		contextMessage{Role: "user", Content: truncate(userMsg)},
-		contextMessage{Role: "assistant", Content: truncate(assistantMsg)},
-	)
-	// Keep only last 5 exchanges (10 messages)
-	if len(ps.recentMessages) > 10 {
-		ps.recentMessages = ps.recentMessages[len(ps.recentMessages)-10:]
-	}
+	ps.ctx.AddRecentMessage(userMsg, assistantMsg)
 }
 
 // buildContextBridge 從最近對話記錄產生上下文摘要
@@ -1005,6 +1522,15 @@ func formatToolUpdate(name string, input map[string]interface{}) string {
 			return fmt.Sprintf("🔎 Search %s", pattern)
 		}
 		return "🔎 Search content"
+	case "command_execution":
+		// Codex CLI's only tool — shell execution. Mirrors Bash formatting.
+		if cmd, ok := input["command"].(string); ok {
+			if len(cmd) > 60 {
+				cmd = cmd[:60] + "..."
+			}
+			return fmt.Sprintf("💻 %s", cmd)
+		}
+		return "💻 Execute command"
 	default:
 		return fmt.Sprintf("🔧 %s", name)
 	}
@@ -1013,16 +1539,59 @@ func formatToolUpdate(name string, input map[string]interface{}) string {
 // Reset clears the current project's session and stats
 func (a *Agent) Reset() {
 	delete(a.projects, a.projectDir)
+	a.currentModelOverride = ""
+	a.lastUsedModel = ""
+	a.enablePlanMode = false
+	a.planModel = ""
+	a.executeModel = ""
+	if a.chatContext != nil {
+		a.chatContext.Sessions = make(map[BackendKind]string)
+		a.chatContext.RecentMsgs = nil
+		a.chatContext.LastActivity = time.Now()
+	}
 }
 
-// ClearSession resets only the session ID, forcing fresh Claude Code context on next run while preserving usage stats
+// ClearSession resets backend session IDs while preserving usage stats.
 func (a *Agent) ClearSession() {
-	a.current().sessionID = ""
+	ps := a.current()
+	ps.ctx.Sessions = make(map[BackendKind]string)
+	ps.ctx.RecentMsgs = nil
+	a.currentModelOverride = ""
+	a.lastUsedModel = ""
+	a.enablePlanMode = false
+	a.planModel = ""
+	a.executeModel = ""
+}
+
+func (a *Agent) ClearSessionForModel(model string) {
+	ps := a.current()
+	ps.ctx.ClearSession(BackendKindForModel(model))
+	ps.ctx.RecentMsgs = nil
+}
+
+// PrepareManualModelSwitch clears native session/context state when the user
+// explicitly changes models. It returns true when existing context was dropped.
+func (a *Agent) PrepareManualModelSwitch(model string) bool {
+	ps := a.current()
+	targetBackend := BackendKindForModel(model)
+	sameActiveModel := a.lastUsedModel == model && ps.ctx.Session(targetBackend) != ""
+	if sameActiveModel {
+		return false
+	}
+	hadContext := ps.ctx.Session(targetBackend) != "" || a.lastUsedModel != "" || len(ps.ctx.RecentMsgs) > 0
+	ps.ctx.ClearSession(targetBackend)
+	ps.ctx.RecentMsgs = nil
+	a.currentModelOverride = ""
+	a.lastUsedModel = ""
+	return hadContext
 }
 
 // SetProject switches the working directory (preserves all project sessions)
 func (a *Agent) SetProject(dir string) {
 	a.projectDir = dir
+	if a.chatContext != nil {
+		a.chatContext.ProjectDir = dir
+	}
 }
 
 // Stats returns the current project's token usage statistics
@@ -1032,7 +1601,17 @@ func (a *Agent) Stats() TokenStats {
 
 // SessionID returns the current project's CLI session ID
 func (a *Agent) SessionID() string {
-	return a.current().sessionID
+	ps := a.current()
+	return ps.ctx.Session(ps.ctx.LastBackend)
+}
+
+// SessionIDForModel returns the native session for a model's backend.
+func (a *Agent) SessionIDForModel(model string) string {
+	return a.current().ctx.Session(BackendKindForModel(model))
+}
+
+func (a *Agent) LastBackend() BackendKind {
+	return a.current().ctx.LastBackend
 }
 
 // ProjectDir returns the current project directory
@@ -1042,22 +1621,57 @@ func (a *Agent) ProjectDir() string {
 
 // LastActivity returns when the agent was last active
 func (a *Agent) LastActivity() time.Time {
-	return a.current().lastActivity
+	return a.current().ctx.LastActivity
+}
+
+// AddRecentMessage appends one user/assistant exchange to the conversation
+// bridge so Hermes follow-up turns can reference the previous task result.
+func (a *Agent) AddRecentMessage(userMsg, assistantMsg string) {
+	ps := a.current()
+	addToRecentMessages(ps, userMsg, assistantMsg)
+}
+
+// RecentMessagesSnapshot returns a copy of the recent conversation bridge state.
+func (a *Agent) RecentMessagesSnapshot() []contextMessage {
+	ps := a.current()
+	return ps.ctx.RecentMessagesSnapshot()
 }
 
 // CreatedAt returns when the agent session was created
 func (a *Agent) CreatedAt() time.Time {
-	return a.current().createdAt
+	return a.current().ctx.CreatedAt
 }
 
 // IsActive returns true if the agent has been active within the last hour
 func (a *Agent) IsActive() bool {
-	return time.Since(a.current().lastActivity) < time.Hour
+	return time.Since(a.current().ctx.LastActivity) < time.Hour
 }
 
 // ProjectCount returns the number of projects this agent has worked with
 func (a *Agent) ProjectCount() int {
 	return len(a.projects)
+}
+
+// languagePromptPrefixes are the per-language directives Alice prepends to
+// every user message before sending to the CLI (see telegram.go). Stripping
+// them before logging keeps Dashboard / Timeline titles readable instead of
+// showing "請用繁體中文回應。…" on every entry.
+var languagePromptPrefixes = []string{
+	"請用繁體中文回應。\n\n",
+	"Please respond in English. Do NOT use Chinese characters or Chinese formatting in your response.\n\n",
+}
+
+// stripLanguageDirective removes any leading language directive from a
+// user-facing prompt copy. Used only when surfacing the prompt for display
+// (DecisionLog / Dashboard / Telegram echoes); the CLI request still receives
+// the directive.
+func stripLanguageDirective(prompt string) string {
+	for _, prefix := range languagePromptPrefixes {
+		if strings.HasPrefix(prompt, prefix) {
+			return prompt[len(prefix):]
+		}
+	}
+	return prompt
 }
 
 // logDecision records a complete AI decision with full context
@@ -1094,11 +1708,11 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 
 	// Create context map
 	context := map[string]interface{}{
-		"turns":         0,
-		"project_dir":   a.projectDir,
-		"model":         a.client.GetModel(),
-		"tool_count":    len(toolCalls),
-		"has_error":     err != nil,
+		"turns":       0,
+		"project_dir": a.projectDir,
+		"model":       a.client.GetModel(),
+		"tool_count":  len(toolCalls),
+		"has_error":   err != nil,
 	}
 
 	if resp != nil {
@@ -1125,11 +1739,11 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 	// Create decision log
 	decision := DecisionLog{
 		Timestamp:       startTime,
-		SessionID:       ps.sessionID,
+		SessionID:       ps.ctx.Session(ps.ctx.LastBackend),
 		ProjectPath:     a.projectDir,
 		ChatID:          a.chatID,
 		ThreadID:        a.threadID,
-		UserPrompt:      userPrompt,
+		UserPrompt:      stripLanguageDirective(userPrompt),
 		AgentResponse:   agentResponse,
 		ThinkingContent: thinkingContent,
 		ToolCalls:       toolCalls,
@@ -1139,7 +1753,7 @@ func (a *Agent) logDecision(userPrompt, agentResponse string, toolCalls []ToolEx
 		TokensUsed:      tokenStats,
 		Source:          "telegram",
 		Model:           ExtractModelShortName(a.lastUsedModel), // 使用的模型
-		RoutingReason:   routingReason,                         // 路由原因
+		RoutingReason:   routingReason,                          // 路由原因
 		RoutingLatency:  routingLatency,                         // 路由延遲 (ms)
 	}
 
@@ -1246,9 +1860,9 @@ func generateSummary(userPrompt, agentResponse, taskType string) string {
 // filterSensitiveData removes or masks sensitive information from text
 func (a *Agent) filterSensitiveData(text string) string {
 	// Use security manager's PII detection if available
-	if globalSecurityManager != nil {
+	if sm := security.Global(); sm != nil {
 		// Don't log events here to avoid double-logging (the original detection point should log)
-		filtered, _ := globalSecurityManager.DetectAndFilterPII(text, false, nil)
+		filtered, _ := sm.DetectAndFilterPII(text, false, nil)
 		return filtered
 	}
 
@@ -1257,12 +1871,12 @@ func (a *Agent) filterSensitiveData(text string) string {
 		pattern     string
 		replacement string
 	}{
-		{`sk-[a-zA-Z0-9-_]{20,}`, "[API_KEY_MASKED]"},                    // API keys
+		{`sk-[a-zA-Z0-9-_]{20,}`, "[API_KEY_MASKED]"},                        // API keys
 		{`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`, "[EMAIL_MASKED]"}, // Email addresses
-		{`\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b`, "[CARD_MASKED]"},       // Credit card numbers
-		{`password\s*[:=]\s*\S+`, "password: [MASKED]"},                       // Passwords
-		{`token\s*[:=]\s*\S+`, "token: [MASKED]"},                             // Tokens
-		{`secret\s*[:=]\s*\S+`, "secret: [MASKED]"},                           // Secrets
+		{`\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b`, "[CARD_MASKED]"},      // Credit card numbers
+		{`password\s*[:=]\s*\S+`, "password: [MASKED]"},                      // Passwords
+		{`token\s*[:=]\s*\S+`, "token: [MASKED]"},                            // Tokens
+		{`secret\s*[:=]\s*\S+`, "secret: [MASKED]"},                          // Secrets
 	}
 
 	filteredText := text

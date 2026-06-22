@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
@@ -8,7 +9,6 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,23 +16,23 @@ import (
 
 // Checkpoint represents a point-in-time snapshot of the project state
 type Checkpoint struct {
-	ID              string            `json:"id" db:"id"`
-	Timestamp       time.Time         `json:"timestamp" db:"timestamp"`
-	ProjectDir      string            `json:"project_dir" db:"project_dir"`
-	GitCommitHash   string            `json:"git_commit_hash" db:"git_commit_hash"`
-	GitBranch       string            `json:"git_branch" db:"git_branch"`
-	GitStashRef     string            `json:"git_stash_ref" db:"git_stash_ref"`
-	Description     string            `json:"description" db:"description"`
-	TriggerType     CheckpointTrigger `json:"trigger_type" db:"trigger_type"`
-	SessionID       string            `json:"session_id" db:"session_id"`
-	ChatID          int64             `json:"chat_id" db:"chat_id"`
-	DecisionLogID   string            `json:"decision_log_id" db:"decision_log_id"`
-	FileSnapshots   map[string]string `json:"file_snapshots" db:"files_snapshot_json"`
-	PreCondition    string            `json:"pre_condition" db:"pre_condition"`
-	DangerousOp     string            `json:"dangerous_op" db:"dangerous_op"`
-	CreatedBy       string            `json:"created_by" db:"created_by"`
-	Size            int64             `json:"size" db:"size"`
-	IsActive        bool              `json:"is_active" db:"is_active"`
+	ID            string            `json:"id" db:"id"`
+	Timestamp     time.Time         `json:"timestamp" db:"timestamp"`
+	ProjectDir    string            `json:"project_dir" db:"project_dir"`
+	GitCommitHash string            `json:"git_commit_hash" db:"git_commit_hash"`
+	GitBranch     string            `json:"git_branch" db:"git_branch"`
+	GitStashRef   string            `json:"git_stash_ref" db:"git_stash_ref"`
+	Description   string            `json:"description" db:"description"`
+	TriggerType   CheckpointTrigger `json:"trigger_type" db:"trigger_type"`
+	SessionID     string            `json:"session_id" db:"session_id"`
+	ChatID        int64             `json:"chat_id" db:"chat_id"`
+	DecisionLogID string            `json:"decision_log_id" db:"decision_log_id"`
+	FileSnapshots map[string]string `json:"file_snapshots" db:"files_snapshot_json"`
+	PreCondition  string            `json:"pre_condition" db:"pre_condition"`
+	DangerousOp   string            `json:"dangerous_op" db:"dangerous_op"`
+	CreatedBy     string            `json:"created_by" db:"created_by"`
+	Size          int64             `json:"size" db:"size"`
+	IsActive      bool              `json:"is_active" db:"is_active"`
 }
 
 // CheckpointTrigger represents different types of checkpoint triggers
@@ -48,11 +48,11 @@ const (
 
 // DangerousOperation represents operations that require checkpoints
 type DangerousOperation struct {
-	Tool        string   `json:"tool"`
-	Operation   string   `json:"operation"`
-	Patterns    []string `json:"patterns"`
+	Tool        string    `json:"tool"`
+	Operation   string    `json:"operation"`
+	Patterns    []string  `json:"patterns"`
 	RiskLevel   RiskLevel `json:"risk_level"`
-	Description string   `json:"description"`
+	Description string    `json:"description"`
 }
 
 // RiskLevel represents the risk level of an operation
@@ -89,11 +89,11 @@ type CheckpointManager struct {
 
 // CheckpointConfig holds configuration for checkpoint behavior
 type CheckpointConfig struct {
-	MaxCheckpoints      int           `json:"max_checkpoints"`
-	AutoCleanupAfter    time.Duration `json:"auto_cleanup_after"`
-	MaxSnapshotSize     int64         `json:"max_snapshot_size"`
-	BackupUntracked     bool          `json:"backup_untracked"`
-	GitIntegration      bool          `json:"git_integration"`
+	MaxCheckpoints      int                  `json:"max_checkpoints"`
+	AutoCleanupAfter    time.Duration        `json:"auto_cleanup_after"`
+	MaxSnapshotSize     int64                `json:"max_snapshot_size"`
+	BackupUntracked     bool                 `json:"backup_untracked"`
+	GitIntegration      bool                 `json:"git_integration"`
 	DangerousOperations []DangerousOperation `json:"dangerous_operations"`
 }
 
@@ -287,17 +287,17 @@ func (cm *CheckpointManager) CreateCheckpoint(projectDir, description string, tr
 	checkpointID := cm.generateCheckpointID(projectDir, triggerType)
 
 	checkpoint := &Checkpoint{
-		ID:           checkpointID,
-		Timestamp:    time.Now(),
-		ProjectDir:   projectDir,
-		Description:  description,
-		TriggerType:  triggerType,
-		SessionID:    sessionID,
+		ID:            checkpointID,
+		Timestamp:     time.Now(),
+		ProjectDir:    projectDir,
+		Description:   description,
+		TriggerType:   triggerType,
+		SessionID:     sessionID,
 		ChatID:        chatID,
 		DecisionLogID: decisionLogID,
 		DangerousOp:   dangerousOp,
-		CreatedBy:    "alice-agent",
-		IsActive:     true,
+		CreatedBy:     "alice-agent",
+		IsActive:      true,
 		FileSnapshots: make(map[string]string),
 	}
 
@@ -352,10 +352,7 @@ func (cm *CheckpointManager) generateCheckpointID(projectDir string, triggerType
 
 // createGitStash creates a Git stash for the current state
 func (cm *CheckpointManager) createGitStash(projectDir, checkpointID string) (string, error) {
-	cmd := exec.Command("git", "stash", "create", fmt.Sprintf("checkpoint-%s", checkpointID))
-	cmd.Dir = projectDir
-
-	output, err := cmd.Output()
+	output, err := runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir, Timeout: 2 * time.Minute}, "git", "stash", "create", fmt.Sprintf("checkpoint-%s", checkpointID))
 	if err != nil {
 		return "", fmt.Errorf("failed to create git stash: %w", err)
 	}
@@ -661,10 +658,7 @@ func (cm *CheckpointManager) RestoreCheckpoint(checkpointID, projectDir string) 
 func (cm *CheckpointManager) restoreGitState(projectDir string, checkpoint *Checkpoint) error {
 	// Apply the stash
 	if checkpoint.GitStashRef != "" {
-		cmd := exec.Command("git", "stash", "apply", checkpoint.GitStashRef)
-		cmd.Dir = projectDir
-
-		if output, err := cmd.CombinedOutput(); err != nil {
+		if output, err := runProcessCombinedOutput(context.Background(), ProcessOptions{Dir: projectDir, Timeout: 2 * time.Minute}, "git", "stash", "apply", checkpoint.GitStashRef); err != nil {
 			return fmt.Errorf("failed to apply git stash %s: %w\nOutput: %s",
 				checkpoint.GitStashRef, err, string(output))
 		}
@@ -822,13 +816,13 @@ func (cm *CheckpointManager) GetCheckpointStats(projectDir string) (map[string]i
 	row := db.QueryRow(query, projectDir)
 
 	var stats struct {
-		Total       int64     `db:"total_checkpoints"`
-		TotalSize   int64     `db:"total_size"`
-		Auto        int64     `db:"auto_checkpoints"`
-		Manual      int64     `db:"manual_checkpoints"`
-		PreDanger   int64     `db:"pre_danger_checkpoints"`
-		Oldest      time.Time `db:"oldest_checkpoint"`
-		Newest      time.Time `db:"newest_checkpoint"`
+		Total     int64     `db:"total_checkpoints"`
+		TotalSize int64     `db:"total_size"`
+		Auto      int64     `db:"auto_checkpoints"`
+		Manual    int64     `db:"manual_checkpoints"`
+		PreDanger int64     `db:"pre_danger_checkpoints"`
+		Oldest    time.Time `db:"oldest_checkpoint"`
+		Newest    time.Time `db:"newest_checkpoint"`
 	}
 
 	err := row.Scan(&stats.Total, &stats.TotalSize, &stats.Auto, &stats.Manual, &stats.PreDanger, &stats.Oldest, &stats.Newest)
@@ -837,15 +831,15 @@ func (cm *CheckpointManager) GetCheckpointStats(projectDir string) (map[string]i
 	}
 
 	return map[string]interface{}{
-		"total_checkpoints":     stats.Total,
-		"total_size_bytes":      stats.TotalSize,
-		"auto_checkpoints":      stats.Auto,
-		"manual_checkpoints":    stats.Manual,
+		"total_checkpoints":      stats.Total,
+		"total_size_bytes":       stats.TotalSize,
+		"auto_checkpoints":       stats.Auto,
+		"manual_checkpoints":     stats.Manual,
 		"pre_danger_checkpoints": stats.PreDanger,
-		"oldest_checkpoint":     stats.Oldest,
-		"newest_checkpoint":     stats.Newest,
-		"max_checkpoints":       cm.config.MaxCheckpoints,
-		"cleanup_after_days":    int(cm.config.AutoCleanupAfter.Hours() / 24),
+		"oldest_checkpoint":      stats.Oldest,
+		"newest_checkpoint":      stats.Newest,
+		"max_checkpoints":        cm.config.MaxCheckpoints,
+		"cleanup_after_days":     int(cm.config.AutoCleanupAfter.Hours() / 24),
 	}, nil
 }
 
@@ -872,11 +866,11 @@ var globalCheckpointManager *CheckpointManager
 // InitCheckpointManager initializes the global checkpoint manager
 func InitCheckpointManager(storage Storage, gitManager *GitManager) error {
 	config := CheckpointConfig{
-		MaxCheckpoints:   50,
-		AutoCleanupAfter: 7 * 24 * time.Hour, // 7 days
-		MaxSnapshotSize:  100 * 1024 * 1024,  // 100MB
-		BackupUntracked:  true,
-		GitIntegration:   true,
+		MaxCheckpoints:      50,
+		AutoCleanupAfter:    7 * 24 * time.Hour, // 7 days
+		MaxSnapshotSize:     100 * 1024 * 1024,  // 100MB
+		BackupUntracked:     true,
+		GitIntegration:      true,
 		DangerousOperations: getDefaultDangerousOperations(),
 	}
 

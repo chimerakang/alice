@@ -1,4 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
+import { useTranslation } from "react-i18next";
+import i18n from "@/i18n";
 import { api } from "@/lib/api";
 import type { SecurityStats, SecurityEvent } from "@/types/alice";
 import { useAppStore } from "@/stores/appStore";
@@ -56,7 +58,17 @@ interface PIIRecord {
   event_id?: string; // Reference to original SecurityEvent for modal
 }
 
+function formatTimestamp(value?: string): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const locale = i18n.language === "zh-TW" ? "zh-TW" : "en-US";
+  return date.toLocaleString(locale);
+}
+
 export default function Security() {
+  const { t } = useTranslation();
+  const locale = i18n.language === "zh-TW" ? "zh-TW" : "en-US";
   const [stats, setStats] = useState<SecurityStats | null>(null);
   const [events, setEvents] = useState<SecurityEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -123,22 +135,22 @@ export default function Security() {
 
   const severityDistribution: SeverityDistribution[] = [
     {
-      name: "Low",
+      name: t("security.severity.low"),
       value: allEvents.filter(e => getSeverityLevel(e.severity) === "low").length,
       color: "#10B981"
     },
     {
-      name: "Medium",
+      name: t("security.severity.medium"),
       value: allEvents.filter(e => getSeverityLevel(e.severity) === "medium").length,
       color: "#F59E0B"
     },
     {
-      name: "High",
+      name: t("security.severity.high"),
       value: allEvents.filter(e => getSeverityLevel(e.severity) === "high").length,
       color: "#EF4444"
     },
     {
-      name: "Critical",
+      name: t("security.severity.critical"),
       value: allEvents.filter(e => getSeverityLevel(e.severity) === "critical").length,
       color: "#DC2626"
     },
@@ -146,17 +158,18 @@ export default function Security() {
 
   // Determine time range and bucket granularity
   const getTimeRangeInfo = () => {
+    const locale = i18n.language === "zh-TW" ? "zh-TW" : "en-US";
     const now = new Date();
     let startTime = dateRange.startTime ? new Date(dateRange.startTime) : undefined;
     let endTime = dateRange.endTime ? new Date(dateRange.endTime) : undefined;
-    let label = "Last 12 Hours";
+    let label = t("security.time_ranges.last_12_hours");
     let bucketMs = 60 * 60 * 1000; // 1 hour default
 
     if (!startTime && !endTime) {
       // Default: last 12 hours
       startTime = new Date(now.getTime() - 12 * 60 * 60 * 1000);
       endTime = now;
-      label = "Last 12 Hours";
+      label = t("security.time_ranges.last_12_hours");
       bucketMs = 60 * 60 * 1000; // 1 hour
     } else if (startTime && endTime) {
       const spanMs = endTime.getTime() - startTime.getTime();
@@ -164,24 +177,24 @@ export default function Security() {
       const spanDays = spanMs / (24 * 60 * 60 * 1000);
 
       if (spanHours <= 1) {
-        label = "Last 1 Hour";
+        label = t("security.time_ranges.last_1_hour");
         bucketMs = 5 * 60 * 1000; // 5 minutes
       } else if (spanHours <= 6) {
-        label = "Last 6 Hours";
+        label = t("security.time_ranges.last_6_hours");
         bucketMs = 30 * 60 * 1000; // 30 minutes
       } else if (spanHours <= 24) {
-        label = "Last 24 Hours";
+        label = t("security.time_ranges.last_24_hours");
         bucketMs = 60 * 60 * 1000; // 1 hour
       } else if (spanDays <= 7) {
-        label = "Last 7 Days";
+        label = t("security.time_ranges.last_7_days");
         bucketMs = 4 * 60 * 60 * 1000; // 4 hours
       } else if (spanDays <= 30) {
-        label = "Last 30 Days";
+        label = t("security.time_ranges.last_30_days");
         bucketMs = 24 * 60 * 60 * 1000; // 1 day
       } else {
         // Custom range
-        const startStr = startTime.toLocaleDateString();
-        const endStr = endTime.toLocaleDateString();
+        const startStr = startTime.toLocaleDateString(locale);
+        const endStr = endTime.toLocaleDateString(locale);
         label = `${startStr} - ${endStr}`;
         bucketMs = 24 * 60 * 60 * 1000; // 1 day
       }
@@ -247,7 +260,7 @@ export default function Security() {
     });
 
     return Object.values(buckets);
-  }, [allEvents, dateRange]);
+  }, [allEvents, dateRange, t, locale]);
 
   // Extract real PII detection records from security events
   const piiRecords: PIIRecord[] = useMemo(() => {
@@ -257,23 +270,23 @@ export default function Security() {
         // Extract PII type from details first (most reliable), fallback to description
         const piiTypeFromDetails = e.details?.pii_type as string | undefined;
         const typeMatch = e.description?.match(/PII detected(?:\s+in\s+\w+\s+\w+)?:\s*(.+)/);
-        const piiType = piiTypeFromDetails || (typeMatch ? typeMatch[1] : e.event_type || "Unknown");
+        const piiType = piiTypeFromDetails || (typeMatch ? typeMatch[1] : e.event_type || t("security.table.unknown"));
 
         // Derive location from message_type and source_type
-        let location = "System";
+        let location = t("security.source.system");
         const messageType = e.details?.message_type as string | undefined;
         const sourceType = e.details?.source_type as string | undefined;
 
         if (messageType === "text" && sourceType === "telegram") {
-          location = "Telegram Message";
+          location = t("security.location.telegram_message");
         } else if (messageType === "photo") {
-          location = "Telegram Photo";
+          location = t("security.location.telegram_photo");
         } else if (messageType === "voice") {
-          location = "Voice Message";
+          location = t("security.location.voice_message");
         } else if (messageType === "batch") {
-          location = "Batch Photos";
+          location = t("security.location.batch_photos");
         } else if (sourceType === "agent") {
-          location = "Agent Logs";
+          location = t("security.location.agent_logs");
         }
 
         // Get match count and snippet from details
@@ -285,10 +298,10 @@ export default function Security() {
         return {
           id: e.event_id || `pii_${i}`,
           event_id: e.event_id, // Reference to original event for modal
-          timestamp: e.timestamp ? new Date(e.timestamp).toLocaleString() : "N/A",
+          timestamp: formatTimestamp(e.timestamp),
           type: piiType,
           location,
-          masked_value: redactedSnippet || "[redacted]",
+          masked_value: redactedSnippet || t("security.table.redacted"),
           chat_id: chatId,
           user_id: userId,
           message_type: messageType,
@@ -298,7 +311,7 @@ export default function Security() {
         };
       })
       .slice(0, 20); // Show last 20
-  }, [allEvents]);
+  }, [allEvents, t, locale]);
 
   // Filter and sort events
   const filteredEvents = allEvents
@@ -332,13 +345,13 @@ export default function Security() {
 
   const handleExportAuditLog = () => {
     const csv = [
-      ["Timestamp", "Type", "Severity", "Description", "Source IP"],
+      [t("security.csv.timestamp"), t("security.csv.type"), t("security.csv.severity"), t("security.csv.description"), t("security.csv.source_ip")],
       ...filteredEvents.map(e => [
         e.timestamp,
         e.event_type,
         e.severity,
         e.description || "",
-        e.ip || (e.event_type?.includes("telegram") ? "Telegram" : "System")
+        e.ip || (e.event_type?.includes("telegram") ? t("security.source.telegram") : t("security.source.system"))
       ])
     ].map(row => row.join(",")).join("\n");
 
@@ -364,13 +377,13 @@ export default function Security() {
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-white">Security & Privacy</h2>
+        <h2 className="text-lg font-semibold text-white">{t("security.title")}</h2>
         <button
           onClick={handleExportAuditLog}
           className="flex items-center gap-2 px-3 py-2 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg transition-colors"
         >
           <Download className="w-3 h-3" />
-          Export Audit Log
+          {t("security.actions.export_audit_log")}
         </button>
       </div>
 
@@ -383,7 +396,7 @@ export default function Security() {
           <div className="card p-5">
             <div className="flex items-center gap-2 mb-2">
               <Shield className="w-4 h-4 text-primary" />
-              <span className="text-sm text-gray-400">Total Events</span>
+              <span className="text-sm text-gray-400">{t("security.summary.total_events")}</span>
             </div>
             <div className="text-2xl font-bold font-mono text-white">
               {stats.total_events}
@@ -393,7 +406,7 @@ export default function Security() {
           <div className="card p-5">
             <div className="flex items-center gap-2 mb-2">
               <ShieldAlert className="w-4 h-4 text-error" />
-              <span className="text-sm text-gray-400">Blocked</span>
+              <span className="text-sm text-gray-400">{t("security.summary.blocked")}</span>
             </div>
             <div className="text-2xl font-bold font-mono text-white">
               {stats.blocked_attempts}
@@ -403,7 +416,7 @@ export default function Security() {
           <div className="card p-5">
             <div className="flex items-center gap-2 mb-2">
               <Eye className="w-4 h-4 text-warning" />
-              <span className="text-sm text-gray-400">PII Detections</span>
+              <span className="text-sm text-gray-400">{t("security.summary.pii_detections")}</span>
             </div>
             <div className="text-2xl font-bold font-mono text-white">
               {stats.pii_detections}
@@ -413,7 +426,7 @@ export default function Security() {
           <div className="card p-5">
             <div className="flex items-center gap-2 mb-2">
               <AlertTriangle className="w-4 h-4 text-success" />
-              <span className="text-sm text-gray-400">Threat Level</span>
+              <span className="text-sm text-gray-400">{t("security.summary.threat_level")}</span>
             </div>
             <div className="text-2xl font-bold font-mono text-white capitalize">
               {stats.threat_level}
@@ -428,7 +441,7 @@ export default function Security() {
         <div className="card p-6">
           <h3 className="text-sm font-semibold text-gray-300 mb-4 flex items-center gap-2">
             <Shield className="w-4 h-4" />
-            Security Event Severity Distribution
+            {t("security.charts.severity_distribution")}
           </h3>
           <ResponsiveContainer width="100%" height={200}>
             <PieChart>
@@ -475,7 +488,7 @@ export default function Security() {
         <div className="card p-6">
           <h3 className="text-sm font-semibold text-gray-300 mb-4 flex items-center gap-2">
             <Calendar className="w-4 h-4" />
-            Security Events Trend ({timeRangeLabel})
+            {t("security.charts.events_trend", { range: timeRangeLabel })}
           </h3>
           <ResponsiveContainer width="100%" height={200}>
             <AreaChart data={eventTrends}>
@@ -540,18 +553,18 @@ export default function Security() {
       <div className="card p-6">
         <h3 className="text-sm font-semibold text-gray-300 mb-4 flex items-center gap-2">
           <Eye className="w-4 h-4" />
-          Recent PII Detection Records
+          {t("security.charts.recent_pii_records")}
         </h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-700">
-                <th className="text-left py-2 text-gray-400 font-medium">Timestamp</th>
-                <th className="text-left py-2 text-gray-400 font-medium">PII Type</th>
-                <th className="text-left py-2 text-gray-400 font-medium">Location</th>
-                <th className="text-left py-2 text-gray-400 font-medium">Source</th>
-                <th className="text-left py-2 text-gray-400 font-medium">Matches</th>
-                <th className="text-left py-2 text-gray-400 font-medium">Preview</th>
+                <th className="text-left py-2 text-gray-400 font-medium">{t("security.table.timestamp")}</th>
+                <th className="text-left py-2 text-gray-400 font-medium">{t("security.table.pii_type")}</th>
+                <th className="text-left py-2 text-gray-400 font-medium">{t("security.table.location")}</th>
+                <th className="text-left py-2 text-gray-400 font-medium">{t("security.table.source")}</th>
+                <th className="text-left py-2 text-gray-400 font-medium">{t("security.table.matches")}</th>
+                <th className="text-left py-2 text-gray-400 font-medium">{t("security.table.preview")}</th>
               </tr>
             </thead>
             <tbody>
@@ -583,20 +596,20 @@ export default function Security() {
                   </td>
                   <td className="py-2 text-gray-300 text-xs">{record.location}</td>
                   <td className="py-2 text-gray-400 text-xs">
-                    {record.chat_id ? `Chat ${record.chat_id}` : "Unknown"}
+                    {record.chat_id ? t("security.table.chat", { chat: record.chat_id }) : t("security.table.unknown")}
                   </td>
                   <td className="py-2 text-gray-300 text-xs font-mono">
-                    {record.match_count ? `${record.match_count} found` : "-"}
+                    {record.match_count ? t("security.table.matches_found", { count: record.match_count }) : "-"}
                   </td>
                   <td className="py-2 text-gray-400 text-xs font-mono max-w-xs truncate">
-                    {record.redacted_snippet ? `"${record.redacted_snippet.substring(0, 50)}..."` : "[redacted]"}
+                    {record.redacted_snippet ? `"${record.redacted_snippet.substring(0, 50)}..."` : t("security.table.redacted")}
                   </td>
                 </tr>
               ))}
               {piiRecords.length === 0 && (
                 <tr>
                   <td colSpan={6} className="py-4 text-center text-gray-500">
-                    No PII detections recorded.
+                    {t("security.empty.no_pii")}
                   </td>
                 </tr>
               )}
@@ -610,7 +623,7 @@ export default function Security() {
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-semibold text-gray-300 flex items-center gap-2">
             <ShieldAlert className="w-4 h-4" />
-            Security Events ({filteredEvents.length})
+            {t("security.table.events", { count: filteredEvents.length })}
           </h3>
 
           <div className="flex items-center gap-3">
@@ -619,7 +632,7 @@ export default function Security() {
               <Search className="w-3 h-3 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500" />
               <input
                 type="text"
-                placeholder="Search events..."
+                placeholder={t("security.search_placeholder")}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="pl-8 pr-3 py-1.5 text-xs bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-primary"
@@ -634,11 +647,11 @@ export default function Security() {
                 onChange={(e) => setSeverityFilter(e.target.value)}
                 className="pl-8 pr-8 py-1.5 text-xs bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-primary appearance-none"
               >
-                <option value="all">All Severities</option>
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="critical">Critical</option>
+                <option value="all">{t("security.severity.all")}</option>
+                <option value="low">{t("security.severity.low")}</option>
+                <option value="medium">{t("security.severity.medium")}</option>
+                <option value="high">{t("security.severity.high")}</option>
+                <option value="critical">{t("security.severity.critical")}</option>
               </select>
             </div>
           </div>
@@ -649,25 +662,25 @@ export default function Security() {
             <thead className="sticky top-0 bg-gray-900">
               <tr className="border-b border-gray-700">
                 <th
-                  className="text-left py-2 text-gray-400 font-medium cursor-pointer hover:text-gray-300"
-                  onClick={() => handleSort("timestamp")}
-                >
-                  Timestamp {sortField === "timestamp" && (sortOrder === "asc" ? "↑" : "↓")}
+                className="text-left py-2 text-gray-400 font-medium cursor-pointer hover:text-gray-300"
+                onClick={() => handleSort("timestamp")}
+              >
+                  {t("security.table.timestamp")} {sortField === "timestamp" && (sortOrder === "asc" ? "↑" : "↓")}
                 </th>
                 <th
                   className="text-left py-2 text-gray-400 font-medium cursor-pointer hover:text-gray-300"
                   onClick={() => handleSort("event_type")}
-                >
-                  Type {sortField === "event_type" && (sortOrder === "asc" ? "↑" : "↓")}
+              >
+                  {t("security.table.type")} {sortField === "event_type" && (sortOrder === "asc" ? "↑" : "↓")}
                 </th>
                 <th
                   className="text-left py-2 text-gray-400 font-medium cursor-pointer hover:text-gray-300"
                   onClick={() => handleSort("severity")}
-                >
-                  Severity {sortField === "severity" && (sortOrder === "asc" ? "↑" : "↓")}
+              >
+                  {t("security.table.severity")} {sortField === "severity" && (sortOrder === "asc" ? "↑" : "↓")}
                 </th>
-                <th className="text-left py-2 text-gray-400 font-medium">Description</th>
-                <th className="text-left py-2 text-gray-400 font-medium">Source</th>
+                <th className="text-left py-2 text-gray-400 font-medium">{t("security.table.description")}</th>
+                <th className="text-left py-2 text-gray-400 font-medium">{t("security.table.source")}</th>
               </tr>
             </thead>
             <tbody>
@@ -678,9 +691,9 @@ export default function Security() {
                   onClick={() => setSelectedEvent(event)}
                 >
                   <td className="py-2 text-gray-300 font-mono">
-                    {event.timestamp ? new Date(event.timestamp).toLocaleString() : "N/A"}
+                    {formatTimestamp(event.timestamp)}
                   </td>
-                  <td className="py-2 text-gray-300">{event.event_type || "Unknown"}</td>
+                  <td className="py-2 text-gray-300">{event.event_type || t("security.table.unknown")}</td>
                   <td className="py-2">
                     <span className={`px-2 py-1 rounded-full text-xs ${
                       getSeverityLevel(event.severity) === "critical" ? "bg-red-500/20 text-red-300" :
@@ -692,15 +705,15 @@ export default function Security() {
                     </span>
                   </td>
                   <td className="py-2 text-gray-300 max-w-xs truncate">
-                    {event.description || "No description"}
+                    {event.description || t("security.table.no_description")}
                   </td>
                   <td className="py-2 text-gray-400 font-mono">
                     {event.ip || (
-                      event.event_type?.includes("telegram") ? "Telegram" :
-                      event.event_type?.includes("rate_limit") ? "HTTP" :
-                      event.event_type?.includes("blocked") ? "HTTP" :
-                      event.event_type?.includes("pii") ? "Telegram" :
-                      "System"
+                      event.event_type?.includes("telegram") ? t("security.source.telegram") :
+                      event.event_type?.includes("rate_limit") ? t("security.source.http") :
+                      event.event_type?.includes("blocked") ? t("security.source.http") :
+                      event.event_type?.includes("pii") ? t("security.source.telegram") :
+                      t("security.source.system")
                     )}
                   </td>
                 </tr>
@@ -708,7 +721,7 @@ export default function Security() {
               {filteredEvents.length === 0 && (
                 <tr>
                   <td colSpan={5} className="py-4 text-center text-gray-500">
-                    No security events found.
+                    {t("security.empty.no_events")}
                   </td>
                 </tr>
               )}
@@ -722,7 +735,7 @@ export default function Security() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className="bg-gray-900 border border-gray-700 rounded-lg max-w-2xl w-full max-h-96 overflow-y-auto">
             <div className="sticky top-0 bg-gray-900 border-b border-gray-700 p-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-white">Security Event Details</h3>
+              <h3 className="text-lg font-semibold text-white">{t("security.modal.title")}</h3>
               <button
                 onClick={() => setSelectedEvent(null)}
                 className="text-gray-400 hover:text-white text-xl"
@@ -733,40 +746,40 @@ export default function Security() {
 
             <div className="p-6 space-y-4">
               <div>
-                <label className="text-xs font-semibold text-gray-400 uppercase">Timestamp</label>
+                <label className="text-xs font-semibold text-gray-400 uppercase">{t("security.modal.timestamp")}</label>
                 <p className="text-white font-mono text-sm mt-1">
-                  {selectedEvent.timestamp ? new Date(selectedEvent.timestamp).toLocaleString() : "N/A"}
+                  {formatTimestamp(selectedEvent.timestamp)}
                 </p>
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-gray-400 uppercase">Event Type</label>
-                <p className="text-white font-mono text-sm mt-1">{selectedEvent.event_type || "Unknown"}</p>
+                <label className="text-xs font-semibold text-gray-400 uppercase">{t("security.modal.event_type")}</label>
+                <p className="text-white font-mono text-sm mt-1">{selectedEvent.event_type || t("security.table.unknown")}</p>
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-gray-400 uppercase">Severity</label>
+                <label className="text-xs font-semibold text-gray-400 uppercase">{t("security.modal.severity")}</label>
                 <p className="text-white font-mono text-sm mt-1">
                   {getSeverityLevel(selectedEvent.severity).toUpperCase()}
                 </p>
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-gray-400 uppercase">Description</label>
-                <p className="text-gray-300 text-sm mt-1">{selectedEvent.description || "No description"}</p>
+                <label className="text-xs font-semibold text-gray-400 uppercase">{t("security.modal.description")}</label>
+                <p className="text-gray-300 text-sm mt-1">{selectedEvent.description || t("security.table.no_description")}</p>
               </div>
 
               {selectedEvent.details && (
                 <>
                   {(selectedEvent.details.chat_id || selectedEvent.details.user_id) && (
                     <div className="bg-gray-800/50 border border-gray-700 rounded p-3">
-                      <label className="text-xs font-semibold text-gray-400 uppercase">Affected Chat/User</label>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">{t("security.modal.affected_chat_user")}</label>
                       <div className="text-white text-sm mt-2 space-y-1 font-mono">
                         {selectedEvent.details.chat_id && (
-                          <p>Chat ID: <span className="text-cyan-400">{selectedEvent.details.chat_id}</span></p>
+                          <p>{t("security.modal.chat_id")}: <span className="text-cyan-400">{selectedEvent.details.chat_id}</span></p>
                         )}
                         {selectedEvent.details.user_id && (
-                          <p>User ID: <span className="text-cyan-400">{selectedEvent.details.user_id}</span></p>
+                          <p>{t("security.modal.user_id")}: <span className="text-cyan-400">{selectedEvent.details.user_id}</span></p>
                         )}
                       </div>
                     </div>
@@ -774,49 +787,49 @@ export default function Security() {
 
                   {selectedEvent.details.message_type && (
                     <div>
-                      <label className="text-xs font-semibold text-gray-400 uppercase">Message Type</label>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">{t("security.modal.message_type")}</label>
                       <p className="text-white text-sm mt-1">{selectedEvent.details.message_type}</p>
                     </div>
                   )}
 
                   {selectedEvent.details.project_path && (
                     <div>
-                      <label className="text-xs font-semibold text-gray-400 uppercase">Project</label>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">{t("security.modal.project")}</label>
                       <p className="text-white text-sm mt-1 font-mono break-all">{selectedEvent.details.project_path}</p>
                     </div>
                   )}
 
                   {selectedEvent.details.message_id && (
                     <div>
-                      <label className="text-xs font-semibold text-gray-400 uppercase">Message Info</label>
-                      <p className="text-white text-sm mt-1 font-mono">Message ID: <span className="text-cyan-400">{selectedEvent.details.message_id}</span></p>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">{t("security.modal.message_info")}</label>
+                      <p className="text-white text-sm mt-1 font-mono">{t("security.modal.message_id")}: <span className="text-cyan-400">{selectedEvent.details.message_id}</span></p>
                     </div>
                   )}
 
                   {selectedEvent.details.redacted_snippet && (
                     <div className="bg-gray-800/50 border border-gray-700 rounded p-3">
                       <label className="text-xs font-semibold text-gray-400 uppercase block mb-2">
-                        Redacted Content Preview (Sensitive Data Filtered)
+                        {t("security.modal.redacted_preview_title")}
                       </label>
                       <p className="text-gray-300 text-sm font-mono whitespace-pre-wrap break-words">
                         {selectedEvent.details.redacted_snippet}
                       </p>
                       <p className="text-gray-500 text-xs mt-2">
-                        ℹ️ To view the full conversation, please check the original Telegram chat ID listed above.
+                        {t("security.modal.redacted_preview_hint")}
                       </p>
                     </div>
                   )}
 
                   {selectedEvent.details.matches && (
                     <div>
-                      <label className="text-xs font-semibold text-gray-400 uppercase">PII Matches Found</label>
-                      <p className="text-orange-400 font-mono text-sm mt-1">{selectedEvent.details.matches} instances</p>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">{t("security.modal.pii_matches_found")}</label>
+                      <p className="text-orange-400 font-mono text-sm mt-1">{t("security.modal.instances", { count: selectedEvent.details.matches })}</p>
                     </div>
                   )}
 
                   {selectedEvent.details.pattern && (
                     <div>
-                      <label className="text-xs font-semibold text-gray-400 uppercase">PII Pattern Detected</label>
+                      <label className="text-xs font-semibold text-gray-400 uppercase">{t("security.modal.pii_pattern_detected")}</label>
                       <p className="text-white text-sm mt-1">{selectedEvent.details.pattern}</p>
                     </div>
                   )}

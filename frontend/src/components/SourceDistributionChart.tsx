@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { Monitor, Code2, Send } from "lucide-react";
 import type { DecisionLog } from "@/types/alice";
@@ -15,34 +16,30 @@ interface SourceData {
   label: string;
 }
 
-const SOURCE_CONFIG: Record<string, Omit<SourceData, 'value'>> = {
+const SOURCE_CONFIG: Record<string, Omit<SourceData, "value" | "label">> = {
   terminal: {
     name: "terminal",
     color: "#6b7280",
     icon: Monitor,
-    label: "Terminal"
   },
   vscode: {
     name: "vscode",
     color: "#8b5cf6",
     icon: Code2,
-    label: "VS Code"
   },
   telegram: {
     name: "telegram",
     color: "#06b6d4",
     icon: Send,
-    label: "Telegram"
   },
   unknown: {
     name: "unknown",
     color: "#64748b",
     icon: Monitor,
-    label: "Unknown"
   }
 };
 
-function CustomTooltip({ active, payload }: any) {
+function CustomTooltip({ active, payload, t }: any) {
   if (!active || !payload || !payload.length) return null;
 
   const data = payload[0].payload as SourceData;
@@ -55,7 +52,7 @@ function CustomTooltip({ active, payload }: any) {
         <span className="text-sm font-medium text-white">{data.label}</span>
       </div>
       <div className="text-sm text-gray-300">
-        {data.value} decisions ({((data.value / payload[0].payload.total) * 100).toFixed(1)}%)
+        {t("dashboard.panels.total_decisions", { count: data.value })} ({((data.value / payload[0].payload.total) * 100).toFixed(1)}%)
       </div>
     </div>
   );
@@ -80,33 +77,33 @@ function CustomLegend({ payload }: any) {
 }
 
 export default function SourceDistributionChart({ decisions }: SourceDistributionChartProps) {
+  const { t } = useTranslation();
   const chartData = useMemo(() => {
     // Count decisions by source
     const sourceCounts: Record<string, number> = {};
 
     decisions.forEach(decision => {
-      const source = decision.source || 'telegram'; // Default to telegram for legacy data
+      const source = decision.source || "telegram";
       sourceCounts[source] = (sourceCounts[source] || 0) + 1;
     });
 
-    // Convert to chart data with configuration
     const data: SourceData[] = Object.entries(sourceCounts).map(([source, count]) => {
       const config = SOURCE_CONFIG[source] || SOURCE_CONFIG.unknown;
       return {
         ...config,
+        label: t(`dashboard.sources.${config.name}`, { defaultValue: t("dashboard.sources.unknown") }),
         value: count,
         total: decisions.length
       } as SourceData & { total: number };
     });
 
-    // Sort by value descending
     return data.sort((a, b) => b.value - a.value);
-  }, [decisions]);
+  }, [decisions, t]);
 
   if (decisions.length === 0) {
     return (
       <div className="flex items-center justify-center h-[200px] text-sm text-gray-600">
-        No decision data available
+        {t("dashboard.panels.no_decision_data")}
       </div>
     );
   }
@@ -114,7 +111,7 @@ export default function SourceDistributionChart({ decisions }: SourceDistributio
   if (chartData.length === 0) {
     return (
       <div className="flex items-center justify-center h-[200px] text-sm text-gray-600">
-        No source data available
+        {t("dashboard.panels.no_source_data")}
       </div>
     );
   }
@@ -136,7 +133,7 @@ export default function SourceDistributionChart({ decisions }: SourceDistributio
               <Cell key={`cell-${index}`} fill={entry.color} />
             ))}
           </Pie>
-          <Tooltip content={<CustomTooltip />} />
+          <Tooltip content={(props) => <CustomTooltip {...props} t={t} />} />
         </PieChart>
       </ResponsiveContainer>
       <CustomLegend payload={chartData} />

@@ -66,11 +66,11 @@ func (c *EnhancedCLIClient) CallWithFiles(ctx context.Context, message string, f
 	// 執行命令
 	log.Printf("[enhanced-cli] executing: claude %s", strings.Join(args, " "))
 
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = projectDir
-	cmd.Env = append(os.Environ(), "ALICE_SKIP_HOOKS=1")
-
-	output, err := cmd.Output()
+	output, err := runProcessOutput(ctx, ProcessOptions{
+		Dir:     projectDir,
+		Env:     cleanEnvForCLI(),
+		Timeout: defaultAgentProcessTimeout,
+	}, "claude", args...)
 	if err != nil {
 		if ctx.Err() == context.Canceled {
 			return nil, fmt.Errorf("agent aborted by user")
@@ -101,7 +101,7 @@ func (c *EnhancedCLIClient) CallWithFiles(ctx context.Context, message string, f
 
 	// 記錄性能指標
 	latency := time.Since(startTime)
-	totalTokens := resp.Usage.InputTokens + resp.Usage.OutputTokens
+	totalTokens := resp.Usage.InputTokens + resp.Usage.CacheReadInputTokens + resp.Usage.CacheCreationInputTokens + resp.Usage.OutputTokens
 	errorType := ""
 	if resp.IsError {
 		errorType = "cli_error"
@@ -116,7 +116,8 @@ func (c *EnhancedCLIClient) CallWithFiles(ctx context.Context, message string, f
 		}
 	}
 
-	RecordAPICall(latency, !resp.IsError, totalTokens, resp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(c.Model))
+	RecordAPICallWithCache(latency, !resp.IsError, totalTokens, resp.TotalCostUSD, chatID, projectDir, errorType, ExtractModelShortName(c.Model),
+		resp.Usage.InputTokens, resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens, resp.Usage.OutputTokens)
 
 	log.Printf("[enhanced-cli] completed in %v, tokens: %d, cost: $%.4f",
 		latency, totalTokens, resp.TotalCostUSD)
@@ -161,9 +162,12 @@ func (c *EnhancedCLIClient) CallStreamWithFiles(ctx context.Context, message str
 	args = append(args, message)
 
 	// 執行流式命令
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = projectDir
-	cmd.Env = append(os.Environ(), "ALICE_SKIP_HOOKS=1")
+	cmd, cancel := processCommand(ctx, ProcessOptions{
+		Dir:     projectDir,
+		Env:     append(os.Environ(), "ALICE_SKIP_HOOKS=1"),
+		Timeout: defaultAgentProcessTimeout,
+	}, "claude", args...)
+	defer cancel()
 
 	// 使用原 CLIClient.CallStream 的邏輯處理流式回應
 	stdout, err := cmd.StdoutPipe()
@@ -178,54 +182,123 @@ func (c *EnhancedCLIClient) CallStreamWithFiles(ctx context.Context, message str
 		return nil, fmt.Errorf("claude CLI start: %w", err)
 	}
 
-	// 處理流式輸出（簡化版，專注於最終結果）
 	var finalResp *CLIResponse
+	var thinkingBlocks []string
+	var textBlocks []string
 
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
+	// Read newline-delimited stream-json with bufio.Reader.ReadBytes rather
+	// than bufio.Scanner. The CLI can emit a single stream-json line larger
+	// than Scanner's 4MB token cap (e.g. a big tool result or file read).
+	// Scan() would then fail with bufio.ErrTooLong, the loop would stop
+	// reading stdout, the OS pipe would fill, and the CLI would block forever
+	// on write until the 15-min process timeout — exactly why Hermes sub-tasks
+	// could freeze with progress stuck at "[N/M]". ReadBytes has no per-line
+	// size limit, so oversized lines are read whole and drained.
+	reader := bufio.NewReader(stdout)
+	processLine := func(line []byte) {
 		if len(line) == 0 {
-			continue
+			return
 		}
 
 		var event struct {
-			Type      string                 `json:"type"`
-			SessionID string                 `json:"session_id"`
-			IsError   bool                   `json:"is_error"`
-			Result    string                 `json:"result"`
-			Usage     struct {
-				InputTokens  int `json:"input_tokens"`
-				OutputTokens int `json:"output_tokens"`
+			Type    string `json:"type"`
+			Subtype string `json:"subtype"`
+			Message *struct {
+				Content []struct {
+					Type     string                 `json:"type"`
+					Name     string                 `json:"name"`
+					Input    map[string]interface{} `json:"input"`
+					Text     string                 `json:"text"`
+					Thinking string                 `json:"thinking"`
+				} `json:"content"`
+			} `json:"message"`
+			SessionID    string  `json:"session_id"`
+			IsError      bool    `json:"is_error"`
+			NumTurns     int     `json:"num_turns"`
+			Result       string  `json:"result"`
+			TotalCostUSD float64 `json:"total_cost_usd"`
+			DurationMs   int     `json:"duration_ms"`
+			Usage        struct {
+				InputTokens              int `json:"input_tokens"`
+				OutputTokens             int `json:"output_tokens"`
+				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 			} `json:"usage"`
 		}
 
 		if err := json.Unmarshal(line, &event); err != nil {
-			continue // 忽略無法解析的行
+			return // 忽略無法解析的行
 		}
 
-		// 只關注最終結果
-		if event.Type == "result" {
-			finalResp = &CLIResponse{
-				Type:      event.Type,
-				SessionID: event.SessionID,
-				IsError:   event.IsError,
-				Result:    event.Result,
-				Usage:     event.Usage,
+		switch event.Type {
+		case "assistant":
+			if event.Message == nil {
+				return
 			}
+			for _, c := range event.Message.Content {
+				switch c.Type {
+				case "tool_use":
+					if onToolUse != nil {
+						onToolUse(c.Name, c.Input)
+					}
+				case "thinking":
+					if c.Thinking != "" {
+						thinkingBlocks = append(thinkingBlocks, c.Thinking)
+						if onContent != nil {
+							onContent("thinking", c.Thinking)
+						}
+					}
+				case "text":
+					if c.Text != "" {
+						textBlocks = append(textBlocks, c.Text)
+						if onContent != nil {
+							onContent("text", c.Text)
+						}
+					}
+				}
+			}
+		case "result":
+			finalResp = &CLIResponse{
+				Type:         event.Type,
+				Subtype:      event.Subtype,
+				SessionID:    event.SessionID,
+				IsError:      event.IsError,
+				NumTurns:     event.NumTurns,
+				Result:       event.Result,
+				TotalCostUSD: event.TotalCostUSD,
+				DurationMs:   event.DurationMs,
+			}
+			finalResp.Usage.InputTokens = event.Usage.InputTokens
+			finalResp.Usage.OutputTokens = event.Usage.OutputTokens
+			finalResp.Usage.CacheReadInputTokens = event.Usage.CacheReadInputTokens
+			finalResp.Usage.CacheCreationInputTokens = event.Usage.CacheCreationInputTokens
+		}
+	}
+
+	for {
+		line, readErr := reader.ReadBytes('\n')
+		processLine(bytes.TrimRight(line, "\r\n"))
+		if readErr != nil {
 			break
 		}
 	}
 
-	if err := cmd.Wait(); err != nil && ctx.Err() != context.Canceled {
+	if finalResp != nil {
+		finalResp.ThinkingContent = strings.Join(thinkingBlocks, "\n\n---\n\n")
+		finalResp.TextContent = strings.Join(textBlocks, "\n\n")
+	}
+
+	if err := cmd.Wait(); err != nil {
+		if ctx.Err() == context.Canceled {
+			return nil, fmt.Errorf("agent aborted by user")
+		}
 		// CLI exited with error — but we may already have a result from streaming
 		if finalResp != nil {
-			log.Printf("[enhanced-cli] CLI exited with error but streaming captured result (is_error=%v)", finalResp.IsError)
+			log.Printf("[enhanced-cli] CLI exited with error but streaming captured result (is_error=%v, turns=%d, text_len=%d)", finalResp.IsError, finalResp.NumTurns, len(finalResp.TextContent))
 			if !finalResp.IsError {
 				finalResp.IsError = true
 			}
-			return finalResp, fmt.Errorf("CLI exited with error: %s", finalResp.Result)
+			return finalResp, fmt.Errorf("CLI returned error: %s", formatCLIStreamError(finalResp, c.MaxTurns))
 		}
 		if stderrBuf.Len() > 0 {
 			return nil, fmt.Errorf("claude CLI error: %s", stderrBuf.String())

@@ -1,19 +1,24 @@
 # Hermes Architecture: Brain-Executor Collaboration
 
-This document describes the Hermes Planner-Executor architecture implemented in `internal/app/hermes/` for [issue #98](https://github.com/chimerakang/alice/issues/98).
+This document describes the Hermes Planner-Executor architecture implemented in
+`internal/app/hermes/` for [issue #98](https://github.com/chimerakang/alice/issues/98).
+For the current runtime ownership model, also see
+[../arch/agent-fsm-architecture.md](../arch/agent-fsm-architecture.md).
 
 ---
 
 ## Overview
 
-Hermes transforms Alice from a **single-model routing** system into a **Brain-Executor collaboration** system:
+Hermes transforms Alice from a **single-model routing** system into a
+**long-task Task Agent** with Planner/Executor/Reviewer roles:
 
 | Mode | Model allocation | Context management |
 |---|---|---|
 | Classic (non-Hermes) | One model per message, chosen by triage | Sticky session |
-| **Hermes** | Planner (Opus) plans; Executor (Haiku) executes | Planner keeps `--resume`; Executor cold-starts per sub-task |
+| **Hermes** | Planner plans; Executor executes; Reviewer may gate quality | Session policy is owned outside Hermes |
 
-The key insight: the Planner retains full task context via `--resume`; the Executor receives only what it needs (goal, accumulated summary, current sub-task) — dramatically reducing per-call token cost.
+The key architecture boundary: Hermes owns durable task progress; it does not
+own chat follow-up state, sticky session policy, or global recovery rules.
 
 ---
 
@@ -23,7 +28,7 @@ The key insight: the Planner retains full task context via `--resume`; the Execu
 User message
     ↓
 ┌─ TelegramBot ────────────────────────────────────────┐
-│  isHermesEnabled() → startHermesTask()               │
+│  Chat Agent routes long-task intent → startHermesTask() │
 └────────────────────────┬─────────────────────────────┘
                          ↓
 ┌─ Coordinator (hermes/coordinator.go) ───────────────┐
@@ -32,10 +37,10 @@ User message
 │  Calls ProgressReporter for Telegram notifications  │
 └──────────┬────────────────────────┬─────────────────┘
            ↓                        ↓
-┌─ PlannerSession ────┐  ┌─ ExecutorSession ──────────┐
+┌─ Planner Role ──────┐  ┌─ Executor Role ────────────┐
 │  planner.go         │  │  executor.go               │
 │  CLIClient (Opus)   │  │  CLIClient (Haiku)         │
-│  --resume session   │  │  Cold-start per sub-task   │
+│  task planning      │  │  model execution           │
 │  JSON parse + retry │  │  BuildExecutorPrompt()     │
 └─────────────────────┘  └────────────────────────────┘
            │                        │
@@ -60,8 +65,7 @@ internal/app/hermes/
   accumulated.go  AppendResult, CompressPrompt, BuildExecutorPrompt
   hooks.go        PreHook, PostHook, PathGuard, GoBuild, TscCheck, JsonLint
   planner.go      PlannerSession — long-lived CLI session, JSON parse/retry
-  executor.go     ExecutorSession — cold-start CLI invocations per sub-task
-  coordinator.go  Coordinator — lifecycle goroutine, budget, interrupts
+  coordinator.go  Coordinator — task lifecycle goroutine and budget checks
   progress.go     ProgressReporter interface + TextProgressReporter
 
 internal/app/
@@ -86,11 +90,11 @@ Phase 1 — Planning (PlannerSession):
   Retry up to maxPlannerJSONRetries if JSON parse fails
   Fallback to classic routing if still failing
 
-Phase 2 — Execution loop (ExecutorSession):
+Phase 2 — Execution loop:
   For each SubTask:
     1. Check TokenBudget.Exceeded() → abort if true
-    2. Check interrupt (queue/interrupt/inject policy)
-    3. BuildExecutorPrompt(state, coreRules) → cold-start Executor
+    2. Apply task feedback already accepted by Chat Agent
+    3. BuildExecutorPrompt(state, coreRules) → Executor
     4. Executor runs tools, returns result text
     5. Retry up to maxRetriesPerSubtask if validation_error set
     6. AppendResult() → UpdateAccumulated()
@@ -165,13 +169,15 @@ Defaults (overridable via config):
 
 ---
 
-## Interrupt Policies
+## Interrupt Handling
 
-| `/hermes stop` | `InterruptAbort` | Cancel immediately, MarkInterrupted |
-|---|---|---|
-| `queue` (default) | Buffer new messages; process after current sub-task completes |
-| `interrupt` | Cancel current sub-task, start new task from interrupting message |
-| `inject` | Append interrupt message to Accumulated; continue execution |
+Hermes task state currently uses fixed feedback injection: messages accepted as
+task feedback are appended to accumulated context and the task continues.
+
+Classification of "feedback vs interrupt vs new task" belongs to the Chat Agent
+FSM described in `docs/arch/agent-fsm-architecture.md`. Hermes should receive a
+clear event and should not infer chat intent from timestamps or sticky session
+state.
 
 ---
 
@@ -211,7 +217,6 @@ Events sent at `normal` verbosity:
     "executor_model": "claude-haiku-4-5-20251001",
     "max_retries_per_subtask": 3,
     "max_planner_json_retries": 3,
-    "interrupt_policy": "queue",
     "progress_verbosity": "normal",
     "hooks": {
       "path_guard": true,

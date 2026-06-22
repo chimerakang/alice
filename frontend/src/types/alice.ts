@@ -82,18 +82,27 @@ export interface GitDiffResponse {
 
 // ========== Agent ==========
 
+export interface ExecutionSnapshot {
+  state: string;
+  since: string;
+  terminal: boolean;
+  reason: string;
+}
+
 export interface AgentInfo {
-  id: string;
   chat_id: number;
   thread_id: number;
   project_dir: string;
   session_id: string;
-  status: Status;
+  is_active: boolean;
+  is_processing: boolean;
+  status?: string;
+  execution?: ExecutionSnapshot;
+  execution_state?: string;
   created_at: string;
-  last_active: string;
-  token_stats?: TokenStats;
-  model: string;
-  git_state?: GitState;
+  last_activity: string;
+  project_count: number;
+  stats: TokenStats;
 }
 
 // ========== Tool ==========
@@ -150,6 +159,359 @@ export interface DecisionLog {
   model?: string;
   routing_reason?: string;
   routing_latency_ms?: number;
+  unified_task?: UnifiedTask;
+}
+
+// ========== Unified Task Graph ==========
+
+export interface UnifiedToolEvent {
+  id?: number;
+  sub_task_id: string;
+  tool_name: string;
+  input_json: string;
+  output_json: string;
+  ts: string;
+  status: string;
+}
+
+export interface UnifiedArtifact {
+  id?: number;
+  sub_task_id: string;
+  path: string;
+  hash: string;
+}
+
+export interface UnifiedSubTask {
+  id: string;
+  task_id: string;
+  idx: number;
+  description: string;
+  model: string;
+  status: string;
+  result_text: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  started_at: string;
+  ended_at?: string;
+  routing_reason: string;
+  routing_latency_ms: number;
+  tool_events: UnifiedToolEvent[];
+  artifacts: UnifiedArtifact[];
+}
+
+export interface UnifiedReviewSubTaskResult {
+  id?: number;
+  review_id: number;
+  sub_task_id: string;
+  score: number;
+  feedback: string;
+  issue_tags: string[];
+}
+
+export interface UnifiedReview {
+  id?: number;
+  task_id: string;
+  reviewer_model: string;
+  verdict: string;
+  overall_score: number;
+  feedback_text: string;
+  issue_tags: string[];
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  block_count?: number;
+  auto_fixed_count?: number;
+  source?: "initial" | "retry" | string;
+  created_at: string;
+  sub_task_results: UnifiedReviewSubTaskResult[];
+}
+
+export interface ReviewLiveEvent {
+  task_id: string;
+  reviewer_model?: string;
+  verdict: string;
+  overall_score: number;
+  issue_tags: string[];
+  advisory_retry?: boolean;
+  failing_subtasks?: number;
+  retry_note?: string;
+  feedback_text?: string;
+  source?: "initial" | "retry" | string;
+  timestamp: string;
+  sub_task_results?: UnifiedReviewSubTaskResult[];
+}
+
+export interface UnifiedTask {
+  id: string;
+  chat_id: number;
+  thread_id: number;
+  project_dir: string;
+  goal: string;
+  engine: string;
+  backend: string;
+  status: string;
+  started_at: string;
+  ended_at?: string;
+  total_input_tokens: number;
+  total_output_tokens: number;
+  total_cost_usd: number;
+  sub_tasks: UnifiedSubTask[];
+  reviews: UnifiedReview[];
+}
+
+// ========== Runtime Events ==========
+
+// HermesInterrupt mirrors hermes.HermesInterrupt for the active-tasks
+// API. Only the fields the dashboard consumes are typed; payload is
+// open-ended so per-Reason renderers can pick what they need.
+export interface HermesInterrupt {
+  id?: string;
+  source_step?: string;
+  resume_step?: string;
+  reason?: string;
+  payload?: Record<string, unknown>;
+  created_at?: string;
+  expires_at?: string;
+}
+
+// HermesActiveTask is the view returned by /api/hermes/active for the
+// dashboard's Hermes Tasks panel. Includes interrupt context so the
+// resolve buttons can be rendered correctly.
+export interface HermesActiveTask {
+  task_id: string;
+  github_url?: string;
+  chat_id: number;
+  thread_id: number;
+  goal: string;
+  project_dir: string;
+  github_issue_number?: number;
+  status: string;
+  next_step?: string;
+  current_idx: number;
+  plan_length: number;
+  used_tokens: number;
+  max_total_tokens?: number;
+  updated_at: string;
+  interrupt?: HermesInterrupt;
+}
+
+// HermesStats mirrors /api/hermes/stats output: aggregate effectiveness
+// metrics for the dashboard's stats panel (#171 / #173 observability).
+export interface HermesStats {
+  window_days: number;
+  generated_at: string;
+  totals: {
+    total: number;
+    done: number;
+    failed: number;
+    interrupted: number;
+    executing: number;
+    planning: number;
+    other: number;
+  };
+  daily: Array<{
+    day: string;
+    total: number;
+    done: number;
+    failed: number;
+    interrupted: number;
+  }>;
+  source_nodes: Record<string, number>;
+  failure_reasons: Record<string, number>;
+  phases: Array<{
+    phase: string;
+    calls: number;
+    avg_input: number;
+    avg_output: number;
+    sum_input: number;
+    sum_output: number;
+  }>;
+  hops: Array<{ hops: number; tasks: number }>;
+}
+
+export interface HermesModelUsage {
+  model: string;
+  input_tokens: number;
+  uncached_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  output_tokens: number;
+  cost_usd: number;
+  call_count: number;
+}
+
+export interface HermesPhaseUsage {
+  phase: string;
+  model: string;
+  input_tokens: number;
+  uncached_input_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+  output_tokens: number;
+  cost_usd: number;
+  call_count: number;
+}
+
+export interface HermesTokenBudget {
+  max_total_tokens: number;
+  max_wallclock_seconds: number;
+  used_tokens: number;
+  started_at: string;
+}
+
+export interface HermesTaskState {
+  id: string;
+  chat_id: number;
+  thread_id: number;
+  planner_session_id: string;
+  executor_session_id?: string;
+  project_dir: string;
+  goal: string;
+  current_idx: number;
+  accumulated: string;
+  status: string;
+  token_budget: HermesTokenBudget;
+  github_issue_number?: number;
+  model_usages: HermesModelUsage[];
+  phase_usages: HermesPhaseUsage[];
+  created_at: string;
+  updated_at: string;
+}
+
+// HermesSubTaskView is the per-sub-task slice returned by
+// /api/hermes/snapshots in the latest_plan field. Carries the actual
+// executor result + reviewer-driven retry feedback so the dashboard
+// drill-in can show what each sub-task did, not just the Walker hops.
+export interface HermesSubTaskView {
+  id: string;
+  description: string;
+  status: string;
+  result?: string;
+  tokens_used?: number;
+  attempts?: number;
+  retry_feedback?: string;
+}
+
+// HermesSnapshotHop is one row in a task's Walker hop history. Returned
+// by /api/hermes/snapshots; rendered as a vertical timeline in the
+// dashboard's Hermes history drill-in.
+export interface HermesSnapshotHop {
+  step: number;
+  snapshot_id: string;
+  parent_snapshot_id?: string;
+  source_node?: string;
+  next_step?: string;
+  reason?: string;
+  status?: string;
+  current_idx: number;
+  has_interrupt?: boolean;
+  interrupt_reason?: string;
+  created_at: string;
+}
+
+export interface RuntimeEventRecord {
+  timestamp: string;
+  type: string;
+  chat_id?: number;
+  thread_id?: number;
+  task_id?: string;
+  issue?: number;
+  payload?: Record<string, unknown>;
+}
+
+// ========== Quality Analytics ==========
+
+export interface QualityBucket {
+  label: string;
+  count: number;
+  percentage: number;
+  avg_score: number;
+  partial_rate: number;
+  fail_rate: number;
+}
+
+export interface QualityTrendPoint {
+  period: string;
+  task_count: number;
+  review_count: number;
+  avg_sub_tasks: number;
+  pass_rate: number;
+  partial_rate: number;
+  fail_rate: number;
+  avg_score: number;
+  avg_sub_score: number;
+}
+
+export interface QualityGranularityScore {
+  sub_task_count: number;
+  task_count: number;
+  avg_score: number;
+}
+
+export interface QualityToolHintStat {
+  tool_hints: string;
+  count: number;
+  pass_rate: number;
+  avg_score: number;
+}
+
+export interface QualityDecompositionStats {
+  window_start: string;
+  window_end: string;
+  task_count: number;
+  sub_task_count: number;
+  avg_sub_tasks: number;
+  stddev_sub_tasks: number;
+  best_granularity: string;
+  granularity_buckets: QualityBucket[];
+  granularity_scores: QualityGranularityScore[];
+  weekly_trend: QualityTrendPoint[];
+  description_buckets: QualityBucket[];
+  tool_hint_stats: QualityToolHintStat[];
+}
+
+export interface QualityIssueTagStat {
+  tag: string;
+  count: number;
+  previous_count: number;
+  delta: number;
+  trend: "up" | "down" | "flat" | string;
+}
+
+export interface QualityLowScoringSubTask {
+  task_id: string;
+  sub_task_id: string;
+  description: string;
+  score: number;
+  issue_tags: string[];
+  feedback: string;
+  created_at: string;
+}
+
+export interface QualityScoreStats {
+  window_start: string;
+  window_end: string;
+  review_count: number;
+  reviewed_sub_task_count: number;
+  pass_rate: number;
+  partial_rate: number;
+  fail_rate: number;
+  avg_overall_score: number;
+  avg_sub_task_score: number;
+  verdict_distribution: Record<string, number>;
+  trend: QualityTrendPoint[];
+  top_issue_tags: QualityIssueTagStat[];
+  low_scoring_sub_tasks: QualityLowScoringSubTask[];
+}
+
+export interface QualityInsight {
+  name: string;
+  severity: "warning" | "info" | "success" | string;
+  message: string;
+  suggestion: string;
+  value: number;
+  threshold: number;
 }
 
 // ========== Performance ==========
@@ -161,6 +523,10 @@ export interface PerformanceMetric {
   tool_execution_time: number;
   tool_execution_type: string;
   tokens_used: number;
+  input_tokens?: number;
+  cache_read_tokens?: number;
+  cache_write_tokens?: number;
+  output_tokens?: number;
   estimated_cost: number;
   memory_usage: number;
   error_type: string;
@@ -173,6 +539,68 @@ export interface PerformanceAnalytics {
   error_rate: number;
   throughput: number;
   timestamp: string;
+}
+
+export interface CacheBreakdownRow {
+  group: string;
+  calls: number;
+  tokens: number;
+  input_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  output_tokens: number;
+  cost: number;
+  cache_read_input_percent: number;
+  cache_read_total_percent: number;
+}
+
+export interface CacheBreakdown {
+  by_provider?: CacheBreakdownRow[];
+  by_model?: CacheBreakdownRow[];
+  by_project?: CacheBreakdownRow[];
+}
+
+export interface PerformanceTrendsResponse {
+  enabled: boolean;
+  timestamp: string;
+  trends?: {
+    cache_breakdown?: CacheBreakdown;
+    cache_hit_rate?: number;
+    cache_read_tokens?: number;
+    cache_write_tokens?: number;
+    total_tokens?: number;
+    total_cost?: number;
+    data_points?: number;
+    [key: string]: unknown;
+  };
+}
+
+// ========== Memory ==========
+
+export interface MemoryPreviewSection {
+  source: string;
+  scope: string;
+  priority: number;
+  size: number;
+  preview: string;
+}
+
+export interface MemoryPreviewResponse {
+  sections: MemoryPreviewSection[];
+  section_count: number;
+  rendered_size: number;
+  rendered_preview: string;
+  timestamp: string;
+}
+
+export interface MemoryPreviewQuery {
+  chatId: number;
+  threadId?: number;
+  projectDir?: string;
+  issue?: number;
+  message?: string;
+  mode?: string;
+  budget?: number;
 }
 
 // ========== Security ==========
@@ -229,11 +657,17 @@ export interface WebSocketEvent {
 export type WebSocketEventType =
   | "tool_execution_start"
   | "tool_execution"
+  | "task_updated"
+  | "sub_task_updated"
+  | "tool_event"
+  | "review_result"
+  | "review_complete"
   | "decision_complete"
   | "performance_metric"
   | "security_alert"
   | "agent_status"
-  | "hook_session_active";
+  | "hook_session_active"
+  | "codex_session_update";
 
 // ========== API Responses ==========
 
@@ -245,6 +679,7 @@ export interface StatsResponse {
   success_rate: number;
   uptime_seconds: number;
   timestamp: string;
+  recent_agents?: AgentInfo[];
   total_tokens_used: number;
   total_cost_usd: number;
 }

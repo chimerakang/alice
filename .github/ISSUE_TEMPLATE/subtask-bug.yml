@@ -1,0 +1,81 @@
+name: 🔴 Bug Fix Subtask
+description: 修復單一 bug 或邏輯問題
+title: "fix: [簡短描述問題]"
+labels: ["bug", "subtask"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        # 🔴 Bug Fix Subtask
+
+  - type: textarea
+    id: root-cause
+    attributes:
+      label: "根本原因分析"
+      description: "為什麼會發生這個 bug？不只是『修了個 typo』，要說清楚邏輯漏洞"
+      placeholder: |
+        例：Agent.Run() 沒有傳遞 ChatContext 到 Executor，導致...
+        為何未被測試：mock 使用了舊 schema...
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: "✅ 驗收標準"
+      description: "複製對應的驗收標準模板，完成後逐項勾選"
+      value: |
+        ## Acceptance Criteria
+
+        ### Root Cause Analysis
+        - [ ] 說明根本原因（不只是「修了個 typo」）
+        - [ ] 說明為何過去沒被發現（測試缺口 / 邊界情況）
+
+        ### 修復驗收
+        - [ ] 舊的失敗測試現在通過
+        - [ ] 新增迴歸測試防止重發
+        - [ ] 所有相關層都檢查過 (數據層 / 邏輯層 / UI層)
+
+        ### 實機驗證 (如適用)
+        - [ ] 手動複現舊 bug → 確認已修復
+        - [ ] 邊界情況測試 (空值 / 大值 / 特殊字符)
+        - [ ] 性能無降級
+
+        ### 後續檢查
+        - [ ] 檢查類似 bug 是否在其他地方存在
+        - [ ] 如果涉及數據，檢查歷史數據是否需要修補
+
+        ### Code Quality
+        - [ ] 無新增 linting 警告
+        - [ ] 無硬編碼敏感資訊
+        - [ ] 代碼可獨立回退（無其他 issue 依賴）
+      required: true
+
+  - type: textarea
+    id: test-plan
+    attributes:
+      label: "🧪 測試計劃"
+      description: "如何驗證這個 bug 已修復？"
+      placeholder: |
+        1. 手動步驟：...
+        2. 自動測試文件名：...
+        3. 預期結果：...
+      required: true
+
+  - type: textarea
+    id: related-issues
+    attributes:
+      label: "相關 Issue"
+      description: "是否依賴或被其他 issue 依賴？"
+      placeholder: |
+        blocking: #XXX
+        depends on: #YYY
+      required: false
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: "📝 備註"
+      description: "任何其他相關資訊或陷阱"
+      required: false

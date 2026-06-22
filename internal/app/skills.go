@@ -191,6 +191,17 @@ func (sm *SkillManager) FindRelevantSkills(userMessage string, projectPath strin
 			continue
 		}
 
+		// Hard project isolation: never surface a skill from a different
+		// project. Cross-project skills caused leaks where tasks like
+		// "下一個 issue 是哪一個" pulled successful patterns from another
+		// repo and the model parroted issue numbers / content that did
+		// not exist in the current repo.
+		// Skills with an empty ProjectPath are treated as global and
+		// remain eligible.
+		if skill.ProjectPath != "" && projectPath != "" && skill.ProjectPath != projectPath {
+			continue
+		}
+
 		score := 0.0
 
 		// Tag matching
