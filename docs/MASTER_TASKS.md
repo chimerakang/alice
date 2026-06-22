@@ -28,7 +28,7 @@
 | P11 - User Experience | 指令健全性和用戶體驗改善 | 100% (1/1) | ✅ |
 | P12 - Dashboard Analytics | Claude Code Hooks UI 增強：統計圖表 + 用戶指南 | 100% (1/1) | ✅ |
 | P13 - Future Enhancements | 未來功能增強與優化 | 54% (14/26) | 🔄 |
-| P14 - Commercialization Strategy | Alice AI Agent 商業化發展策略與產品定位 | 0% (0/6) | 🔄 |
+| P14 - OSS Sustainability Strategy | Alice AI Agent 開源永續與社群定位 | 0% (0/6) | 🔄 |
 | P2 - Monitoring | Web Dashboard + API + 監控系統 | 100% (7/7) | ✅ |
 | P3 - Data Layer | 持久化 + Git 整合 + Checkpoint | 100% (5/5) | ✅ |
 | P4 - Proto-First | Protocol Buffers 架構遷移 | 100% (1/1) | ✅ |
@@ -73,12 +73,12 @@
 | P13.2 | **🐛 Telegram 訊息 UTF-8 編碼錯誤導致發送失敗** | [#39](https://github.com/chimerakang/alice/issues/39) | ✅ |
 | P13.3 | **Dashboard Bug: Storage 顯示 — + 端口衝突導致 nginx 代理失效** | [#44](https://github.com/chimerakang/alice/issues/44) | ✅ |
 | P13.4 | **【MVP】AI 開發審計系統 - 企業安全合規功能** | [#48](https://github.com/chimerakang/alice/issues/48) | 🔄 |
-| P13.5 | **【商業功能】單機版主管報告系統 - AI 使用效益監控** | [#50](https://github.com/chimerakang/alice/issues/50) | 🔄 |
+| P13.5 | **【開源功能】單機版使用效益報告系統** | [#50](https://github.com/chimerakang/alice/issues/50) | 🔄 |
 | P13.6 | **🔧 擴展 PerformanceMetrics - 增加管理層洞察數據收集** | [#52](https://github.com/chimerakang/alice/issues/52) | 🔄 |
 | P13.7 | **🎨 Manager Dashboard 前端介面 - 主管視角的 AI 使用分析頁面** | [#55](https://github.com/chimerakang/alice/issues/55) | 🔄 |
 | P13.8 | **📊 自動週報生成系統 - 團隊 AI 使用效益報告** | [#57](https://github.com/chimerakang/alice/issues/57) | 🔄 |
 | P13.9 | **🚨 智能異常檢測系統 - AI 使用模式風險預警** | [#59](https://github.com/chimerakang/alice/issues/59) | 🔄 |
-| P13.10 | **💰【商業功能】Alice SecureGuard - AI 開發防洩密系統** | [#60](https://github.com/chimerakang/alice/issues/60) | 🔄 |
+| P13.10 | **Alice SecureGuard - AI 開發防洩密系統** | [#60](https://github.com/chimerakang/alice/issues/60) | 🔄 |
 | P13.11 | **🔍 智能 Token 檢測引擎 - SecureGuard 核心功能** | [#61](https://github.com/chimerakang/alice/issues/61) | 🔄 |
 | P13.12 | **Performance Bug: 時間範圍篩選器對 Tool Distribution 無效 — API 未支援時間參數** | [#62](https://github.com/chimerakang/alice/issues/62) | ✅ |
 | P13.13 | **🐛 Hook 腳本未提取 session duration 和 token 數據** | [#68](https://github.com/chimerakang/alice/issues/68) | ✅ |
@@ -87,7 +87,7 @@
 | P13.16 | **🐛 Telegram /tasks 無法顯示 GitHub Issues（private repo 認證失敗）** | [#71](https://github.com/chimerakang/alice/issues/71) | ✅ |
 | P13.17 | **P13: Dynamic Model Routing - 智慧模型路由降低 Token 成本** | [#72](https://github.com/chimerakang/alice/issues/72) | ✅ |
 | P13.18 | **P13: Per-Model Cost Tracking - 按模型記錄 Token 成本與用量** | [#73](https://github.com/chimerakang/alice/issues/73) | ✅ |
-| P13.19 | **P13: Savings Calculator - 智慧路由省錢可視化（商業賣點）** | [#74](https://github.com/chimerakang/alice/issues/74) | 🔄 |
+| P13.19 | **P13: Savings Calculator - 智慧路由省錢可視化（開源維護價值）** | [#74](https://github.com/chimerakang/alice/issues/74) | 🔄 |
 | P13.20 | **回填歷史資料缺失的 model 與費用欄位** | [#75](https://github.com/chimerakang/alice/issues/75) | ✅ |
 | P13.21 | **Bot 多國語系支援 — 可切換顯示語言** | [#76](https://github.com/chimerakang/alice/issues/76) | 🔄 |
 | P13.22 | **/usage 指令增加按模型分類的 token 用量與費用顯示** | [#77](https://github.com/chimerakang/alice/issues/77) | ✅ |
@@ -95,16 +95,16 @@
 | P13.24 | **🐛 Smart Routing 導致對話上下文丟失：Model 切換時強制清空 Session** | [#79](https://github.com/chimerakang/alice/issues/79) | ✅ |
 | P13.25 | **🎨 Cost Trend 頁面 UI 修正：標籤更新 + 卡片橫向排列** | [#80](https://github.com/chimerakang/alice/issues/80) | 🔄 |
 
-## P14 - Commercialization Strategy (🔄 0%)
+## P14 - OSS Sustainability Strategy (🔄 0%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
-| P14.1 | **Alice 商業化：單機版隱私優先定位策略** | [#49](https://github.com/chimerakang/alice/issues/49) | 🔄 |
-| P14.2 | **多人版架構設計：從單機到團隊協作** | [#51](https://github.com/chimerakang/alice/issues/51) | 🔄 |
-| P14.3 | **競品分析深化：Entire Checkpoints vs Alice 差異化策略** | [#53](https://github.com/chimerakang/alice/issues/53) | 🔄 |
-| P14.4 | **產品授權與定價模式設計** | [#54](https://github.com/chimerakang/alice/issues/54) | 🔄 |
-| P14.5 | **品牌定位與行銷策略規劃** | [#56](https://github.com/chimerakang/alice/issues/56) | 🔄 |
-| P14.6 | **Alice 商業化執行藍圖：6個月行動計畫** | [#58](https://github.com/chimerakang/alice/issues/58) | 🔄 |
+| P14.1 | **OpenAI/Codex OSS fund readiness** | [#49](https://github.com/chimerakang/alice/issues/49) | 🔄 |
+| P14.2 | **Open-source project hygiene** | [#51](https://github.com/chimerakang/alice/issues/51) | 🔄 |
+| P14.3 | **OSS positioning notes** | [#53](https://github.com/chimerakang/alice/issues/53) | 🔄 |
+| P14.4 | **Maintainer workflow demos** | [#54](https://github.com/chimerakang/alice/issues/54) | 🔄 |
+| P14.5 | **Community adoption** | [#56](https://github.com/chimerakang/alice/issues/56) | 🔄 |
+| P14.6 | **Six-week OSS action plan** | [#58](https://github.com/chimerakang/alice/issues/58) | 🔄 |
 
 ## P2 - Monitoring (✅ 100%)
 
@@ -203,12 +203,12 @@
 | [#39](https://github.com/chimerakang/alice/issues/39) | 🐛 Telegram 訊息 UTF-8 編碼錯誤導致發送失敗 | P13 - Future Enhancements | ✅ |
 | [#44](https://github.com/chimerakang/alice/issues/44) | Dashboard Bug: Storage 顯示 — + 端口衝突導致 nginx 代理失效 | P13 - Future Enhancements | ✅ |
 | [#48](https://github.com/chimerakang/alice/issues/48) | 【MVP】AI 開發審計系統 - 企業安全合規功能 | P13 - Future Enhancements | 🔄 |
-| [#50](https://github.com/chimerakang/alice/issues/50) | 【商業功能】單機版主管報告系統 - AI 使用效益監控 | P13 - Future Enhancements | 🔄 |
+| [#50](https://github.com/chimerakang/alice/issues/50) | 【開源功能】單機版使用效益報告系統 | P13 - Future Enhancements | 🔄 |
 | [#52](https://github.com/chimerakang/alice/issues/52) | 🔧 擴展 PerformanceMetrics - 增加管理層洞察數據收集 | P13 - Future Enhancements | 🔄 |
 | [#55](https://github.com/chimerakang/alice/issues/55) | 🎨 Manager Dashboard 前端介面 - 主管視角的 AI 使用分析頁面 | P13 - Future Enhancements | 🔄 |
 | [#57](https://github.com/chimerakang/alice/issues/57) | 📊 自動週報生成系統 - 團隊 AI 使用效益報告 | P13 - Future Enhancements | 🔄 |
 | [#59](https://github.com/chimerakang/alice/issues/59) | 🚨 智能異常檢測系統 - AI 使用模式風險預警 | P13 - Future Enhancements | 🔄 |
-| [#60](https://github.com/chimerakang/alice/issues/60) | 💰【商業功能】Alice SecureGuard - AI 開發防洩密系統 | P13 - Future Enhancements | 🔄 |
+| [#60](https://github.com/chimerakang/alice/issues/60) | Alice SecureGuard - AI 開發防洩密系統 | P13 - Future Enhancements | 🔄 |
 | [#61](https://github.com/chimerakang/alice/issues/61) | 🔍 智能 Token 檢測引擎 - SecureGuard 核心功能 | P13 - Future Enhancements | 🔄 |
 | [#62](https://github.com/chimerakang/alice/issues/62) | Performance Bug: 時間範圍篩選器對 Tool Distribution 無效 — API 未支援時間參數 | P13 - Future Enhancements | ✅ |
 | [#68](https://github.com/chimerakang/alice/issues/68) | 🐛 Hook 腳本未提取 session duration 和 token 數據 | P13 - Future Enhancements | ✅ |
@@ -217,19 +217,19 @@
 | [#71](https://github.com/chimerakang/alice/issues/71) | 🐛 Telegram /tasks 無法顯示 GitHub Issues（private repo 認證失敗） | P13 - Future Enhancements | ✅ |
 | [#72](https://github.com/chimerakang/alice/issues/72) | P13: Dynamic Model Routing - 智慧模型路由降低 Token 成本 | P13 - Future Enhancements | ✅ |
 | [#73](https://github.com/chimerakang/alice/issues/73) | P13: Per-Model Cost Tracking - 按模型記錄 Token 成本與用量 | P13 - Future Enhancements | ✅ |
-| [#74](https://github.com/chimerakang/alice/issues/74) | P13: Savings Calculator - 智慧路由省錢可視化（商業賣點） | P13 - Future Enhancements | 🔄 |
+| [#74](https://github.com/chimerakang/alice/issues/74) | P13: Savings Calculator - 智慧路由省錢可視化（開源維護價值） | P13 - Future Enhancements | 🔄 |
 | [#75](https://github.com/chimerakang/alice/issues/75) | 回填歷史資料缺失的 model 與費用欄位 | P13 - Future Enhancements | ✅ |
 | [#76](https://github.com/chimerakang/alice/issues/76) | Bot 多國語系支援 — 可切換顯示語言 | P13 - Future Enhancements | 🔄 |
 | [#77](https://github.com/chimerakang/alice/issues/77) | /usage 指令增加按模型分類的 token 用量與費用顯示 | P13 - Future Enhancements | ✅ |
 | [#78](https://github.com/chimerakang/alice/issues/78) | Add project_path field to performance_metrics table for per-project token cost tracking | P13 - Future Enhancements | 🔄 |
 | [#79](https://github.com/chimerakang/alice/issues/79) | 🐛 Smart Routing 導致對話上下文丟失：Model 切換時強制清空 Session | P13 - Future Enhancements | ✅ |
 | [#80](https://github.com/chimerakang/alice/issues/80) | 🎨 Cost Trend 頁面 UI 修正：標籤更新 + 卡片橫向排列 | P13 - Future Enhancements | 🔄 |
-| [#49](https://github.com/chimerakang/alice/issues/49) | Alice 商業化：單機版隱私優先定位策略 | P14 - Commercialization Strategy | 🔄 |
-| [#51](https://github.com/chimerakang/alice/issues/51) | 多人版架構設計：從單機到團隊協作 | P14 - Commercialization Strategy | 🔄 |
-| [#53](https://github.com/chimerakang/alice/issues/53) | 競品分析深化：Entire Checkpoints vs Alice 差異化策略 | P14 - Commercialization Strategy | 🔄 |
-| [#54](https://github.com/chimerakang/alice/issues/54) | 產品授權與定價模式設計 | P14 - Commercialization Strategy | 🔄 |
-| [#56](https://github.com/chimerakang/alice/issues/56) | 品牌定位與行銷策略規劃 | P14 - Commercialization Strategy | 🔄 |
-| [#58](https://github.com/chimerakang/alice/issues/58) | Alice 商業化執行藍圖：6個月行動計畫 | P14 - Commercialization Strategy | 🔄 |
+| [#49](https://github.com/chimerakang/alice/issues/49) | OpenAI/Codex OSS fund readiness | P14 - OSS Sustainability Strategy | 🔄 |
+| [#51](https://github.com/chimerakang/alice/issues/51) | Open-source project hygiene | P14 - OSS Sustainability Strategy | 🔄 |
+| [#53](https://github.com/chimerakang/alice/issues/53) | OSS positioning notes | P14 - OSS Sustainability Strategy | 🔄 |
+| [#54](https://github.com/chimerakang/alice/issues/54) | Maintainer workflow demos | P14 - OSS Sustainability Strategy | 🔄 |
+| [#56](https://github.com/chimerakang/alice/issues/56) | Community adoption | P14 - OSS Sustainability Strategy | 🔄 |
+| [#58](https://github.com/chimerakang/alice/issues/58) | Six-week OSS action plan | P14 - OSS Sustainability Strategy | 🔄 |
 | [#1](https://github.com/chimerakang/alice/issues/1) | 🎛️ Web Dashboard Integration | P2 - Monitoring | ✅ |
 | [#2](https://github.com/chimerakang/alice/issues/2) | 🔍 AI Agent Transparency & Decision Logging | P2 - Monitoring | ✅ |
 | [#3](https://github.com/chimerakang/alice/issues/3) | 🤖 Multi-Agent Coordination System | P2 - Monitoring | ✅ |
@@ -274,4 +274,3 @@
 **In Progress:** 17 🔄
 
 **Last sync:** 2026-02-17 08:24 UTC
-

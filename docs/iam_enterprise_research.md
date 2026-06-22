@@ -803,7 +803,7 @@ g, charlie, admin
 - Modern cloud-native deployments
 - Go-native projects
 
-### 4.2 Commercial Solutions (For Reference)
+### 4.2 Hosted Identity Solutions (For Reference)
 
 | Solution | Pricing Model | Best For | Standout Feature |
 |----------|--------------|----------|------------------|
@@ -822,13 +822,13 @@ Authelia > Authentik > Keycloak
 
 #### Startups / SMBs:
 ```
-Ory Kratos/Hydra > Authentik > Auth0 (commercial)
+Ory Kratos/Hydra > Authentik > Auth0
 (scalable, cost-effective, modern)
 ```
 
 #### Enterprise / Legacy Systems:
 ```
-Keycloak > Okta (commercial) > Azure AD
+Keycloak > Okta > Azure AD
 (mature, feature-rich, enterprise support)
 ```
 
@@ -1903,7 +1903,7 @@ Based on the research and Alice's existing architecture, here's the recommended 
 - [ ] Role/permission editor
 - [ ] Audit log viewer
 
-#### **Phase 3: Enterprise Features (Optional)**
+#### **Phase 3: Advanced Team Features (Optional)**
 
 - [ ] Migrate to PostgreSQL + RLS
 - [ ] Implement ReBAC with Ory Keto
