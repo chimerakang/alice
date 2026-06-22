@@ -7,9 +7,10 @@
 <p align="center">
   <a href="#-why-alice-monitor">Why?</a> &bull;
   <a href="#-key-features">Features</a> &bull;
+  <a href="#-oss-maintainer-workflows">OSS Maintainers</a> &bull;
   <a href="#-quick-start">Quick Start</a> &bull;
   <a href="#-tech-stack">Tech Stack</a> &bull;
-  <a href="#-support--enterprise">Enterprise</a> &bull;
+  <a href="#-community--support">Community</a> &bull;
   <a href="#-license">License</a>
 </p>
 
@@ -29,7 +30,7 @@ Built entirely in **Go**, it ships as a single, lightweight binary with a gorgeo
 
 ## 🔥 Key Features
 
-### 🔒 Enterprise-Grade Security & PII Redaction
+### 🔒 Security & PII Redaction
 
 Don't leak your users' data to LLMs. Alice Monitor intercepts and **automatically masks Personally Identifiable Information** (PII) like emails, credit cards, and SSNs before they hit the LLM API, complete with a full security audit log.
 
@@ -53,6 +54,19 @@ No complex microservices. Run it locally alongside your codebase. Your logs, you
 
 ---
 
+## 🌱 OSS Maintainer Workflows
+
+Alice Monitor is built for open-source maintainers who use AI coding agents in real repositories and need a safer way to review, automate, and understand that work.
+
+- **Codex and CLI agent observability** — Record agent turns, tool calls, costs, and timing so maintainers can review what happened before merging a change.
+- **Pull request review support** — Use Alice as a local companion for Codex-powered review, regression checks, and release validation.
+- **Maintainer automation** — Track recurring tasks such as changelog preparation, issue triage, dependency updates, and release checklists.
+- **Security-first local workflows** — Detect secrets and PII locally before prompts or logs become part of an AI-assisted workflow.
+
+Alice can use OpenAI API credits for Codex-based pull request review, maintainer automation, release validation, and security checks for public open-source repositories. The goal is to help maintainers keep useful automation transparent, auditable, and privacy-conscious.
+
+---
+
 ## 🛠️ Quick Start
 
 Getting started is as simple as running a single Go command.
@@ -65,6 +79,7 @@ Getting started is as simple as running a single Go command.
   npm install -g @anthropic-ai/claude-code
   claude auth
   ```
+- Optional for Codex/OpenAI workflows: Codex CLI access plus `OPENAI_API_KEY`, or `multimedia.openai_api_key` in `config.json`.
 - **Node.js 18+** installed and `npx` available on the host PATH. `/preview` 會透過 `npx playwright screenshot` 進行瀏覽器截圖。
 - 若是全新機器，第一次執行 `/preview` 時可能需要允許 `npx` 下載 Playwright 套件與瀏覽器資源；若不想在首次請求時下載，請先執行 `npx --yes playwright install chromium`。
 - A **Telegram Bot Token** from [@BotFather](https://t.me/BotFather)
@@ -114,35 +129,19 @@ open http://localhost:3939
 
 ---
 
-## 🤝 Support & Enterprise
+## 🤝 Community & Support
 
-Alice Monitor is open-source and free for personal and community use.
+Alice Monitor is an open-source project for personal, community, and maintainer use. Contributions, bug reports, security reports, and workflow ideas are welcome.
 
-### 🏢 Looking for Enterprise Features?
-
-If you are building commercial multi-tenant SaaS or deploying agents in strict compliance environments (Healthcare, FinTech), we offer a **Commercial License** and **Pro Features** including:
-
-| Tier | Price | Highlights |
-|------|-------|-----------|
-| **Community** | Free | Core monitoring, basic PII detection, single-user dashboard |
-| **Team** | $99/mo | Custom PII rules, Team RBAC, priority support (up to 20 users) |
-| **Enterprise** | $299/mo | Full SSO (SAML/OIDC), audit exports, SIEM integration, SLA |
-| **Custom** | Contact us | On-premise deployment, custom integrations, dedicated support |
-
-> Annual plans receive a 20% discount.
-
-📩 For enterprise inquiries, see our full [Commercialization Plan](docs/COMMERCIALIZATION.md) or contact us at <!-- TODO: Add contact email -->.
+- Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a substantial pull request.
+- Use [SECURITY.md](SECURITY.md) for responsible disclosure guidance.
+- Open an issue when you find a reproducible bug or want to discuss a maintainer workflow.
 
 ---
 
 ## 📄 License
 
-This project is dual-licensed:
-
-- **Open-source** — [AGPL-3.0](LICENSE) for personal, community, and open-source use
-- **Commercial** — A proprietary license for closed-source SaaS and commercial products
-
-> If you intend to use Alice Monitor as part of a closed-source commercial product or SaaS, a commercial license is required. See [docs/COMMERCIALIZATION.md](docs/COMMERCIALIZATION.md) for details.
+Alice Monitor is licensed under [AGPL-3.0](LICENSE).
 
 ---
 
@@ -154,7 +153,7 @@ This project is dual-licensed:
 
 # Alice — Claude Code Telegram Agent
 
-透過 Telegram 操控的 AI 程式開發助手。底層呼叫 Claude Code CLI，搭配 Claude Max 訂閱使用，無額外 token 費用。
+透過 Telegram 操控的 AI 程式開發助手。Alice 可串接 Claude Code CLI，也可在 multi-backend 模式下觀察或執行 Codex/GPT 工作流，並把 agent 的工具呼叫、成本、時間線與安全事件留在本機。
 
 ## 架構
 
@@ -216,15 +215,26 @@ This project is dual-licensed:
 - 📱 **響應式設計** - 支援桌面、平板、手機
 - 🔍 **智能過濾** - 事件類型、時間範圍、狀態過濾
 
+## 🌱 開源維護者工作流
+
+Alice 適合正在使用 AI coding agent 維護公開專案的開源維護者。它把 agent 的推理軌跡、工具呼叫、成本、時間線和安全事件留在本機，讓維護者可以在合併變更前看清楚發生了什麼。
+
+- **Codex 與 CLI agent 可觀測性** - 記錄 agent turns、工具呼叫、token 成本與執行時間。
+- **Pull request review 支援** - 協助 Codex 驅動的 PR review、回歸檢查與 release validation。
+- **維護者自動化** - 支援 changelog、issue triage、dependency update、release checklist 等重複維護工作。
+- **本地優先安全檢查** - 在 prompt 或 log 進入 AI 工作流前，先於本機偵測 secrets 與 PII。
+
+若專案取得 OpenAI API credits，Alice 會優先用於公開開源專案的 Codex PR review、維護者自動化、release validation 與安全檢查。目標是讓 AI 輔助維護流程更透明、可稽核，也更重視隱私。
+
 ## 前置條件
 
-- **Claude Max 訂閱**（$200/月，無限使用）
 - 機器上已安裝並登入 Claude Code CLI：
   ```bash
   npm install -g @anthropic-ai/claude-code
   claude login
   ```
 - 驗證 CLI 正常：`claude -p "hello"`
+- 若要使用 Codex/OpenAI 工作流，需具備 Codex CLI 存取權，並設定 `OPENAI_API_KEY` 或 `config.json` 內的 `multimedia.openai_api_key`
 
 ## 快速開始
 

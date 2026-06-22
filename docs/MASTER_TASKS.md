@@ -26,7 +26,7 @@
 | P11 - User Experience | 指令健全性和用戶體驗改善 | 100% (1/1) | ✅ |
 | P12 - Dashboard Analytics | Claude Code Hooks UI 增強：統計圖表 + 用戶指南 | 100% (1/1) | ✅ |
 | P13 - Future Enhancements | 未來功能增強與優化 | 76% (29/38) | 🔄 |
-| P14 - Commercialization Strategy | Alice AI Agent 商業化發展策略與產品定位 | 16% (1/6) | 🔄 |
+| P14 - OSS Sustainability Strategy | Alice AI Agent 開源永續與社群定位 | 16% (1/6) | 🔄 |
 | P15 - Hermes Stabilization & Cleanup | Hermes v2 stabilization, memory isolation, token observability, routing cleanup, and execution-engine consolidation. | 83% (15/18) | 🔄 |
 | P15 - Parallel Subagents & Orchestration | Implementation of parallel subagent execution with isolated contexts, tool-level parallelism, and orchestration | 91% (11/12) | 🔄 |
 | P16 - Multi-Backend Execution | Support for multiple execution backends: Local, Docker, SSH | 100% (1/1) | ✅ |
@@ -124,8 +124,8 @@
 | | — 完成功能 MVP 開發 | | ☐ |
 | | — 獲得至少 3 家企業的興趣表達 | | ☐ |
 | | — 驗證技術架構可擴展性 | | ☐ |
-| | — 確認商業模式可行性 | | ☐ |
-| P13.5 | **【商業功能】單機版主管報告系統 - AI 使用效益監控** | [#50](https://github.com/chimerakang/alice/issues/50) | 🔄 |
+| | — 確認開源永續模式可行性 | | ☐ |
+| P13.5 | **【開源功能】單機版主管報告系統 - AI 使用效益監控** | [#50](https://github.com/chimerakang/alice/issues/50) | 🔄 |
 | | — **團隊 AI 使用健康度指標** | | ☐ |
 | | — 個人效益排行榜（誰用AI效果好/差） | | ☐ |
 | | — Bug率變化趨勢（AI輔助前後對比） | | ☐ |
@@ -321,7 +321,7 @@
 | | — 警告描述清晰易懂 | | ☐ |
 | | — 提供具體的處理建議 | | ☐ |
 | | — 支援快速確認和關閉 | | ☐ |
-| P13.10 | **💰【商業功能】Alice SecureGuard - AI 開發防洩密系統** | [#60](https://github.com/chimerakang/alice/issues/60) | 🔄 |
+| P13.10 | **💰【開源功能】Alice SecureGuard - AI 開發防洩密系統** | [#60](https://github.com/chimerakang/alice/issues/60) | 🔄 |
 | | — **Token 模式識別引擎** | | ☐ |
 | | — AWS/Azure/GCP access keys | | ☐ |
 | | — Database connection strings   | | ☐ |
@@ -386,7 +386,7 @@
 | | — 誤報率 < 5% | | ☐ |
 | | — 響應時間 < 0.5 秒 | | ☐ |
 | | — 系統可用性 > 99.9% | | ☐ |
-| | — 第一年獲得 100 個付費企業客戶 | | ☐ |
+| | — 第一年獲得 100 個採用團隊或維護者 | | ☐ |
 | | — 客戶留存率 > 90% | | ☐ |
 | | — 年度經常性收入 > $500 萬 | | ☐ |
 | | — 淨推薦分數 (NPS) > 50 | | ☐ |
@@ -508,7 +508,7 @@
 | | — GET /api/costs/by-model endpoint | | ✅ |
 | | — GET /api/costs/summary endpoint | | ✅ |
 | | — 向後相容：舊紀錄 model 預設為 config 中的模型 | | ✅ |
-| P13.19 | **P13: Savings Calculator - 智慧路由省錢可視化（商業賣點）** | [#74](https://github.com/chimerakang/alice/issues/74) | ✅ |
+| P13.19 | **P13: Savings Calculator - 智慧路由省錢可視化（開源維護價值）** | [#74](https://github.com/chimerakang/alice/issues/74) | ✅ |
 | | — `GetCostSavings()` SQL 查詢（計算實際 vs 假設成本） | | ☐ |
 | | — `GET /api/costs/savings` endpoint | | ☐ |
 | | — 模型費率表 `ModelPricing`（用於假設成本計算） | | ☐ |
@@ -708,262 +708,43 @@
 | | — 對 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) Hermes GPT tier 段落的更新 | | ✅ |
 | P13.38 | **Implement Codex CLI VS Code interception (Phase 1: JSONL watcher)** | [#150](https://github.com/chimerakang/alice/issues/150) | ✅ |
 
-## P14 - Commercialization Strategy (🔄 16%)
+## P14 - OSS Sustainability Strategy (🔄 16%)
 
 | # | Task | Issue | Status |
 |---|------|-------|--------|
-| P14.1 | **Alice 商業化：單機版隱私優先定位策略** | [#49](https://github.com/chimerakang/alice/issues/49) | 🔄 |
-| | — 制定 "完全本地化 AI 助手" 的品牌定位 | | ☐ |
-| | — 對比分析：Alice vs 雲端競品的隱私優勢 | | ☐ |
-| | — 準備隱私合規認證材料（GDPR、SOC2、ISO 27001） | | ☐ |
-| | — 金融機構：資料不出境要求 | | ☐ |
-| | — 政府單位：機密專案開發 | | ☐ |
-| | — 醫療軟體：HIPAA 合規要求   | | ☐ |
-| | — 國防承包商：高安全等級要求 | | ☐ |
-| | — 企業授權模式：單機 $2,999/年 | | ☐ |
-| | — 部門授權：$9,999/年（10台機器） | | ☐ |
-| | — 個人開發者：$199/年 | | ☐ |
-| | — 分析 Entire Checkpoints 的雲端 SaaS 模式 | | ☐ |
-| | — 識別單機版無法被雲端服務取代的場景 | | ☐ |
-| | — 制定反雲端化的行銷策略 | | ☐ |
-| P14.2 | **多人版架構設計：從單機到團隊協作** | [#51](https://github.com/chimerakang/alice/issues/51) | 🔄 |
-| | — 分析當前架構：單一 Bot 實例 + 本地 SQLite | | ☐ |
-| | — 識別多人協作的技術瓶頸 | | ☐ |
-| | — 評估現有程式碼的重用性 | | ☐ |
-| | — 研究 Entire Checkpoints 的多人協作功能 | | ☐ |
-| | — 分析 GitHub Copilot Business 的團隊管理 | | ☐ |
-| | — 比較其他 AI 編程工具的協作模式 | | ☐ |
-| | — SQLite → PostgreSQL 資料庫遷移 | | ☐ |
-| | — 用戶認證與權限系統設計 | | ☐ |
-| | — 多專案隔離機制 | | ☐ |
-| | — 基於角色的存取控制（RBAC） | | ☐ |
-| | — 設計可選雲端同步機制 | | ☐ |
-| | — 團隊設定中心化管理 | | ☐ |
-| | — 跨實例數據聚合分析 | | ☐ |
-| | — 企業級 SSO 整合規劃 | | ☐ |
-| | — 多租戶架構設計 | | ☐ |
-| | — 微服務拆分策略 | | ☐ |
-| | — 水平擴展能力規劃 | | ☐ |
-| | — API 開放與生態建設 | | ☐ |
-| | — 多用戶認證系統 | | ☐ |
-| | — 資料庫遷移方案 | | ☐ |
-| | — 基礎權限管理 | | ☐ |
-| | — 團隊協作功能 | | ☐ |
-| | — 跨專案管理 | | ☐ |
-| | — 企業整合介面 | | ☐ |
-| | — 完整 SaaS 平台 | | ☐ |
-| | — 高級分析功能 | | ☐ |
-| | — 第三方生態 | | ☐ |
-| | — 架構重構的工程量估算 | | ☐ |
-| | — 向下兼容性考量 | | ☐ |
-| | — 資料遷移風險控制 | | ☐ |
-| | — 效能影響評估 | | ☐ |
-| P14.3 | **競品分析深化：Entire Checkpoints vs Alice 差異化策略** | [#53](https://github.com/chimerakang/alice/issues/53) | ✅ |
-| | — 下載並試用 Entire Checkpoints 開源工具 | | ☐ |
-| | — 分析其 Git 整合和透明化追蹤功能 | | ☐ |
-| | — 研究支援的 AI 工具（Claude Code、Gemini CLI） | | ☐ |
-| | — 評估其開發者體驗和易用性 | | ☐ |
-| | — 分析 Entire 的三層平台架構 | | ☐ |
-| | — 研究其企業級功能規劃 | | ☐ |
-| | — 評估其定價策略（如果公開） | | ☐ |
-| | — 分析其目標市場定位 | | ☐ |
-| | — Alice vs Entire 功能對比矩陣 | | ☐ |
-| | — 技術實現方式差異分析 | | ☐ |
-| | — 各自的技術優劣勢評估 | | ☐ |
-| | — Telegram 整合優勢分析 | | ☐ |
-| | — 多模態支援（語音、圖像）競爭力 | | ☐ |
-| | — 完全本地化部署的市場需求 | | ☐ |
-| | — 企業 Dashboard 的可視化價值 | | ☐ |
-| | — 制定 "Mobile-First AI Assistant" 定位 | | ☐ |
-| | — 遠程工作場景的應用分析 | | ☐ |
-| | — 亞洲市場 Telegram 普及度研究 | | ☐ |
-| | — 跨時區團隊協作價值主張 | | ☐ |
-| | — 對比雲端 vs 本地化的隱私優勢 | | ☐ |
-| | — 合規市場（金融、醫療、政府）需求分析 | | ☐ |
-| | — "Never sends code to cloud" 行銷策略 | | ☐ |
-| | — 資料主權完全掌控的企業價值 | | ☐ |
-| | — 識別 Entire 不會涉足的市場區隔 | | ☐ |
-| | — 中小企業市場策略 | | ☐ |
-| | — 特定垂直行業策略 | | ☐ |
-| | — 地理市場差異化（亞洲優先） | | ☐ |
-| | — 評估成為 Entire 生態夥伴的可能性 | | ☐ |
-| | — Alice 作為 Entire 的 Telegram 介面 | | ☐ |
-| | — 技術互補合作模式研究 | | ☐ |
-| | — 建立 Entire 產品更新追蹤機制 | | ☐ |
-| | — 競爭對手動態監控流程 | | ☐ |
-| | — 市場反應收集與分析 | | ☐ |
-| P14.4 | **產品授權與定價模式設計** | [#54](https://github.com/chimerakang/alice/issues/54) | 🔄 |
-| | — 單機授權：$2,999/年 | | ☐ |
-| | — 部門授權：$9,999/年（最多10台機器） | | ☐ |
-| | — 企業授權：$29,999/年（無限機器） | | ☐ |
-| | — 免費版：基礎功能 | | ☐ |
-| | — Pro 版：$199/年 | | ☐ |
-| | — Studio 版：$499/年 | | ☐ |
-| | — 設計離線授權驗證機制 | | ☐ |
-| | — 實現授權密鑰管理系統 | | ☐ |
-| | — 建立授權有效期檢查 | | ☐ |
-| | — 設計功能開關控制 | | ☐ |
-| | — AI 使用量統計機制 | | ☐ |
-| | — 成本追蹤與報告系統 | | ☐ |
-| | — 授權續約提醒功能 | | ☐ |
-| | — 使用情況分析報告 | | ☐ |
-| | — 客戶資料庫設計 | | ☐ |
-| | — 授權分發管理介面 | | ☐ |
-| | — 技術支援工單系統 | | ☐ |
-| | — 客戶使用情況監控 | | ☐ |
-| | — GitHub Copilot: $10/月個人，$39/月企業 | | ☐ |
-| | — Cursor: $20/月 Pro | | ☐ |
-| | — Tabnine Enterprise: $234K+/年（500人） | | ☐ |
-| | — Telegram Bot 平台：$19/月起 | | ☐ |
-| | — 客戶 ROI 計算模型 | | ☐ |
-| | — 價格敏感度測試 | | ☐ |
-| | — 不同市場區隔接受度調研 | | ☐ |
-| | — 定價彈性分析 | | ☐ |
-| | — 企業客戶開發策略 | | ☐ |
-| | — POC（概念驗證）流程設計 | | ☐ |
-| | — 合約談判標準化 | | ☐ |
-| | — 客戶成功管理流程 | | ☐ |
-| | — 線上購買流程設計 | | ☐ |
-| | — 免費試用體驗優化 | | ☐ |
-| | — 付費轉換漏斗分析 | | ☐ |
-| | — 客戶自助服務平台 | | ☐ |
-| | — EULA（終端使用者授權協議）制定 | | ☐ |
-| | — 資料處理與隱私條款 | | ☐ |
-| | — 技術支援條款與 SLA | | ☐ |
-| | — 智慧財產權保護 | | ☐ |
-| | — 不同國家的授權法規研究 | | ☐ |
-| | — 跨國企業授權模式設計 | | ☐ |
-| | — 稅務與會計處理方案 | | ☐ |
-| P14.5 | **品牌定位與行銷策略規劃** | [#56](https://github.com/chimerakang/alice/issues/56) | 🔄 |
-| | — 制定品牌標語："The AI coding assistant that stays home" | | ☐ |
-| | — 對比競品雲端模式的差異化訊息 | | ☐ |
-| | — 隱私優先的品牌形象建立 | | ☐ |
-| | — 企業資料主權的價值主張 | | ☐ |
-| | — 強調 Telegram 整合的便利性 | | ☐ |
-| | — 遠程工作時代的移動協作價值 | | ☐ |
-| | — 跨時區團隊的即時 AI 支援 | | ☐ |
-| | — 多模態互動的創新體驗 | | ☐ |
-| | — 金融科技公司：合規要求嚴格 | | ☐ |
-| | — 政府承包商：資安等級要求高 | | ☐ |
-| | — 醫療軟體公司：HIPAA 合規需求 | | ☐ |
-| | — 中型軟體公司：成本敏感但注重隱私 | | ☐ |
-| | — 個人開發者：重視隱私的技術專家 | | ☐ |
-| | — 新創公司：資源有限但需要 AI 助手 | | ☐ |
-| | — 教育機構：學生實驗環境需求 | | ☐ |
-| | — 諮詢公司：需要向客戶展示 AI 過程 | | ☐ |
-| | — "為什麼企業需要本地化 AI 助手" 白皮書 | | ☐ |
-| | — "AI 編程工具的隱私風險分析" 研究報告 | | ☐ |
-| | — "計算雲端 AI 的真實成本" ROI 分析 | | ☐ |
-| | — "遠程團隊的 AI 協作最佳實踐" 指南 | | ☐ |
-| | — "一鍵回滾 AI 錯誤" 功能演示影片 | | ☐ |
-| | — "Telegram + Dashboard 雙重體驗" 使用案例 | | ☐ |
-| | — "隱私保護 vs 雲端風險" 對比演示 | | ☐ |
-| | — "企業級監控與透明化" 功能展示 | | ☐ |
-| | — "AI 編程工具使用情況" 年度報告 | | ☐ |
-| | — "企業 AI 採用障礙" 調查分析 | | ☐ |
-| | — "開發者隱私關注" 趨勢研究 | | ☐ |
-| | — Alice 使用者成功案例集 | | ☐ |
-| | — 產品官網設計與開發 | | ☐ |
-| | — SEO 關鍵字策略規劃 | | ☐ |
-| | — 著陸頁面 A/B 測試 | | ☐ |
-| | — 轉換率優化（CRO） | | ☐ |
-| | — CTO/技術主管目標廣告 | | ☐ |
-| | — 企業決策者內容行銷 | | ☐ |
-| | — 行業專家意見領袖合作 | | ☐ |
-| | — 企業客戶成功故事分享 | | ☐ |
-| | — 開發者社群參與策略 | | ☐ |
-| | — 技術內容分享計畫 | | ☐ |
-| | — KOL 與技術專家合作 | | ☐ |
-| | — 開源社群關係建立 | | ☐ |
-| | — 產品教學影片系列 | | ☐ |
-| | — 技術深度分析內容 | | ☐ |
-| | — 客戶訪談與案例分享 | | ☐ |
-| | — 競品對比分析影片 | | ☐ |
-| | — 技術會議演講申請 | | ☐ |
-| | — 工程師大會展位規劃 | | ☐ |
-| | — 隱私與資安會議參與 | | ☐ |
-| | — 企業 IT 高峰會議行銷 | | ☐ |
-| | — 科技媒體關係建立 | | ☐ |
-| | — 產品發布新聞稿撰寫 | | ☐ |
-| | — 記者專訪安排 | | ☐ |
-| | — 行業報告引用推廣 | | ☐ |
-| | — AI 顧問公司合作計畫 | | ☐ |
-| | — 系統整合商夥伴方案 | | ☐ |
-| | — 企業軟體廠商聯盟 | | ☐ |
-| | — 教育機構合作專案 | | ☐ |
-| | — 軟體分銷商合作 | | ☐ |
-| | — 企業採購平台上架 | | ☐ |
-| | — 雲端市場（AWS、Azure）評估 | | ☐ |
-| | — 第三方軟體商店策略 | | ☐ |
-| | — 品牌知名度調查 | | ☐ |
-| | — 客戶滿意度監控 | | ☐ |
-| | — 競品品牌對比分析 | | ☐ |
-| | — 行銷 ROI 測量機制 | | ☐ |
-| | — 商標註冊申請 | | ☐ |
-| | — 網域名稱保護 | | ☐ |
-| | — 負面評論管理機制 | | ☐ |
-| | — 品牌形象危機處理預案 | | ☐ |
-| P14.6 | **Alice 商業化執行藍圖：6個月行動計畫** | [#58](https://github.com/chimerakang/alice/issues/58) | 🔄 |
-| | — 實現基礎授權驗證系統 | | ☐ |
-| | — 添加使用量追蹤與計費功能 | | ☐ |
-| | — 優化 Dashboard 企業級展示 | | ☐ |
-| | — 改善產品穩定性與效能 | | ☐ |
-| | — 制定 EULA 與服務條款 | | ☐ |
-| | — 準備隱私政策與 GDPR 合規文件 | | ☐ |
-| | — 申請必要的軟體授權與商標 | | ☐ |
-| | — 建立客戶支援與 SLA 框架 | | ☐ |
-| | — 完成 Entire Checkpoints 深度競品分析 | | ☐ |
-| | — 進行目標客戶訪談 (5-10 家企業) | | ☐ |
-| | — 驗證定價策略與市場接受度 | | ☐ |
-| | — 完善客戶人群分析與需求調研 | | ☐ |
-| | — 建立產品官網與註冊系統 | | ☐ |
-| | — 開放 Beta 測試申請 | | ☐ |
-| | — 招募 10-15 個企業 Beta 客戶 | | ☐ |
-| | — 建立客戶反饋收集機制 | | ☐ |
-| | — 執行客戶開發訪談 | | ☐ |
-| | — 收集產品使用情況數據 | | ☐ |
-| | — 分析客戶痛點與需求變化 | | ☐ |
-| | — 調整產品功能優先級 | | ☐ |
-| | — 建立產品使用情況分析 | | ☐ |
-| | — 追蹤客戶滿意度與 NPS | | ☐ |
-| | — 分析定價策略有效性 | | ☐ |
-| | — 收集客戶成功案例 | | ☐ |
-| | — 完成品牌視覺識別設計 | | ☐ |
-| | — 制作產品演示影片與簡報 | | ☐ |
-| | — 準備客戶案例研究報告 | | ☐ |
-| | — 建立完整的行銷素材庫 | | ☐ |
-| | — 官網 SEO 優化與內容行銷 | | ☐ |
-| | — LinkedIn B2B 廣告投放 | | ☐ |
-| | — Twitter 技術社群參與 | | ☐ |
-| | — YouTube 產品教學頻道建立 | | ☐ |
-| | — 建立 AI 顧問公司合作關係 | | ☐ |
-| | — 接觸系統整合商夥伴 | | ☐ |
-| | — 參加相關技術會議與展覽 | | ☐ |
-| | — 建立 KOL 與意見領袖網絡 | | ☐ |
-| | — Beta 客戶數量：15+ 家企業 | | ☐ |
-| | — 產品穩定性：99%+ uptime | | ☐ |
-| | — 客戶滿意度：NPS > 50 | | ☐ |
-| | — 功能完成度：核心功能 100% | | ☐ |
-| | — 付費客戶轉換率：20%+ | | ☐ |
-| | — 月度經常性收入 (MRR)：K+ | | ☐ |
-| | — 客戶獲取成本 (CAC)：< ,000 | | ☐ |
-| | — 客戶生命週期價值 (LTV)：> ,000 | | ☐ |
-| | — 官網月訪問量：1,000+ UV | | ☐ |
-| | — 行銷合格潛在客戶 (MQL)：50+/月 | | ☐ |
-| | — 銷售合格潛在客戶 (SQL)：10+/月 | | ☐ |
-| | — 內容行銷覆蓋率：10K+ 閱讀 | | ☐ |
-| | — 月 2 結束：是否繼續單機版策略 vs 開發多人版 | | ☐ |
-| | — 月 4 結束：是否調整定價策略與目標市場 | | ☐ |
-| | — 月 6 結束：是否進入規模化成長階段 | | ☐ |
-| | — 技術延遲：建立開發緩衝時間 | | ☐ |
-| | — 競品壓力：準備差異化應對策略 | | ☐ |
-| | — 客戶需求變化：保持產品靈活性 | | ☐ |
-| | — 市場接受度低：準備產品定位調整 | | ☐ |
-| | — 定價策略失效：建立動態定價機制 | | ☐ |
-| | — 競爭加劇：強化獨特價值主張 | | ☐ |
-| | — 現金流壓力：控制燒錢速度 | | ☐ |
-| | — 客戶付款延遲：建立付款保障機制 | | ☐ |
-| | — 投資回報不佳：設定止損線 | | ☐ |
+| P14.1 | **OpenAI/Codex OSS fund readiness** | [#49](https://github.com/chimerakang/alice/issues/49) | 🔄 |
+| | — README positions Alice as a local-first OSS maintainer tool | | ✅ |
+| | — Add English and Traditional Chinese Codex maintainer workflow copy | | ✅ |
+| | — Explain API credit use for PR review, release validation, issue triage, and security checks | | ✅ |
+| | — Remove old product packaging claims from public docs | | ✅ |
+| | — Prepare a short application narrative and measurable maintainer use cases | | ☐ |
+| P14.2 | **Open-source project hygiene** | [#51](https://github.com/chimerakang/alice/issues/51) | 🔄 |
+| | — Maintain AGPL-3.0 license clarity | | ✅ |
+| | — Add CONTRIBUTING.md with English and Traditional Chinese guidance | | ✅ |
+| | — Add SECURITY.md with responsible disclosure guidance | | ✅ |
+| | — Keep issue templates focused on reproducible bugs, features, and i18n work | | ✅ |
+| | — Add public roadmap labels for maintainer workflows | | ☐ |
+| P14.3 | **OSS positioning notes** | [#53](https://github.com/chimerakang/alice/issues/53) | ✅ |
+| | — Replace old competitive plan with OSS positioning notes | | ✅ |
+| | — Emphasize local-first observability, privacy, and auditability | | ✅ |
+| | — Document Codex/OpenAI-powered maintainer scenarios | | ✅ |
+| P14.4 | **Maintainer workflow demos** | [#54](https://github.com/chimerakang/alice/issues/54) | 🔄 |
+| | — Record a PR review workflow using Alice timeline and cost tracking | | ☐ |
+| | — Record a release validation workflow with checkpoints | | ☐ |
+| | — Record a security hygiene workflow for secrets and PII detection | | ☐ |
+| | — Add screenshots or short clips to README/docs | | ☐ |
+| P14.5 | **Community adoption** | [#56](https://github.com/chimerakang/alice/issues/56) | 🔄 |
+| | — Publish good first issues for OSS maintainer workflows | | ☐ |
+| | — Add examples for Codex session observation and multi-backend setup | | ☐ |
+| | — Collect feedback from maintainers using AI coding agents | | ☐ |
+| | — Track stars, forks, issues, and external feedback as adoption signals | | ☐ |
+| P14.6 | **Six-week OSS action plan** | [#58](https://github.com/chimerakang/alice/issues/58) | 🔄 |
+| | — Week 1: finish public docs and security hygiene | | ✅ |
+| | — Week 2: prepare OpenAI OSS fund application draft | | ☐ |
+| | — Week 3: publish Codex PR review demo | | ☐ |
+| | — Week 4: publish release validation demo | | ☐ |
+| | — Week 5: invite maintainer feedback | | ☐ |
+| | — Week 6: submit application and track follow-up actions | | ☐ |
 
 ## P15 - Hermes Stabilization & Cleanup (🔄 83%)
 
@@ -1263,10 +1044,10 @@
 | P15.7 | **Hermes (Future): SDK 混用方案探索 — 結構化輸出與並行優化** | [#100](https://github.com/chimerakang/alice/issues/100) | ✅ |
 | | — 純 CLI 的 Planner JSON 輸出穩定率 < 90%（retry 成本 > 結構化輸出收益） | | ☐ |
 | | — 單一 chat 需要真正並行執行多個 SubTask（CLI subprocess 並行成本過高） | | ☐ |
-| | — Alice 走商業化路徑（#P14），多租戶情境下訂閱模型不再適用 | | ☐ |
+| | — Alice 走開源永續路徑（#P14），多租戶情境下訂閱模型不再適用 | | ☐ |
 | | — Anthropic 推出針對 agent 場景的訂閱式 API（抹平成本差異） | | ☐ |
 | | — 在 /Volumes/eclipse/projects/alice 檢查 GitHub #100 相關背景與現有 Hermes/Planner 架構檔案，確認此 Deferred/Future issue 是否只需要記錄或標記觸發條件而非實作；不得修改 config.json、.git/、.env 或 *.pem。 | | ✅ |
-| | — 搜尋 repository 中與 #100、#95、Hermes Planner、SDK 混用、JSON 穩定率、SubTask 並行、商業化 #P14、Anthropic agent API 觀察相關的文件或任務追蹤位置，判斷四個 unchecked checklist 是否已有對應狀態或證據可更新。 | | ✅ |
+| | — 搜尋 repository 中與 #100、#95、Hermes Planner、SDK 混用、JSON 穩定率、SubTask 並行、開源永續 #P14、Anthropic agent API 觀察相關的文件或任務追蹤位置，判斷四個 unchecked checklist 是否已有對應狀態或證據可更新。 | | ✅ |
 | | — 若專案有任務同步或 issue 狀態回寫流程，依現有格式更新 #100 對應的本地追蹤文件或產出回報內容，保留其 Deferred/Future 性質並逐項處理四個觸發條件；若沒有本地可改檔案，僅產出可回覆 GitHub issue 的狀態摘要。 | | ✅ |
 | | — 驗證本次未引入不必要程式碼變更：執行 git status --short 與必要的 diff 檢查，若有文件變更則確認只限 #100 相關內容且未碰禁止修改路徑。 | | ✅ |
 | P15.8 | **Hermes: GitHub Issue 整合層 — /hermes #N、checklist 同步、自動 comment** | [#101](https://github.com/chimerakang/alice/issues/101) | ✅ |
@@ -1812,12 +1593,12 @@
 | [#39](https://github.com/chimerakang/alice/issues/39) | 🐛 Telegram 訊息 UTF-8 編碼錯誤導致發送失敗 | P13 - Future Enhancements | ✅ |
 | [#44](https://github.com/chimerakang/alice/issues/44) | Dashboard Bug: Storage 顯示 — + 端口衝突導致 nginx 代理失效 | P13 - Future Enhancements | ✅ |
 | [#48](https://github.com/chimerakang/alice/issues/48) | 【MVP】AI 開發審計系統 - 企業安全合規功能 | P13 - Future Enhancements | 🔄 |
-| [#50](https://github.com/chimerakang/alice/issues/50) | 【商業功能】單機版主管報告系統 - AI 使用效益監控 | P13 - Future Enhancements | 🔄 |
+| [#50](https://github.com/chimerakang/alice/issues/50) | 【開源功能】單機版主管報告系統 - AI 使用效益監控 | P13 - Future Enhancements | 🔄 |
 | [#52](https://github.com/chimerakang/alice/issues/52) | 🔧 擴展 PerformanceMetrics - 增加管理層洞察數據收集 | P13 - Future Enhancements | 🔄 |
 | [#55](https://github.com/chimerakang/alice/issues/55) | 🎨 Manager Dashboard 前端介面 - 主管視角的 AI 使用分析頁面 | P13 - Future Enhancements | 🔄 |
 | [#57](https://github.com/chimerakang/alice/issues/57) | 📊 自動週報生成系統 - 團隊 AI 使用效益報告 | P13 - Future Enhancements | 🔄 |
 | [#59](https://github.com/chimerakang/alice/issues/59) | 🚨 智能異常檢測系統 - AI 使用模式風險預警 | P13 - Future Enhancements | 🔄 |
-| [#60](https://github.com/chimerakang/alice/issues/60) | 💰【商業功能】Alice SecureGuard - AI 開發防洩密系統 | P13 - Future Enhancements | 🔄 |
+| [#60](https://github.com/chimerakang/alice/issues/60) | 💰【開源功能】Alice SecureGuard - AI 開發防洩密系統 | P13 - Future Enhancements | 🔄 |
 | [#61](https://github.com/chimerakang/alice/issues/61) | 🔍 智能 Token 檢測引擎 - SecureGuard 核心功能 | P13 - Future Enhancements | 🔄 |
 | [#62](https://github.com/chimerakang/alice/issues/62) | Performance Bug: 時間範圍篩選器對 Tool Distribution 無效 — API 未支援時間參數 | P13 - Future Enhancements | ✅ |
 | [#68](https://github.com/chimerakang/alice/issues/68) | 🐛 Hook 腳本未提取 session duration 和 token 數據 | P13 - Future Enhancements | ✅ |
@@ -1826,7 +1607,7 @@
 | [#71](https://github.com/chimerakang/alice/issues/71) | 🐛 Telegram /tasks 無法顯示 GitHub Issues（private repo 認證失敗） | P13 - Future Enhancements | ✅ |
 | [#72](https://github.com/chimerakang/alice/issues/72) | P13: Dynamic Model Routing - 智慧模型路由降低 Token 成本 | P13 - Future Enhancements | ✅ |
 | [#73](https://github.com/chimerakang/alice/issues/73) | P13: Per-Model Cost Tracking - 按模型記錄 Token 成本與用量 | P13 - Future Enhancements | ✅ |
-| [#74](https://github.com/chimerakang/alice/issues/74) | P13: Savings Calculator - 智慧路由省錢可視化（商業賣點） | P13 - Future Enhancements | ✅ |
+| [#74](https://github.com/chimerakang/alice/issues/74) | P13: Savings Calculator - 智慧路由省錢可視化（開源維護價值） | P13 - Future Enhancements | ✅ |
 | [#75](https://github.com/chimerakang/alice/issues/75) | 回填歷史資料缺失的 model 與費用欄位 | P13 - Future Enhancements | ✅ |
 | [#76](https://github.com/chimerakang/alice/issues/76) | Bot 多國語系支援 — 可切換顯示語言 | P13 - Future Enhancements | ✅ |
 | [#77](https://github.com/chimerakang/alice/issues/77) | /usage 指令增加按模型分類的 token 用量與費用顯示 | P13 - Future Enhancements | ✅ |
@@ -1846,12 +1627,12 @@
 | [#129](https://github.com/chimerakang/alice/issues/129) | 整合 OpenAI Image Generation (gpt-image-2 / DALL-E) 為遊戲開發鋪路 | P13 - Future Enhancements | 🔄 |
 | [#130](https://github.com/chimerakang/alice/issues/130) | research: VS Code 上的 Codex CLI 訊息攔截方案 | P13 - Future Enhancements | ✅ |
 | [#150](https://github.com/chimerakang/alice/issues/150) | Implement Codex CLI VS Code interception (Phase 1: JSONL watcher) | P13 - Future Enhancements | ✅ |
-| [#49](https://github.com/chimerakang/alice/issues/49) | Alice 商業化：單機版隱私優先定位策略 | P14 - Commercialization Strategy | 🔄 |
-| [#51](https://github.com/chimerakang/alice/issues/51) | 多人版架構設計：從單機到團隊協作 | P14 - Commercialization Strategy | 🔄 |
-| [#53](https://github.com/chimerakang/alice/issues/53) | 競品分析深化：Entire Checkpoints vs Alice 差異化策略 | P14 - Commercialization Strategy | ✅ |
-| [#54](https://github.com/chimerakang/alice/issues/54) | 產品授權與定價模式設計 | P14 - Commercialization Strategy | 🔄 |
-| [#56](https://github.com/chimerakang/alice/issues/56) | 品牌定位與行銷策略規劃 | P14 - Commercialization Strategy | 🔄 |
-| [#58](https://github.com/chimerakang/alice/issues/58) | Alice 商業化執行藍圖：6個月行動計畫 | P14 - Commercialization Strategy | 🔄 |
+| [#49](https://github.com/chimerakang/alice/issues/49) | Alice 開源永續：本地優先隱私定位策略 | P14 - OSS Sustainability Strategy | 🔄 |
+| [#51](https://github.com/chimerakang/alice/issues/51) | 多人版架構設計：從單機到團隊協作 | P14 - OSS Sustainability Strategy | 🔄 |
+| [#53](https://github.com/chimerakang/alice/issues/53) | 競品分析深化：Entire Checkpoints vs Alice 差異化策略 | P14 - OSS Sustainability Strategy | ✅ |
+| [#54](https://github.com/chimerakang/alice/issues/54) | Open-source maintainer workflow demos | P14 - OSS Sustainability Strategy | 🔄 |
+| [#56](https://github.com/chimerakang/alice/issues/56) | 品牌定位與行銷策略規劃 | P14 - OSS Sustainability Strategy | 🔄 |
+| [#58](https://github.com/chimerakang/alice/issues/58) | Alice 開源永續執行藍圖：6個月行動計畫 | P14 - OSS Sustainability Strategy | 🔄 |
 | [#115](https://github.com/chimerakang/alice/issues/115) | Post-stabilization cleanup: retire legacy coordinator / DecisionLog bridge | P15 - Hermes Stabilization & Cleanup | 🔄 |
 | [#120](https://github.com/chimerakang/alice/issues/120) | [Closed/Superseded Epic] Alice architecture unification: ExecutionEngine + Review feedback | P15 - Hermes Stabilization & Cleanup | ✅ |
 | [#143](https://github.com/chimerakang/alice/issues/143) | 建立 Alice Unified Memory Architecture | P15 - Hermes Stabilization & Cleanup | ✅ |
