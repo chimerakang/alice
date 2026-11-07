@@ -751,6 +751,7 @@ func Main() {
 	<-quit
 
 	log.Println("🛑 Shutting down...")
+	tgBot.Stop()
 
 	// Stop cron scheduler
 	if globalCronScheduler != nil {

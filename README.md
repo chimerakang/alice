@@ -601,3 +601,14 @@ CLAUDE_MODEL=claude-sonnet-4-20250514
 Alice 固定執行 `/usr/bin/caffeinate -u -t 1` 喚醒顯示器，再檢查螢保 session；只有螢保 session 活躍時才透過 macOS CoreGraphics 送出一次固定 Escape 按鍵，避免干擾正常應用程式。需要啟用 cgo 的 macOS 編譯版本與 Alice 的輔助使用權限；缺少權限會明確回報，不會自行授權。輸入後會等待螢保 session 結束，逾時會回報未完成。整個動作有 5 秒逾時，不經過 AI 或 shell，不會終止螢保／loginwindow 程序或解除真正的密碼鎖。session 旗標只用於判斷退出前後狀態，不代表一定要求密碼；仍需以實際畫面驗證。整台 Mac 睡眠或 Alice 未執行時，無法透過此指令喚醒。
 
 驗證時應分別確認顯示器由熄滅轉為亮起，以及螢保是否退出；不要把程序結束碼當成畫面效果的證據。部署新版本並重啟 Alice 後才會生效。
+
+
+## Telegram 連線可靠性與背景監控
+
+一般 Telegram API 請求有 20 秒逾時，60 秒的長輪詢有 75 秒完整逾時，包含回應內容讀取。收訊失敗會退避重試並遵守 `retry_after`；同步發訊最多三次、總時限一分鐘。關閉服務會取消進行中的請求。
+
+`/api/health` 現在反映最近成功的 Telegram polling；尚未就緒、失敗、停止或超過 225 秒沒有成功 polling 時回傳 HTTP 503。啟動後需等第一輪 polling 完成才會就緒。
+
+部署新版 bot、確認 macOS 權限及健康檢查正常後，可執行 `bash scripts/install-alice-watchdog.sh` 安裝獨立的 launchd 健康監控。它每 30 秒檢查一次，連續三次失敗會重啟 Alice；新程序有兩分鐘寬限，重啟間隔至少五分鐘。不會啟動刻意卸載的 bot 服務。此安裝步驟會新增使用者的 LaunchAgent；程式更新本身不會自動執行安裝。
+
+Issue 建立狀態與五份待發布草稿見 [Telegram reliability issue drafts](docs/TELEGRAM_RELIABILITY_ISSUES.md)。

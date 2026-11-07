@@ -252,10 +252,18 @@ func (wi *WebInterface) handleHealth(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		status := map[string]interface{}{
-			"status":    "healthy",
-			"timestamp": time.Now(),
-			"telegram":  "active",
+		now := time.Now()
+		telegram, lastSuccess := wi.bot.pollHealth.snapshot(now)
+		health := "healthy"
+		if telegram != "active" {
+			health = "unhealthy"
+		}
+		status := map[string]interface{}{"status": health, "timestamp": now, "telegram": telegram}
+		if !lastSuccess.IsZero() {
+			status["telegram_last_success"] = lastSuccess
+		}
+		if health != "healthy" {
+			w.WriteHeader(http.StatusServiceUnavailable)
 		}
 
 		json.NewEncoder(w).Encode(status)
