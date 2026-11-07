@@ -1,6 +1,13 @@
 #!/bin/bash
 set -e
 
+# Reuse the installed launchd service to avoid starting a second bot.
+ALICE_SERVICE="gui/$(id -u)/local.chimera.alice"
+if launchctl print "$ALICE_SERVICE" >/dev/null 2>&1; then
+    echo "🔄 透過 launchd 重啟 Alice..."
+    exec launchctl kickstart -k "$ALICE_SERVICE"
+fi
+
 echo "🔌 停止現有 bot 進程..."
 pkill -f "^\./alice" || true
 sleep 1

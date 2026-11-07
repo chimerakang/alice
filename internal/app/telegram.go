@@ -223,6 +223,7 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "agents", "description": "View specialized agent list"},
 		{"command": "tasks", "description": "View to-do list"},
 		{"command": "lang", "description": "Switch bot language"},
+		{"command": "wake", "description": "Request Mac display wake"},
 		{"command": "preview", "description": "Preview webpage screenshot"},
 		{"command": "help", "description": "Show help message"},
 	}
@@ -441,8 +442,12 @@ func (t *TelegramBot) Start() {
 						MessageThreadID int `json:"message_thread_id"`
 					} `json:"reply_to_message"`
 					From *struct {
-						ID int64 `json:"id"`
+						ID    int64 `json:"id"`
+						IsBot bool  `json:"is_bot"`
 					} `json:"from"`
+					SenderChat *struct {
+						ID int64 `json:"id"`
+					} `json:"sender_chat"`
 					Chat *struct {
 						ID int64 `json:"id"`
 					} `json:"chat"`
@@ -509,6 +514,10 @@ func (t *TelegramBot) Start() {
 					t.lastUsedMu.Lock()
 					t.lastUsedThreadID[key.chatID] = key.threadID
 					t.lastUsedMu.Unlock()
+				}
+				if isWakeCommand(msg.Text) {
+					go t.handleWakeCommand(key, msg.From.ID, msg.From.IsBot || msg.SenderChat != nil, msg.Text)
+					continue
 				}
 				go t.handleMessage(key, msg.From.ID, msg.Text, msg.Caption, msg.Photo, msg.Voice, msg.Document, msg.MediaGroupID, msg.MessageID)
 			}
@@ -893,6 +902,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		help += t.getLocalizedMessage(key.chatID, "help_project_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_reset_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_clear_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_wake_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_status_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_usage_desc", nil) + "\n\n"
 		help += t.getLocalizedMessage(key.chatID, "help_routing_commands", nil) + "\n"
