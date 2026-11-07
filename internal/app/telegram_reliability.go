@@ -49,14 +49,18 @@ func (e *telegramAPIError) Error() string { return fmt.Sprintf("Telegram API err
 type telegramPollingHealth struct {
 	mu          sync.RWMutex
 	lastSuccess time.Time
-	failed      bool
+	failures    int
 	stopped     bool
 }
 
 func (h *telegramPollingHealth) record(err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.failed = err != nil
+	if err != nil {
+		h.failures++
+	} else {
+		h.failures = 0
+	}
 	h.stopped = false
 	if err == nil {
 		h.lastSuccess = time.Now()
@@ -69,7 +73,7 @@ func (h *telegramPollingHealth) snapshot(now time.Time) (string, time.Time) {
 	switch {
 	case h.stopped:
 		return "stopped", h.lastSuccess
-	case h.failed:
+	case h.failures > 0 && (h.lastSuccess.IsZero() || h.failures >= 3):
 		return "degraded", h.lastSuccess
 	case h.lastSuccess.IsZero():
 		return "starting", h.lastSuccess

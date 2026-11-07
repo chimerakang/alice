@@ -607,7 +607,7 @@ Alice 固定執行 `/usr/bin/caffeinate -u -t 1` 喚醒顯示器，再檢查螢�
 
 一般 Telegram API 請求有 20 秒逾時，60 秒的長輪詢有 75 秒完整逾時，包含回應內容讀取。收訊失敗會退避重試並遵守 `retry_after`；同步發訊最多三次、總時限一分鐘。關閉服務會取消進行中的請求。
 
-`/api/health` 現在反映最近成功的 Telegram polling；尚未就緒、失敗、停止或超過 225 秒沒有成功 polling 時回傳 HTTP 503。啟動後需等第一輪 polling 完成才會就緒。
+`/api/health` 現在反映最近成功的 Telegram polling；尚未成功連線、連續三次失敗、停止或超過 225 秒沒有成功 polling 時回傳 HTTP 503。啟動後需等第一輪 polling 完成才會就緒。
 
 部署新版 bot、確認 macOS 權限及健康檢查正常後，可執行 `bash scripts/install-alice-watchdog.sh` 安裝獨立的 launchd 健康監控。它每 30 秒檢查一次，連續三次失敗會重啟 Alice；新程序有兩分鐘寬限，重啟間隔至少五分鐘。不會啟動刻意卸載的 bot 服務。此安裝步驟會新增使用者的 LaunchAgent；程式更新本身不會自動執行安裝。
 

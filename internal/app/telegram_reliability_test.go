@@ -191,3 +191,21 @@ func TestSyncRetryWaitCancelsOnStop(t *testing.T) {
 		t.Fatal("retried after cancellation")
 	}
 }
+
+func TestHealthAllowsTransientPollingRecovery(t *testing.T) {
+	var h telegramPollingHealth
+	h.record(nil)
+	h.record(errors.New("temporary disconnect"))
+	if state, _ := h.snapshot(time.Now()); state != "active" {
+		t.Fatalf("transient disconnect marked unhealthy: %s", state)
+	}
+	h.record(errors.New("still offline"))
+	h.record(errors.New("still offline"))
+	if state, _ := h.snapshot(time.Now()); state != "degraded" {
+		t.Fatalf("repeated failures not unhealthy: %s", state)
+	}
+	h.record(nil)
+	if state, _ := h.snapshot(time.Now()); state != "active" {
+		t.Fatalf("did not recover: %s", state)
+	}
+}

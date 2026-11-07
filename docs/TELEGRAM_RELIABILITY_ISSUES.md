@@ -12,7 +12,7 @@ Acceptance: separate API and long-poll deadlines cover headers and body; shutdow
 
 Priority: high. `/api/health` reports healthy and Telegram active without checking polling. launchd KeepAlive restarts only after process exit, so it cannot recover a living but unresponsive process.
 
-Acceptance: return HTTP 503 for starting, failed, stale or stopped polling; expose last successful poll; independent launchd watchdog uses bounded local HTTP checks, restarts after three failures, respects intentionally unloaded services and applies a cooldown. Do not claim these defects alone establish the cause of the observed process-wide hang.
+Acceptance: return HTTP 503 for starting, repeatedly failed, stale or stopped polling; allow a recent successful poll to cover a transient disconnect while reconnecting; expose last successful poll; independent launchd watchdog uses bounded local HTTP checks, restarts after three failures, respects intentionally unloaded services and applies a cooldown. Do not claim these defects alone establish the cause of the observed process-wide hang.
 
 ## 3. Back off polling failures and honor Telegram retry_after
 
