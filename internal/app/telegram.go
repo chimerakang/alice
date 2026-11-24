@@ -134,6 +134,9 @@ type TelegramBot struct {
 	pollHTTPClient *http.Client
 	pollHealth     telegramPollingHealth
 
+	// fleet is the running fleet, or nil when the fleet is disabled.
+	fleet *FleetService
+
 	// 媒體批次處理
 	mediaBatches map[string]*MediaBatch // mediaGroupID 或 chatKey 作為 key
 	batchMu      sync.RWMutex           // 保護 mediaBatches map
@@ -1108,7 +1111,11 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 			return
 		}
 		log.Printf("[telegram] handling command: %s, threadID=%d, chatID=%d", text, key.threadID, key.chatID)
+		if t.handleFleetCommand(key, userID, text) {
+			return
+		}
 		t.handleCommand(key, text)
+		t.fleetAfterCommand(key, userID, text)
 		return
 	}
 

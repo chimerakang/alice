@@ -1555,6 +1555,26 @@ func (s *SQLiteStorage) GetTopicSetting(chatID int64, threadID int) (string, err
 	return projectDir, err
 }
 
+// ListTopicProjectDirs returns the distinct project directories bound to topics.
+func (s *SQLiteStorage) ListTopicProjectDirs() ([]string, error) {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT project_dir FROM topic_settings
+		WHERE project_dir != '' ORDER BY project_dir`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var dirs []string
+	for rows.Next() {
+		var dir string
+		if err := rows.Scan(&dir); err != nil {
+			return nil, err
+		}
+		dirs = append(dirs, dir)
+	}
+	return dirs, rows.Err()
+}
+
 // SaveTopicModelPreference 儲存 topic 的模型偏好；空字串代表自動模式
 func (s *SQLiteStorage) SaveTopicModelPreference(chatID int64, threadID int, projectDir, modelPref string) error {
 	return s.execWithRetry(func() error {

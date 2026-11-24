@@ -505,6 +505,14 @@
     "image_gen_send_failed": "🎨 Image generated but failed to send, please try again.",
     "image_gen_disabled": "🎨 Image generation is not enabled. Ask admin to enable `enable_image_generation`.",
     "image_gen_no_api_key": "🎨 Image generation requires an OpenAI API Key. Ask admin to configure it.",
-    "image_gen_usage": "🎨 Usage: /image <description>\nExample: /image fire dragon, watercolor style, fantasy scene"
+    "image_gen_usage": "🎨 Usage: /image <description>\nExample: /image fire dragon, watercolor style, fantasy scene",
+    "fleet_no_project": "⚠️ This topic has no project to dispatch to. Run /project <path> first; the path must be a git repository.",
+    "fleet_error": "❌ Fleet operation failed: {error}",
+    "fleet_project_registered": "🚢 Registered as fleet project: {name} (trust mode: {mode})\nUse /project to view its settings and /project mode to change the trust mode.",
+    "fleet_project_not_git": "ℹ️ This path is not a git repository, so it cannot take fleet tasks. Normal conversation is unaffected.",
+    "fleet_project_info": "🚢 Project: {name} ({id})\n📁 Path: {path}\n🌿 Default branch: {branch}\n🔐 Trust mode: {mode}\n✅ Verify commands: {verify}\n⚙️ Max concurrent: {concurrent}\n\nSwitch project: /project <path>\nChange trust mode: /project mode <no-mistakes|direct-pr|local-only>",
+    "fleet_project_verify_none": "(none)",
+    "fleet_project_mode_usage": "Usage: /project mode <no-mistakes|direct-pr|local-only>\n• local-only: commit on a local branch, push nothing\n• direct-pr: push and open a PR once checks pass\n• no-mistakes: open a PR and merge only after you approve",
+    "fleet_project_mode_set": "🔐 Trust mode of {name} is now {mode}. Tasks already dispatched keep their original mode."
   }
 }

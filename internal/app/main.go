@@ -936,6 +936,14 @@ func Main() {
 			log.Printf("⚠️ Warning: fleet disabled: %v", err)
 		} else {
 			globalFleet = svc
+			tgBot.fleet = svc
+			if lister, ok := globalStorage.(topicProjectDirLister); ok {
+				if n, err := svc.BackfillTopicProjects(appCtx, lister); err != nil {
+					log.Printf("⚠️ Warning: fleet project backfill: %v", err)
+				} else if n > 0 {
+					log.Printf("   Fleet: registered %d project(s) from existing topics", n)
+				}
+			}
 			log.Printf("   Fleet: enabled (worktrees=%s, trust=%s)", svc.Config.WorktreeRoot, svc.TrustMode)
 		}
 	}

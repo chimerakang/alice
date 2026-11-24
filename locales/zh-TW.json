@@ -505,6 +505,14 @@
     "image_gen_send_failed": "🎨 圖片生成成功但發送失敗，請稍後再試。",
     "image_gen_disabled": "🎨 圖片生成功能目前未啟用。請聯繫管理員開啟 `enable_image_generation` 設定。",
     "image_gen_no_api_key": "🎨 圖片生成需要 OpenAI API Key，請聯繫管理員設定。",
-    "image_gen_usage": "🎨 用法：/image <圖片描述>\n範例：/image 火龍，水彩風格，奇幻場景"
+    "image_gen_usage": "🎨 用法：/image <圖片描述>\n範例：/image 火龍，水彩風格，奇幻場景",
+    "fleet_no_project": "⚠️ 這個 topic 尚未綁定可派工的專案。請先執行 /project <路徑>，路徑需為 git 存放庫。",
+    "fleet_error": "❌ Fleet 操作失敗：{error}",
+    "fleet_project_registered": "🚢 已登記為 fleet 專案：{name}（信任模式：{mode}）\n可用 /project 查看設定，/project mode 調整信任模式。",
+    "fleet_project_not_git": "ℹ️ 此路徑不是 git 存放庫，無法作為 fleet 專案派工；一般對話不受影響。",
+    "fleet_project_info": "🚢 專案：{name}（{id}）\n📁 路徑：{path}\n🌿 預設分支：{branch}\n🔐 信任模式：{mode}\n✅ 驗收指令：{verify}\n⚙️ 並行上限：{concurrent}\n\n切換專案：/project <路徑>\n調整信任模式：/project mode <no-mistakes|direct-pr|local-only>",
+    "fleet_project_verify_none": "（未設定）",
+    "fleet_project_mode_usage": "用法：/project mode <no-mistakes|direct-pr|local-only>\n• local-only：只在本機分支提交，不推送\n• direct-pr：驗收通過後推送並開 PR\n• no-mistakes：開 PR 後需由你核准才合併",
+    "fleet_project_mode_set": "🔐 {name} 的信任模式已設為 {mode}。已派出的任務維持原本的模式。"
   }
 }
