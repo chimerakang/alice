@@ -148,7 +148,7 @@ export const fleetApi = {
   tryVerify: async (id: string) =>
     (await request<{ verifications?: FleetVerification[] }>("POST", `/api/fleet/projects/${enc(id)}/verify`, {}, true))
       .verifications ?? [],
-  getCosts: (days = 7) => request<FleetCosts>("GET", `/api/fleet/costs${query({ days })}`),
+  getCosts: (days = 7) => request<FleetCosts>("GET", `/api/costs/fleet${query({ days })}`),
 
   getAudit: async (params: { project?: string; task?: string; actor?: string; limit?: number; beforeId?: number } = {}) =>
     (

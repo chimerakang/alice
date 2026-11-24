@@ -41,6 +41,9 @@ func (wi *WebInterface) registerFleetProjectRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/fleet/projects/{id}/worktrees", wi.fleetHandler(false, wi.fleetProjectWorktrees))
 	mux.HandleFunc("POST /api/fleet/projects/{id}/verify", wi.fleetHandlerWithin(true, fleetVerifyRunTimeout, wi.fleetProjectVerify))
 	mux.HandleFunc("GET /api/fleet/costs", wi.fleetHandler(false, wi.fleetCosts))
+	// The same view under the existing cost endpoints, where the Performance
+	// page reads the rest of its numbers.
+	mux.HandleFunc("GET /api/costs/fleet", wi.fleetHandler(false, wi.fleetCosts))
 }
 
 // fleetProjectIssues lists a project's open GitHub issues, marking the ones

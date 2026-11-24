@@ -1,3 +1,4 @@
+import FleetCostPanel from "@/components/fleet/FleetCostPanel";
 import { useEffect, useState, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "@/i18n";
@@ -201,6 +202,9 @@ export default function Performance() {
 
       {/* Date Range Filter */}
       <DateRangeFilter onChange={handleDateRangeChange} />
+
+      {/* Fleet spending by project and task, against its budgets */}
+      <FleetCostPanel />
 
       {/* Summary Cards */}
       {analytics && (

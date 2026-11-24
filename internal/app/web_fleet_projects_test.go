@@ -251,6 +251,10 @@ func TestFleetAPICosts(t *testing.T) {
 	if projects[0]["daily_limit_usd"] != float64(3) || projects[0]["task_limit_usd"] != float64(1) {
 		t.Fatalf("project limits = %v", projects[0])
 	}
+	// The same numbers are served beside the other cost endpoints.
+	if alias := e.get("/api/costs/fleet?days=30"); len(list(t, alias, "projects")) != 1 || len(list(t, alias, "overruns")) != 1 {
+		t.Fatalf("/api/costs/fleet = %v", alias)
+	}
 	if status, _ := e.call(http.MethodGet, "/api/fleet/costs?days=x", "", false); status != http.StatusBadRequest {
 		t.Fatalf("days=x: %d", status)
 	}

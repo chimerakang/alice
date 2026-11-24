@@ -1024,6 +1024,39 @@
       "missing": "目錄不存在",
       "error_concurrent": "並行上限需為 1 以上的整數。",
       "error_budget": "預算需為 0 以上的金額；留空表示沿用預設。"
+    },
+    "costs": {
+      "title": "Fleet 成本與預算",
+      "today": "今日",
+      "period": "近 {{days}} 天",
+      "days": "{{days}} 天",
+      "fleet_daily": "全艦隊每日預算",
+      "project": "專案",
+      "daily_use": "每日預算使用率",
+      "task_limit": "單一任務上限",
+      "no_limit": "未設上限",
+      "by_task": "依任務（最高成本）",
+      "no_tasks": "這段期間沒有產生成本的任務。",
+      "overruns": "超限紀錄",
+      "no_overruns": "沒有因預算而停下的任務。"
+    },
+    "audit": {
+      "title": "Fleet 指令稽核",
+      "subtitle": "每一道 fleet 指令的操作者、時間、來源與結果，被拒絕的也會記錄。",
+      "empty": "沒有符合的紀錄。",
+      "time": "時間",
+      "actor": "操作者",
+      "via": "來源",
+      "command": "指令",
+      "target": "專案 / 任務",
+      "result": "結果",
+      "via_telegram": "Telegram",
+      "via_web": "網頁",
+      "via_startup": "啟動程序",
+      "ok": "成功",
+      "refused": "被拒絕",
+      "filter_project": "依專案篩選",
+      "filter_task": "任務 ID"
     }
   }
 }

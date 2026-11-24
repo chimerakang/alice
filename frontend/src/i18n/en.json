@@ -1024,6 +1024,39 @@
       "missing": "directory missing",
       "error_concurrent": "Max concurrent must be a whole number of at least 1.",
       "error_budget": "A budget must be 0 or more; leave it empty to use the default."
+    },
+    "costs": {
+      "title": "Fleet cost and budgets",
+      "today": "Today",
+      "period": "Last {{days}} days",
+      "days": "{{days}}d",
+      "fleet_daily": "Fleet daily budget",
+      "project": "Project",
+      "daily_use": "Daily budget used",
+      "task_limit": "Per-task limit",
+      "no_limit": "no limit",
+      "by_task": "By task (costliest)",
+      "no_tasks": "No task has cost anything in this period.",
+      "overruns": "Stopped by a budget",
+      "no_overruns": "No task has been stopped by a budget."
+    },
+    "audit": {
+      "title": "Fleet command audit",
+      "subtitle": "Who gave each fleet command, when, through what, and how it went; refusals are recorded too.",
+      "empty": "No matching entries.",
+      "time": "Time",
+      "actor": "Actor",
+      "via": "Source",
+      "command": "Command",
+      "target": "Project / task",
+      "result": "Result",
+      "via_telegram": "Telegram",
+      "via_web": "Web",
+      "via_startup": "Startup",
+      "ok": "OK",
+      "refused": "Refused",
+      "filter_project": "Filter by project",
+      "filter_task": "Task ID"
     }
   }
 }
