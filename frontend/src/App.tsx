@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useAppStore } from "@/stores/appStore";
+import { useFleetStore } from "@/stores/fleetStore";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import Dashboard from "@/pages/Dashboard";
 import Timeline from "@/pages/Timeline";
@@ -63,8 +64,11 @@ function AppLayout() {
   useWebSocket({
     onEvent: (event) => {
       handleWsEvent(event);
+      useFleetStore.getState().handleWsEvent(event);
       if (!wsConnected) setWsConnected(true);
     },
+    // After a drop, the server replays the fleet events missed since this.
+    getFleetAfterId: () => useFleetStore.getState().lastEventId,
   });
 
   return (
