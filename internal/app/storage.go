@@ -1555,6 +1555,26 @@ func (s *SQLiteStorage) GetTopicSetting(chatID int64, threadID int) (string, err
 	return projectDir, err
 }
 
+// ListTopicBindings returns every topic that has a project directory.
+func (s *SQLiteStorage) ListTopicBindings() ([]topicBinding, error) {
+	rows, err := s.db.Query(`
+		SELECT chat_id, thread_id, project_dir FROM topic_settings
+		WHERE project_dir != '' ORDER BY updated_at DESC, chat_id, thread_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []topicBinding
+	for rows.Next() {
+		var b topicBinding
+		if err := rows.Scan(&b.Key.chatID, &b.Key.threadID, &b.Dir); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
 // ListTopicProjectDirs returns the distinct project directories bound to topics.
 func (s *SQLiteStorage) ListTopicProjectDirs() ([]string, error) {
 	rows, err := s.db.Query(`

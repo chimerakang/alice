@@ -126,6 +126,8 @@ func newCardEnv(t *testing.T) *cardEnv {
 	if err != nil {
 		t.Fatalf("NewFleetService: %v", err)
 	}
+	// Tests must never start a real agent: point the runner at nothing.
+	svc.Runner.Binary = filepath.Join(t.TempDir(), "no-such-claude")
 	cardStore, err := newFleetCardStore(storage.db)
 	if err != nil {
 		t.Fatalf("newFleetCardStore: %v", err)

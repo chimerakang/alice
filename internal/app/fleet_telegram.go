@@ -157,6 +157,15 @@ func (t *TelegramBot) handleFleetCommand(key chatKey, userID int64, text string)
 	case "/scout":
 		t.fleetDispatch(ctx, key, userID, fleet.ShapeScout, rest)
 		return true
+	case "/quiet":
+		t.fleetQuiet(ctx, key)
+		return true
+	case "/afk":
+		t.fleetAFK(ctx, key, rest)
+		return true
+	case "/back":
+		t.fleetBack(ctx, key)
+		return true
 	case "/project":
 		switch {
 		case len(parts) == 1:
@@ -270,7 +279,44 @@ func (t *TelegramBot) attachFleet(ctx context.Context, svc *FleetService, db *sq
 		DashboardURL: svc.Config.DashboardURL,
 	}
 	svc.run("fleet.cards", func() error { return t.fleetCards.Run(ctx) })
+
+	if err := cards.preparePrompts(); err != nil {
+		return err
+	}
+	owner := svc.Config.OwnerUserID
+	if owner == 0 && len(t.config.AllowedUserIDs) > 0 {
+		owner = t.config.AllowedUserIDs[0]
+	}
+	t.fleetNotices = &fleetNotices{
+		Fleet:     svc,
+		Store:     cards,
+		Messenger: t,
+		Docs:      t,
+		Localize:  t.getLocalizedMessage,
+		Owner:     owner,
+	}
+	if topics, ok := globalStorage.(topicBindingLister); ok {
+		t.fleetNotices.Topics = topics
+	}
+	t.fleetNotifier = &fleet.Notifier{
+		Store:     svc.Store,
+		Commander: svc.Commander,
+		User:      strconv.FormatInt(owner, 10),
+		Deliver:   t.fleetNotices.Deliver,
+	}
+	svc.run("fleet.notifier", func() error { return t.fleetNotifier.Run(ctx) })
 	return nil
+}
+
+// SendDocument implements fleetDocSender.
+func (t *TelegramBot) SendDocument(key chatKey, path, caption string) error {
+	return t.sendMediaFile(key, path, "document", caption)
+}
+
+// fleetIsOwner reports whether a user may land work: approve, merge, or wave
+// a task through. With no owner configured, every allowed user may.
+func (t *TelegramBot) fleetIsOwner(userID int64) bool {
+	return t.fleetNotices == nil || t.fleetNotices.Owner == 0 || t.fleetNotices.Owner == userID
 }
 
 // fleetKeyboard converts card buttons to a Telegram inline keyboard. An
@@ -348,11 +394,23 @@ func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, da
 	ctx, cancel := context.WithTimeout(context.Background(), fleetCommandTimeout)
 	defer cancel()
 
-	// A button only acts on a task whose card lives in this chat.
+	// A button only acts on a task that has a card or a prompt in this chat.
 	if t.fleetCards != nil {
 		card, found, err := t.fleetCards.Store.Get(taskID)
-		if err != nil || !found || card.Key.chatID != key.chatID {
+		here := err == nil && found && card.Key.chatID == key.chatID
+		if !here {
+			here, _ = t.fleetCards.Store.HasPrompt(key.chatID, taskID, "")
+		}
+		if !here {
 			answer("fleet_cb_unknown", nil)
+			return
+		}
+	}
+	// Landing work is the owner's decision alone.
+	switch action {
+	case fleetActApprove, fleetActMerge, fleetActPass:
+		if !t.fleetIsOwner(userID) {
+			answer("fleet_cb_owner_only", nil)
 			return
 		}
 	}
@@ -388,6 +446,23 @@ func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, da
 		if t.fleetCards != nil {
 			t.fleetCards.SetConfirm(ctx, taskID, "")
 		}
+	case fleetActPass:
+		_, err = cmd.Pass(ctx, actor, taskID)
+	case fleetActGoOn:
+		_, err = cmd.Reply(ctx, actor, fleet.ReplyRequest{TaskID: taskID, IgnoreBudget: true})
+	case fleetActHint:
+		// The hint itself is typed as a reply to the message.
+		answer("fleet_cb_hint", nil)
+		return
+	case fleetActPromptDiscard:
+		// A prompt cannot redraw itself to ask again, so the same button is
+		// pressed twice.
+		if t.fleetNotices == nil || !t.fleetNotices.confirmDiscard(taskID, time.Now()) {
+			answer("fleet_cb_confirm", nil)
+			return
+		}
+		_, err = cmd.Discard(ctx, actor, taskID)
+		action = fleetActDiscard
 	default:
 		answer("fleet_cb_unknown", nil)
 		return

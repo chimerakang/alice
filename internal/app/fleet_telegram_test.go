@@ -274,7 +274,11 @@ func TestFleetLocaleKeys(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, m := range keyRe.FindAllStringSubmatch(string(src), -1) {
-			used[m[1]] = true
+			// A key ending in "_" is the fixed part of one completed at
+			// run time; those are listed below.
+			if !strings.HasSuffix(m[1], "_") {
+				used[m[1]] = true
+			}
 		}
 	}
 	if len(used) == 0 {
@@ -292,6 +296,17 @@ func TestFleetLocaleKeys(t *testing.T) {
 		"fleet_cb_unknown", "fleet_cb_confirm", "fleet_cb_cancel", "fleet_cb_retry", "fleet_cb_approve",
 		"fleet_cb_merge", "fleet_cb_discard", "fleet_disabled",
 		errFleetDispatchFlagValue.Error(), errFleetDispatchBudget.Error(), errFleetDispatchDuplicated.Error(),
+		"fleet_wake_review_ready", "fleet_wake_completed", "fleet_wake_failed", "fleet_wake_question",
+		"fleet_wake_needs_decision", "fleet_wake_stuck", "fleet_wake_over_budget",
+		"fleet_prompt_hint_question", "fleet_prompt_hint_needs_decision", "fleet_prompt_hint_failed",
+		"fleet_prompt_hint_stuck", "fleet_prompt_hint_over_budget",
+		"fleet_btn_pass", "fleet_btn_hint", "fleet_btn_goon", "fleet_btn_approve_merge",
+		"fleet_cb_owner_only", "fleet_cb_hint", "fleet_cb_pass", "fleet_cb_goon",
+		"fleet_result_changes", "fleet_result_verify_none", "fleet_result_verify_passed", "fleet_result_verify_failed",
+		"fleet_result_next_local", "fleet_result_next_no_mistakes", "fleet_result_next_direct_pr",
+		"fleet_mode_normal", "fleet_mode_quiet", "fleet_mode_afk", "fleet_disp_auto_approved", "fleet_disp_auto_resumed",
+		"fleet_away_header", "fleet_away_nothing", "fleet_away_handled", "fleet_away_held", "fleet_away_held_hint",
+		"fleet_afk_usage", "fleet_afk_err_duration", "fleet_afk_action_approve", "fleet_afk_action_resume",
 	} {
 		used[key] = true
 	}

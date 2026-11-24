@@ -29,6 +29,8 @@ import (
 	"claude-tg-agent/internal/app/issueops"
 	"claude-tg-agent/internal/app/security"
 	"claude-tg-agent/internal/app/task"
+
+	"github.com/chimerakang/alice-core/fleet"
 )
 
 // chatKey 用於識別獨立對話（支援 Forum Topics）
@@ -138,6 +140,9 @@ type TelegramBot struct {
 	fleet *FleetService
 	// fleetCards posts and updates task cards; nil without a fleet.
 	fleetCards *fleetCardManager
+	// fleetNotices and fleetNotifier tell the owner about tasks.
+	fleetNotices  *fleetNotices
+	fleetNotifier *fleet.Notifier
 
 	// 媒體批次處理
 	mediaBatches map[string]*MediaBatch // mediaGroupID 或 chatKey 作為 key
@@ -1011,6 +1016,11 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 
 	text = strings.TrimSpace(text)
 	caption = strings.TrimSpace(caption)
+
+	// A reply to one of the fleet's messages goes to that task's agent.
+	if len(photo) == 0 && voice == nil && document == nil && t.fleetHandleReply(key, userID, replyToMessageID, text) {
+		return
+	}
 
 	// Handle photo messages - 支援批次處理
 	if len(photo) > 0 {

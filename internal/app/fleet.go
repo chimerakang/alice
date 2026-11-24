@@ -36,6 +36,10 @@ type FleetConfig struct {
 	DailyBudgetUSD float64 `json:"daily_budget_usd"`
 	// TaskBudgetUSD caps one task's lifetime spend. Zero means no limit.
 	TaskBudgetUSD float64 `json:"task_budget_usd"`
+	// OwnerUserID is the Telegram user the fleet reports to, and the only
+	// one who may approve, merge or wave a task through. Defaults to the
+	// first of allowed_user_ids.
+	OwnerUserID int64 `json:"owner_user_id"`
 	// DashboardURL is the dashboard's address as the owner reaches it, e.g.
 	// "http://localhost:3939". When set, task cards link to it.
 	DashboardURL string `json:"dashboard_url"`
