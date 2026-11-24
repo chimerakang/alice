@@ -1,0 +1,238 @@
+syntax = "proto3";
+
+package alice.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/alice/proto/gen/go/alice/v1;alicev1";
+
+// The fleet: one agent run per task, each in its own git worktree, across
+// every registered project. These messages are the JSON bodies of
+// /api/fleet/* and the payloads of the fleet.* WebSocket messages.
+//
+// Statuses, shapes, trust modes and liveness values are the fleet's own
+// strings (e.g. "review_ready", "ship", "no-mistakes", "unknown"), carried
+// as they are rather than re-encoded as enums.
+
+// A Telegram topic bound to a project.
+message FleetTopic {
+  int64 chat_id = 1;
+  int32 thread_id = 2;
+}
+
+// Spending limits of a project, in US dollars. Zero means the default.
+message FleetProjectBudget {
+  double task_cost_usd = 1;
+  double daily_cost_usd = 2;
+}
+
+// A repository under the fleet's management.
+message FleetProject {
+  string id = 1;
+  string name = 2;
+  string repo_path = 3;
+  string remote = 4;
+  string default_branch = 5;
+  // "local-only", "direct-pr" or "no-mistakes".
+  string trust_mode = 6;
+  repeated string verify_commands = 7;
+  int32 max_concurrent = 8;
+  string branch_prefix = 9;
+  FleetProjectBudget budget = 10;
+  repeated FleetTopic topics = 11;
+  google.protobuf.Timestamp created_at = 12;
+  google.protobuf.Timestamp updated_at = 13;
+}
+
+message FleetProjectList {
+  repeated FleetProject projects = 1;
+}
+
+// One agent run against one project, from dispatch to a final state.
+message FleetTask {
+  string id = 1;
+  string project_id = 2;
+  string project_name = 3;
+  // "ship" or "scout".
+  string shape = 4;
+  string goal = 5;
+  // "manual" or "issue".
+  string source_kind = 6;
+  int32 issue_number = 7;
+  string trust_mode = 8;
+  string model = 9;
+  int32 priority = 10;
+  // "queued", "running", "verifying", "review_ready", "needs_decision",
+  // "done", "failed" or "cancelled".
+  string status = 11;
+  string status_reason = 12;
+  // "unknown", "busy", "idle" or "dead". Unknown is not idle.
+  string liveness = 13;
+  string branch = 14;
+  string worktree_path = 15;
+  string session_id = 16;
+  string pr_url = 17;
+  int32 pr_number = 18;
+  double input_tokens = 19;
+  double output_tokens = 20;
+  double cost_usd = 21;
+  // The task's own cost cap, or zero for the default.
+  double budget_cost_usd = 22;
+  google.protobuf.Timestamp created_at = 23;
+  google.protobuf.Timestamp updated_at = 24;
+  google.protobuf.Timestamp started_at = 25;
+  google.protobuf.Timestamp finished_at = 26;
+  google.protobuf.Timestamp last_activity_at = 27;
+}
+
+message FleetTaskList {
+  repeated FleetTask tasks = 1;
+}
+
+// One entry in a task's append-only history. Event IDs increase across all
+// tasks, so the last ID seen is a cursor to resume from.
+message FleetEvent {
+  // Sent as a number: event IDs stay far below 2^53.
+  double id = 1;
+  string task_id = 2;
+  string project_id = 3;
+  // e.g. "status", "liveness", "verify.result", "wake", "agent.tool_use".
+  string type = 4;
+  // The event's body, as JSON text.
+  string payload_json = 5;
+  google.protobuf.Timestamp created_at = 6;
+}
+
+message FleetEventList {
+  repeated FleetEvent events = 1;
+  // Pass as after_id to read on from here.
+  double next_after_id = 2;
+  bool has_more = 3;
+}
+
+// The outcome of one acceptance check.
+message FleetVerification {
+  double id = 1;
+  string task_id = 2;
+  int32 attempt = 3;
+  int32 step_index = 4;
+  string name = 5;
+  string command = 6;
+  bool passed = 7;
+  int32 exit_code = 8;
+  string output_tail = 9;
+  double duration_ms = 10;
+  bool timed_out = 11;
+  string error = 12;
+  google.protobuf.Timestamp created_at = 13;
+}
+
+message FleetVerificationList {
+  repeated FleetVerification verifications = 1;
+}
+
+// A task's work compared with where its branch left the default branch.
+message FleetDiff {
+  string base = 1;
+  string stat = 2;
+  string patch = 3;
+  repeated string untracked = 4;
+  bool truncated = 5;
+}
+
+message FleetCounts {
+  int32 queued = 1;
+  int32 running = 2;
+  int32 review_ready = 3;
+  int32 needs_decision = 4;
+  int32 failed_today = 5;
+  int32 done_today = 6;
+}
+
+message FleetUsage {
+  double input_tokens = 1;
+  double output_tokens = 2;
+  double cost_usd = 3;
+}
+
+message FleetProjectDigest {
+  string project_id = 1;
+  string name = 2;
+  FleetCounts counts = 3;
+  FleetUsage today = 4;
+}
+
+// Counts and today's usage for every project.
+message FleetDigest {
+  google.protobuf.Timestamp generated_at = 1;
+  google.protobuf.Timestamp day_start = 2;
+  repeated FleetProjectDigest projects = 3;
+  FleetCounts totals = 4;
+  FleetUsage today = 5;
+  int32 pending_wakes = 6;
+  // The owner's notification mode: "normal", "quiet" or "afk".
+  string notify_mode = 7;
+}
+
+// One command given to the fleet, and how it went.
+message FleetAuditEntry {
+  double id = 1;
+  string actor = 2;
+  // The surface the command came through: "telegram", "web", ...
+  string via = 3;
+  string command = 4;
+  string project_id = 5;
+  string task_id = 6;
+  string detail = 7;
+  bool ok = 8;
+  string error = 9;
+  google.protobuf.Timestamp created_at = 10;
+}
+
+message FleetAuditList {
+  repeated FleetAuditEntry entries = 1;
+}
+
+// Body of POST /api/fleet/tasks.
+message FleetDispatchRequest {
+  string project_id = 1;
+  // What to do. Leave empty when dispatching from an issue.
+  string goal = 2;
+  // A GitHub issue number to dispatch from, or zero.
+  int32 issue = 3;
+  // "ship" (default) or "scout".
+  string shape = 4;
+  string model = 5;
+  // Caps this task's total cost, or zero for the default.
+  double budget_usd = 6;
+  int32 priority = 7;
+}
+
+// Body of POST /api/fleet/tasks/{id}/reply.
+message FleetReplyRequest {
+  string text = 1;
+  bool ignore_budget = 2;
+}
+
+// Body of POST /api/fleet/tasks/{id}/cancel.
+message FleetCancelRequest {
+  string reason = 1;
+}
+
+// Body of POST /api/fleet/projects and PUT /api/fleet/projects/{id}. On an
+// update, repo_path is ignored.
+message FleetProjectRequest {
+  string repo_path = 1;
+  string name = 2;
+  string trust_mode = 3;
+  repeated string verify_commands = 4;
+  int32 max_concurrent = 5;
+  FleetProjectBudget budget = 6;
+}
+
+// The error body of every /api/fleet/* endpoint.
+message FleetError {
+  string error = 1;
+  // A stable word for the kind of failure, e.g. "not_found", "conflict".
+  string code = 2;
+}

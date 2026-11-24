@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/chimerakang/alice-core/fleet"
 	"github.com/chimerakang/alice-core/worktree"
@@ -195,30 +194,12 @@ func (f *FleetService) Stop() {
 	f.wg.Wait()
 }
 
-// fleetEventMessage is what a fleet event looks like on the WebSocket and in
-// the runtime event log.
-type fleetEventMessage struct {
-	ID        int64           `json:"id"`
-	Type      string          `json:"type"`
-	TaskID    string          `json:"task_id,omitempty"`
-	ProjectID string          `json:"project_id,omitempty"`
-	Payload   json.RawMessage `json:"payload,omitempty"`
-	CreatedAt time.Time       `json:"created_at"`
-}
-
-// forwardFleetEvent hands one fleet event to the WebSocket hub and the
-// runtime event log.
+// forwardFleetEvent hands one fleet event to the WebSocket hub, as a
+// "fleet.<type>" message carrying the same JSON the REST endpoints return,
+// and to the runtime event log.
 func forwardFleetEvent(ev fleet.BusEvent) {
-	msg := fleetEventMessage{
-		ID:        ev.ID,
-		Type:      ev.Type,
-		TaskID:    ev.TaskID,
-		ProjectID: ev.ProjectID,
-		Payload:   ev.Payload,
-		CreatedAt: ev.CreatedAt,
-	}
 	if globalWebSocketHub != nil {
-		globalWebSocketHub.BroadcastEvent(fleetEventPrefix+ev.Type, msg)
+		globalWebSocketHub.BroadcastEvent(fleetEventPrefix+ev.Type, fleetEventWSData(ev.Event, ev.ProjectID))
 	}
 	if globalStorage == nil {
 		return
