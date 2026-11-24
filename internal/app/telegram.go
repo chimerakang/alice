@@ -616,6 +616,10 @@ func (t *TelegramBot) registerCommands() {
 		commands = append(commands,
 			map[string]string{"command": "ship", "description": "Dispatch a task to this topic's project"},
 			map[string]string{"command": "scout", "description": "Dispatch a read-only investigation"},
+			map[string]string{"command": "fleet", "description": "Fleet overview across projects"},
+			map[string]string{"command": "quiet", "description": "Only notify what needs a decision"},
+			map[string]string{"command": "afk", "description": "Away mode with an optional grant"},
+			map[string]string{"command": "back", "description": "Back to normal notifications"},
 		)
 	}
 
@@ -2338,6 +2342,13 @@ func (t *TelegramBot) sendMenu(key chatKey) {
 			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_status", nil), "callback_data": "menu:status"},
 			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_abort", nil), "callback_data": "menu:abort_confirm"},
 		},
+	}
+
+	if t.fleet != nil {
+		staticRows = append(staticRows, []map[string]interface{}{
+			{"text": t.getLocalizedMessage(key.chatID, "fleet_btn_menu", nil), "callback_data": fleetCallbackData(fleetActOverview, fleetAllTasks)},
+			{"text": t.getLocalizedMessage(key.chatID, "fleet_btn_tasks", nil), "callback_data": fleetCallbackData(fleetActTasks, fleetAllTasks)},
+		})
 	}
 
 	allRows := append(t.buildContextAwareRows(key), staticRows...)

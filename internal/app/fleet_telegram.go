@@ -20,6 +20,21 @@ var errFleetNoProject = errors.New("topic is not bound to a fleet project")
 // fleetCommandTimeout bounds the fleet work done for one Telegram command.
 const fleetCommandTimeout = 30 * time.Second
 
+// fleetMsg returns a fleet message in the chat's language. Placeholders are
+// written with their braces, as they appear in the locale files:
+// {"{name}": "alice"}.
+func (t *TelegramBot) fleetMsg(chatID int64, key string, vars map[string]string) string {
+	if len(vars) == 0 {
+		return t.getLocalizedMessage(chatID, key, nil)
+	}
+	// The i18n manager adds the braces itself.
+	bare := make(map[string]string, len(vars))
+	for name, value := range vars {
+		bare[strings.TrimSuffix(strings.TrimPrefix(name, "{"), "}")] = value
+	}
+	return t.getLocalizedMessage(chatID, key, bare)
+}
+
 // fleetActor names a Telegram user in the fleet's audit log.
 func fleetActor(userID int64) fleet.Actor {
 	return fleet.Actor{ID: strconv.FormatInt(userID, 10), Via: "telegram"}
@@ -126,9 +141,9 @@ func (t *TelegramBot) fleetRequireProject(ctx context.Context, key chatKey) (fle
 		return project, true
 	}
 	if errors.Is(err, errFleetNoProject) {
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_no_project", nil))
+		t.send(key, t.fleetMsg(key.chatID, "fleet_no_project", nil))
 	} else {
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
+		t.send(key, t.fleetMsg(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
 	}
 	return fleet.Project{}, false
 }
@@ -157,6 +172,16 @@ func (t *TelegramBot) handleFleetCommand(key chatKey, userID int64, text string)
 	case "/scout":
 		t.fleetDispatch(ctx, key, userID, fleet.ShapeScout, rest)
 		return true
+	case "/fleet":
+		switch {
+		case len(parts) == 1:
+			t.fleetOverview(ctx, key)
+		case parts[1] == "tasks":
+			t.fleetTaskList(ctx, key)
+		default:
+			t.send(key, t.fleetMsg(key.chatID, "fleet_usage", nil))
+		}
+		return true
 	case "/quiet":
 		t.fleetQuiet(ctx, key)
 		return true
@@ -166,6 +191,8 @@ func (t *TelegramBot) handleFleetCommand(key chatKey, userID int64, text string)
 	case "/back":
 		t.fleetBack(ctx, key)
 		return true
+	case "/hermes", "/ghermes", "/abort", "/retry", "/resume", "/close", "/parallel", "/strict", "/mr":
+		return t.fleetCompat(ctx, key, userID, command, parts, rest)
 	case "/project":
 		switch {
 		case len(parts) == 1:
@@ -185,11 +212,11 @@ func (t *TelegramBot) fleetShowProject(ctx context.Context, key chatKey) bool {
 	if err != nil {
 		return false
 	}
-	verify := t.getLocalizedMessage(key.chatID, "fleet_project_verify_none", nil)
+	verify := t.fleetMsg(key.chatID, "fleet_project_verify_none", nil)
 	if len(project.VerifyCommands) > 0 {
 		verify = strings.Join(project.VerifyCommands, "\n   ")
 	}
-	t.send(key, t.getLocalizedMessage(key.chatID, "fleet_project_info", map[string]string{
+	t.send(key, t.fleetMsg(key.chatID, "fleet_project_info", map[string]string{
 		"{name}":       project.Name,
 		"{id}":         project.ID,
 		"{path}":       project.RepoPath,
@@ -204,12 +231,12 @@ func (t *TelegramBot) fleetShowProject(ctx context.Context, key chatKey) bool {
 // fleetSetProjectMode handles /project mode <trust mode>.
 func (t *TelegramBot) fleetSetProjectMode(ctx context.Context, key chatKey, userID int64, args []string) {
 	if len(args) != 1 {
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_project_mode_usage", nil))
+		t.send(key, t.fleetMsg(key.chatID, "fleet_project_mode_usage", nil))
 		return
 	}
 	mode, err := fleet.ParseTrustMode(args[0])
 	if err != nil {
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_project_mode_usage", nil))
+		t.send(key, t.fleetMsg(key.chatID, "fleet_project_mode_usage", nil))
 		return
 	}
 	project, ok := t.fleetRequireProject(ctx, key)
@@ -222,10 +249,10 @@ func (t *TelegramBot) fleetSetProjectMode(ctx context.Context, key chatKey, user
 			return nil
 		})
 	if err != nil {
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
+		t.send(key, t.fleetMsg(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
 		return
 	}
-	t.send(key, t.getLocalizedMessage(key.chatID, "fleet_project_mode_set", map[string]string{
+	t.send(key, t.fleetMsg(key.chatID, "fleet_project_mode_set", map[string]string{
 		"{name}": project.Name,
 		"{mode}": string(project.TrustMode),
 	}))
@@ -239,7 +266,25 @@ func (t *TelegramBot) fleetAfterCommand(key chatKey, userID int64, text string) 
 		return
 	}
 	parts := strings.Fields(text)
-	if len(parts) < 2 || strings.Split(parts[0], "@")[0] != "/project" || parts[1] == "mode" {
+	if len(parts) == 0 {
+		return
+	}
+	switch strings.Split(parts[0], "@")[0] {
+	case "/status":
+		ctx, cancel := context.WithTimeout(context.Background(), fleetCommandTimeout)
+		defer cancel()
+		if line := t.fleetStatusLine(ctx, key.chatID); line != "" {
+			t.send(key, line)
+		}
+		return
+	case "/help", "/start":
+		t.send(key, t.fleetMsg(key.chatID, "fleet_help", nil))
+		return
+	case "/project":
+	default:
+		return
+	}
+	if len(parts) < 2 || parts[1] == "mode" {
 		return
 	}
 	// /project saved the path only if it was valid; read back what it saved.
@@ -252,11 +297,11 @@ func (t *TelegramBot) fleetAfterCommand(key chatKey, userID int64, text string) 
 	project, created, err := t.fleet.EnsureProject(ctx, fleetActor(userID), dir)
 	switch {
 	case errors.Is(err, fleet.ErrNotGitRepo):
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_project_not_git", nil))
+		t.send(key, t.fleetMsg(key.chatID, "fleet_project_not_git", nil))
 	case err != nil:
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
+		t.send(key, t.fleetMsg(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
 	case created:
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_project_registered", map[string]string{
+		t.send(key, t.fleetMsg(key.chatID, "fleet_project_registered", map[string]string{
 			"{name}": project.Name,
 			"{mode}": string(project.TrustMode),
 		}))
@@ -275,7 +320,7 @@ func (t *TelegramBot) attachFleet(ctx context.Context, svc *FleetService, db *sq
 		Fleet:        svc,
 		Store:        cards,
 		Messenger:    t,
-		Localize:     t.getLocalizedMessage,
+		Localize:     t.fleetMsg,
 		DashboardURL: svc.Config.DashboardURL,
 	}
 	svc.run("fleet.cards", func() error { return t.fleetCards.Run(ctx) })
@@ -292,7 +337,7 @@ func (t *TelegramBot) attachFleet(ctx context.Context, svc *FleetService, db *sq
 		Store:     cards,
 		Messenger: t,
 		Docs:      t,
-		Localize:  t.getLocalizedMessage,
+		Localize:  t.fleetMsg,
 		Owner:     owner,
 	}
 	if topics, ok := globalStorage.(topicBindingLister); ok {
@@ -380,7 +425,7 @@ func (t *TelegramBot) EditCard(key chatKey, messageID int, text string, buttons 
 // handleFleetCallback handles a press on a task card's button.
 func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, data string) {
 	answer := func(msgKey string, vars map[string]string) {
-		t.answerCallbackQuery(queryID, fleetClip(t.getLocalizedMessage(key.chatID, msgKey, vars), 190))
+		t.answerCallbackQuery(queryID, fleetClip(t.fleetMsg(key.chatID, msgKey, vars), 190))
 	}
 	action, taskID, ok := parseFleetCallback(data)
 	if !ok {
@@ -393,6 +438,25 @@ func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, da
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), fleetCommandTimeout)
 	defer cancel()
+
+	// Buttons that open something rather than act on a task.
+	switch action {
+	case fleetActOverview:
+		t.fleetOverview(ctx, key)
+		t.answerCallbackQuery(queryID, "")
+		return
+	case fleetActTasks:
+		t.fleetTaskList(ctx, key)
+		t.answerCallbackQuery(queryID, "")
+		return
+	case fleetActCard:
+		if err := t.fleetOpenCard(ctx, key, taskID); err != nil {
+			answer("fleet_error", map[string]string{"{error}": err.Error()})
+			return
+		}
+		t.answerCallbackQuery(queryID, "")
+		return
+	}
 
 	// A button only acts on a task that has a card or a prompt in this chat.
 	if t.fleetCards != nil {

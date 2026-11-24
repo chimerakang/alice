@@ -131,9 +131,9 @@ func (t *TelegramBot) fleetDispatch(ctx context.Context, key chatKey, userID int
 	usageKey := "fleet_" + string(shape) + "_usage"
 	args, err := parseFleetDispatch(rest)
 	if err != nil {
-		msg := t.getLocalizedMessage(key.chatID, usageKey, nil)
+		msg := t.fleetMsg(key.chatID, usageKey, nil)
 		if !errors.Is(err, errFleetDispatchEmpty) {
-			msg = t.getLocalizedMessage(key.chatID, err.Error(), nil) + "\n\n" + msg
+			msg = t.fleetMsg(key.chatID, err.Error(), nil) + "\n\n" + msg
 		}
 		t.send(key, msg)
 		return
@@ -155,7 +155,7 @@ func (t *TelegramBot) fleetDispatch(ctx context.Context, key chatKey, userID int
 		Budget:    fleet.Limit{CostUSD: args.BudgetUSD},
 	})
 	if err != nil {
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
+		t.send(key, t.fleetMsg(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
 		return
 	}
 	t.fleetPostCard(ctx, key, task)
@@ -171,7 +171,7 @@ func (t *TelegramBot) fleetPostCard(ctx context.Context, key chatKey, task fleet
 		}
 		log.Printf("[fleet] post card for task %s: %v", task.ID, err)
 	}
-	t.send(key, t.getLocalizedMessage(key.chatID, "fleet_dispatched", map[string]string{
+	t.send(key, t.fleetMsg(key.chatID, "fleet_dispatched", map[string]string{
 		"{id}":   task.ID,
 		"{goal}": fleetGoalLine(task),
 	}))
@@ -183,7 +183,7 @@ func (t *TelegramBot) fleetPostCard(ctx context.Context, key chatKey, task fleet
 func (t *TelegramBot) fleetIssuePassesGate(ctx context.Context, key chatKey, project fleet.Project, number int) bool {
 	issue, err := hermesFetchIssue(ctx, project.RepoPath, number)
 	if err != nil {
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_issue_read_failed", map[string]string{
+		t.send(key, t.fleetMsg(key.chatID, "fleet_issue_read_failed", map[string]string{
 			"{number}": strconv.Itoa(number),
 			"{error}":  err.Error(),
 		}))

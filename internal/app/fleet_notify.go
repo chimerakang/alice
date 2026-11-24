@@ -723,27 +723,27 @@ func (f *FleetService) resolveProjects(ctx context.Context, words []string) (ids
 // fleetQuiet handles /quiet.
 func (t *TelegramBot) fleetQuiet(ctx context.Context, key chatKey) {
 	if _, err := t.fleetNotifier.SetMode(ctx, fleet.NotifyQuiet, nil); err != nil {
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
+		t.send(key, t.fleetMsg(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
 		return
 	}
 	t.fleetNotices.SetHome(key)
-	t.send(key, t.getLocalizedMessage(key.chatID, "fleet_quiet_on", nil))
+	t.send(key, t.fleetMsg(key.chatID, "fleet_quiet_on", nil))
 }
 
 // fleetAFK handles /afk.
 func (t *TelegramBot) fleetAFK(ctx context.Context, key chatKey, rest string) {
 	args, err := parseFleetAFK(rest)
 	if err != nil {
-		msg := t.getLocalizedMessage(key.chatID, "fleet_afk_usage", nil)
+		msg := t.fleetMsg(key.chatID, "fleet_afk_usage", nil)
 		if errors.Is(err, errFleetAFKDuration) {
-			msg = t.getLocalizedMessage(key.chatID, "fleet_afk_err_duration", nil) + "\n\n" + msg
+			msg = t.fleetMsg(key.chatID, "fleet_afk_err_duration", nil) + "\n\n" + msg
 		}
 		t.send(key, msg)
 		return
 	}
 	projects, unknown, err := t.fleet.resolveProjects(ctx, args.Projects)
 	if err == nil && unknown != "" {
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_afk_err_project", map[string]string{"{name}": unknown}))
+		t.send(key, t.fleetMsg(key.chatID, "fleet_afk_err_project", map[string]string{"{name}": unknown}))
 		return
 	}
 	var prefs fleet.NotifyPrefs
@@ -753,24 +753,24 @@ func (t *TelegramBot) fleetAFK(ctx context.Context, key chatKey, rest string) {
 		})
 	}
 	if err != nil {
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
+		t.send(key, t.fleetMsg(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
 		return
 	}
 	t.fleetNotices.SetHome(key)
 
-	actions := t.getLocalizedMessage(key.chatID, "fleet_afk_actions_none", nil)
+	actions := t.fleetMsg(key.chatID, "fleet_afk_actions_none", nil)
 	if len(prefs.Grant.Actions) > 0 {
 		var names []string
 		for _, a := range prefs.Grant.Actions {
-			names = append(names, t.getLocalizedMessage(key.chatID, "fleet_afk_action_"+string(a), nil))
+			names = append(names, t.fleetMsg(key.chatID, "fleet_afk_action_"+string(a), nil))
 		}
 		actions = strings.Join(names, "、")
 	}
-	scope := t.getLocalizedMessage(key.chatID, "fleet_afk_projects_all", nil)
+	scope := t.fleetMsg(key.chatID, "fleet_afk_projects_all", nil)
 	if len(projects) > 0 {
 		scope = strings.Join(projects, ", ")
 	}
-	t.send(key, t.getLocalizedMessage(key.chatID, "fleet_afk_on", map[string]string{
+	t.send(key, t.fleetMsg(key.chatID, "fleet_afk_on", map[string]string{
 		"{until}":    prefs.Grant.ExpiresAt.Local().Format("01-02 15:04"),
 		"{actions}":  actions,
 		"{projects}": scope,
@@ -781,11 +781,11 @@ func (t *TelegramBot) fleetAFK(ctx context.Context, key chatKey, rest string) {
 func (t *TelegramBot) fleetBack(ctx context.Context, key chatKey) {
 	summary, err := t.fleetNotifier.Back(ctx)
 	if err != nil {
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
+		t.send(key, t.fleetMsg(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
 		return
 	}
 	if summary.Mode == fleet.NotifyNormal || summary.Mode == "" {
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_back_already", nil))
+		t.send(key, t.fleetMsg(key.chatID, "fleet_back_already", nil))
 		return
 	}
 	t.send(key, t.fleetNotices.renderSummary(key.chatID, summary))
@@ -811,9 +811,9 @@ func (t *TelegramBot) fleetHandleReply(key chatKey, userID int64, replyToMessage
 	ctx, cancel := context.WithTimeout(context.Background(), fleetCommandTimeout)
 	defer cancel()
 	if _, err := t.fleet.Commander.Reply(ctx, fleetActor(userID), fleet.ReplyRequest{TaskID: taskID, Text: text}); err != nil {
-		t.send(key, t.getLocalizedMessage(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
+		t.send(key, t.fleetMsg(key.chatID, "fleet_error", map[string]string{"{error}": err.Error()}))
 		return true
 	}
-	t.send(key, t.getLocalizedMessage(key.chatID, "fleet_reply_sent", map[string]string{"{id}": taskID}))
+	t.send(key, t.fleetMsg(key.chatID, "fleet_reply_sent", map[string]string{"{id}": taskID}))
 	return true
 }

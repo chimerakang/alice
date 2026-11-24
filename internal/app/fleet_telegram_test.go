@@ -134,7 +134,7 @@ func TestFleetAfterCommandIgnoresOtherCommands(t *testing.T) {
 	key := chatKey{chatID: 7, threadID: 3}
 	bindTopic(t, storage, key, newFleetTestRepo(t))
 
-	for _, text := range []string{"/status", "/project", "/project mode direct-pr", "/projects x"} {
+	for _, text := range []string{"/usage", "/project", "/project mode direct-pr", "/projects x"} {
 		bot.fleetAfterCommand(key, 42, text)
 	}
 	expectNoFleetMessage(t, bot)
@@ -261,7 +261,7 @@ func TestFleetLocaleKeys(t *testing.T) {
 	}
 	zh, en := load("zh-TW"), load("en")
 
-	keyRe := regexp.MustCompile(`getLocalizedMessage\([^,]+, "(fleet_[a-z0-9_]+)"`)
+	keyRe := regexp.MustCompile(`(?:fleetMsg|loc)\((?:[^,()]+, )?"(fleet_[a-z0-9_]+)"`)
 	varRe := regexp.MustCompile(`\{[a-z_]+\}`)
 	files, _ := filepath.Glob("fleet*.go")
 	used := map[string]bool{}
@@ -307,6 +307,8 @@ func TestFleetLocaleKeys(t *testing.T) {
 		"fleet_mode_normal", "fleet_mode_quiet", "fleet_mode_afk", "fleet_disp_auto_approved", "fleet_disp_auto_resumed",
 		"fleet_away_header", "fleet_away_nothing", "fleet_away_handled", "fleet_away_held", "fleet_away_held_hint",
 		"fleet_afk_usage", "fleet_afk_err_duration", "fleet_afk_action_approve", "fleet_afk_action_resume",
+		"fleet_compat_cancelled", "fleet_compat_retried", "fleet_compat_resumed",
+		"fleet_compat_hermes", "fleet_compat_ghermes",
 	} {
 		used[key] = true
 	}
