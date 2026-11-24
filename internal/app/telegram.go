@@ -131,6 +131,8 @@ type TelegramBot struct {
 	allowIDs map[int64]bool // 白名單
 	config   *Config
 	i18n     *I18nManager // 多國語系管理器
+	pollHTTPClient *http.Client
+	pollHealth     telegramPollingHealth
 
 	// 媒體批次處理
 	mediaBatches map[string]*MediaBatch // mediaGroupID 或 chatKey 作為 key
@@ -386,7 +388,7 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 	// 驗證 bot token
 	resp, err := apiHTTPClient.Get(fmt.Sprintf("https://api.telegram.org/bot%s/getMe", config.TelegramToken))
 	if err != nil {
-		return nil, fmt.Errorf("telegram bot init: %w", err)
+		return nil, &telegramRequestError{err}
 	}
 	defer resp.Body.Close()
 
@@ -516,6 +518,7 @@ func (t *TelegramBot) Stop() {
 	if t.queueCancel != nil {
 		t.queueCancel()
 	}
+	t.pollHealth.stop()
 }
 
 // registerRetryInflight records a running /retry attempt so Stop() can notify
@@ -592,6 +595,7 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "close", "description": "Close a GitHub issue"},
 		{"command": "mr", "description": "Hermes milestone review"},
 		{"command": "lang", "description": "Switch bot language"},
+		{"command": "wake", "description": "Request Mac display wake"},
 		{"command": "preview", "description": "Preview webpage screenshot"},
 		{"command": "send-file", "description": "Send a file from the project directory"},
 		{"command": "strict", "description": "Toggle strict review mode"},
@@ -601,12 +605,19 @@ func (t *TelegramBot) registerCommands() {
 
 	body, _ := json.Marshal(map[string]interface{}{"commands": commands})
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/setMyCommands", t.config.TelegramToken)
-	resp, err := t.telegramAPIClient().Post(apiURL, "application/json", bytes.NewReader(body))
+	resp, err := t.telegramRequest(t.telegramContext(), http.MethodPost, apiURL, bytes.NewReader(body), false)
 	if err != nil {
 		log.Printf("[telegram] setMyCommands error: %v", err)
 		return
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	var registered struct {
+		OK bool `json:"ok"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&registered); err != nil || resp.StatusCode != http.StatusOK || !registered.OK {
+		log.Printf("[telegram] command registration rejected (HTTP %d)", resp.StatusCode)
+		return
+	}
 	log.Printf("[telegram] bot commands registered (%d commands)", len(commands))
 }
 
@@ -831,29 +842,14 @@ func (t *TelegramBot) Start() {
 
 	log.Println("[telegram] listening for messages...")
 
+	ctx := t.pollCtx
+	if ctx == nil {
+		ctx = t.telegramContext()
+	}
+	defer t.pollHealth.stop()
 	offset := 0
-	for {
-		select {
-		case <-t.pollCtx.Done():
-			log.Printf("[telegram] polling stopped")
-			return
-		default:
-		}
-		req, err := http.NewRequestWithContext(t.pollCtx, http.MethodGet, fmt.Sprintf("%s/getUpdates?offset=%d&timeout=60", apiURL, offset), nil)
-		if err != nil {
-			log.Printf("[telegram] getUpdates request error: %v", err)
-			continue
-		}
-		resp, err := t.telegramLongPollClient().Do(req)
-		if err != nil {
-			if t.pollCtx.Err() != nil {
-				log.Printf("[telegram] polling stopped")
-				return
-			}
-			log.Printf("[telegram] getUpdates error: %v", err)
-			continue
-		}
-
+	failures := 0
+	for ctx.Err() == nil {
 		var result struct {
 			OK          bool   `json:"ok"`
 			ErrorCode   int    `json:"error_code"`
@@ -869,8 +865,12 @@ func (t *TelegramBot) Start() {
 						MessageThreadID int `json:"message_thread_id"`
 					} `json:"reply_to_message"`
 					From *struct {
-						ID int64 `json:"id"`
+						ID    int64 `json:"id"`
+						IsBot bool  `json:"is_bot"`
 					} `json:"from"`
+					SenderChat *struct {
+						ID int64 `json:"id"`
+					} `json:"sender_chat"`
 					Chat *struct {
 						ID int64 `json:"id"`
 					} `json:"chat"`
@@ -898,29 +898,20 @@ func (t *TelegramBot) Start() {
 			} `json:"result"`
 		}
 
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			resp.Body.Close()
-			log.Printf("[telegram] decode error: %v", err)
-			continue
-		}
-		resp.Body.Close()
-
-		if !result.OK {
-			// A non-ok getUpdates is almost always 409 Conflict: another
-			// process is long-polling the SAME bot token. This used to be
-			// swallowed silently, so a competing poller made the bot look
-			// completely dead — no received messages, no errors, nothing in
-			// the log. Surface it, and back off so we neither tight-loop nor
-			// hammer the API while the conflict persists.
-			log.Printf("[telegram] getUpdates not ok: error_code=%d description=%q (another instance may be polling the same bot token)", result.ErrorCode, result.Description)
-			select {
-			case <-t.pollCtx.Done():
-				log.Printf("[telegram] polling stopped")
+		err := t.pollUpdates(ctx, fmt.Sprintf("%s/getUpdates?offset=%d&timeout=60", apiURL, offset), &result)
+		if err != nil {
+			if ctx.Err() != nil {
 				return
-			case <-time.After(3 * time.Second):
+			}
+			failures++
+			delay := telegramRetryDelay(err, failures)
+			log.Printf("[telegram] polling failed: %v; retry in %v", err, delay)
+			if waitTelegramRetry(ctx, delay) != nil {
+				return
 			}
 			continue
 		}
+		failures = 0
 
 		for _, update := range result.Result {
 			offset = update.UpdateID + 1
@@ -951,6 +942,10 @@ func (t *TelegramBot) Start() {
 					t.lastUsedThreadID[key.chatID] = key.threadID
 					t.lastUsedMu.Unlock()
 				}
+				if isWakeCommand(msg.Text) {
+					go t.handleWakeCommand(key, msg.From.ID, msg.From.IsBot || msg.SenderChat != nil, msg.Text)
+					continue
+				}
 				replyToMsgID := 0
 				if msg.ReplyToMessage != nil {
 					replyToMsgID = msg.ReplyToMessage.MessageID
@@ -963,7 +958,7 @@ func (t *TelegramBot) Start() {
 			}
 
 			// Handle callback queries (inline keyboard button clicks)
-			if update.CallbackQuery != nil && update.CallbackQuery.Message != nil {
+			if update.CallbackQuery != nil && update.CallbackQuery.Message != nil && update.CallbackQuery.From != nil && update.CallbackQuery.Message.Chat != nil {
 				query := update.CallbackQuery
 				key := chatKey{chatID: query.Message.Chat.ID, threadID: query.Message.MessageThreadID}
 				go func() {
@@ -1481,6 +1476,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		help += t.getLocalizedMessage(key.chatID, "help_project_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_reset_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_clear_desc", nil) + "\n"
+		help += t.getLocalizedMessage(key.chatID, "help_wake_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_status_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_usage_desc", nil) + "\n\n"
 		help += t.getLocalizedMessage(key.chatID, "help_routing_commands", nil) + "\n"
@@ -5034,7 +5030,9 @@ func (t *TelegramBot) messageQueueWorker() {
 				}
 
 				go func(message *TelegramMessage) {
-					time.Sleep(backoffDelay)
+					if waitTelegramRetry(t.telegramContext(), backoffDelay) != nil {
+						return
+					}
 					select {
 					case t.messageQueue <- message:
 						// Successfully re-queued
@@ -5063,7 +5061,7 @@ func (t *TelegramBot) sendMessageDirect(msg *TelegramMessage) bool {
 
 	// Make API call
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/%s", t.config.TelegramToken, msg.Method)
-	resp, err := t.telegramAPIClient().Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
+	resp, err := t.telegramRequest(t.telegramContext(), http.MethodPost, apiURL, bytes.NewReader(jsonData), false)
 	if err != nil {
 		log.Printf("[telegram] %s error: %v", msg.Method, err)
 		return false
@@ -5095,7 +5093,7 @@ func (t *TelegramBot) sendMessageDirect(msg *TelegramMessage) bool {
 				retryAfter, msg.Retries+1, msg.MaxRetries)
 
 			// Sleep for the specified duration, then return false to trigger retry
-			time.Sleep(retryAfter)
+			_ = waitTelegramRetry(t.telegramContext(), retryAfter)
 			return false
 		}
 	}
@@ -5164,60 +5162,55 @@ func (t *TelegramBot) queueMessage(method string, params map[string]interface{})
 // sendMessageSync sends a message synchronously and returns the response
 // Use this only for messages that need to return data (like message ID)
 func (t *TelegramBot) sendMessageSync(method string, params map[string]interface{}) (map[string]interface{}, error) {
-	// Wait for rate limiter to avoid hitting rate limits
-	<-t.rateLimiter.C
-
-	jsonData, err := json.Marshal(params)
+	ctx, cancel := context.WithTimeout(t.telegramContext(), time.Minute)
+	defer cancel()
+	data, err := json.Marshal(params)
 	if err != nil {
 		return nil, fmt.Errorf("error marshaling params: %w", err)
 	}
-
-	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/%s", t.config.TelegramToken, method)
-	resp, err := t.telegramAPIClient().Post(apiURL, "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("HTTP error: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("error reading response: %w", err)
-	}
-
-	// Handle 429 Rate Limiting
-	if resp.StatusCode == 429 {
-		var errorResp struct {
-			OK          bool   `json:"ok"`
-			ErrorCode   int    `json:"error_code"`
-			Description string `json:"description"`
-			Parameters  struct {
-				RetryAfter int `json:"retry_after"`
-			} `json:"parameters"`
+	endpoint := fmt.Sprintf("https://api.telegram.org/bot%s/%s", t.config.TelegramToken, method)
+	for attempt := 0; attempt < telegramMaxSendAttempts; attempt++ {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-t.rateLimiter.C:
 		}
-
-		if json.Unmarshal(body, &errorResp) == nil && errorResp.Parameters.RetryAfter > 0 {
-			retryAfter := time.Duration(errorResp.Parameters.RetryAfter) * time.Second
-			log.Printf("[telegram] Rate limited! Waiting %v before retry", retryAfter)
-			time.Sleep(retryAfter)
-
-			// Retry once
-			return t.sendMessageSync(method, params)
+		resp, err := t.telegramRequest(ctx, http.MethodPost, endpoint, bytes.NewReader(data), false)
+		if err != nil {
+			return nil, err
 		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, &telegramRequestError{readErr}
+		}
+		var result map[string]interface{}
+		if err := json.Unmarshal(body, &result); err != nil {
+			return nil, fmt.Errorf("invalid Telegram API response: %w", err)
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			var envelope struct {
+				Parameters struct {
+					RetryAfter int `json:"retry_after"`
+				} `json:"parameters"`
+			}
+			_ = json.Unmarshal(body, &envelope)
+			retryErr := &telegramAPIError{Code: resp.StatusCode, RetryAfter: envelope.Parameters.RetryAfter}
+			if attempt+1 == telegramMaxSendAttempts {
+				return nil, retryErr
+			}
+			if err := waitTelegramRetry(ctx, telegramRetryDelay(retryErr, attempt+1)); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if resp.StatusCode != http.StatusOK || result["ok"] != true {
+			return nil, &telegramAPIError{Code: resp.StatusCode}
+		}
+		return result, nil
 	}
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("telegram API error (status %d): %s", resp.StatusCode, string(body))
-	}
-
-	// Parse response
-	var result map[string]interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("error parsing response: %w", err)
-	}
-
-	return result, nil
+	return nil, fmt.Errorf("Telegram send attempts exhausted")
 }
-
 func (t *TelegramBot) apiCall(method string, params url.Values) {
 	// Convert url.Values to map[string]interface{} for JSON
 	jsonParams := make(map[string]interface{})
@@ -9514,7 +9507,7 @@ func (t *TelegramBot) DownloadTelegramFile(fileID, fileType string) (string, err
 	getFileURL := fmt.Sprintf("https://api.telegram.org/bot%s/getFile?file_id=%s",
 		t.config.TelegramToken, fileID)
 
-	resp, err := t.telegramAPIClient().Get(getFileURL)
+	resp, err := t.telegramRequest(t.telegramContext(), http.MethodGet, getFileURL, nil, false)
 	if err != nil {
 		return "", fmt.Errorf("getFile request failed: %w", err)
 	}
