@@ -4,6 +4,7 @@ go 1.24.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.38.0
+	github.com/chimerakang/alice-core v0.0.0-20261124091256-70b8d0d7d372
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3

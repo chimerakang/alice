@@ -101,6 +101,16 @@
     }
   },
 
+  "fleet": {
+    "enabled": false,
+    "worktree_root": "./data/worktrees",
+    "report_root": "./data/fleet-reports",
+    "max_concurrent": 2,
+    "default_trust_mode": "local-only",
+    "daily_budget_usd": 0,
+    "task_budget_usd": 0
+  },
+
   "security": {
     "enable_rate_limiting": true,
     "rate_limit_rpm": 60,
