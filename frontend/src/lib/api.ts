@@ -28,6 +28,8 @@ import type {
   HermesTaskState,
 } from "@/types/alice";
 
+import { fleetApi } from "@/lib/fleetApi";
+
 const BASE = "";
 
 /** Normalize a DecisionLog: generate id if missing, map nested tokens_used to flat fields */
@@ -376,4 +378,7 @@ export const api = {
 
   // ========== WebSocket Stats ==========
   getWebSocketStats: () => fetchJson<unknown>("/api/websocket/stats"),
+
+  // ========== Fleet ==========
+  fleet: fleetApi,
 } as const;

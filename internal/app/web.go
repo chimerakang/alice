@@ -166,6 +166,9 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/checkpoints/restore", wi.handleRestoreCheckpoint)
 	mux.HandleFunc("/api/checkpoints/stats", wi.handleCheckpointStats)
 
+	// Fleet: projects, tasks, events and commands
+	wi.registerFleetRoutes(mux)
+
 	// WebSocket Real-time Events
 	mux.HandleFunc("/ws", wi.handleWebSocket)
 	mux.HandleFunc("/api/websocket/stats", wi.handleWebSocketStats)

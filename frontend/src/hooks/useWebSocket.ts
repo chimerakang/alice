@@ -3,13 +3,25 @@ import type { WebSocketEvent } from "@/types/alice";
 
 interface UseWebSocketOptions {
   onEvent?: (event: WebSocketEvent) => void;
+  /**
+   * The last fleet event ID seen, read at each (re)connect. The server then
+   * replays the fleet events missed since, so nothing is lost across a drop.
+   */
+  getFleetAfterId?: () => number;
   reconnectDelay?: number;
   maxReconnectDelay?: number;
+}
+
+/** The WebSocket URL, asking for a replay of fleet events when resuming. */
+export function wsUrl(protocol: string, host: string, fleetAfterId: number): string {
+  const base = `${protocol}//${host}/ws`;
+  return fleetAfterId > 0 ? `${base}?fleet_after_id=${Math.floor(fleetAfterId)}` : base;
 }
 
 export function useWebSocket(options: UseWebSocketOptions = {}) {
   const {
     onEvent,
+    getFleetAfterId,
     reconnectDelay = 1000,
     maxReconnectDelay = 30000,
   } = options;
@@ -20,10 +32,13 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
   const retriesRef = useRef(0);
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
+  const fleetAfterRef = useRef(getFleetAfterId);
+  fleetAfterRef.current = getFleetAfterId;
 
   const connect = useCallback(() => {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${window.location.host}/ws`;
+    const afterId = fleetAfterRef.current?.() ?? 0;
+    const url = wsUrl(protocol, window.location.host, afterId);
 
     const ws = new WebSocket(url);
     wsRef.current = ws;

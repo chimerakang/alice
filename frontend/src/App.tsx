@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { BrowserRouter, Routes, Route, NavLink } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { useAppStore } from "@/stores/appStore";
+import { useFleetStore } from "@/stores/fleetStore";
 import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import Dashboard from "@/pages/Dashboard";
 import Timeline from "@/pages/Timeline";
@@ -13,6 +15,11 @@ import Security from "@/pages/Security";
 import Memory from "@/pages/Memory";
 import Runtime from "@/pages/Runtime";
 import HermesTasks from "@/pages/HermesTasks";
+import Fleet from "@/pages/Fleet";
+import FleetTask from "@/pages/FleetTask";
+import FleetInbox from "@/pages/FleetInbox";
+import FleetProjects from "@/pages/FleetProjects";
+import { selectInbox } from "@/stores/fleetStore";
 import {
   LayoutDashboard,
   Clock,
@@ -26,9 +33,22 @@ import {
   Pickaxe,
   Wifi,
   WifiOff,
+  Ship,
+  Inbox,
+  FolderGit2,
+  Menu,
 } from "lucide-react";
 
 const navSections = [
+  {
+    // The fleet comes first: it is where work is given and decided.
+    labelKey: "nav.section_fleet",
+    items: [
+      { to: "/fleet", icon: Ship, labelKey: "nav.fleet" },
+      { to: "/fleet/inbox", icon: Inbox, labelKey: "nav.fleet_inbox" },
+      { to: "/fleet/projects", icon: FolderGit2, labelKey: "nav.fleet_projects" },
+    ],
+  },
   {
     labelKey: "nav.section_overview",
     items: [
@@ -59,18 +79,43 @@ const navSections = [
 function AppLayout() {
   const { t } = useTranslation();
   const { wsConnected, handleWsEvent, setWsConnected } = useAppStore();
+  // How many tasks are waiting on the owner, shown beside the inbox link.
+  const waiting = useFleetStore((s) => selectInbox(s.tasks).length);
+  // On a phone the sidebar is a drawer, closed until asked for.
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useWebSocket({
     onEvent: (event) => {
       handleWsEvent(event);
+      useFleetStore.getState().handleWsEvent(event);
       if (!wsConnected) setWsConnected(true);
     },
+    // After a drop, the server replays the fleet events missed since this.
+    getFleetAfterId: () => useFleetStore.getState().lastEventId,
   });
 
   return (
-    <div className="min-h-screen flex">
+    <div className="min-h-screen flex flex-col md:flex-row">
+      {/* Top bar, phones only */}
+      <div className="md:hidden flex items-center justify-between border-b border-gray-800/60 bg-black/60 px-4 py-3">
+        <span className="text-base font-bold text-white">
+          Alice<span className="text-primary ml-1.5 text-xs font-normal">Monitor</span>
+        </span>
+        <button
+          type="button"
+          onClick={() => setMenuOpen((v) => !v)}
+          aria-label={t("nav.menu")}
+          aria-expanded={menuOpen}
+          className="rounded-md border border-gray-700 p-1.5 text-gray-300"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+      </div>
+
       {/* Sidebar */}
-      <aside className="w-56 shrink-0 border-r border-gray-800/60 bg-black/40 backdrop-blur-sm flex flex-col">
+      <aside
+        className={`${menuOpen ? "flex" : "hidden"} md:flex w-full md:w-56 shrink-0 border-b md:border-b-0 md:border-r border-gray-800/60 bg-black/40 backdrop-blur-sm flex-col`}
+      >
         {/* Logo */}
         <div className="p-5 border-b border-gray-800/60">
           <h1 className="text-lg font-bold tracking-tight text-white">
@@ -92,7 +137,8 @@ function AppLayout() {
                 <NavLink
                   key={to}
                   to={to}
-                  end={to === "/"}
+                  end={to === "/" || to === "/fleet"}
+                  onClick={() => setMenuOpen(false)}
                   className={({ isActive }) =>
                     `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${
                       isActive
@@ -103,6 +149,14 @@ function AppLayout() {
                 >
                   <Icon className="w-4 h-4" />
                   {t(labelKey)}
+                  {to === "/fleet/inbox" && waiting > 0 && (
+                    <span
+                      className="ml-auto rounded-full bg-warning/20 px-1.5 text-[11px] font-semibold tabular-nums text-warning"
+                      data-testid="inbox-count"
+                    >
+                      {waiting}
+                    </span>
+                  )}
                 </NavLink>
               ))}
             </div>
@@ -129,10 +183,14 @@ function AppLayout() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
-        <div className="max-w-7xl mx-auto p-6">
+      <main className="flex-1 min-w-0 overflow-y-auto">
+        <div className="max-w-7xl mx-auto p-4 md:p-6">
           <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/fleet" element={<Fleet />} />
+            <Route path="/fleet/inbox" element={<FleetInbox />} />
+            <Route path="/fleet/projects" element={<FleetProjects />} />
+            <Route path="/fleet/tasks/:id" element={<FleetTask />} />
             <Route path="/issues-runs" element={<Timeline />} />
             <Route path="/timeline" element={<Timeline />} />
             <Route path="/reviews" element={<Reviews />} />

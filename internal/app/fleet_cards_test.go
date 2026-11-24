@@ -128,6 +128,9 @@ func newCardEnv(t *testing.T) *cardEnv {
 	}
 	// Tests must never start a real agent: point the runner at nothing.
 	svc.Runner.Binary = filepath.Join(t.TempDir(), "no-such-claude")
+	// A reply starts a run in the background, which fails at once for want
+	// of an agent; let it finish before the test's directories are removed.
+	t.Cleanup(svc.Scheduler.Wait)
 	cardStore, err := newFleetCardStore(storage.db)
 	if err != nil {
 		t.Fatalf("newFleetCardStore: %v", err)

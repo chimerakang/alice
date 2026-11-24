@@ -1,9 +1,11 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -179,6 +181,31 @@ func (h *WebSocketHub) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// 啟動客戶端的讀寫 goroutines
 	go client.writePump()
 	go client.readPump()
+
+	// A client that reconnects names the last fleet event it saw and is sent
+	// what it missed. Its Send channel is closed when it disconnects, hence
+	// the recover.
+	if raw := r.URL.Query().Get("fleet_after_id"); raw != "" && globalFleet != nil {
+		if afterID, err := strconv.ParseInt(raw, 10, 64); err == nil && afterID >= 0 {
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				replayFleetEvents(ctx, globalFleet, afterID, func(body []byte) (ok bool) {
+					defer func() {
+						if recover() != nil {
+							ok = false
+						}
+					}()
+					select {
+					case client.Send <- body:
+						return true
+					case <-ctx.Done():
+						return false
+					}
+				})
+			}()
+		}
+	}
 }
 
 // writePump 處理向 WebSocket 連接寫入消息

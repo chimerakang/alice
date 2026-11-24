@@ -43,6 +43,28 @@ vi.mock("@/pages/Timeline", () => ({
   default: () => <div data-testid="timeline-page" />,
 }));
 
+vi.mock("@/pages/Fleet", () => ({
+  default: () => <div data-testid="fleet-page" />,
+}));
+
+vi.mock("@/pages/FleetTask", () => ({
+  default: () => <div data-testid="fleet-task-page" />,
+}));
+
+vi.mock("@/pages/FleetInbox", () => ({
+  default: () => <div data-testid="fleet-inbox-page" />,
+}));
+
+vi.mock("@/pages/FleetProjects", () => ({
+  default: () => <div data-testid="fleet-projects-page" />,
+}));
+
+vi.mock("@/stores/fleetStore", () => ({
+  // Two tasks are waiting on the owner.
+  useFleetStore: (selector: (s: { tasks: Record<string, unknown> }) => unknown) => selector({ tasks: {} }),
+  selectInbox: () => [{ id: "a" }, { id: "b" }],
+}));
+
 vi.mock("@/pages/HermesTasks", () => ({
   default: () => <div data-testid="hermes-tasks-page" />,
 }));
@@ -92,5 +114,28 @@ describe("App", () => {
     expect(html).toContain('href="/memory"');
     expect(html).toContain("Memory");
     expect(html).toContain('data-testid="route:/memory"');
+  });
+
+  it("puts the fleet first in the sidebar and routes its pages", () => {
+    const html = renderToStaticMarkup(<App />);
+
+    // The fleet board is the first link; the pages that were there stay.
+    const firstLink = html.indexOf('href="/');
+    expect(html.slice(firstLink, firstLink + 14)).toBe('href="/fleet">');
+    expect(html.indexOf('href="/fleet"')).toBeLessThan(html.indexOf('href="/issues-runs"'));
+    expect(html).toContain('href="/fleet/inbox"');
+    expect(html).toContain('href="/fleet/projects"');
+
+    for (const [route, page] of [
+      ["/fleet", "fleet-page"],
+      ["/fleet/inbox", "fleet-inbox-page"],
+      ["/fleet/projects", "fleet-projects-page"],
+      ["/fleet/tasks/:id", "fleet-task-page"],
+    ]) {
+      expect(html).toContain(`data-testid="route:${route}"`);
+      expect(html).toContain(`data-testid="${page}"`);
+    }
+    // The count of tasks waiting on the owner sits beside the inbox link.
+    expect(html).toMatch(/data-testid="inbox-count"[^>]*>2</);
   });
 });

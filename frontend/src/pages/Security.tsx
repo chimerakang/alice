@@ -1,3 +1,4 @@
+import FleetAuditPanel from "@/components/fleet/FleetAuditPanel";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "@/i18n";
@@ -839,6 +840,9 @@ export default function Security() {
           </div>
         </div>
       )}
+
+      {/* Every fleet command: who, when, through what, and the outcome */}
+      <FleetAuditPanel />
     </div>
   );
 }

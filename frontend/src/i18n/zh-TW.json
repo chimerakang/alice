@@ -12,7 +12,12 @@
     "performance": "效能",
     "runtime": "Runtime 事件",
     "memory": "記憶體",
-    "security": "安全"
+    "security": "安全",
+    "section_fleet": "艦隊",
+    "fleet": "艦隊看板",
+    "fleet_inbox": "決策收件匣",
+    "fleet_projects": "專案管理",
+    "menu": "選單"
   },
   "common": {
     "connected": "已連線",
@@ -428,20 +433,20 @@
       "partial_rate": "部分通過率",
       "partial_rate_detail": "最佳粒度 {{granularity}}"
     },
-  "sections": {
-    "decomposition_effect": "拆解效果",
-    "review_scoreboard": "Review 看板",
-    "alice_insights": "Alice 洞察"
-  },
-  "time_windows": {
-    "7d": "7 天",
-    "30d": "30 天",
-    "90d": "90 天"
-  },
-  "charts": {
-    "granularity_distribution": "粒度分佈",
-    "granularity_vs_score": "粒度與分數",
-    "weekly_sub_task_trend": "每週子任務趨勢",
+    "sections": {
+      "decomposition_effect": "拆解效果",
+      "review_scoreboard": "Review 看板",
+      "alice_insights": "Alice 洞察"
+    },
+    "time_windows": {
+      "7d": "7 天",
+      "30d": "30 天",
+      "90d": "90 天"
+    },
+    "charts": {
+      "granularity_distribution": "粒度分佈",
+      "granularity_vs_score": "粒度與分數",
+      "weekly_sub_task_trend": "每週子任務趨勢",
       "description_length_vs_fail_rate": "描述長度 vs 失敗率",
       "pass_partial_fail_trend": "通過 / 部分 / 失敗 趨勢",
       "verdict_distribution": "Verdict 分佈",
@@ -847,5 +852,211 @@
       "no_rendered_preview": "尚未載入渲染後預覽。"
     },
     "continue_placeholder": "繼續處理 #143"
+  },
+  "fleet": {
+    "unavailable": {
+      "disabled_title": "Fleet 尚未啟用",
+      "disabled_body": "在 config.json 的 fleet 區塊把 enabled 設為 true 並重新啟動 Alice，這裡就會顯示所有專案的任務。",
+      "error_title": "無法載入 Fleet 資料"
+    },
+    "liveness": {
+      "unknown": "狀態不明（沒有訊號，不代表閒置）",
+      "busy": "Agent 執行中",
+      "idle": "閒置",
+      "dead": "程序已消失"
+    },
+    "status": {
+      "queued": "排隊中",
+      "running": "執行中",
+      "verifying": "驗收中",
+      "review_ready": "待審",
+      "needs_decision": "待決策",
+      "done": "完成",
+      "failed": "失敗",
+      "cancelled": "已取消"
+    },
+    "shape": {
+      "ship": "交付",
+      "scout": "調查"
+    },
+    "trust": {
+      "local-only": "local-only",
+      "direct-pr": "direct-pr",
+      "no-mistakes": "no-mistakes"
+    },
+    "trust_help": {
+      "local-only": "驗收通過後只在本機分支提交，不推送；核准時快轉到預設分支。",
+      "direct-pr": "驗收通過後推送並開 PR，任務即完成；合併由你決定。",
+      "no-mistakes": "驗收通過後推送並開 PR，需由你核准才會合併。"
+    },
+    "columns": {
+      "queued": "排隊",
+      "active": "進行中",
+      "review_ready": "待審",
+      "needs_decision": "待決策",
+      "finished": "已結束"
+    },
+    "counts": {
+      "running": "進行中",
+      "queued": "排隊",
+      "review_ready": "待審",
+      "needs_decision": "待決策",
+      "done_today": "今日完成",
+      "failed_today": "今日失敗",
+      "cost_today": "今日成本"
+    },
+    "board": {
+      "title": "艦隊看板",
+      "subtitle": "所有專案的任務，依狀態分欄，即時更新。",
+      "project_filter": "專案篩選",
+      "all_projects": "全部專案",
+      "inbox": "待處理 {{count}}",
+      "dispatch": "派工",
+      "no_projects": "還沒有登記任何專案。",
+      "go_projects": "前往專案管理",
+      "empty_column": "沒有任務",
+      "show_all": "顯示全部 {{count}} 個"
+    },
+    "actions": {
+      "approve": "核准",
+      "merge": "合併",
+      "pass": "放行",
+      "retry": "重試",
+      "reply": "追加指示",
+      "cancel": "取消任務",
+      "discard": "捨棄",
+      "working": "處理中…",
+      "reply_placeholder_review": "要再調整什麼？送出後會在原 session 繼續。",
+      "reply_placeholder_blocked": "回答 agent 的問題，或補充指示。留空表示「照原樣繼續」。",
+      "send_reply": "送出",
+      "carry_on": "照原樣繼續"
+    },
+    "confirm": {
+      "cancel_title": "取消這個任務？",
+      "cancel_body": "執行中的 agent 會被中止。工作目錄與分支會保留。",
+      "discard_title": "捨棄這個任務的成果？",
+      "discard_body": "工作目錄會被移除，包含尚未提交的變更。分支會保留，已提交的內容仍可手動取回。",
+      "keep": "先不要"
+    },
+    "token": {
+      "placeholder": "API token",
+      "save": "儲存 token",
+      "hint": "這台 Alice 設定了 web_api_token，指令需要它。Token 只存在這個瀏覽器。儲存後請再按一次原本的按鈕。"
+    },
+    "dispatch": {
+      "title": "派工",
+      "project": "專案",
+      "shape": "類型",
+      "model": "模型",
+      "model_default": "預設",
+      "budget": "預算上限（美元）",
+      "budget_default": "沿用預設",
+      "mode_single": "單一任務",
+      "mode_batch": "批次",
+      "mode_issues": "從 GitHub issues",
+      "goal_placeholder_ship": "要完成什麼？例如：修好不穩定的登入測試",
+      "goal_placeholder_scout": "想調查什麼？結果會是一份報告，不會修改程式碼。",
+      "batch_placeholder": "每行一個任務：\n更新 README\n補上單元測試\n修正 lint",
+      "batch_hint": "每行一個任務，行首的編號或項目符號會被移除。一次最多 {{max}} 個。",
+      "no_issues": "這個專案沒有開啟中的 issue。",
+      "issue_taken": "任務 {{id}} 處理中",
+      "done": "已派發 {{count}} 個任務。",
+      "submit": "派發 {{count}} 個任務",
+      "error_project": "請先選擇專案。",
+      "error_empty": "沒有可派發的任務。",
+      "error_budget": "預算需為大於 0 的金額。",
+      "error_too_many": "一次最多派發 {{max}} 個任務。"
+    },
+    "task": {
+      "back": "回到看板",
+      "not_found": "找不到任務 {{id}}。",
+      "elapsed": "耗時",
+      "cost": "成本",
+      "tokens": "Tokens（輸入 / 輸出）",
+      "model": "模型",
+      "branch": "分支",
+      "timeline": "事件時間軸",
+      "no_runs": "Agent 尚未開始執行。",
+      "diff": "變更（相對於基準分支）",
+      "diff_truncated": "差異過大，僅顯示前段。",
+      "no_diff": "目前沒有變更。",
+      "untracked": "尚未加入 git 的新檔案：",
+      "checks": "驗收結果",
+      "no_checks": "尚未執行驗收。",
+      "attempt": "第 {{n}} 輪",
+      "exit_code": "結束碼 {{code}}",
+      "timed_out": "逾時"
+    },
+    "inbox": {
+      "title": "決策收件匣",
+      "subtitle": "所有等你處理的任務，附上判斷所需的情境，可直接在這裡決定。",
+      "empty": "沒有等你處理的任務。",
+      "waiting": "已等待 {{time}}",
+      "open": "詳情"
+    },
+    "projects": {
+      "title": "專案管理",
+      "subtitle": "登記存放庫，並設定 fleet 如何對待每一個。",
+      "path_placeholder": "/path/to/repository",
+      "register": "登記",
+      "register_hint": "路徑需為 Alice 所在機器上的 git 存放庫。也可以在 Telegram topic 中用 /project 登記。",
+      "empty": "還沒有登記任何專案。",
+      "branch": "預設分支",
+      "remote": "Remote",
+      "no_remote": "無",
+      "topics": "綁定的 TG topic",
+      "no_topics": "無",
+      "name": "名稱",
+      "trust_mode": "信任模式",
+      "max_concurrent": "並行上限",
+      "task_budget": "單一任務預算（美元）",
+      "daily_budget": "每日預算（美元）",
+      "budget_default": "沿用預設",
+      "verify_commands": "驗收指令（每行一個，以結束碼判定）",
+      "saved": "已儲存。",
+      "try_verify": "試跑驗收指令",
+      "trying": "執行中…",
+      "try_save_first": "請先儲存變更；試跑只會執行已儲存的指令。",
+      "worktrees": "工作目錄",
+      "no_worktrees": "沒有任務的工作目錄。",
+      "dirty": "有未提交變更",
+      "orphan": "孤兒",
+      "missing": "目錄不存在",
+      "error_concurrent": "並行上限需為 1 以上的整數。",
+      "error_budget": "預算需為 0 以上的金額；留空表示沿用預設。"
+    },
+    "costs": {
+      "title": "Fleet 成本與預算",
+      "today": "今日",
+      "period": "近 {{days}} 天",
+      "days": "{{days}} 天",
+      "fleet_daily": "全艦隊每日預算",
+      "project": "專案",
+      "daily_use": "每日預算使用率",
+      "task_limit": "單一任務上限",
+      "no_limit": "未設上限",
+      "by_task": "依任務（最高成本）",
+      "no_tasks": "這段期間沒有產生成本的任務。",
+      "overruns": "超限紀錄",
+      "no_overruns": "沒有因預算而停下的任務。"
+    },
+    "audit": {
+      "title": "Fleet 指令稽核",
+      "subtitle": "每一道 fleet 指令的操作者、時間、來源與結果，被拒絕的也會記錄。",
+      "empty": "沒有符合的紀錄。",
+      "time": "時間",
+      "actor": "操作者",
+      "via": "來源",
+      "command": "指令",
+      "target": "專案 / 任務",
+      "result": "結果",
+      "via_telegram": "Telegram",
+      "via_web": "網頁",
+      "via_startup": "啟動程序",
+      "ok": "成功",
+      "refused": "被拒絕",
+      "filter_project": "依專案篩選",
+      "filter_task": "任務 ID"
+    }
   }
 }

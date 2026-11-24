@@ -667,7 +667,9 @@ export type WebSocketEventType =
   | "security_alert"
   | "agent_status"
   | "hook_session_active"
-  | "codex_session_update";
+  | "codex_session_update"
+  // Fleet events arrive as "fleet.<event type>", e.g. "fleet.status".
+  | `fleet.${string}`;
 
 // ========== API Responses ==========
 
