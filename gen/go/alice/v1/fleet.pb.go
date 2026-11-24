@@ -1778,6 +1778,468 @@ func (x *FleetProjectRequest) GetBudget() *FleetProjectBudget {
 	return nil
 }
 
+// An open GitHub issue of a project, as offered for dispatch.
+type FleetIssue struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Number    int32                  `protobuf:"varint,1,opt,name=number,proto3" json:"number,omitempty"`
+	Title     string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
+	Labels    []string               `protobuf:"bytes,3,rep,name=labels,proto3" json:"labels,omitempty"`
+	Milestone string                 `protobuf:"bytes,4,opt,name=milestone,proto3" json:"milestone,omitempty"`
+	Url       string                 `protobuf:"bytes,5,opt,name=url,proto3" json:"url,omitempty"`
+	// The unfinished task already working on this issue, if any.
+	TaskId        string `protobuf:"bytes,6,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetIssue) Reset() {
+	*x = FleetIssue{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetIssue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetIssue) ProtoMessage() {}
+
+func (x *FleetIssue) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetIssue.ProtoReflect.Descriptor instead.
+func (*FleetIssue) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *FleetIssue) GetNumber() int32 {
+	if x != nil {
+		return x.Number
+	}
+	return 0
+}
+
+func (x *FleetIssue) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *FleetIssue) GetLabels() []string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+func (x *FleetIssue) GetMilestone() string {
+	if x != nil {
+		return x.Milestone
+	}
+	return ""
+}
+
+func (x *FleetIssue) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *FleetIssue) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+type FleetIssueList struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Issues        []*FleetIssue          `protobuf:"bytes,1,rep,name=issues,proto3" json:"issues,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetIssueList) Reset() {
+	*x = FleetIssueList{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetIssueList) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetIssueList) ProtoMessage() {}
+
+func (x *FleetIssueList) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetIssueList.ProtoReflect.Descriptor instead.
+func (*FleetIssueList) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *FleetIssueList) GetIssues() []*FleetIssue {
+	if x != nil {
+		return x.Issues
+	}
+	return nil
+}
+
+// A task checkout of a project.
+type FleetWorktree struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Path   string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Branch string                 `protobuf:"bytes,2,opt,name=branch,proto3" json:"branch,omitempty"`
+	// The task this checkout belongs to, when one is known.
+	TaskId     string `protobuf:"bytes,3,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	TaskStatus string `protobuf:"bytes,4,opt,name=task_status,json=taskStatus,proto3" json:"task_status,omitempty"`
+	// Uncommitted or untracked changes: work that removing it would lose.
+	Dirty bool `protobuf:"varint,5,opt,name=dirty,proto3" json:"dirty,omitempty"`
+	// No unfinished task owns it.
+	Orphan bool `protobuf:"varint,6,opt,name=orphan,proto3" json:"orphan,omitempty"`
+	// Git lists it but its directory is gone.
+	Missing       bool `protobuf:"varint,7,opt,name=missing,proto3" json:"missing,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetWorktree) Reset() {
+	*x = FleetWorktree{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetWorktree) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetWorktree) ProtoMessage() {}
+
+func (x *FleetWorktree) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetWorktree.ProtoReflect.Descriptor instead.
+func (*FleetWorktree) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *FleetWorktree) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *FleetWorktree) GetBranch() string {
+	if x != nil {
+		return x.Branch
+	}
+	return ""
+}
+
+func (x *FleetWorktree) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *FleetWorktree) GetTaskStatus() string {
+	if x != nil {
+		return x.TaskStatus
+	}
+	return ""
+}
+
+func (x *FleetWorktree) GetDirty() bool {
+	if x != nil {
+		return x.Dirty
+	}
+	return false
+}
+
+func (x *FleetWorktree) GetOrphan() bool {
+	if x != nil {
+		return x.Orphan
+	}
+	return false
+}
+
+func (x *FleetWorktree) GetMissing() bool {
+	if x != nil {
+		return x.Missing
+	}
+	return false
+}
+
+type FleetWorktreeList struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Worktrees     []*FleetWorktree       `protobuf:"bytes,1,rep,name=worktrees,proto3" json:"worktrees,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetWorktreeList) Reset() {
+	*x = FleetWorktreeList{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetWorktreeList) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetWorktreeList) ProtoMessage() {}
+
+func (x *FleetWorktreeList) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetWorktreeList.ProtoReflect.Descriptor instead.
+func (*FleetWorktreeList) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *FleetWorktreeList) GetWorktrees() []*FleetWorktree {
+	if x != nil {
+		return x.Worktrees
+	}
+	return nil
+}
+
+// One project's spending, for the cost view.
+type FleetProjectCost struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	ProjectId string                 `protobuf:"bytes,1,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	Name      string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Today     *FleetUsage            `protobuf:"bytes,3,opt,name=today,proto3" json:"today,omitempty"`
+	// Usage over the requested period.
+	Period *FleetUsage `protobuf:"bytes,4,opt,name=period,proto3" json:"period,omitempty"`
+	// The limits in force, in US dollars. Zero means no limit.
+	DailyLimitUsd float64 `protobuf:"fixed64,5,opt,name=daily_limit_usd,json=dailyLimitUsd,proto3" json:"daily_limit_usd,omitempty"`
+	TaskLimitUsd  float64 `protobuf:"fixed64,6,opt,name=task_limit_usd,json=taskLimitUsd,proto3" json:"task_limit_usd,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetProjectCost) Reset() {
+	*x = FleetProjectCost{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetProjectCost) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetProjectCost) ProtoMessage() {}
+
+func (x *FleetProjectCost) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetProjectCost.ProtoReflect.Descriptor instead.
+func (*FleetProjectCost) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *FleetProjectCost) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *FleetProjectCost) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *FleetProjectCost) GetToday() *FleetUsage {
+	if x != nil {
+		return x.Today
+	}
+	return nil
+}
+
+func (x *FleetProjectCost) GetPeriod() *FleetUsage {
+	if x != nil {
+		return x.Period
+	}
+	return nil
+}
+
+func (x *FleetProjectCost) GetDailyLimitUsd() float64 {
+	if x != nil {
+		return x.DailyLimitUsd
+	}
+	return 0
+}
+
+func (x *FleetProjectCost) GetTaskLimitUsd() float64 {
+	if x != nil {
+		return x.TaskLimitUsd
+	}
+	return 0
+}
+
+// Spending by project and task, with the limits it is measured against.
+type FleetCosts struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	DayStart    *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=day_start,json=dayStart,proto3" json:"day_start,omitempty"`
+	PeriodStart *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=period_start,json=periodStart,proto3" json:"period_start,omitempty"`
+	Today       *FleetUsage            `protobuf:"bytes,3,opt,name=today,proto3" json:"today,omitempty"`
+	Period      *FleetUsage            `protobuf:"bytes,4,opt,name=period,proto3" json:"period,omitempty"`
+	// The fleet-wide daily limit, in US dollars. Zero means no limit.
+	DailyLimitUsd float64             `protobuf:"fixed64,5,opt,name=daily_limit_usd,json=dailyLimitUsd,proto3" json:"daily_limit_usd,omitempty"`
+	Projects      []*FleetProjectCost `protobuf:"bytes,6,rep,name=projects,proto3" json:"projects,omitempty"`
+	// The most expensive tasks created in the period, costliest first.
+	Tasks []*FleetTask `protobuf:"bytes,7,rep,name=tasks,proto3" json:"tasks,omitempty"`
+	// Tasks stopped because a budget was reached, newest first.
+	Overruns      []*FleetTask `protobuf:"bytes,8,rep,name=overruns,proto3" json:"overruns,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetCosts) Reset() {
+	*x = FleetCosts{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetCosts) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetCosts) ProtoMessage() {}
+
+func (x *FleetCosts) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetCosts.ProtoReflect.Descriptor instead.
+func (*FleetCosts) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *FleetCosts) GetDayStart() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DayStart
+	}
+	return nil
+}
+
+func (x *FleetCosts) GetPeriodStart() *timestamppb.Timestamp {
+	if x != nil {
+		return x.PeriodStart
+	}
+	return nil
+}
+
+func (x *FleetCosts) GetToday() *FleetUsage {
+	if x != nil {
+		return x.Today
+	}
+	return nil
+}
+
+func (x *FleetCosts) GetPeriod() *FleetUsage {
+	if x != nil {
+		return x.Period
+	}
+	return nil
+}
+
+func (x *FleetCosts) GetDailyLimitUsd() float64 {
+	if x != nil {
+		return x.DailyLimitUsd
+	}
+	return 0
+}
+
+func (x *FleetCosts) GetProjects() []*FleetProjectCost {
+	if x != nil {
+		return x.Projects
+	}
+	return nil
+}
+
+func (x *FleetCosts) GetTasks() []*FleetTask {
+	if x != nil {
+		return x.Tasks
+	}
+	return nil
+}
+
+func (x *FleetCosts) GetOverruns() []*FleetTask {
+	if x != nil {
+		return x.Overruns
+	}
+	return nil
+}
+
 // The error body of every /api/fleet/* endpoint.
 type FleetError struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1790,7 +2252,7 @@ type FleetError struct {
 
 func (x *FleetError) Reset() {
 	*x = FleetError{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[21]
+	mi := &file_alice_v1_fleet_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1802,7 +2264,7 @@ func (x *FleetError) String() string {
 func (*FleetError) ProtoMessage() {}
 
 func (x *FleetError) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[21]
+	mi := &file_alice_v1_fleet_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1815,7 +2277,7 @@ func (x *FleetError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetError.ProtoReflect.Descriptor instead.
 func (*FleetError) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{21}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *FleetError) GetError() string {
@@ -2010,7 +2472,46 @@ const file_alice_v1_fleet_proto_rawDesc = "" +
 	"trust_mode\x18\x03 \x01(\tR\ttrustMode\x12'\n" +
 	"\x0fverify_commands\x18\x04 \x03(\tR\x0everifyCommands\x12%\n" +
 	"\x0emax_concurrent\x18\x05 \x01(\x05R\rmaxConcurrent\x124\n" +
-	"\x06budget\x18\x06 \x01(\v2\x1c.alice.v1.FleetProjectBudgetR\x06budget\"6\n" +
+	"\x06budget\x18\x06 \x01(\v2\x1c.alice.v1.FleetProjectBudgetR\x06budget\"\x9b\x01\n" +
+	"\n" +
+	"FleetIssue\x12\x16\n" +
+	"\x06number\x18\x01 \x01(\x05R\x06number\x12\x14\n" +
+	"\x05title\x18\x02 \x01(\tR\x05title\x12\x16\n" +
+	"\x06labels\x18\x03 \x03(\tR\x06labels\x12\x1c\n" +
+	"\tmilestone\x18\x04 \x01(\tR\tmilestone\x12\x10\n" +
+	"\x03url\x18\x05 \x01(\tR\x03url\x12\x17\n" +
+	"\atask_id\x18\x06 \x01(\tR\x06taskId\">\n" +
+	"\x0eFleetIssueList\x12,\n" +
+	"\x06issues\x18\x01 \x03(\v2\x14.alice.v1.FleetIssueR\x06issues\"\xbd\x01\n" +
+	"\rFleetWorktree\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x16\n" +
+	"\x06branch\x18\x02 \x01(\tR\x06branch\x12\x17\n" +
+	"\atask_id\x18\x03 \x01(\tR\x06taskId\x12\x1f\n" +
+	"\vtask_status\x18\x04 \x01(\tR\n" +
+	"taskStatus\x12\x14\n" +
+	"\x05dirty\x18\x05 \x01(\bR\x05dirty\x12\x16\n" +
+	"\x06orphan\x18\x06 \x01(\bR\x06orphan\x12\x18\n" +
+	"\amissing\x18\a \x01(\bR\amissing\"J\n" +
+	"\x11FleetWorktreeList\x125\n" +
+	"\tworktrees\x18\x01 \x03(\v2\x17.alice.v1.FleetWorktreeR\tworktrees\"\xed\x01\n" +
+	"\x10FleetProjectCost\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x01 \x01(\tR\tprojectId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12*\n" +
+	"\x05today\x18\x03 \x01(\v2\x14.alice.v1.FleetUsageR\x05today\x12,\n" +
+	"\x06period\x18\x04 \x01(\v2\x14.alice.v1.FleetUsageR\x06period\x12&\n" +
+	"\x0fdaily_limit_usd\x18\x05 \x01(\x01R\rdailyLimitUsd\x12$\n" +
+	"\x0etask_limit_usd\x18\x06 \x01(\x01R\ftaskLimitUsd\"\x9a\x03\n" +
+	"\n" +
+	"FleetCosts\x127\n" +
+	"\tday_start\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\bdayStart\x12=\n" +
+	"\fperiod_start\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\vperiodStart\x12*\n" +
+	"\x05today\x18\x03 \x01(\v2\x14.alice.v1.FleetUsageR\x05today\x12,\n" +
+	"\x06period\x18\x04 \x01(\v2\x14.alice.v1.FleetUsageR\x06period\x12&\n" +
+	"\x0fdaily_limit_usd\x18\x05 \x01(\x01R\rdailyLimitUsd\x126\n" +
+	"\bprojects\x18\x06 \x03(\v2\x1a.alice.v1.FleetProjectCostR\bprojects\x12)\n" +
+	"\x05tasks\x18\a \x03(\v2\x13.alice.v1.FleetTaskR\x05tasks\x12/\n" +
+	"\boverruns\x18\b \x03(\v2\x13.alice.v1.FleetTaskR\boverruns\"6\n" +
 	"\n" +
 	"FleetError\x12\x14\n" +
 	"\x05error\x18\x01 \x01(\tR\x05error\x12\x12\n" +
@@ -2028,7 +2529,7 @@ func file_alice_v1_fleet_proto_rawDescGZIP() []byte {
 	return file_alice_v1_fleet_proto_rawDescData
 }
 
-var file_alice_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
+var file_alice_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_alice_v1_fleet_proto_goTypes = []any{
 	(*FleetTopic)(nil),            // 0: alice.v1.FleetTopic
 	(*FleetProjectBudget)(nil),    // 1: alice.v1.FleetProjectBudget
@@ -2051,40 +2552,57 @@ var file_alice_v1_fleet_proto_goTypes = []any{
 	(*FleetReplyRequest)(nil),     // 18: alice.v1.FleetReplyRequest
 	(*FleetCancelRequest)(nil),    // 19: alice.v1.FleetCancelRequest
 	(*FleetProjectRequest)(nil),   // 20: alice.v1.FleetProjectRequest
-	(*FleetError)(nil),            // 21: alice.v1.FleetError
-	(*timestamppb.Timestamp)(nil), // 22: google.protobuf.Timestamp
+	(*FleetIssue)(nil),            // 21: alice.v1.FleetIssue
+	(*FleetIssueList)(nil),        // 22: alice.v1.FleetIssueList
+	(*FleetWorktree)(nil),         // 23: alice.v1.FleetWorktree
+	(*FleetWorktreeList)(nil),     // 24: alice.v1.FleetWorktreeList
+	(*FleetProjectCost)(nil),      // 25: alice.v1.FleetProjectCost
+	(*FleetCosts)(nil),            // 26: alice.v1.FleetCosts
+	(*FleetError)(nil),            // 27: alice.v1.FleetError
+	(*timestamppb.Timestamp)(nil), // 28: google.protobuf.Timestamp
 }
 var file_alice_v1_fleet_proto_depIdxs = []int32{
 	1,  // 0: alice.v1.FleetProject.budget:type_name -> alice.v1.FleetProjectBudget
 	0,  // 1: alice.v1.FleetProject.topics:type_name -> alice.v1.FleetTopic
-	22, // 2: alice.v1.FleetProject.created_at:type_name -> google.protobuf.Timestamp
-	22, // 3: alice.v1.FleetProject.updated_at:type_name -> google.protobuf.Timestamp
+	28, // 2: alice.v1.FleetProject.created_at:type_name -> google.protobuf.Timestamp
+	28, // 3: alice.v1.FleetProject.updated_at:type_name -> google.protobuf.Timestamp
 	2,  // 4: alice.v1.FleetProjectList.projects:type_name -> alice.v1.FleetProject
-	22, // 5: alice.v1.FleetTask.created_at:type_name -> google.protobuf.Timestamp
-	22, // 6: alice.v1.FleetTask.updated_at:type_name -> google.protobuf.Timestamp
-	22, // 7: alice.v1.FleetTask.started_at:type_name -> google.protobuf.Timestamp
-	22, // 8: alice.v1.FleetTask.finished_at:type_name -> google.protobuf.Timestamp
-	22, // 9: alice.v1.FleetTask.last_activity_at:type_name -> google.protobuf.Timestamp
+	28, // 5: alice.v1.FleetTask.created_at:type_name -> google.protobuf.Timestamp
+	28, // 6: alice.v1.FleetTask.updated_at:type_name -> google.protobuf.Timestamp
+	28, // 7: alice.v1.FleetTask.started_at:type_name -> google.protobuf.Timestamp
+	28, // 8: alice.v1.FleetTask.finished_at:type_name -> google.protobuf.Timestamp
+	28, // 9: alice.v1.FleetTask.last_activity_at:type_name -> google.protobuf.Timestamp
 	4,  // 10: alice.v1.FleetTaskList.tasks:type_name -> alice.v1.FleetTask
-	22, // 11: alice.v1.FleetEvent.created_at:type_name -> google.protobuf.Timestamp
+	28, // 11: alice.v1.FleetEvent.created_at:type_name -> google.protobuf.Timestamp
 	6,  // 12: alice.v1.FleetEventList.events:type_name -> alice.v1.FleetEvent
-	22, // 13: alice.v1.FleetVerification.created_at:type_name -> google.protobuf.Timestamp
+	28, // 13: alice.v1.FleetVerification.created_at:type_name -> google.protobuf.Timestamp
 	8,  // 14: alice.v1.FleetVerificationList.verifications:type_name -> alice.v1.FleetVerification
 	11, // 15: alice.v1.FleetProjectDigest.counts:type_name -> alice.v1.FleetCounts
 	12, // 16: alice.v1.FleetProjectDigest.today:type_name -> alice.v1.FleetUsage
-	22, // 17: alice.v1.FleetDigest.generated_at:type_name -> google.protobuf.Timestamp
-	22, // 18: alice.v1.FleetDigest.day_start:type_name -> google.protobuf.Timestamp
+	28, // 17: alice.v1.FleetDigest.generated_at:type_name -> google.protobuf.Timestamp
+	28, // 18: alice.v1.FleetDigest.day_start:type_name -> google.protobuf.Timestamp
 	13, // 19: alice.v1.FleetDigest.projects:type_name -> alice.v1.FleetProjectDigest
 	11, // 20: alice.v1.FleetDigest.totals:type_name -> alice.v1.FleetCounts
 	12, // 21: alice.v1.FleetDigest.today:type_name -> alice.v1.FleetUsage
-	22, // 22: alice.v1.FleetAuditEntry.created_at:type_name -> google.protobuf.Timestamp
+	28, // 22: alice.v1.FleetAuditEntry.created_at:type_name -> google.protobuf.Timestamp
 	15, // 23: alice.v1.FleetAuditList.entries:type_name -> alice.v1.FleetAuditEntry
 	1,  // 24: alice.v1.FleetProjectRequest.budget:type_name -> alice.v1.FleetProjectBudget
-	25, // [25:25] is the sub-list for method output_type
-	25, // [25:25] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	21, // 25: alice.v1.FleetIssueList.issues:type_name -> alice.v1.FleetIssue
+	23, // 26: alice.v1.FleetWorktreeList.worktrees:type_name -> alice.v1.FleetWorktree
+	12, // 27: alice.v1.FleetProjectCost.today:type_name -> alice.v1.FleetUsage
+	12, // 28: alice.v1.FleetProjectCost.period:type_name -> alice.v1.FleetUsage
+	28, // 29: alice.v1.FleetCosts.day_start:type_name -> google.protobuf.Timestamp
+	28, // 30: alice.v1.FleetCosts.period_start:type_name -> google.protobuf.Timestamp
+	12, // 31: alice.v1.FleetCosts.today:type_name -> alice.v1.FleetUsage
+	12, // 32: alice.v1.FleetCosts.period:type_name -> alice.v1.FleetUsage
+	25, // 33: alice.v1.FleetCosts.projects:type_name -> alice.v1.FleetProjectCost
+	4,  // 34: alice.v1.FleetCosts.tasks:type_name -> alice.v1.FleetTask
+	4,  // 35: alice.v1.FleetCosts.overruns:type_name -> alice.v1.FleetTask
+	36, // [36:36] is the sub-list for method output_type
+	36, // [36:36] is the sub-list for method input_type
+	36, // [36:36] is the sub-list for extension type_name
+	36, // [36:36] is the sub-list for extension extendee
+	0,  // [0:36] is the sub-list for field type_name
 }
 
 func init() { file_alice_v1_fleet_proto_init() }
@@ -2098,7 +2616,7 @@ func file_alice_v1_fleet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_alice_v1_fleet_proto_rawDesc), len(file_alice_v1_fleet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   22,
+			NumMessages:   28,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -1,6 +1,6 @@
 // Pure helpers for the fleet pages: no fetching, no React.
 
-import type { DiffFile, ToolExecution } from "@/types/alice";
+import type { DecisionLog, DiffFile, ToolExecution } from "@/types/alice";
 import type {
   FleetEvent,
   FleetLiveness,
@@ -323,4 +323,52 @@ export function groupByColumn(tasks: FleetTask[]): Record<string, FleetTask[]> {
     if (column) out[column.key].push(task);
   }
   return out;
+}
+
+/**
+ * Splits a task's history into its runs, each in the shape the existing
+ * timeline entry draws: when it started, what it was told, the tools it
+ * called, how long it took and what it cost.
+ */
+export function runsFromEvents(task: FleetTask, events: FleetEvent[]): DecisionLog[] {
+  const runs: { started: FleetEvent; events: FleetEvent[] }[] = [];
+  for (const event of events) {
+    if (event.type === "run.started") runs.push({ started: event, events: [] });
+    else if (runs.length > 0) runs[runs.length - 1].events.push(event);
+  }
+  return runs.map((run, index) => {
+    const start = parsePayload(run.started);
+    const result = [...run.events].reverse().find((e) => e.type === "agent.result");
+    const totals = result ? parsePayload(result) : {};
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+    // A run ends at its result, or at the status change that follows it.
+    const last = result ?? [...run.events].reverse().find((e) => e.type === "status") ?? run.events[run.events.length - 1];
+    const startedMs = Date.parse(run.started.created_at ?? "");
+    const endedMs = Date.parse(last?.created_at ?? "");
+    const instruction = typeof start.instruction === "string" ? start.instruction.trim() : "";
+    const texts = run.events.filter((e) => e.type === "agent.text");
+    const lastText = texts.length > 0 ? parsePayload(texts[texts.length - 1]).text : "";
+    return {
+      id: `${task.id}-run-${index + 1}`,
+      timestamp: run.started.created_at ?? "",
+      session_id: task.session_id,
+      project_path: task.worktree_path,
+      // The first run works on the goal; later ones on what the owner said.
+      user_prompt: instruction || (index === 0 ? firstLine(task.goal) : "…"),
+      agent_response: typeof lastText === "string" ? lastText : "",
+      tool_calls: toolExecutionsFromEvents(run.events),
+      task_type: task.shape,
+      outcome: { success: totals.is_error !== true } as DecisionLog["outcome"],
+      duration_ms:
+        num(totals.duration_ms) ||
+        (Number.isFinite(startedMs) && Number.isFinite(endedMs) ? Math.max(0, endedMs - startedMs) : 0),
+      tokens_input: num(totals.input_tokens),
+      tokens_output: num(totals.output_tokens),
+      cost_usd: num(totals.cost_usd),
+      chat_id: 0,
+      thread_id: 0,
+      source: "fleet",
+      model: task.model,
+    } as DecisionLog;
+  });
 }

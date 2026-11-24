@@ -2,16 +2,19 @@
 
 import type {
   FleetAuditEntry,
+  FleetCosts,
   FleetDiff,
   FleetDigest,
   FleetDispatchRequest,
   FleetErrorBody,
   FleetEventList,
+  FleetIssue,
   FleetProject,
   FleetProjectRequest,
   FleetTask,
   FleetTaskAction,
   FleetVerification,
+  FleetWorktree,
 } from "@/types/fleet";
 
 const TOKEN_KEY = "alice-api-token";
@@ -124,6 +127,9 @@ export const fleetApi = {
       "GET",
       `/api/fleet/tasks/${enc(id)}/events${query({ after_id: params.afterId, limit: params.limit, types: params.types?.join(",") })}`,
     ),
+  /** The task's most recent event of one type, e.g. the last thing its agent said. */
+  getLastTaskEvent: async (id: string, type: string) =>
+    (await request<FleetEventList>("GET", `/api/fleet/tasks/${enc(id)}/events${query({ last_of: type })}`)).events?.[0] ?? null,
   getEvents: (params: { afterId?: number; limit?: number; types?: string[] } = {}) =>
     request<FleetEventList>(
       "GET",
@@ -133,6 +139,16 @@ export const fleetApi = {
   getTaskVerifications: async (id: string) =>
     (await request<{ verifications?: FleetVerification[] }>("GET", `/api/fleet/tasks/${enc(id)}/verifications`))
       .verifications ?? [],
+
+  listProjectIssues: async (id: string) =>
+    (await request<{ issues?: FleetIssue[] }>("GET", `/api/fleet/projects/${enc(id)}/issues`)).issues ?? [],
+  listProjectWorktrees: async (id: string) =>
+    (await request<{ worktrees?: FleetWorktree[] }>("GET", `/api/fleet/projects/${enc(id)}/worktrees`)).worktrees ?? [],
+  /** Runs the project's saved verify commands once and returns each outcome. */
+  tryVerify: async (id: string) =>
+    (await request<{ verifications?: FleetVerification[] }>("POST", `/api/fleet/projects/${enc(id)}/verify`, {}, true))
+      .verifications ?? [],
+  getCosts: (days = 7) => request<FleetCosts>("GET", `/api/fleet/costs${query({ days })}`),
 
   getAudit: async (params: { project?: string; task?: string; actor?: string; limit?: number; beforeId?: number } = {}) =>
     (

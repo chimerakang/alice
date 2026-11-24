@@ -73,11 +73,19 @@ func (wi *WebInterface) registerFleetRoutes(mux *http.ServeMux) {
 	command("PUT /api/fleet/projects/{id}", wi.fleetUpdateProject)
 	command("POST /api/fleet/tasks", wi.fleetDispatchTask)
 	command("POST /api/fleet/tasks/{id}/{action}", wi.fleetTaskAction)
+
+	wi.registerFleetProjectRoutes(mux)
 }
 
 // fleetHandler wraps a fleet endpoint: recovery, the token check for
 // commands, the fleet being enabled, the timeout, and the JSON reply.
 func (wi *WebInterface) fleetHandler(isCommand bool, h func(context.Context, *FleetService, *http.Request) (proto.Message, error)) http.HandlerFunc {
+	return wi.fleetHandlerWithin(isCommand, fleetWebTimeout, h)
+}
+
+// fleetHandlerWithin is fleetHandler with its own time limit, for the few
+// requests that legitimately take longer.
+func (wi *WebInterface) fleetHandlerWithin(isCommand bool, timeout time.Duration, h func(context.Context, *FleetService, *http.Request) (proto.Message, error)) http.HandlerFunc {
 	return wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		if isCommand && wi.apiToken != "" && r.Header.Get("Authorization") != "Bearer "+wi.apiToken {
 			writeFleetError(w, http.StatusUnauthorized, "unauthorized", "a valid API token is required")
@@ -89,8 +97,8 @@ func (wi *WebInterface) fleetHandler(isCommand bool, h func(context.Context, *Fl
 			return
 		}
 		// The server's write timeout is sized for quick reads.
-		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(fleetWebTimeout + 5*time.Second))
-		ctx, cancel := context.WithTimeout(r.Context(), fleetWebTimeout)
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(timeout + 5*time.Second))
+		ctx, cancel := context.WithTimeout(r.Context(), timeout)
 		defer cancel()
 
 		msg, err := h(ctx, svc, r)
@@ -165,6 +173,10 @@ func fleetErrorStatus(err error) (int, string) {
 		errors.Is(err, fleet.ErrIssueClosed), errors.Is(err, fleet.ErrNothingToApprove),
 		errors.Is(err, fleet.ErrNotFastForward):
 		return http.StatusConflict, "conflict"
+	case errors.Is(err, errTasksNoGitHubRepo):
+		return http.StatusConflict, "no_github_repo"
+	case errors.Is(err, errTasksGitHubAuthRequired):
+		return http.StatusBadGateway, "github_auth"
 	case errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout, "timeout"
 	}
@@ -487,8 +499,23 @@ func fleetEventPage(ctx context.Context, svc *FleetService, r *http.Request, tas
 
 func (wi *WebInterface) fleetTaskEvents(ctx context.Context, svc *FleetService, r *http.Request) (proto.Message, error) {
 	id := r.PathValue("id")
-	if _, err := svc.Commander.GetTask(ctx, id); err != nil {
+	task, err := svc.Commander.GetTask(ctx, id)
+	if err != nil {
 		return nil, err
+	}
+	// last_of=<type> asks only for the task's most recent event of a type,
+	// e.g. the last thing its agent said, however long its history is.
+	if kind := strings.TrimSpace(r.URL.Query().Get("last_of")); kind != "" {
+		out := &alicev1.FleetEventList{}
+		ev, ok, err := svc.Store.LastEvent(ctx, id, kind)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out.Events = append(out.Events, fleetEventProto(ev, task.ProjectID))
+			out.NextAfterId = float64(ev.ID)
+		}
+		return out, nil
 	}
 	return fleetEventPage(ctx, svc, r, id)
 }

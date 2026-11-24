@@ -12,7 +12,12 @@
     "performance": "Performance",
     "runtime": "Runtime",
     "memory": "Memory",
-    "security": "Security"
+    "security": "Security",
+    "section_fleet": "Fleet",
+    "fleet": "Fleet board",
+    "fleet_inbox": "Decision inbox",
+    "fleet_projects": "Projects",
+    "menu": "Menu"
   },
   "common": {
     "connected": "Connected",
@@ -428,20 +433,20 @@
       "partial_rate": "Partial Rate",
       "partial_rate_detail": "Best granularity {{granularity}}"
     },
-  "sections": {
-    "decomposition_effect": "Decomposition Effect",
-    "review_scoreboard": "Review Scoreboard",
-    "alice_insights": "Alice Insights"
-  },
-  "time_windows": {
-    "7d": "7d",
-    "30d": "30d",
-    "90d": "90d"
-  },
-  "charts": {
-    "granularity_distribution": "Granularity Distribution",
-    "granularity_vs_score": "Granularity vs Score",
-    "weekly_sub_task_trend": "Weekly Sub-task Trend",
+    "sections": {
+      "decomposition_effect": "Decomposition Effect",
+      "review_scoreboard": "Review Scoreboard",
+      "alice_insights": "Alice Insights"
+    },
+    "time_windows": {
+      "7d": "7d",
+      "30d": "30d",
+      "90d": "90d"
+    },
+    "charts": {
+      "granularity_distribution": "Granularity Distribution",
+      "granularity_vs_score": "Granularity vs Score",
+      "weekly_sub_task_trend": "Weekly Sub-task Trend",
       "description_length_vs_fail_rate": "Description Length vs Fail Rate",
       "pass_partial_fail_trend": "Pass / Partial / Fail Trend",
       "verdict_distribution": "Verdict Distribution",
@@ -847,5 +852,178 @@
       "no_rendered_preview": "No rendered preview loaded."
     },
     "continue_placeholder": "Continue with #143"
+  },
+  "fleet": {
+    "unavailable": {
+      "disabled_title": "The fleet is not enabled",
+      "disabled_body": "Set enabled to true in the fleet block of config.json and restart Alice; every project's tasks will then show here.",
+      "error_title": "The fleet's data could not be loaded"
+    },
+    "liveness": {
+      "unknown": "Unknown (no signal, which is not the same as idle)",
+      "busy": "Agent running",
+      "idle": "Idle",
+      "dead": "Process is gone"
+    },
+    "status": {
+      "queued": "Queued",
+      "running": "Running",
+      "verifying": "Verifying",
+      "review_ready": "Review ready",
+      "needs_decision": "Needs decision",
+      "done": "Done",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "shape": {
+      "ship": "Ship",
+      "scout": "Scout"
+    },
+    "trust": {
+      "local-only": "local-only",
+      "direct-pr": "direct-pr",
+      "no-mistakes": "no-mistakes"
+    },
+    "trust_help": {
+      "local-only": "After checks pass the work is committed on a local branch and nothing is pushed; approving fast-forwards the default branch.",
+      "direct-pr": "After checks pass the branch is pushed and a pull request opened, and the task is done; merging is up to you.",
+      "no-mistakes": "After checks pass the branch is pushed and a pull request opened; it merges only once you approve."
+    },
+    "columns": {
+      "queued": "Queued",
+      "active": "In progress",
+      "review_ready": "Review ready",
+      "needs_decision": "Needs decision",
+      "finished": "Finished"
+    },
+    "counts": {
+      "running": "In progress",
+      "queued": "Queued",
+      "review_ready": "Review",
+      "needs_decision": "Decision",
+      "done_today": "Done today",
+      "failed_today": "Failed today",
+      "cost_today": "Cost today"
+    },
+    "board": {
+      "title": "Fleet board",
+      "subtitle": "Every project's tasks, in columns by status, updated live.",
+      "project_filter": "Filter by project",
+      "all_projects": "All projects",
+      "inbox": "Waiting on you: {{count}}",
+      "dispatch": "Dispatch",
+      "no_projects": "No projects are registered yet.",
+      "go_projects": "Go to Projects",
+      "empty_column": "No tasks",
+      "show_all": "Show all {{count}}"
+    },
+    "actions": {
+      "approve": "Approve",
+      "merge": "Merge",
+      "pass": "Wave through",
+      "retry": "Retry",
+      "reply": "Send instructions",
+      "cancel": "Cancel task",
+      "discard": "Discard",
+      "working": "Working…",
+      "reply_placeholder_review": "What should change? It continues in the same session.",
+      "reply_placeholder_blocked": "Answer the agent's question, or add instructions. Leave empty to say \"carry on\".",
+      "send_reply": "Send",
+      "carry_on": "Carry on"
+    },
+    "confirm": {
+      "cancel_title": "Cancel this task?",
+      "cancel_body": "A running agent is stopped. The checkout and the branch are kept.",
+      "discard_title": "Discard this task's work?",
+      "discard_body": "The checkout is removed, uncommitted changes included. The branch is kept, so committed work can still be recovered by hand.",
+      "keep": "Not now"
+    },
+    "token": {
+      "placeholder": "API token",
+      "save": "Save token",
+      "hint": "This Alice has a web_api_token set, and commands need it. The token is kept in this browser only. After saving, press the button again."
+    },
+    "dispatch": {
+      "title": "Dispatch tasks",
+      "project": "Project",
+      "shape": "Shape",
+      "model": "Model",
+      "model_default": "default",
+      "budget": "Budget cap (USD)",
+      "budget_default": "use the default",
+      "mode_single": "One task",
+      "mode_batch": "Batch",
+      "mode_issues": "From GitHub issues",
+      "goal_placeholder_ship": "What should be done? E.g. fix the flaky login test",
+      "goal_placeholder_scout": "What should be looked into? The result is a report; no code is changed.",
+      "batch_placeholder": "One task per line:\nUpdate the README\nAdd unit tests\nFix lint",
+      "batch_hint": "One task per line; leading numbers and bullets are removed. At most {{max}} at once.",
+      "no_issues": "This project has no open issues.",
+      "issue_taken": "being handled by task {{id}}",
+      "done": "Dispatched {{count}} task(s).",
+      "submit": "Dispatch {{count}} task(s)",
+      "error_project": "Pick a project first.",
+      "error_empty": "There is nothing to dispatch.",
+      "error_budget": "The budget must be an amount above 0.",
+      "error_too_many": "At most {{max}} tasks can be dispatched at once."
+    },
+    "task": {
+      "back": "Back to the board",
+      "not_found": "Task {{id}} was not found.",
+      "elapsed": "Elapsed",
+      "cost": "Cost",
+      "tokens": "Tokens (in / out)",
+      "model": "Model",
+      "branch": "Branch",
+      "timeline": "Timeline",
+      "no_runs": "The agent has not started yet.",
+      "diff": "Changes (against the base branch)",
+      "diff_truncated": "The diff is too large; only its beginning is shown.",
+      "no_diff": "No changes yet.",
+      "untracked": "New files not yet added to git:",
+      "checks": "Checks",
+      "no_checks": "No checks have run yet.",
+      "attempt": "round {{n}}",
+      "exit_code": "exit {{code}}",
+      "timed_out": "timed out"
+    },
+    "inbox": {
+      "title": "Decision inbox",
+      "subtitle": "Everything waiting on you, with what you need to decide, right here.",
+      "empty": "Nothing is waiting on you.",
+      "waiting": "waiting {{time}}",
+      "open": "Details"
+    },
+    "projects": {
+      "title": "Projects",
+      "subtitle": "Register repositories and set how the fleet treats each.",
+      "path_placeholder": "/path/to/repository",
+      "register": "Register",
+      "register_hint": "The path must be a git repository on the machine Alice runs on. A project can also be registered with /project in a Telegram topic.",
+      "empty": "No projects are registered yet.",
+      "branch": "Default branch",
+      "remote": "Remote",
+      "no_remote": "none",
+      "topics": "Bound Telegram topics",
+      "no_topics": "none",
+      "name": "Name",
+      "trust_mode": "Trust mode",
+      "max_concurrent": "Max concurrent",
+      "task_budget": "Per-task budget (USD)",
+      "daily_budget": "Daily budget (USD)",
+      "budget_default": "use the default",
+      "verify_commands": "Verify commands (one per line, judged by exit code)",
+      "saved": "Saved.",
+      "try_verify": "Try the verify commands",
+      "trying": "Running…",
+      "try_save_first": "Save your changes first; a trial run only executes the saved commands.",
+      "worktrees": "Checkouts",
+      "no_worktrees": "No task checkouts.",
+      "dirty": "uncommitted changes",
+      "orphan": "orphan",
+      "missing": "directory missing",
+      "error_concurrent": "Max concurrent must be a whole number of at least 1.",
+      "error_budget": "A budget must be 0 or more; leave it empty to use the default."
+    }
   }
 }

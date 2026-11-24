@@ -220,3 +220,40 @@ describe("parseBatchGoals", () => {
     expect(parseBatchGoals("3 retries are enough")).toEqual(["3 retries are enough"]);
   });
 });
+
+describe("runsFromEvents", () => {
+  it("splits a task's history into runs for the timeline", async () => {
+    const { runsFromEvents } = await import("./fleet");
+    const t = task({ id: "abc", goal: "Fix the login\nmore detail", session_id: "s1", model: "opus" });
+    const runs = runsFromEvents(t, [
+      event(1, "status", { to: "queued" }, "2026-01-01T10:00:00Z"),
+      event(2, "run.started", {}, "2026-01-01T10:00:05Z"),
+      event(3, "agent.tool_use", { id: "a", tool: "Read", input: { file_path: "x.go" } }, "2026-01-01T10:00:06Z"),
+      event(4, "agent.tool_result", { tool_use_id: "a" }, "2026-01-01T10:00:07Z"),
+      event(5, "agent.text", { text: "Which approach, A or B?" }, "2026-01-01T10:00:08Z"),
+      event(6, "agent.result", { is_error: false, duration_ms: 3000, input_tokens: 100, output_tokens: 40, cost_usd: 0.02 }, "2026-01-01T10:00:08Z"),
+      event(7, "status", { from: "running", to: "needs_decision" }, "2026-01-01T10:00:09Z"),
+      event(8, "run.started", { instruction: "Use B" }, "2026-01-01T10:05:00Z"),
+      event(9, "agent.tool_use", { id: "b", tool: "Edit", input: { file_path: "y.go" } }, "2026-01-01T10:05:01Z"),
+      event(10, "status", { from: "running", to: "failed" }, "2026-01-01T10:05:31Z"),
+    ]);
+    expect(runs).toHaveLength(2);
+    expect(runs[0]).toMatchObject({
+      id: "abc-run-1", timestamp: "2026-01-01T10:00:05Z", user_prompt: "Fix the login",
+      agent_response: "Which approach, A or B?", duration_ms: 3000, tokens_input: 100, tokens_output: 40,
+      cost_usd: 0.02, source: "fleet", model: "opus",
+    });
+    expect(runs[0].outcome.success).toBe(true);
+    expect(runs[0].tool_calls.map((c) => c.tool_name)).toEqual(["Read"]);
+    // The second run is about what the owner said, and has no result: it
+    // ended at the status change, 31 seconds after it started.
+    expect(runs[1].user_prompt).toBe("Use B");
+    expect(runs[1].duration_ms).toBe(31000);
+    expect(runs[1].tool_calls.map((c) => [c.tool_name, String(c.status)])).toEqual([["Edit", "STATUS_RUNNING"]]);
+  });
+
+  it("returns nothing for a task that has not run", async () => {
+    const { runsFromEvents } = await import("./fleet");
+    expect(runsFromEvents(task({}), [event(1, "status", { to: "queued" })])).toEqual([]);
+  });
+});

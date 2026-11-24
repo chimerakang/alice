@@ -176,6 +176,46 @@ export interface FleetProjectRequest {
   budget?: FleetProjectBudget;
 }
 
+export interface FleetIssue {
+  number: number;
+  title: string;
+  labels: string[];
+  milestone: string;
+  url: string;
+  /** The unfinished task already working on this issue, if any. */
+  task_id: string;
+}
+
+export interface FleetWorktree {
+  path: string;
+  branch: string;
+  task_id: string;
+  task_status: string;
+  dirty: boolean;
+  orphan: boolean;
+  missing: boolean;
+}
+
+export interface FleetProjectCost {
+  project_id: string;
+  name: string;
+  today: FleetUsage | null;
+  period: FleetUsage | null;
+  daily_limit_usd: number;
+  task_limit_usd: number;
+}
+
+export interface FleetCosts {
+  day_start: string | null;
+  period_start: string | null;
+  today: FleetUsage | null;
+  period: FleetUsage | null;
+  daily_limit_usd: number;
+  projects: FleetProjectCost[];
+  tasks: FleetTask[];
+  overruns: FleetTask[];
+}
+
 export type FleetTaskAction =
   | "cancel"
   | "retry"

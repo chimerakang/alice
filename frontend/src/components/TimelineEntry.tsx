@@ -90,6 +90,14 @@ function ToolCallItem({ tool }: { tool: ToolExecution }) {
 
 function SourceBadge({ source }: { source?: string }) {
   const src = source || "telegram";
+  if (src === "fleet") {
+    // A run of a fleet task: it came from the fleet, whoever dispatched it.
+    return (
+      <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-primary/15 text-primary border border-primary/30">
+        Fleet
+      </span>
+    );
+  }
   if (src === "vscode") {
     return (
       <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-blue-500/15 text-blue-400 border border-blue-500/30">

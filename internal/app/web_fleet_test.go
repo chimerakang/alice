@@ -232,6 +232,18 @@ func TestFleetAPIEventsResumeFromACursor(t *testing.T) {
 	if life["next_after_id"].(float64) != seen[len(seen)-1] {
 		t.Errorf("next_after_id = %v, want the last event %v", life["next_after_id"], seen[len(seen)-1])
 	}
+	// The latest event of one type, without paging.
+	if _, err := e.svc.Store.AppendEvent(ctx, task.ID, fleet.EventAgentToolUse, map[string]string{"tool": "Edit"}); err != nil {
+		t.Fatal(err)
+	}
+	lastTool := list(t, e.get("/api/fleet/tasks/"+task.ID+"/events?last_of=agent.tool_use"), "events")
+	if len(lastTool) != 1 || lastTool[0]["payload_json"] != `{"tool":"Edit"}` {
+		t.Fatalf("last_of=agent.tool_use: %v", lastTool)
+	}
+	if none := list(t, e.get("/api/fleet/tasks/"+task.ID+"/events?last_of=agent.text"), "events"); len(none) != 0 {
+		t.Fatalf("last_of with no such event: %v", none)
+	}
+
 	if status, body := e.call(http.MethodGet, "/api/fleet/tasks/nosuchtask00/events", "", false); status != http.StatusNotFound {
 		t.Fatalf("events of an unknown task: %d %v", status, body)
 	}

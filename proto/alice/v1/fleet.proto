@@ -230,6 +230,67 @@ message FleetProjectRequest {
   FleetProjectBudget budget = 6;
 }
 
+// An open GitHub issue of a project, as offered for dispatch.
+message FleetIssue {
+  int32 number = 1;
+  string title = 2;
+  repeated string labels = 3;
+  string milestone = 4;
+  string url = 5;
+  // The unfinished task already working on this issue, if any.
+  string task_id = 6;
+}
+
+message FleetIssueList {
+  repeated FleetIssue issues = 1;
+}
+
+// A task checkout of a project.
+message FleetWorktree {
+  string path = 1;
+  string branch = 2;
+  // The task this checkout belongs to, when one is known.
+  string task_id = 3;
+  string task_status = 4;
+  // Uncommitted or untracked changes: work that removing it would lose.
+  bool dirty = 5;
+  // No unfinished task owns it.
+  bool orphan = 6;
+  // Git lists it but its directory is gone.
+  bool missing = 7;
+}
+
+message FleetWorktreeList {
+  repeated FleetWorktree worktrees = 1;
+}
+
+// One project's spending, for the cost view.
+message FleetProjectCost {
+  string project_id = 1;
+  string name = 2;
+  FleetUsage today = 3;
+  // Usage over the requested period.
+  FleetUsage period = 4;
+  // The limits in force, in US dollars. Zero means no limit.
+  double daily_limit_usd = 5;
+  double task_limit_usd = 6;
+}
+
+// Spending by project and task, with the limits it is measured against.
+message FleetCosts {
+  google.protobuf.Timestamp day_start = 1;
+  google.protobuf.Timestamp period_start = 2;
+  FleetUsage today = 3;
+  FleetUsage period = 4;
+  // The fleet-wide daily limit, in US dollars. Zero means no limit.
+  double daily_limit_usd = 5;
+  repeated FleetProjectCost projects = 6;
+  // The most expensive tasks created in the period, costliest first.
+  repeated FleetTask tasks = 7;
+  // Tasks stopped because a budget was reached, newest first.
+  repeated FleetTask overruns = 8;
+}
+
 // The error body of every /api/fleet/* endpoint.
 message FleetError {
   string error = 1;
