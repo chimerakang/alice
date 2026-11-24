@@ -273,13 +273,29 @@ func (wi *WebInterface) handleHealth(w http.ResponseWriter, r *http.Request) {
 	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
+		now := time.Now()
+		// Without a bot (API-only mode, tests) there is no poller to judge.
+		telegram, lastSuccess := "active", time.Time{}
+		if wi.bot != nil {
+			telegram, lastSuccess = wi.bot.pollHealth.snapshot(now)
+		}
+		health := "healthy"
+		if telegram != "active" {
+			health = "unhealthy"
+		}
 		status := map[string]interface{}{
-			"status":    "healthy",
-			"timestamp": time.Now(),
-			"telegram":  "active",
+			"status":    health,
+			"timestamp": now,
+			"telegram":  telegram,
 			"jobs":      globalJobTracker.Summary(),
 			"storage":   runtimeStorageHealth(),
 			"hermes":    runtimeHermesStatus(wi.bot),
+		}
+		if !lastSuccess.IsZero() {
+			status["telegram_last_success"] = lastSuccess
+		}
+		if health != "healthy" {
+			w.WriteHeader(http.StatusServiceUnavailable)
 		}
 
 		json.NewEncoder(w).Encode(status)

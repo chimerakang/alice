@@ -100,6 +100,9 @@ type Config struct {
 
 	// Hermes Settings
 	Hermes HermesConfig `json:"hermes"`
+
+	// Fleet Settings
+	Fleet FleetConfig `json:"fleet"`
 }
 
 // HermesConfig controls Hermes Brain-Executor mode settings.
@@ -923,6 +926,31 @@ func Main() {
 		RemindPendingPauses(appCtx, hermesStore, tgBot)
 	}
 
+	// Start the fleet if enabled. Nothing is built or started otherwise.
+	if config.Fleet.Enabled {
+		svc, err := NewFleetService(config.Fleet, fleetDatabase(), config.DatabasePath, config.Model)
+		if err == nil {
+			err = svc.Start(appCtx)
+		}
+		if err != nil {
+			log.Printf("⚠️ Warning: fleet disabled: %v", err)
+		} else {
+			globalFleet = svc
+			if err := tgBot.attachFleet(appCtx, svc, fleetDatabase()); err != nil {
+				log.Printf("⚠️ Warning: fleet task cards unavailable: %v", err)
+				tgBot.fleet = svc
+			}
+			if lister, ok := globalStorage.(topicProjectDirLister); ok {
+				if n, err := svc.BackfillTopicProjects(appCtx, lister); err != nil {
+					log.Printf("⚠️ Warning: fleet project backfill: %v", err)
+				} else if n > 0 {
+					log.Printf("   Fleet: registered %d project(s) from existing topics", n)
+				}
+			}
+			log.Printf("   Fleet: enabled (worktrees=%s, trust=%s)", svc.Config.WorktreeRoot, svc.TrustMode)
+		}
+	}
+
 	// Initialize Cron Scheduler
 	if config.EnablePersistence && globalStorage != nil {
 		globalCronScheduler = NewCronScheduler(tgBot, client)
@@ -1021,6 +1049,12 @@ func Main() {
 
 	cancelApp()
 	tgBot.Stop()
+
+	// Stop fleet agents before the database closes; their sessions are kept.
+	if globalFleet != nil {
+		globalFleet.Stop()
+		log.Printf("✅ Fleet stopped")
+	}
 
 	// Stop cron scheduler
 	if globalCronScheduler != nil {
