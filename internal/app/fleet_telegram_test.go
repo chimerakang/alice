@@ -280,6 +280,21 @@ func TestFleetLocaleKeys(t *testing.T) {
 	if len(used) == 0 {
 		t.Fatal("found no fleet message keys in the source")
 	}
+	// Keys that are built at run time rather than written out in a call.
+	for _, status := range fleet.AllStatuses {
+		used["fleet_status_"+string(status)] = true
+	}
+	for _, key := range []string{
+		"fleet_shape_ship", "fleet_shape_scout", "fleet_ship_usage", "fleet_scout_usage",
+		"fleet_card_meter", "fleet_card_action_queued", "fleet_card_action_running", "fleet_card_action_verifying",
+		"fleet_card_confirm_discard", "fleet_btn_cancel", "fleet_btn_retry", "fleet_btn_approve", "fleet_btn_merge",
+		"fleet_btn_discard", "fleet_btn_discard_confirm", "fleet_btn_back", "fleet_btn_details",
+		"fleet_cb_unknown", "fleet_cb_confirm", "fleet_cb_cancel", "fleet_cb_retry", "fleet_cb_approve",
+		"fleet_cb_merge", "fleet_cb_discard", "fleet_disabled",
+		errFleetDispatchFlagValue.Error(), errFleetDispatchBudget.Error(), errFleetDispatchDuplicated.Error(),
+	} {
+		used[key] = true
+	}
 	for key := range used {
 		z, okZ := zh[key]
 		e, okE := en[key]

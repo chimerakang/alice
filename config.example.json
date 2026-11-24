@@ -108,7 +108,8 @@
     "max_concurrent": 2,
     "default_trust_mode": "local-only",
     "daily_budget_usd": 0,
-    "task_budget_usd": 0
+    "task_budget_usd": 0,
+    "dashboard_url": ""
   },
 
   "security": {

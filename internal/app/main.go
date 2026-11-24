@@ -936,7 +936,10 @@ func Main() {
 			log.Printf("⚠️ Warning: fleet disabled: %v", err)
 		} else {
 			globalFleet = svc
-			tgBot.fleet = svc
+			if err := tgBot.attachFleet(appCtx, svc, fleetDatabase()); err != nil {
+				log.Printf("⚠️ Warning: fleet task cards unavailable: %v", err)
+				tgBot.fleet = svc
+			}
 			if lister, ok := globalStorage.(topicProjectDirLister); ok {
 				if n, err := svc.BackfillTopicProjects(appCtx, lister); err != nil {
 					log.Printf("⚠️ Warning: fleet project backfill: %v", err)

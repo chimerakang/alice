@@ -136,6 +136,8 @@ type TelegramBot struct {
 
 	// fleet is the running fleet, or nil when the fleet is disabled.
 	fleet *FleetService
+	// fleetCards posts and updates task cards; nil without a fleet.
+	fleetCards *fleetCardManager
 
 	// 媒體批次處理
 	mediaBatches map[string]*MediaBatch // mediaGroupID 或 chatKey 作為 key
@@ -604,6 +606,12 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "strict", "description": "Toggle strict review mode"},
 		{"command": "retry", "description": "Retry reviewed low-score sub-task"},
 		{"command": "help", "description": "Show help message"},
+	}
+	if t.config.Fleet.Enabled {
+		commands = append(commands,
+			map[string]string{"command": "ship", "description": "Dispatch a task to this topic's project"},
+			map[string]string{"command": "scout", "description": "Dispatch a read-only investigation"},
+		)
 	}
 
 	body, _ := json.Marshal(map[string]interface{}{"commands": commands})
@@ -5977,6 +5985,8 @@ func (t *TelegramBot) handleCallbackQuery(key chatKey, userID int64, queryID, da
 
 	// Handle different callback data
 	switch {
+	case strings.HasPrefix(data, fleetCallbackPrefix):
+		t.handleFleetCallback(key, userID, queryID, data)
 	case data == "refresh_dashboard":
 		// Send updated dashboard
 		t.handleDashboard(key)

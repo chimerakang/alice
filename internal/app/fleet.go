@@ -36,6 +36,9 @@ type FleetConfig struct {
 	DailyBudgetUSD float64 `json:"daily_budget_usd"`
 	// TaskBudgetUSD caps one task's lifetime spend. Zero means no limit.
 	TaskBudgetUSD float64 `json:"task_budget_usd"`
+	// DashboardURL is the dashboard's address as the owner reaches it, e.g.
+	// "http://localhost:3939". When set, task cards link to it.
+	DashboardURL string `json:"dashboard_url"`
 }
 
 // trustMode returns the configured default trust mode.
@@ -106,12 +109,11 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 	if err != nil {
 		return nil, err
 	}
-	var budget *fleet.Budget
-	if cfg.DailyBudgetUSD > 0 || cfg.TaskBudgetUSD > 0 {
-		budget = &fleet.Budget{
-			Daily: fleet.Limit{CostUSD: cfg.DailyBudgetUSD},
-			Task:  fleet.Limit{CostUSD: cfg.TaskBudgetUSD},
-		}
+	// Always set, even with no limits configured: a task dispatched with
+	// its own budget is only held to it when the runner has a policy.
+	budget := &fleet.Budget{
+		Daily: fleet.Limit{CostUSD: cfg.DailyBudgetUSD},
+		Task:  fleet.Limit{CostUSD: cfg.TaskBudgetUSD},
 	}
 	runner := &fleet.Runner{
 		Store:        store,

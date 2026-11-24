@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -146,7 +147,16 @@ func (t *TelegramBot) handleFleetCommand(key chatKey, userID int64, text string)
 	ctx, cancel := context.WithTimeout(context.Background(), fleetCommandTimeout)
 	defer cancel()
 
-	switch strings.Split(parts[0], "@")[0] {
+	command := strings.Split(parts[0], "@")[0]
+	// What follows the command word, with its line breaks intact.
+	rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), parts[0]))
+	switch command {
+	case "/ship":
+		t.fleetDispatch(ctx, key, userID, fleet.ShapeShip, rest)
+		return true
+	case "/scout":
+		t.fleetDispatch(ctx, key, userID, fleet.ShapeScout, rest)
+		return true
 	case "/project":
 		switch {
 		case len(parts) == 1:
@@ -241,5 +251,155 @@ func (t *TelegramBot) fleetAfterCommand(key chatKey, userID int64, text string) 
 			"{name}": project.Name,
 			"{mode}": string(project.TrustMode),
 		}))
+	}
+}
+
+// attachFleet connects the bot to a running fleet: commands reach it, and
+// task cards are posted and kept current through the bot.
+func (t *TelegramBot) attachFleet(ctx context.Context, svc *FleetService, db *sql.DB) error {
+	cards, err := newFleetCardStore(db)
+	if err != nil {
+		return err
+	}
+	t.fleet = svc
+	t.fleetCards = &fleetCardManager{
+		Fleet:        svc,
+		Store:        cards,
+		Messenger:    t,
+		Localize:     t.getLocalizedMessage,
+		DashboardURL: svc.Config.DashboardURL,
+	}
+	svc.run("fleet.cards", func() error { return t.fleetCards.Run(ctx) })
+	return nil
+}
+
+// fleetKeyboard converts card buttons to a Telegram inline keyboard. An
+// empty keyboard removes the buttons a message had.
+func fleetKeyboard(buttons [][]fleetButton) map[string]interface{} {
+	rows := make([][]map[string]interface{}, 0, len(buttons))
+	for _, row := range buttons {
+		out := make([]map[string]interface{}, 0, len(row))
+		for _, b := range row {
+			btn := map[string]interface{}{"text": b.Text}
+			if b.URL != "" {
+				btn["url"] = b.URL
+			} else {
+				btn["callback_data"] = b.Data
+			}
+			out = append(out, btn)
+		}
+		rows = append(rows, out)
+	}
+	return map[string]interface{}{"inline_keyboard": rows}
+}
+
+// SendCard implements fleetMessenger on the synchronous send path, which
+// waits for the rate limiter and retries when Telegram asks it to.
+func (t *TelegramBot) SendCard(key chatKey, text string, buttons [][]fleetButton) (int, error) {
+	params := map[string]interface{}{
+		"chat_id":                  key.chatID,
+		"text":                     sanitizeUTF8(text),
+		"disable_web_page_preview": true,
+	}
+	if key.threadID != 0 {
+		params["message_thread_id"] = key.threadID
+	}
+	if len(buttons) > 0 {
+		params["reply_markup"] = fleetKeyboard(buttons)
+	}
+	resp, err := t.sendMessageSync("sendMessage", params)
+	if err != nil {
+		return 0, err
+	}
+	result, _ := resp["result"].(map[string]interface{})
+	id, ok := result["message_id"].(float64)
+	if !ok {
+		return 0, errors.New("telegram: sendMessage returned no message_id")
+	}
+	return int(id), nil
+}
+
+// EditCard implements fleetMessenger.
+func (t *TelegramBot) EditCard(key chatKey, messageID int, text string, buttons [][]fleetButton) error {
+	_, err := t.sendMessageSync("editMessageText", map[string]interface{}{
+		"chat_id":                  key.chatID,
+		"message_id":               messageID,
+		"text":                     sanitizeUTF8(text),
+		"disable_web_page_preview": true,
+		"reply_markup":             fleetKeyboard(buttons),
+	})
+	return err
+}
+
+// handleFleetCallback handles a press on a task card's button.
+func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, data string) {
+	answer := func(msgKey string, vars map[string]string) {
+		t.answerCallbackQuery(queryID, fleetClip(t.getLocalizedMessage(key.chatID, msgKey, vars), 190))
+	}
+	action, taskID, ok := parseFleetCallback(data)
+	if !ok {
+		answer("fleet_cb_unknown", nil)
+		return
+	}
+	if t.fleet == nil {
+		answer("fleet_disabled", nil)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), fleetCommandTimeout)
+	defer cancel()
+
+	// A button only acts on a task whose card lives in this chat.
+	if t.fleetCards != nil {
+		card, found, err := t.fleetCards.Store.Get(taskID)
+		if err != nil || !found || card.Key.chatID != key.chatID {
+			answer("fleet_cb_unknown", nil)
+			return
+		}
+	}
+
+	actor := fleetActor(userID)
+	cmd := t.fleet.Commander
+	var err error
+	switch action {
+	case fleetActCancel:
+		_, err = cmd.Cancel(ctx, actor, taskID, "")
+	case fleetActRetry:
+		_, err = cmd.Retry(ctx, actor, taskID)
+	case fleetActApprove:
+		_, err = cmd.Approve(ctx, actor, taskID)
+	case fleetActMerge:
+		_, err = cmd.Merge(ctx, actor, taskID)
+	case fleetActDiscard:
+		// Discarding removes the checkout, uncommitted work included, so
+		// it takes a second press.
+		if t.fleetCards != nil {
+			t.fleetCards.SetConfirm(ctx, taskID, fleetActDiscard)
+		}
+		answer("fleet_cb_confirm", nil)
+		return
+	case fleetActBack:
+		if t.fleetCards != nil {
+			t.fleetCards.SetConfirm(ctx, taskID, "")
+		}
+		t.answerCallbackQuery(queryID, "")
+		return
+	case fleetActDiscardConfirm:
+		_, err = cmd.Discard(ctx, actor, taskID)
+		if t.fleetCards != nil {
+			t.fleetCards.SetConfirm(ctx, taskID, "")
+		}
+	default:
+		answer("fleet_cb_unknown", nil)
+		return
+	}
+	if err != nil {
+		answer("fleet_error", map[string]string{"{error}": err.Error()})
+	} else {
+		answer("fleet_cb_"+strings.TrimSuffix(action, "!"), nil)
+	}
+	// The status change redraws the card by itself; this covers an action
+	// that failed after changing what the card should show.
+	if t.fleetCards != nil {
+		t.fleetCards.Refresh(ctx, taskID)
 	}
 }
