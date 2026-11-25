@@ -1094,17 +1094,14 @@ func InterruptSubTaskIdx(interrupt *HermesInterrupt) (int, bool) {
 // β1/β2 cold-restart resume path. SweepStaleHermesInterrupts handles
 // abandoning paused tasks via its own 24h cutoff.
 func (s *SQLiteTaskStore) SweepZombieTasks(reason string) (int, error) {
+	// Filter through the status index before reading snapshot JSON for active tasks.
 	rows, err := s.db.Query(`
-		SELECT task.id, snap.state_json FROM hermes_task_states AS task
-		LEFT JOIN (
-			SELECT s.task_id, s.state_json, s.state_status FROM hermes_snapshots s
-			INNER JOIN (
-				SELECT task_id, MAX(step) AS max_step
-				FROM hermes_snapshots
-				GROUP BY task_id
-			) latest ON latest.task_id = s.task_id AND latest.max_step = s.step
-		) AS snap ON snap.task_id = task.id
-		WHERE COALESCE(snap.state_status, task.status) IN ('planning','executing','validating')`)
+		SELECT task.id, (
+			SELECT state_json FROM hermes_snapshots WHERE task_id = task.id ORDER BY step DESC LIMIT 1
+		) FROM hermes_task_states AS task
+		WHERE COALESCE((
+			SELECT state_status FROM hermes_snapshots WHERE task_id = task.id ORDER BY step DESC LIMIT 1
+		), task.status) IN ('planning','executing','validating')`)
 	if err != nil {
 		return 0, fmt.Errorf("SweepZombieTasks query: %w", err)
 	}
