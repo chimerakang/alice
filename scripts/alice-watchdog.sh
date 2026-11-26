@@ -17,7 +17,11 @@ if [ "$pid" != "$previous_pid" ]; then
     printf '%s\n' "$now" > "$ALICE_STATE_DIR/first_seen"
     printf '0\n' > "$ALICE_STATE_DIR/failures"
 fi
-if curl --silent --fail --max-time 5 http://127.0.0.1:8082/api/health >/dev/null; then
+# Probe liveness only. The full health report queries the database, which slows
+# down while Fleet agents load the machine; a slow answer here restarted a
+# healthy service and killed its running tasks.
+ALICE_HEALTH_TIMEOUT="${ALICE_WATCHDOG_HEALTH_TIMEOUT:-15}"
+if curl --silent --fail --max-time "$ALICE_HEALTH_TIMEOUT" http://127.0.0.1:8082/api/health/live >/dev/null; then
     printf '0\n' > "$ALICE_STATE_DIR/failures"
     exit 0
 fi
