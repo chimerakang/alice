@@ -1,10 +1,8 @@
-name: CI/CD Pipeline
+name: Legacy feature and release checks
 
 on:
   push:
-    branches: [ main, feature/* ]
-  pull_request:
-    branches: [ main ]
+    branches: [ feature/* ]
   release:
     types: [ published ]
 
