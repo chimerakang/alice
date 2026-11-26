@@ -1752,7 +1752,8 @@ func (x *FleetCancelRequest) GetReason() string {
 }
 
 // Body of POST /api/fleet/projects and PUT /api/fleet/projects/{id}. On an
-// update, repo_path is ignored.
+// update, repo_path is ignored, and an empty default_branch leaves the target
+// branch as it is.
 type FleetProjectRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	RepoPath       string                 `protobuf:"bytes,1,opt,name=repo_path,json=repoPath,proto3" json:"repo_path,omitempty"`
@@ -1761,6 +1762,7 @@ type FleetProjectRequest struct {
 	VerifyCommands []string               `protobuf:"bytes,4,rep,name=verify_commands,json=verifyCommands,proto3" json:"verify_commands,omitempty"`
 	MaxConcurrent  int32                  `protobuf:"varint,5,opt,name=max_concurrent,json=maxConcurrent,proto3" json:"max_concurrent,omitempty"`
 	Budget         *FleetProjectBudget    `protobuf:"bytes,6,opt,name=budget,proto3" json:"budget,omitempty"`
+	DefaultBranch  string                 `protobuf:"bytes,7,opt,name=default_branch,json=defaultBranch,proto3" json:"default_branch,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1835,6 +1837,13 @@ func (x *FleetProjectRequest) GetBudget() *FleetProjectBudget {
 		return x.Budget
 	}
 	return nil
+}
+
+func (x *FleetProjectRequest) GetDefaultBranch() string {
+	if x != nil {
+		return x.DefaultBranch
+	}
+	return ""
 }
 
 // An open GitHub issue of a project, as offered for dispatch.
@@ -2637,7 +2646,7 @@ const file_alice_v1_fleet_proto_rawDesc = "" +
 	"\x04text\x18\x01 \x01(\tR\x04text\x12#\n" +
 	"\rignore_budget\x18\x02 \x01(\bR\fignoreBudget\",\n" +
 	"\x12FleetCancelRequest\x12\x16\n" +
-	"\x06reason\x18\x01 \x01(\tR\x06reason\"\xeb\x01\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\"\x92\x02\n" +
 	"\x13FleetProjectRequest\x12\x1b\n" +
 	"\trepo_path\x18\x01 \x01(\tR\brepoPath\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x1d\n" +
@@ -2645,7 +2654,8 @@ const file_alice_v1_fleet_proto_rawDesc = "" +
 	"trust_mode\x18\x03 \x01(\tR\ttrustMode\x12'\n" +
 	"\x0fverify_commands\x18\x04 \x03(\tR\x0everifyCommands\x12%\n" +
 	"\x0emax_concurrent\x18\x05 \x01(\x05R\rmaxConcurrent\x124\n" +
-	"\x06budget\x18\x06 \x01(\v2\x1c.alice.v1.FleetProjectBudgetR\x06budget\"\xb4\x01\n" +
+	"\x06budget\x18\x06 \x01(\v2\x1c.alice.v1.FleetProjectBudgetR\x06budget\x12%\n" +
+	"\x0edefault_branch\x18\a \x01(\tR\rdefaultBranch\"\xb4\x01\n" +
 	"\n" +
 	"FleetIssue\x12\x16\n" +
 	"\x06number\x18\x01 \x01(\x05R\x06number\x12\x14\n" +

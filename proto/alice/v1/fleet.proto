@@ -237,7 +237,8 @@ message FleetCancelRequest {
 }
 
 // Body of POST /api/fleet/projects and PUT /api/fleet/projects/{id}. On an
-// update, repo_path is ignored.
+// update, repo_path is ignored, and an empty default_branch leaves the target
+// branch as it is.
 message FleetProjectRequest {
   string repo_path = 1;
   string name = 2;
@@ -245,6 +246,7 @@ message FleetProjectRequest {
   repeated string verify_commands = 4;
   int32 max_concurrent = 5;
   FleetProjectBudget budget = 6;
+  string default_branch = 7;
 }
 
 // An open GitHub issue of a project, as offered for dispatch.

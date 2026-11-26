@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CREATE_ISSUE, MAX_BATCH, buildDispatchRequests } from "@/lib/fleetForms";
+import { DEFAULT_CREATE_ISSUE, MAX_BATCH, buildDispatchRequests, projectDraft, projectRequest } from "@/lib/fleetForms";
+import type { FleetProject } from "@/types/fleet";
 
 const base = { mode: "single" as const, project: "app", shape: "ship" as const, model: "", budget: "", goal: "", batch: "", issues: [] as number[] };
 
@@ -39,6 +40,22 @@ describe("buildDispatchRequests", () => {
     const many = Array.from({ length: MAX_BATCH + 1 }, (_, i) => `task ${i}`).join("\n");
     expect(buildDispatchRequests({ ...base, mode: "batch", batch: many }).error).toBe("too_many");
     expect(buildDispatchRequests({ ...base, mode: "batch", batch: many.split("\n").slice(1).join("\n") }).error).toBe("");
+  });
+});
+
+describe("project form", () => {
+  const project = { id: "app", name: "App", default_branch: "main", trust_mode: "local-only", verify_commands: [], max_concurrent: 2 } as unknown as FleetProject;
+
+  it("shows the current target branch and sends the edited one", () => {
+    const draft = projectDraft(project);
+    expect(draft.default_branch).toBe("main");
+    const built = projectRequest({ ...draft, default_branch: "  develop " });
+    expect(built.error).toBe("");
+    expect(built.req?.default_branch).toBe("develop");
+  });
+
+  it("sends an empty target branch when it is cleared, which leaves it unchanged", () => {
+    expect(projectRequest({ ...projectDraft(project), default_branch: "" }).req?.default_branch).toBe("");
   });
 });
 

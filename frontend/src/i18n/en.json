@@ -1019,6 +1019,8 @@
       "no_topics": "none",
       "name": "Name",
       "trust_mode": "Trust mode",
+      "default_branch": "Target branch",
+      "default_branch_help": "Only applies to tasks started after the change.",
       "max_concurrent": "Max concurrent",
       "task_budget": "Per-task budget (USD)",
       "daily_budget": "Daily budget (USD)",

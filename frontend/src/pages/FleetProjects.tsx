@@ -125,10 +125,14 @@ function ProjectPanel({ project }: { project: FleetProject }) {
         </p>
       </header>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
         <label className="space-y-1 text-xs text-gray-400">
           {t("fleet.projects.name")}
           <input value={draft.name} onChange={(e) => set("name", e.target.value)} className={input} />
+        </label>
+        <label className="space-y-1 text-xs text-gray-400">
+          {t("fleet.projects.default_branch")}
+          <input value={draft.default_branch} onChange={(e) => set("default_branch", e.target.value)} className={clsx(input, "font-mono")} />
         </label>
         <label className="space-y-1 text-xs text-gray-400">
           {t("fleet.projects.trust_mode")}
@@ -153,7 +157,7 @@ function ProjectPanel({ project }: { project: FleetProject }) {
           <input value={draft.daily_budget} onChange={(e) => set("daily_budget", e.target.value)} inputMode="decimal" placeholder={t("fleet.projects.budget_default")} className={input} />
         </label>
       </div>
-      <p className="text-xs text-gray-500">{t(`fleet.trust_help.${draft.trust_mode}`)}</p>
+      <p className="text-xs text-gray-500">{t("fleet.projects.default_branch_help")} {t(`fleet.trust_help.${draft.trust_mode}`)}</p>
 
       <label className="block space-y-1 text-xs text-gray-400">
         {t("fleet.projects.verify_commands")}

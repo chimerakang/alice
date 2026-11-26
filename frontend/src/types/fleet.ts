@@ -187,6 +187,8 @@ export interface FleetProjectRequest {
   verify_commands?: string[];
   max_concurrent?: number;
   budget?: FleetProjectBudget;
+  /** Empty or absent leaves the target branch unchanged. */
+  default_branch?: string;
 }
 
 export interface FleetIssue {

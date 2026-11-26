@@ -1019,6 +1019,8 @@
       "no_topics": "無",
       "name": "名稱",
       "trust_mode": "信任模式",
+      "default_branch": "目標分支",
+      "default_branch_help": "只影響變更後才開始的任務。",
       "max_concurrent": "並行上限",
       "task_budget": "單一任務預算（美元）",
       "daily_budget": "每日預算（美元）",

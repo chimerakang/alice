@@ -62,6 +62,7 @@ export function buildDispatchRequests(input: {
 /** The project form's fields, as typed. */
 export interface ProjectDraft {
   name: string;
+  default_branch: string;
   trust_mode: FleetTrustMode;
   verify: string;
   max_concurrent: string;
@@ -72,6 +73,7 @@ export interface ProjectDraft {
 export function projectDraft(p: FleetProject): ProjectDraft {
   return {
     name: p.name,
+    default_branch: p.default_branch ?? "",
     trust_mode: p.trust_mode,
     verify: (p.verify_commands ?? []).join("\n"),
     max_concurrent: String(p.max_concurrent || 1),
@@ -91,6 +93,7 @@ export function projectRequest(d: ProjectDraft): { req: FleetProjectRequest | nu
   return {
     req: {
       name: d.name.trim(),
+      default_branch: d.default_branch.trim(),
       trust_mode: d.trust_mode,
       verify_commands: d.verify.split("\n").map((l) => l.trim()).filter(Boolean),
       max_concurrent: concurrent,

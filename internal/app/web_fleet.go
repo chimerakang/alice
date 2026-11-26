@@ -162,7 +162,8 @@ func fleetErrorStatus(err error) (int, string) {
 	switch {
 	case errors.Is(err, errFleetBadRequest),
 		errors.Is(err, fleet.ErrInvalidTask), errors.Is(err, fleet.ErrInvalidProject),
-		errors.Is(err, fleet.ErrNotGitRepo), errors.Is(err, fleet.ErrInvalidNotifyMode):
+		errors.Is(err, fleet.ErrNotGitRepo), errors.Is(err, fleet.ErrInvalidNotifyMode),
+		errors.Is(err, fleet.ErrBranchNotFound):
 		return http.StatusBadRequest, "invalid"
 	case errors.Is(err, fleet.ErrTaskNotFound), errors.Is(err, fleet.ErrProjectNotFound):
 		return http.StatusNotFound, "not_found"
@@ -640,8 +641,17 @@ func (wi *WebInterface) fleetUpdateProject(ctx context.Context, svc *FleetServic
 	if req.Budget != nil && (req.Budget.TaskCostUsd < 0 || req.Budget.DailyCostUsd < 0) {
 		return nil, fleetBadRequest("a budget cannot be negative")
 	}
-	out, err := svc.Commander.UpdateProject(ctx, wi.fleetWebActor(), r.PathValue("id"), "settings edited on the dashboard",
+	// An empty default_branch leaves the target branch alone.
+	branch := strings.TrimSpace(req.DefaultBranch)
+	note := "settings edited on the dashboard"
+	if branch != "" {
+		note += "; target branch set to " + branch
+	}
+	out, err := svc.Commander.UpdateProject(ctx, wi.fleetWebActor(), r.PathValue("id"), note,
 		func(p *fleet.Project) error {
+			if branch != "" {
+				p.DefaultBranch = branch
+			}
 			if name := strings.TrimSpace(req.Name); name != "" {
 				p.Name = name
 			}
