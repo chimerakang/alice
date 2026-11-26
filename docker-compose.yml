@@ -8,6 +8,8 @@ services:
       - "127.0.0.1:3939:8082"
     environment:
       - TZ=${TZ:-Asia/Taipei}
+      # Same value as web_api_token in config.json; see nginx.conf.
+      - WEB_API_TOKEN=${WEB_API_TOKEN:-}
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:8082/"]
       interval: 30s

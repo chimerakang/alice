@@ -4,8 +4,12 @@ FROM nginx:alpine
 # Copy React build output
 COPY web/ /usr/share/nginx/html/
 
-# Copy nginx configuration
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# nginx.conf is a template: the image's entrypoint fills in WEB_API_TOKEN and
+# writes the result to /etc/nginx/conf.d/default.conf. Only that one variable
+# is substituted, so nginx's own $variables are left alone.
+ENV WEB_API_TOKEN="" \
+    NGINX_ENVSUBST_FILTER="^WEB_API_TOKEN$"
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 
 EXPOSE 8082
 
