@@ -53,7 +53,7 @@ fi
 ALICE_READY_TIMEOUT="${ALICE_READY_TIMEOUT:-150}"
 ALICE_READY_DEADLINE=$(( $(date +%s) + ALICE_READY_TIMEOUT ))
 while [ "$(date +%s)" -lt "$ALICE_READY_DEADLINE" ]; do
-    if curl --silent --fail --max-time 2 http://127.0.0.1:8082/api/health >/dev/null; then
+    if curl --silent --fail --max-time 2 http://127.0.0.1:8082/api/health/live >/dev/null; then
         echo "✅ Alice 與 Telegram polling 已就緒"
         exit 0
     fi

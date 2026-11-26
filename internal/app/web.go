@@ -95,6 +95,7 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 
 	// API endpoints
 	mux.HandleFunc("/api/health", wi.handleHealth)
+	mux.HandleFunc("/api/health/live", wi.handleHealthLive)
 	mux.HandleFunc("/api/stats", wi.handleStats)
 	mux.HandleFunc("/api/agents", wi.handleAgents)
 	mux.HandleFunc("/api/agents/abort", wi.handleAgentAbort)
@@ -279,15 +280,7 @@ func (wi *WebInterface) handleHealth(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		now := time.Now()
-		// Without a bot (API-only mode, tests) there is no poller to judge.
-		telegram, lastSuccess := "active", time.Time{}
-		if wi.bot != nil {
-			telegram, lastSuccess = wi.bot.pollHealth.snapshot(now)
-		}
-		health := "healthy"
-		if telegram != "active" {
-			health = "unhealthy"
-		}
+		health, telegram, lastSuccess := wi.liveness(now)
 		status := map[string]interface{}{
 			"status":    health,
 			"timestamp": now,
@@ -303,6 +296,45 @@ func (wi *WebInterface) handleHealth(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}
 
+		json.NewEncoder(w).Encode(status)
+	})(w, r)
+}
+
+// liveness judges the service from in-memory state only: the process answers
+// and Telegram polling is current.
+func (wi *WebInterface) liveness(now time.Time) (health, telegram string, lastSuccess time.Time) {
+	// Without a bot (API-only mode, tests) there is no poller to judge.
+	telegram = "active"
+	if wi.bot != nil {
+		telegram, lastSuccess = wi.bot.pollHealth.snapshot(now)
+	}
+	health = "healthy"
+	if telegram != "active" {
+		health = "unhealthy"
+	}
+	return health, telegram, lastSuccess
+}
+
+// handleHealthLive is the probe for supervisors that restart the service. It
+// gives the same verdict as /api/health but reads no database: those queries
+// slow down under Fleet load, and a slow answer to a restart probe kills the
+// running tasks.
+func (wi *WebInterface) handleHealthLive(w http.ResponseWriter, r *http.Request) {
+	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		now := time.Now()
+		health, telegram, lastSuccess := wi.liveness(now)
+		status := map[string]interface{}{
+			"status":    health,
+			"timestamp": now,
+			"telegram":  telegram,
+		}
+		if !lastSuccess.IsZero() {
+			status["telegram_last_success"] = lastSuccess
+		}
+		if health != "healthy" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
 		json.NewEncoder(w).Encode(status)
 	})(w, r)
 }
