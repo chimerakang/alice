@@ -239,6 +239,7 @@ export interface FleetProjectRequest {
   budget?: FleetProjectBudget;
   /** Empty or absent leaves the target branch unchanged. */
   default_branch?: string;
+  branch_prefix?: string;
 }
 
 export interface FleetIssue {

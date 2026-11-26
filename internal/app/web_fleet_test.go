@@ -620,3 +620,37 @@ func TestFleetAPIProjectTargetBranch(t *testing.T) {
 		t.Fatalf("audit log does not mention develop: %v", e.get("/api/fleet/audit"))
 	}
 }
+
+func TestFleetAPIProjectTaskBranchPrefix(t *testing.T) {
+	e := newWebFleetEnv(t)
+	repo := newFleetTestRepo(t)
+	status, created := e.call(http.MethodPost, "/api/fleet/projects", fmt.Sprintf(`{"repo_path":%q}`, repo), true)
+	if status != http.StatusOK || created["branch_prefix"] != "alice/" {
+		t.Fatalf("register: %d %v", status, created)
+	}
+	id := created["id"].(string)
+	endpoint := "/api/fleet/projects/" + id
+	for _, tc := range []struct {
+		body string
+		want int
+	}{
+		{`{"trust_mode":"local-only","max_concurrent":1,"branch_prefix":" feat/ "}`, http.StatusOK},
+		{`{"trust_mode":"local-only","max_concurrent":1}`, http.StatusOK},
+		{`{"trust_mode":"local-only","max_concurrent":1,"branch_prefix":"bad prefix/"}`, http.StatusBadRequest},
+	} {
+		status, got := e.call(http.MethodPut, endpoint, tc.body, true)
+		if status != tc.want {
+			t.Fatalf("update: %d %v, want %d", status, got, tc.want)
+		}
+		if current := e.get(endpoint); current["branch_prefix"] != "feat/" {
+			t.Fatalf("saved prefix = %v, want feat/", current["branch_prefix"])
+		}
+	}
+	project, err := e.svc.Store.GetProject(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch := project.BranchName("abc123"); branch != "feat/abc123" {
+		t.Fatalf("new branch = %q, want feat/abc123", branch)
+	}
+}

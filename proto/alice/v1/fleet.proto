@@ -307,6 +307,8 @@ message FleetProjectRequest {
   int32 max_concurrent = 5;
   FleetProjectBudget budget = 6;
   string default_branch = 7;
+  // Empty on update keeps the existing prefix.
+  string branch_prefix = 8;
 }
 
 // An open GitHub issue of a project, as offered for dispatch.

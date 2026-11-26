@@ -1070,6 +1070,7 @@
       "name": "名稱",
       "trust_mode": "信任模式",
       "default_branch": "目標分支",
+      "branch_prefix": "任務分支前綴",
       "default_branch_help": "只影響變更後才開始的任務。",
       "max_concurrent": "並行上限",
       "task_budget": "單一任務預算（美元）",

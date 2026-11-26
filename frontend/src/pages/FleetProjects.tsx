@@ -135,6 +135,10 @@ function ProjectPanel({ project }: { project: FleetProject }) {
           <input value={draft.default_branch} onChange={(e) => set("default_branch", e.target.value)} className={clsx(input, "font-mono")} />
         </label>
         <label className="space-y-1 text-xs text-gray-400">
+          {t("fleet.projects.branch_prefix")}
+          <input value={draft.branch_prefix} onChange={(e) => set("branch_prefix", e.target.value)} placeholder="feat/" className={clsx(input, "font-mono")} />
+        </label>
+        <label className="space-y-1 text-xs text-gray-400">
           {t("fleet.projects.trust_mode")}
           <select value={draft.trust_mode} onChange={(e) => set("trust_mode", e.target.value as FleetTrustMode)} className={input}>
             {TRUST_MODES.map((mode) => (

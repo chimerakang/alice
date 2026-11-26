@@ -612,6 +612,7 @@ func (wi *WebInterface) fleetRegisterProject(ctx context.Context, svc *FleetServ
 	}
 	p := fleet.Project{
 		RepoPath:       strings.TrimSpace(req.RepoPath),
+		BranchPrefix:   strings.TrimSpace(req.BranchPrefix),
 		Name:           strings.TrimSpace(req.Name),
 		TrustMode:      mode,
 		VerifyCommands: fleetCleanCommands(req.VerifyCommands),
@@ -644,14 +645,21 @@ func (wi *WebInterface) fleetUpdateProject(ctx context.Context, svc *FleetServic
 	}
 	// An empty default_branch leaves the target branch alone.
 	branch := strings.TrimSpace(req.DefaultBranch)
+	prefix := strings.TrimSpace(req.BranchPrefix)
 	note := "settings edited on the dashboard"
 	if branch != "" {
 		note += "; target branch set to " + branch
+	}
+	if prefix != "" {
+		note += "; task branch prefix set to " + prefix
 	}
 	out, err := svc.Commander.UpdateProject(ctx, wi.fleetWebActor(), r.PathValue("id"), note,
 		func(p *fleet.Project) error {
 			if branch != "" {
 				p.DefaultBranch = branch
+			}
+			if prefix != "" {
+				p.BranchPrefix = prefix
 			}
 			if name := strings.TrimSpace(req.Name); name != "" {
 				p.Name = name
