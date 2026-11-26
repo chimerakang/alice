@@ -14,6 +14,7 @@ import type {
   FleetProjectRequest,
   FleetTask,
   FleetTaskAction,
+  FleetDelivery,
   FleetVerification,
   FleetWorktree,
 } from "@/types/fleet";
@@ -137,6 +138,7 @@ export const fleetApi = {
       `/api/fleet/events${query({ after_id: params.afterId, limit: params.limit, types: params.types?.join(",") })}`,
     ),
   getTaskDiff: (id: string) => request<FleetDiff>("GET", `/api/fleet/tasks/${enc(id)}/diff`),
+  getTaskDelivery: (id: string) => request<FleetDelivery>("GET", `/api/fleet/tasks/${enc(id)}/delivery`),
   getTaskVerifications: async (id: string) =>
     (await request<{ verifications?: FleetVerification[] }>("GET", `/api/fleet/tasks/${enc(id)}/verifications`))
       .verifications ?? [],

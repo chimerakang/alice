@@ -7,6 +7,7 @@ import DiffViewer from "@/components/DiffViewer";
 import StatusBadge from "@/components/StatusBadge";
 import TimelineEntry from "@/components/TimelineEntry";
 import ToolCallGantt from "@/components/ToolCallGantt";
+import FleetDeliverySummary from "@/components/fleet/FleetDeliverySummary";
 import FleetActions from "@/components/fleet/FleetActions";
 import FleetUnavailable from "@/components/fleet/FleetUnavailable";
 import LivenessDot from "@/components/fleet/LivenessDot";
@@ -24,7 +25,7 @@ import {
 } from "@/lib/fleet";
 import { useFleet } from "@/hooks/useFleet";
 import { useNow } from "@/hooks/useNow";
-import type { FleetDiff, FleetEvent, FleetVerification } from "@/types/fleet";
+import type { FleetDelivery, FleetDiff, FleetEvent, FleetVerification } from "@/types/fleet";
 
 /** How often a live task's events are polled, beneath the WebSocket. */
 const POLL_MS = 4000;
@@ -46,6 +47,7 @@ export default function FleetTaskPage() {
   const [events, setEvents] = useState<FleetEvent[]>([]);
   const [diff, setDiff] = useState<FleetDiff | null>(null);
   const [checks, setChecks] = useState<FleetVerification[]>([]);
+  const [delivery, setDelivery] = useState<FleetDelivery | null>(null);
   const [missing, setMissing] = useState(false);
   const cursor = useRef(0);
   const loading = useRef(false);
@@ -72,13 +74,18 @@ export default function FleetTaskPage() {
   const pullDetail = useCallback(async () => {
     if (!id) return;
     try {
-      const [d, v] = await Promise.all([fleetApi.getTaskDiff(id), fleetApi.getTaskVerifications(id)]);
+      const [d, v, summary] = await Promise.all([
+        fleetApi.getTaskDiff(id).catch(() => null),
+        fleetApi.getTaskVerifications(id).catch(() => null),
+        task?.shape === "ship" ? fleetApi.getTaskDelivery(id).catch(() => null) : Promise.resolve(null),
+      ]);
       setDiff(d);
-      setChecks(v);
+      if (v) setChecks(v);
+      setDelivery(summary);
     } catch {
       // Not fatal: the timeline still tells the story.
     }
-  }, [id]);
+  }, [id, task?.shape]);
 
   // A task opened by link may not be in the store yet.
   useEffect(() => {
@@ -96,6 +103,7 @@ export default function FleetTaskPage() {
     setEvents([]);
     setDiff(null);
     setChecks([]);
+    setDelivery(null);
     setMissing(false);
   }, [id]);
 
@@ -197,6 +205,12 @@ export default function FleetTaskPage() {
             </a>
           )}
         </dl>
+        {delivery && (
+          <FleetDeliverySummary
+            delivery={delivery}
+            onShowDiff={() => document.getElementById("fleet-task-diff")?.scrollIntoView({ behavior: "smooth" })}
+          />
+        )}
         <FleetActions task={task} />
       </header>
 
@@ -222,6 +236,7 @@ export default function FleetTaskPage() {
       </CollapsiblePanel>
 
       {task.shape === "ship" && (
+        <div id="fleet-task-diff">
         <CollapsiblePanel title={t("fleet.task.diff")} badge={files.length} defaultOpen={files.length > 0}>
           <div className="p-4 space-y-2">
             {diff?.truncated && <p className="text-xs text-warning">{t("fleet.task.diff_truncated")}</p>}
@@ -242,6 +257,7 @@ export default function FleetTaskPage() {
             )}
           </div>
         </CollapsiblePanel>
+        </div>
       )}
 
       <CollapsiblePanel title={t("fleet.task.checks")} badge={checks.filter((c) => c.attempt === latestAttempt).length} defaultOpen={checks.length > 0}>

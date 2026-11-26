@@ -149,6 +149,66 @@ message FleetDiff {
   bool truncated = 5;
 }
 
+message FleetDeliveryItem {
+  // Names the kind of line so each surface words it in its own language.
+  string code = 1;
+  string detail = 2;
+}
+
+message FleetDeliveryCheck {
+  string name = 1;
+  string command = 2;
+  bool passed = 3;
+  int32 exit_code = 4;
+  double duration_ms = 5;
+  bool timed_out = 6;
+}
+
+// One launch of a task's agent and what became of it.
+message FleetDeliveryRun {
+  int32 number = 1;
+  google.protobuf.Timestamp started_at = 2;
+  // running | passed | failed | not_verified
+  string outcome = 3;
+  // The verification round of this run; 0 when it was not verified.
+  int32 attempt = 4;
+  string stop_reason = 5;
+}
+
+// What a reviewer needs before approving a ship task, derived from the
+// fleet's records on every read.
+message FleetDelivery {
+  string task_id = 1;
+  string shape = 2;
+  string status = 3;
+  bool approvable = 4;
+  // State of the latest run's acceptance:
+  // not_configured | not_run | failed | passed
+  string verification = 5;
+  // The run and round the checks below belong to; checks_previous is set
+  // when that is an earlier run than the latest.
+  int32 checks_run = 6;
+  int32 checks_attempt = 7;
+  bool checks_previous = 8;
+  repeated FleetDeliveryCheck checks = 9;
+  bool diff_known = 10;
+  int32 files = 11;
+  int32 insertions = 12;
+  int32 deletions = 13;
+  int32 untracked = 14;
+  string note = 15;
+  bool note_missing = 16;
+  string stop_reason = 17;
+  repeated FleetDeliveryRun runs = 18;
+  repeated FleetDeliveryItem completed = 19;
+  repeated FleetDeliveryItem pending = 20;
+  repeated FleetDeliveryItem limits = 21;
+  // approve | decide | rerun | wait | none
+  string next = 22;
+  string pr_url = 23;
+  int32 pr_number = 24;
+}
+
 message FleetCounts {
   int32 queued = 1;
   int32 running = 2;

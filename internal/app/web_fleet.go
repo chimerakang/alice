@@ -66,6 +66,7 @@ func (wi *WebInterface) registerFleetRoutes(mux *http.ServeMux) {
 	query("/api/fleet/tasks/{id}/events", wi.fleetTaskEvents)
 	query("/api/fleet/tasks/{id}/diff", wi.fleetTaskDiff)
 	query("/api/fleet/tasks/{id}/verifications", wi.fleetTaskVerifications)
+	query("/api/fleet/tasks/{id}/delivery", wi.fleetTaskDelivery)
 	query("/api/fleet/events", wi.fleetEvents)
 	query("/api/fleet/audit", wi.fleetAudit)
 
@@ -815,6 +816,9 @@ func (wi *WebInterface) fleetTaskAction(ctx context.Context, svc *FleetService, 
 	if err != nil {
 		return nil, err
 	}
+	if (action == "approve" || action == "merge") && wi.bot != nil {
+		wi.bot.fleetNotices.notifyLanding(ctx, task)
+	}
 	// Reply returns the task as it was when the run was accepted; read it
 	// again so the caller sees where it stands now.
 	if fresh, ferr := cmd.GetTask(ctx, id); ferr == nil {
@@ -873,4 +877,47 @@ func replayFleetEvents(ctx context.Context, svc *FleetService, afterID int64, se
 			sent++
 		}
 	}
+}
+
+func fleetDeliveryItemsProto(items []fleetDeliveryItem) []*alicev1.FleetDeliveryItem {
+	out := []*alicev1.FleetDeliveryItem{}
+	for _, it := range items {
+		out = append(out, &alicev1.FleetDeliveryItem{Code: it.Code, Detail: it.Detail})
+	}
+	return out
+}
+
+func fleetDeliveryProto(d fleetDelivery) *alicev1.FleetDelivery {
+	out := &alicev1.FleetDelivery{
+		TaskId: d.TaskID, Shape: d.Shape, Status: d.Status, Approvable: d.Approvable,
+		Verification: d.Verification, ChecksRun: int32(d.ChecksRun), ChecksAttempt: int32(d.ChecksAttempt),
+		ChecksPrevious: d.ChecksPrevious, DiffKnown: d.DiffKnown, Files: int32(d.Files),
+		Insertions: int32(d.Insertions), Deletions: int32(d.Deletions), Untracked: int32(d.Untracked),
+		Note: d.Note, NoteMissing: d.NoteMissing, StopReason: d.StopReason, Next: d.Next,
+		PrUrl: d.PRURL, PrNumber: int32(d.PRNumber),
+		Completed: fleetDeliveryItemsProto(d.Completed), Pending: fleetDeliveryItemsProto(d.Pending),
+		Limits: fleetDeliveryItemsProto(d.Limits),
+		Checks: []*alicev1.FleetDeliveryCheck{}, Runs: []*alicev1.FleetDeliveryRun{},
+	}
+	for _, c := range d.Checks {
+		out.Checks = append(out.Checks, &alicev1.FleetDeliveryCheck{
+			Name: c.Name, Command: c.Command, Passed: c.Passed, ExitCode: int32(c.ExitCode),
+			DurationMs: float64(c.DurationMS), TimedOut: c.TimedOut,
+		})
+	}
+	for _, r := range d.Runs {
+		out.Runs = append(out.Runs, &alicev1.FleetDeliveryRun{
+			Number: int32(r.Number), StartedAt: fleetTime(r.StartedAt), Outcome: r.Outcome,
+			Attempt: int32(r.Attempt), StopReason: r.StopReason,
+		})
+	}
+	return out
+}
+
+func (wi *WebInterface) fleetTaskDelivery(ctx context.Context, svc *FleetService, r *http.Request) (proto.Message, error) {
+	d, err := svc.Delivery(ctx, r.PathValue("id"))
+	if err != nil {
+		return nil, err
+	}
+	return fleetDeliveryProto(d), nil
 }

@@ -109,6 +109,56 @@ export interface FleetVerification {
   created_at: string | null;
 }
 
+export interface FleetDeliveryItem {
+  code: string;
+  detail: string;
+}
+
+export interface FleetDeliveryCheck {
+  name: string;
+  command: string;
+  passed: boolean;
+  exit_code: number;
+  duration_ms: number;
+  timed_out: boolean;
+}
+
+export interface FleetDeliveryRun {
+  number: number;
+  started_at: string | null;
+  outcome: "running" | "passed" | "failed" | "not_verified";
+  attempt: number;
+  stop_reason: string;
+}
+
+/** What a reviewer needs before approving a ship task. */
+export interface FleetDelivery {
+  task_id: string;
+  shape: string;
+  status: string;
+  approvable: boolean;
+  verification: "not_configured" | "not_run" | "failed" | "passed";
+  checks_run: number;
+  checks_attempt: number;
+  checks_previous: boolean;
+  checks: FleetDeliveryCheck[];
+  diff_known: boolean;
+  files: number;
+  insertions: number;
+  deletions: number;
+  untracked: number;
+  note: string;
+  note_missing: boolean;
+  stop_reason: string;
+  runs: FleetDeliveryRun[];
+  completed: FleetDeliveryItem[];
+  pending: FleetDeliveryItem[];
+  limits: FleetDeliveryItem[];
+  next: "approve" | "decide" | "rerun" | "wait" | "none";
+  pr_url: string;
+  pr_number: number;
+}
+
 export interface FleetDiff {
   base: string;
   stat: string;

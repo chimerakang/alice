@@ -333,12 +333,13 @@ func (t *TelegramBot) attachFleet(ctx context.Context, svc *FleetService, db *sq
 		owner = t.config.AllowedUserIDs[0]
 	}
 	t.fleetNotices = &fleetNotices{
-		Fleet:     svc,
-		Store:     cards,
-		Messenger: t,
-		Docs:      t,
-		Localize:  t.fleetMsg,
-		Owner:     owner,
+		Fleet:        svc,
+		Store:        cards,
+		Messenger:    t,
+		Docs:         t,
+		Localize:     t.fleetMsg,
+		Owner:        owner,
+		DashboardURL: svc.Config.DashboardURL,
 	}
 	if topics, ok := globalStorage.(topicBindingLister); ok {
 		t.fleetNotices.Topics = topics
@@ -481,6 +482,7 @@ func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, da
 
 	actor := fleetActor(userID)
 	cmd := t.fleet.Commander
+	var task fleet.Task
 	var err error
 	switch action {
 	case fleetActCancel:
@@ -488,9 +490,9 @@ func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, da
 	case fleetActRetry:
 		_, err = cmd.Retry(ctx, actor, taskID)
 	case fleetActApprove:
-		_, err = cmd.Approve(ctx, actor, taskID)
+		task, err = cmd.Approve(ctx, actor, taskID)
 	case fleetActMerge:
-		_, err = cmd.Merge(ctx, actor, taskID)
+		task, err = cmd.Merge(ctx, actor, taskID)
 	case fleetActDiscard:
 		// Discarding removes the checkout, uncommitted work included, so
 		// it takes a second press.
@@ -535,6 +537,9 @@ func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, da
 		answer("fleet_error", map[string]string{"{error}": err.Error()})
 	} else {
 		answer("fleet_cb_"+strings.TrimSuffix(action, "!"), nil)
+		if action == fleetActApprove || action == fleetActMerge {
+			t.fleetNotices.notifyLanding(ctx, task)
+		}
 	}
 	// The status change redraws the card by itself; this covers an action
 	// that failed after changing what the card should show.
