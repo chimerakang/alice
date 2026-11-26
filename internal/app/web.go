@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -58,8 +59,9 @@ type WebInterface struct {
 	mu        sync.RWMutex
 }
 
-// NewWebInterface creates a new web interface instance
-func NewWebInterface(bot *TelegramBot, port, staticDir, apiToken string) *WebInterface {
+// NewWebInterface creates a new web interface instance. An empty bindAddress
+// listens on every interface.
+func NewWebInterface(bot *TelegramBot, bindAddress, port, staticDir, apiToken string) *WebInterface {
 	wi := &WebInterface{
 		bot:       bot,
 		apiToken:  apiToken,
@@ -68,7 +70,7 @@ func NewWebInterface(bot *TelegramBot, port, staticDir, apiToken string) *WebInt
 
 	// Create HTTP server
 	wi.server = &http.Server{
-		Addr:              ":" + port,
+		Addr:              net.JoinHostPort(bindAddress, port),
 		Handler:           wi.CreateRouter(),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      10 * time.Second,
