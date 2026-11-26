@@ -195,7 +195,7 @@ describe("filterAndSortReviews", () => {
 
 describe("buildTimelineFocusPath", () => {
   it("encodes the task id in the focus query", () => {
-    expect(buildTimelineFocusPath("task 1/alpha")).toBe("/timeline?focus=task%201%2Falpha");
+    expect(buildTimelineFocusPath("task 1/alpha")).toBe("/issues-runs?focus=task%201%2Falpha");
   });
 });
 
