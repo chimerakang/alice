@@ -85,6 +85,7 @@ type FleetService struct {
 	Watcher   *fleet.Watcher
 	Commander *fleet.Commander
 	Bus       *fleet.Bus
+	IssueSync *FleetIssueSync
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -148,7 +149,9 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 		Budget:       budget,
 	}
 	deliverer := &fleet.Deliverer{Store: store}
-	issues := &fleet.IssueTracker{Store: store}
+	// The tracker still ticks checklist items; what the issue is told, and
+	// when it is closed, is FleetIssueSync's.
+	issues := &fleet.IssueTracker{Store: store, NoComments: true}
 	sched := &fleet.Scheduler{
 		Store:         store,
 		Runner:        runner,
@@ -166,6 +169,7 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 		Watcher:   &fleet.Watcher{Store: store, Runner: runner},
 		Commander: &fleet.Commander{Store: store, Scheduler: sched, Deliverer: deliverer, Issues: issues},
 		Bus:       &fleet.Bus{Store: store},
+		IssueSync: &FleetIssueSync{Store: store, Host: ghFleetIssueHost{}},
 	}, nil
 }
 
@@ -189,6 +193,7 @@ func (f *FleetService) Start(ctx context.Context) error {
 	})
 	f.run("fleet.scheduler", func() error { return f.Scheduler.Run(ctx) })
 	f.run("fleet.watcher", func() error { return f.Watcher.Run(ctx) })
+	f.run("fleet.issue_sync", func() error { return f.IssueSync.Run(ctx, f.Bus) })
 	return nil
 }
 
