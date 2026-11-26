@@ -528,6 +528,8 @@
     "fleet_card_meter": "⏱ {elapsed} · 💰 ${cost}",
     "fleet_card_action_queued": "Waiting for a slot",
     "fleet_card_action_running": "Agent at work",
+    "fleet_card_startup_recovered": "Automatically resumed after a service restart",
+    "fleet_card_startup_resume_capped": "Automatic restart recovery limit reached. A decision is needed.",
     "fleet_card_retry_vs_reply": "ℹ️ Retry starts a new session and redoes the task from its original goal, losing earlier instructions. Reply to this card to continue in the existing session.",
     "fleet_card_action_verifying": "Running the verify commands",
     "fleet_card_confirm_discard": "⚠️ Discarding removes this task's checkout, uncommitted changes included; the branch is kept. Are you sure?",

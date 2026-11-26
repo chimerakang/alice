@@ -230,15 +230,17 @@ func (m *fleetCardManager) Run(ctx context.Context) error {
 
 // cardEvents are the events that change what a card shows.
 var cardEvents = map[string]bool{
-	fleet.EventStatus:            true,
-	fleet.EventVerification:      true,
-	fleet.EventAgentToolUse:      true,
-	fleet.EventAgentResult:       true,
-	fleet.EventDeliveryCommitted: true,
-	fleet.EventDeliveryPushed:    true,
-	fleet.EventDeliveryPROpened:  true,
-	fleet.EventDeliveryApproved:  true,
-	fleet.EventDiscarded:         true,
+	fleet.EventStatus:              true,
+	fleet.EventStartupResumed:      true,
+	fleet.EventStartupResumeCapped: true,
+	fleet.EventVerification:        true,
+	fleet.EventAgentToolUse:        true,
+	fleet.EventAgentResult:         true,
+	fleet.EventDeliveryCommitted:   true,
+	fleet.EventDeliveryPushed:      true,
+	fleet.EventDeliveryPROpened:    true,
+	fleet.EventDeliveryApproved:    true,
+	fleet.EventDiscarded:           true,
 }
 
 func (m *fleetCardManager) handleEvent(ctx context.Context, ev fleet.Event) {
@@ -401,6 +403,13 @@ func (m *fleetCardManager) render(ctx context.Context, chatID int64, task fleet.
 	if task.PRURL != "" {
 		b.WriteString("\n🔗 ")
 		b.WriteString(task.PRURL)
+	}
+	if recovered, capped := fleetStartupResumeState(ctx, m.Fleet.Store, task); capped || recovered {
+		key := "fleet_card_startup_recovered"
+		if capped {
+			key = "fleet_card_startup_resume_capped"
+		}
+		b.WriteString("\n" + loc(key, nil))
 	}
 	if task.Status == fleet.StatusNeedsDecision && task.SessionID != "" {
 		b.WriteString("\n\n")
