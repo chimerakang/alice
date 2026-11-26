@@ -73,6 +73,7 @@ func (wi *WebInterface) registerFleetRoutes(mux *http.ServeMux) {
 	command("POST /api/fleet/projects", wi.fleetRegisterProject)
 	command("PUT /api/fleet/projects/{id}", wi.fleetUpdateProject)
 	command("POST /api/fleet/tasks", wi.fleetDispatchTask)
+	command("POST /api/fleet/epics", wi.fleetCreateEpic)
 	command("POST /api/fleet/tasks/{id}/{action}", wi.fleetTaskAction)
 
 	wi.registerFleetProjectRoutes(mux)

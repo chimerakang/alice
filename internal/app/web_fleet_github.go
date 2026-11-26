@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
+	alicev1 "claude-tg-agent/gen/go/alice/v1"
+
 	"github.com/chimerakang/alice-core/fleet"
+	"google.golang.org/protobuf/proto"
 )
 
 // Testable vars for GitHub operations during Fleet dispatch, following the same
@@ -18,6 +22,9 @@ var (
 	fleetGitHubMilestoneGetOrCreate = getOrCreateFleetGitHubMilestone
 	fleetGitHubMilestoneListFunc    = listFleetGitHubMilestones
 	fleetGitHubEpicUpdateFunc       = appendToFleetGitHubEpic
+	fleetGitHubLabelEnsureFunc      = ensureFleetGitHubLabel
+	fleetGitHubLabeledIssueFunc     = createFleetGitHubLabeledIssue
+	fleetGitHubStatusFunc           = checkFleetGitHubStatus
 	// fleetDispatchFromIssueFunc wraps the Commander.Dispatch call for the
 	// "from issue" path so tests can substitute it without needing real gh.
 	fleetDispatchFromIssueFunc = defaultFleetDispatchFromIssue
@@ -29,10 +36,18 @@ type fleetCreatedIssue struct {
 }
 
 func createFleetGitHubIssue(ctx context.Context, repoPath, title, body string, milestoneNumber int) (fleetCreatedIssue, error) {
+	return createFleetGitHubLabeledIssue(ctx, repoPath, title, body, milestoneNumber, nil)
+}
+
+// createFleetGitHubLabeledIssue creates an issue carrying the given labels.
+func createFleetGitHubLabeledIssue(ctx context.Context, repoPath, title, body string, milestoneNumber int, labels []string) (fleetCreatedIssue, error) {
 	args := []string{
 		"api", "repos/:owner/:repo/issues", "-X", "POST",
 		"-f", "title=" + title,
 		"-f", "body=" + body,
+	}
+	for _, l := range labels {
+		args = append(args, "-f", "labels[]="+l)
 	}
 	if milestoneNumber > 0 {
 		args = append(args, "-F", fmt.Sprintf("milestone=%d", milestoneNumber))
@@ -108,20 +123,62 @@ func appendToFleetGitHubEpic(ctx context.Context, repoPath string, epicNumber, i
 	if err := json.Unmarshal(out, &epic); err != nil {
 		return fmt.Errorf("parse epic body: %w", err)
 	}
-	newItem := fmt.Sprintf("- [ ] #%d %s", issueNumber, issueTitle)
-	body := strings.TrimRight(epic.Body, "\n")
-	if body == "" {
-		body = newItem
-	} else {
-		body = body + "\n" + newItem
-	}
-	_, err = runProcessCombinedOutput(ctx, ProcessOptions{Dir: repoPath, Timeout: 30 * time.Second}, "gh",
+	body := appendEpicChild(epic.Body, fmt.Sprintf("- [ ] #%d %s", issueNumber, issueTitle))
+	patchOut, err := runProcessCombinedOutput(ctx, ProcessOptions{Dir: repoPath, Timeout: 30 * time.Second}, "gh",
 		"api", fmt.Sprintf("repos/:owner/:repo/issues/%d", epicNumber),
 		"-X", "PATCH",
 		"-f", "body="+body,
 	)
 	if err != nil {
-		return ghWrapError(out, err, "update epic body")
+		return ghWrapError(patchOut, err, "update epic body")
+	}
+	return nil
+}
+
+// appendEpicChild adds a child item at the end of an epic body. When the body
+// ends with the (empty) sub-issue heading that createEpicBody leaves, the item
+// goes under it, separated by a blank line; otherwise it follows the last line.
+func appendEpicChild(body, item string) string {
+	body = strings.TrimRight(body, "\r\n \t")
+	if body == "" {
+		return item
+	}
+	last := body[strings.LastIndex(body, "\n")+1:]
+	if strings.HasPrefix(strings.TrimSpace(last), "#") {
+		return body + "\n\n" + item
+	}
+	return body + "\n" + item
+}
+
+// buildEpicBody is the description followed by an empty sub-issue section,
+// which later children are appended into.
+func buildEpicBody(description, heading string) string {
+	return strings.TrimRight(description, "\r\n \t") + "\n\n## " + heading + "\n"
+}
+
+// ensureFleetGitHubLabel creates the label when the repo lacks it and reports
+// whether it did.
+func ensureFleetGitHubLabel(ctx context.Context, repoPath, name string) (bool, error) {
+	out, err := runProcessCombinedOutput(ctx, ProcessOptions{Dir: repoPath, Timeout: 30 * time.Second}, "gh",
+		"api", "repos/:owner/:repo/labels", "-X", "POST", "-f", "name="+name,
+	)
+	if err != nil {
+		if strings.Contains(strings.ToLower(string(out)), "already_exists") {
+			return false, nil
+		}
+		return false, ghWrapError(out, err, "create label")
+	}
+	return true, nil
+}
+
+// checkFleetGitHubStatus reports whether gh is logged in and the repo has a
+// GitHub remote: nil, errTasksGitHubAuthRequired or errTasksNoGitHubRepo.
+func checkFleetGitHubStatus(ctx context.Context, repoPath string) error {
+	out, err := runProcessCombinedOutput(ctx, ProcessOptions{Dir: repoPath, Timeout: 20 * time.Second}, "gh",
+		"repo", "view", "--json", "url",
+	)
+	if err != nil {
+		return ghWrapError(out, err, "check github")
 	}
 	return nil
 }
@@ -190,4 +247,58 @@ func resolvedEpicLabels(labels []string) []string {
 // IssueTracker to fetch the issue from GitHub.
 func defaultFleetDispatchFromIssue(ctx context.Context, svc *FleetService, actor fleet.Actor, projectID string, issueNum int, opts fleet.DispatchRequest) (fleet.Task, error) {
 	return svc.Commander.Dispatch(ctx, actor, opts)
+}
+
+// defaultEpicChildrenHeading is used when fleet.epic_children_heading is unset.
+const defaultEpicChildrenHeading = "Sub-issues"
+
+// fleetCreateEpic handles POST /api/fleet/epics: it creates an epic issue on
+// GitHub and nothing else. No task is created.
+func (wi *WebInterface) fleetCreateEpic(ctx context.Context, svc *FleetService, r *http.Request) (proto.Message, error) {
+	var req alicev1.FleetEpicRequest
+	if err := readFleetBody(r, &req); err != nil {
+		return nil, err
+	}
+	description := strings.TrimSpace(req.Description)
+	switch {
+	case strings.TrimSpace(req.ProjectId) == "":
+		return nil, fleetBadRequest("project_id is required")
+	case description == "":
+		return nil, fleetBadRequest("a description is required")
+	}
+	project, err := svc.Commander.GetProject(ctx, strings.TrimSpace(req.ProjectId))
+	if err != nil {
+		return nil, err
+	}
+	title := firstNonEmptyLine(description)
+	heading := strings.TrimSpace(svc.Config.EpicChildrenHeading)
+	if heading == "" {
+		heading = defaultEpicChildrenHeading
+	}
+	label := resolvedEpicLabels(svc.Config.EpicLabels)[0]
+
+	var milestoneNumber int
+	if ms := strings.TrimSpace(req.Milestone); ms != "" {
+		if milestoneNumber, err = fleetGitHubMilestoneGetOrCreate(ctx, project.RepoPath, ms); err != nil {
+			return nil, err
+		}
+	}
+	labelCreated, err := fleetGitHubLabelEnsureFunc(ctx, project.RepoPath, label)
+	if err != nil {
+		return nil, err
+	}
+	created, err := fleetGitHubLabeledIssueFunc(ctx, project.RepoPath, title, buildEpicBody(description, heading), milestoneNumber, []string{label})
+	if err != nil {
+		return nil, err
+	}
+	out := &alicev1.FleetEpicReply{
+		Number: int32(created.Number), Title: title, Url: created.HTMLURL,
+		Label: label, LabelCreated: labelCreated,
+	}
+	if pattern := strings.TrimSpace(svc.Config.EpicTitlePattern); pattern != "" {
+		if re := compileEpicPattern(pattern); re != nil && !re.MatchString(title) {
+			out.TitlePatternMismatch, out.TitlePattern = true, pattern
+		}
+	}
+	return out, nil
 }

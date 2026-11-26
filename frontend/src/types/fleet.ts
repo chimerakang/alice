@@ -225,6 +225,29 @@ export interface FleetDispatchRequest {
   epic_issue?: number;
 }
 
+/** Body of POST /api/fleet/epics. */
+export interface FleetEpicRequest {
+  project_id: string;
+  description: string;
+  milestone?: string;
+}
+
+export interface FleetEpicReply {
+  number: number;
+  title: string;
+  url: string;
+  label: string;
+  label_created: boolean;
+  title_pattern_mismatch: boolean;
+  title_pattern: string;
+}
+
+/** Whether GitHub can be written for a project right now. */
+export interface FleetGitHubStatus {
+  available: boolean;
+  reason: "" | "no_remote" | "auth_required";
+}
+
 export interface FleetMilestone {
   number: number;
   title: string;

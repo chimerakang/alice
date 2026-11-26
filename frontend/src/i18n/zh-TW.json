@@ -974,7 +974,18 @@
       "github_epic_label": "Epic",
       "github_epic_placeholder": "選擇要掛入的 epic",
       "github_issue_created": "已建立 GitHub issue #{{number}}。",
-      "github_epic_warning": "警告：{{message}}"
+      "github_epic_warning": "警告：{{message}}",
+      "github_kind_issue": "一般 issue（建立後派工）",
+      "github_kind_epic": "Epic（規劃用容器，不派工）",
+      "github_kind_label": "建立",
+      "submit_epic": "建立 epic",
+      "epic_created": "已建立 Epic #{{number}}。可在下方選擇它作為 Epic，接著輸入第一個子任務。",
+      "epic_label_created": "標籤「{{label}}」原本不存在，已建立。",
+      "epic_title_mismatch": "標題不符合設定的 epic 樣式（{{pattern}}），Fleet 可能不會把它認成 epic。標題未被修改。",
+      "epic_fields_na": "建立 epic 時不適用。",
+      "github_checking": "正在檢查 GitHub 存取…",
+      "github_reason_no_remote": "無法使用 GitHub：此專案沒有 GitHub remote。",
+      "github_reason_auth_required": "無法使用 GitHub：gh 尚未登入。請在 Alice 主機執行 `gh auth login`。"
     },
     "delivery": {
       "title": "交付摘要",

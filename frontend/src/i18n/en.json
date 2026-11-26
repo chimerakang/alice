@@ -974,7 +974,18 @@
       "github_epic_label": "Epic",
       "github_epic_placeholder": "Pick an epic to add this issue to",
       "github_issue_created": "GitHub issue #{{number}} created.",
-      "github_epic_warning": "Warning: {{message}}"
+      "github_epic_warning": "Warning: {{message}}",
+      "github_kind_issue": "Ordinary issue (dispatched as a task)",
+      "github_kind_epic": "Epic (planning container, no task)",
+      "github_kind_label": "Create",
+      "submit_epic": "Create epic",
+      "epic_created": "Epic #{{number}} created. Pick it as the Epic below to add its first sub-task.",
+      "epic_label_created": "The label \"{{label}}\" did not exist and was created.",
+      "epic_title_mismatch": "The title does not match the configured epic pattern ({{pattern}}), so Fleet may not recognise it as an epic. The title was not changed.",
+      "epic_fields_na": "Not used when creating an epic.",
+      "github_checking": "Checking GitHub access…",
+      "github_reason_no_remote": "GitHub is unavailable: this project has no GitHub remote.",
+      "github_reason_auth_required": "GitHub is unavailable: gh is not logged in. Run `gh auth login` on the Alice host."
     },
     "delivery": {
       "title": "Delivery summary",
