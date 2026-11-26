@@ -14,6 +14,8 @@ github.com/chimerakang/alice-core v0.0.0-20261124101120-ec2029ae8dd2 h1:6xblYADz
 github.com/chimerakang/alice-core v0.0.0-20261124101120-ec2029ae8dd2/go.mod h1:nS8tbx5+GEWMgzVvxTEinD1FR/tb96Hr+GiojpbOsYk=
 github.com/chimerakang/alice-core v0.0.0-20261126013649-0197e9baf8ec h1:AsqwW/qW3aXAxp1REpe5e5vkdq4dr5i/A0pJB8QiNZ4=
 github.com/chimerakang/alice-core v0.0.0-20261126013649-0197e9baf8ec/go.mod h1:nS8tbx5+GEWMgzVvxTEinD1FR/tb96Hr+GiojpbOsYk=
+github.com/chimerakang/alice-core v0.0.0-20261126013841-3b53fb019d2a h1:eG/cPWR+VZZFaVl90ZIHNAyYohYi7BIVrhC5h7jU4JY=
+github.com/chimerakang/alice-core v0.0.0-20261126013841-3b53fb019d2a/go.mod h1:nS8tbx5+GEWMgzVvxTEinD1FR/tb96Hr+GiojpbOsYk=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dnaeon/go-vcr v1.2.0 h1:zHCHvJYTMh1N7xnV7zf1m1GPBF9Ad0Jk/whtQ1663qI=
