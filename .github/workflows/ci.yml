@@ -2,9 +2,9 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main, develop, feature/* ]
+    branches: [ main, feature/* ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main ]
   release:
     types: [ published ]
 
@@ -190,20 +190,6 @@ jobs:
     - name: Cleanup
       if: always()
       run: docker-compose down -v
-
-  deploy-staging:
-    name: Deploy to Staging
-    runs-on: ubuntu-latest
-    needs: [test, lint, docker-build]
-    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
-    environment: staging
-
-    steps:
-    - name: Deploy to staging environment
-      run: |
-        echo "Deploying to staging..."
-        # Add your staging deployment commands here
-        # Example: kubectl apply -f k8s/staging/
 
   deploy-production:
     name: Deploy to Production

@@ -1,0 +1,53 @@
+name: Fleet Develop CI
+
+on:
+  pull_request:
+    branches: [develop]
+  push:
+    branches: [develop]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fleet-develop-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    name: Fleet develop verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build and test the backend
+        run: |
+          go build ./...
+          go test ./...
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Build and test the frontend
+        working-directory: frontend
+        run: |
+          npm run build
+          npm test
+      - name: Retain dashboard for Epic acceptance
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: alice-dashboard-${{ github.sha }}
+          path: web/
+          if-no-files-found: error
