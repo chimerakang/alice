@@ -478,4 +478,5 @@ For additional support, please open an issue in the GitHub repository.
    SHA using the deployment procedure for the production host. Use the dashboard
    artifact from that SHA and build the backend from the same commit. Check the
    service health and keep the previous accepted version available for rollback.
-   The Fleet Develop CI workflow does not deploy.
+   Alice CI runs the same build and test checks for `develop` and `main`.
+   The workflow does not deploy.
