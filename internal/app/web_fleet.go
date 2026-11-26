@@ -818,6 +818,12 @@ func (wi *WebInterface) fleetTaskAction(ctx context.Context, svc *FleetService, 
 		task, err = cmd.Pass(ctx, actor, id)
 	case "discard":
 		task, err = cmd.Discard(ctx, actor, id)
+	case "sync-issue":
+		// Retries the issue update; ?close=true is the operator's go-ahead
+		// to close the issue if every other condition holds.
+		if _, err = svc.IssueSync.Sync(ctx, id, IssueSyncOptions{AuthorizeClose: r.URL.Query().Get("close") == "true"}); err == nil {
+			task, err = cmd.GetTask(ctx, id)
+		}
 	default:
 		return nil, fleetBadRequest("unknown action " + strconv.Quote(action))
 	}
