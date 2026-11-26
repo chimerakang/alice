@@ -31,8 +31,16 @@ func fleetPathWithin(path, root string) bool {
 }
 
 // FleetConfig controls the fleet: one agent run per task, each in its own
-// git worktree, across every registered project. It is off unless enabled.
+// git worktree, across every registered project. It is the default task
+// backend; set backend to "hermes" to run the old Hermes system instead.
 type FleetConfig struct {
+	// Backend selects the task system: "fleet" (default when empty) or
+	// "hermes".
+	Backend string `json:"backend"`
+	// Enabled is the older on/off switch. It no longer has any effect:
+	// Backend decides, and an empty Backend means fleet.
+	//
+	// Deprecated: use Backend.
 	Enabled bool `json:"enabled"`
 	// WorktreeRoot is where task checkouts are created. Defaults to
 	// "worktrees" beside the database.
@@ -67,6 +75,26 @@ type FleetConfig struct {
 	// EpicChildrenHeading titles the sub-issue section appended to epics the
 	// dashboard creates. Defaults to "Sub-issues" when empty.
 	EpicChildrenHeading string `json:"epic_children_heading"`
+}
+
+const (
+	fleetBackendFleet  = "fleet"
+	fleetBackendHermes = "hermes"
+)
+
+// Active reports whether the fleet is the task backend. Anything but an
+// explicit "hermes" selects it.
+func (c FleetConfig) Active() bool {
+	return !strings.EqualFold(strings.TrimSpace(c.Backend), fleetBackendHermes)
+}
+
+// validateBackend rejects a backend value that is neither system.
+func (c FleetConfig) validateBackend() error {
+	switch strings.ToLower(strings.TrimSpace(c.Backend)) {
+	case "", fleetBackendFleet, fleetBackendHermes:
+		return nil
+	}
+	return fmt.Errorf("fleet.backend %q: must be %q or %q", c.Backend, fleetBackendFleet, fleetBackendHermes)
 }
 
 // trustMode returns the configured default trust mode.

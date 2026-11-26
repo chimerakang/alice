@@ -157,3 +157,18 @@ func TestFleetServiceForwardsEventsToRuntimeEvents(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 }
+
+func TestFleetConfigBackend(t *testing.T) {
+	cases := map[string]bool{"": true, "fleet": true, "Fleet": true, "hermes": false, " HERMES ": false}
+	for in, want := range cases {
+		if got := (FleetConfig{Backend: in}).Active(); got != want {
+			t.Errorf("Backend %q: Active = %v, want %v", in, got, want)
+		}
+	}
+	if err := (FleetConfig{Backend: "bogus"}).validateBackend(); err == nil {
+		t.Error("bogus backend accepted")
+	}
+	if err := (FleetConfig{}).validateBackend(); err != nil {
+		t.Error(err)
+	}
+}

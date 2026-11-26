@@ -926,8 +926,12 @@ func Main() {
 		RemindPendingPauses(appCtx, hermesStore, tgBot)
 	}
 
-	// Start the fleet if enabled. Nothing is built or started otherwise.
-	if config.Fleet.Enabled {
+	// Start the fleet unless fleet.backend selects hermes. Nothing is built
+	// or started otherwise.
+	if err := config.Fleet.validateBackend(); err != nil {
+		log.Printf("⚠️ Warning: %v; using fleet", err)
+	}
+	if config.Fleet.Active() {
 		svc, err := NewFleetService(config.Fleet, fleetDatabase(), config.DatabasePath, config.Model)
 		if err == nil {
 			err = svc.Start(appCtx)

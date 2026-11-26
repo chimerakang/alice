@@ -612,7 +612,7 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "retry", "description": "Retry reviewed low-score sub-task"},
 		{"command": "help", "description": "Show help message"},
 	}
-	if t.config.Fleet.Enabled {
+	if t.config.Fleet.Active() {
 		commands = append(commands,
 			map[string]string{"command": "ship", "description": "Dispatch a task to this topic's project"},
 			map[string]string{"command": "scout", "description": "Dispatch a read-only investigation"},
