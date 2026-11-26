@@ -29,7 +29,10 @@ fi
 first_seen=$now
 if [ -r "$ALICE_STATE_DIR/first_seen" ]; then read -r first_seen < "$ALICE_STATE_DIR/first_seen" || true; fi
 case "$first_seen" in ''|*[!0-9]*) first_seen=$now ;; esac
-if [ $((now - first_seen)) -lt 120 ]; then exit 0; fi
+# Opening the database alone has taken over three minutes on a loaded machine;
+# a short grace here restarted the service mid-startup, in a loop.
+ALICE_STARTUP_GRACE="${ALICE_WATCHDOG_STARTUP_GRACE:-600}"
+if [ $((now - first_seen)) -lt "$ALICE_STARTUP_GRACE" ]; then exit 0; fi
 failures=0
 if [ -r "$ALICE_STATE_DIR/failures" ]; then read -r failures < "$ALICE_STATE_DIR/failures" || true; fi
 case "$failures" in ''|*[!0-9]*) failures=0 ;; esac
