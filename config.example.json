@@ -103,6 +103,8 @@
 
   "fleet": {
     "enabled": false,
+    "scout_backend": "claude",
+    "scout_codex_model": "",
     "worktree_root": "./data/worktrees",
     "report_root": "./data/fleet-reports",
     "max_concurrent": 2,
