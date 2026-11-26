@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -13,6 +14,21 @@ import (
 	"github.com/chimerakang/alice-core/fleet"
 	"github.com/chimerakang/alice-core/worktree"
 )
+
+func fleetCanonicalPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return filepath.Clean(path)
+}
+
+func fleetPathWithin(path, root string) bool {
+	if path == "" || root == "" {
+		return false
+	}
+	rel, err := filepath.Rel(fleetCanonicalPath(root), fleetCanonicalPath(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
 
 // FleetConfig controls the fleet: one agent run per task, each in its own
 // git worktree, across every registered project. It is off unless enabled.

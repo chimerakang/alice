@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -276,7 +275,7 @@ func fleetProjectProto(p fleet.Project, topics []topicBinding) *alicev1.FleetPro
 		UpdatedAt: fleetTime(p.UpdatedAt),
 	}
 	for _, b := range topics {
-		if b.Dir == p.RepoPath || strings.HasPrefix(b.Dir, p.RepoPath+string(os.PathSeparator)) {
+		if fleetPathWithin(b.Dir, p.RepoPath) {
 			out.Topics = append(out.Topics, &alicev1.FleetTopic{ChatId: b.Key.chatID, ThreadId: int32(b.Key.threadID)})
 		}
 	}

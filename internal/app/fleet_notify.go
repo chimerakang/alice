@@ -193,7 +193,7 @@ func (n *fleetNotices) destination(ctx context.Context, taskID, projectID string
 		if project, err := n.Fleet.Store.GetProject(ctx, projectID); err == nil {
 			if bindings, err := n.Topics.ListTopicBindings(); err == nil {
 				for _, b := range bindings {
-					if b.Dir == project.RepoPath || strings.HasPrefix(b.Dir, project.RepoPath+string(os.PathSeparator)) {
+					if fleetPathWithin(b.Dir, project.RepoPath) {
 						return b.Key
 					}
 				}

@@ -96,7 +96,7 @@ func (wi *WebInterface) fleetProjectWorktrees(ctx context.Context, svc *FleetSer
 	byPath := map[string]fleet.Task{}
 	for _, task := range tasks {
 		if task.WorktreePath != "" {
-			byPath[task.WorktreePath] = task
+			byPath[fleetCanonicalPath(task.WorktreePath)] = task
 		}
 	}
 	out := &alicev1.FleetWorktreeList{}
@@ -105,7 +105,7 @@ func (wi *WebInterface) fleetProjectWorktrees(ctx context.Context, svc *FleetSer
 			continue
 		}
 		wt := &alicev1.FleetWorktree{Path: tree.Path, Branch: tree.Branch, Missing: tree.Prunable, Orphan: true}
-		if task, ok := byPath[tree.Path]; ok {
+		if task, ok := byPath[fleetCanonicalPath(tree.Path)]; ok {
 			wt.TaskId, wt.TaskStatus = task.ID, string(task.Status)
 			wt.Orphan = task.Status.IsTerminal()
 		}
