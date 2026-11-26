@@ -1,10 +1,10 @@
-name: Fleet Develop CI
+name: Alice CI
 
 on:
   pull_request:
-    branches: [develop]
+    branches: [main, develop]
   push:
-    branches: [develop]
+    branches: [main, develop]
   merge_group:
     types: [checks_requested]
 
@@ -12,11 +12,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: fleet-develop-${{ github.event_name }}-${{ github.ref }}
+  group: alice-ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   verify:
+    # Keep the existing required check name for protected develop PRs.
     name: Fleet develop verification
     runs-on: ubuntu-latest
     timeout-minutes: 20
