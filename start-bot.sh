@@ -47,8 +47,12 @@ else
     sleep 1
     nohup ./alice >> alice.log 2>&1 &
 fi
-# A live PID alone is not readiness. The health endpoint includes Telegram polling.
-for attempt in $(seq 1 30); do
+# A live PID alone is not readiness. The health endpoint includes Telegram polling,
+# which reports ready only after the first long poll returns: up to 60s on a quiet
+# bot, on top of startup. Allow for both, as the watchdog does.
+ALICE_READY_TIMEOUT="${ALICE_READY_TIMEOUT:-150}"
+ALICE_READY_DEADLINE=$(( $(date +%s) + ALICE_READY_TIMEOUT ))
+while [ "$(date +%s)" -lt "$ALICE_READY_DEADLINE" ]; do
     if curl --silent --fail --max-time 2 http://127.0.0.1:8082/api/health >/dev/null; then
         echo "✅ Alice 與 Telegram polling 已就緒"
         exit 0
