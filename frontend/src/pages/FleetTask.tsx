@@ -40,7 +40,7 @@ function when(ts: string | null): string {
 export default function FleetTaskPage() {
   const { t } = useTranslation();
   const { id = "" } = useParams();
-  const { loaded, unavailable, error, tasks, refreshTask } = useFleet();
+  const { loaded, unavailable, error, tasks, projects, refreshTask } = useFleet();
   const task = tasks[id];
   const now = useNow(5_000);
 
@@ -121,6 +121,10 @@ export default function FleetTaskPage() {
   const files = useMemo(() => parsePatch(diff?.patch ?? ""), [diff]);
   const lifecycle = useMemo(() => events.filter((e) => !QUIET.has(e.type)), [events]);
   const latestAttempt = checks.reduce((max, c) => Math.max(max, c.attempt), 0);
+  // A ship task is checked only with its project's commands: with none set,
+  // "not run yet" would promise a result that is never coming.
+  const project = task ? projects.find((p) => p.id === task.project_id) : undefined;
+  const noCommands = task?.shape === "ship" && !!project && (project.verify_commands ?? []).length === 0;
 
   if (!loaded) return <p className="text-sm text-gray-500">{t("common.loading")}</p>;
   if (unavailable) return <FleetUnavailable reason={unavailable} error={error} />;
@@ -250,7 +254,15 @@ export default function FleetTaskPage() {
 
       <CollapsiblePanel title={t("fleet.task.checks")} badge={checks.filter((c) => c.attempt === latestAttempt).length} defaultOpen={checks.length > 0}>
         <div className="p-4 space-y-3">
-          {checks.length === 0 && <p className="text-sm text-gray-500">{t("fleet.task.no_checks")}</p>}
+          {checks.length === 0 && !noCommands && <p className="text-sm text-gray-500">{t("fleet.task.no_checks")}</p>}
+          {checks.length === 0 && noCommands && (
+            <p className="text-sm text-warning">
+              {t("fleet.task.no_verify_commands")}{" "}
+              <Link to="/fleet/projects" className="underline hover:text-gray-200">
+                {t("fleet.task.open_project_settings")}
+              </Link>
+            </p>
+          )}
           {checks.map((check) => (
             <div key={check.id} className="rounded-md border border-gray-800">
               <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">

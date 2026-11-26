@@ -1003,6 +1003,8 @@
       "untracked": "New files not yet added to git:",
       "checks": "Checks",
       "no_checks": "No checks have run yet.",
+      "no_verify_commands": "This project has no verify commands, so ship tasks are not checked.",
+      "open_project_settings": "Set them in project settings",
       "attempt": "round {{n}}",
       "exit_code": "exit {{code}}",
       "timed_out": "timed out"

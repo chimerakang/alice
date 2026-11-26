@@ -1003,6 +1003,8 @@
       "untracked": "尚未加入 git 的新檔案：",
       "checks": "驗收結果",
       "no_checks": "尚未執行驗收。",
+      "no_verify_commands": "此專案沒有設定驗收指令，Ship 任務不會執行驗收。",
+      "open_project_settings": "前往專案管理設定",
       "attempt": "第 {{n}} 輪",
       "exit_code": "結束碼 {{code}}",
       "timed_out": "逾時"
