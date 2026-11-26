@@ -965,7 +965,16 @@
       "error_project": "Pick a project first.",
       "error_empty": "There is nothing to dispatch.",
       "error_budget": "The budget must be an amount above 0.",
-      "error_too_many": "At most {{max}} tasks can be dispatched at once."
+      "error_too_many": "At most {{max}} tasks can be dispatched at once.",
+      "github_section": "GitHub",
+      "github_create_issue": "Create GitHub issue from this task",
+      "github_no_remote": "No GitHub remote configured for this project.",
+      "github_milestone_label": "Milestone",
+      "github_milestone_placeholder": "Milestone name (created if absent)",
+      "github_epic_label": "Epic",
+      "github_epic_placeholder": "Pick an epic to add this issue to",
+      "github_issue_created": "GitHub issue #{{number}} created.",
+      "github_epic_warning": "Warning: {{message}}"
     },
     "task": {
       "back": "Back to the board",

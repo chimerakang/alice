@@ -42,6 +42,8 @@ message FleetProject {
   repeated FleetTopic topics = 11;
   google.protobuf.Timestamp created_at = 12;
   google.protobuf.Timestamp updated_at = 13;
+  // True when the project has a git remote (GitHub issue creation may be available).
+  bool github_available = 14;
 }
 
 message FleetProjectList {
@@ -83,6 +85,13 @@ message FleetTask {
   google.protobuf.Timestamp started_at = 25;
   google.protobuf.Timestamp finished_at = 26;
   google.protobuf.Timestamp last_activity_at = 27;
+  // The URL of the GitHub issue this task was dispatched from, when it was
+  // just created by the dispatch request. Not persisted; only set in the
+  // dispatch response.
+  string issue_url = 28;
+  // A non-fatal warning from the dispatch, e.g. the epic could not be updated.
+  // Not persisted; only set in the dispatch response.
+  string warning = 29;
 }
 
 message FleetTaskList {
@@ -206,6 +215,14 @@ message FleetDispatchRequest {
   // Caps this task's total cost, or zero for the default.
   double budget_usd = 6;
   int32 priority = 7;
+  // When true, a GitHub issue is created from goal before dispatch.
+  bool create_issue = 8;
+  // Optional milestone name. Created if it does not exist. Only used when
+  // create_issue is true.
+  string milestone = 9;
+  // An existing epic issue number to append the new issue to. Only used when
+  // create_issue is true.
+  int32 epic_issue = 10;
 }
 
 // Body of POST /api/fleet/tasks/{id}/reply.
@@ -239,10 +256,22 @@ message FleetIssue {
   string url = 5;
   // The unfinished task already working on this issue, if any.
   string task_id = 6;
+  // True when the issue is an epic (by label or title pattern from config).
+  bool is_epic = 7;
 }
 
 message FleetIssueList {
   repeated FleetIssue issues = 1;
+}
+
+// An open milestone of a project.
+message FleetMilestone {
+  int32 number = 1;
+  string title = 2;
+}
+
+message FleetMilestoneList {
+  repeated FleetMilestone milestones = 1;
 }
 
 // A task checkout of a project.

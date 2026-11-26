@@ -38,6 +38,7 @@ const fleetOverBudgetPrefix = "over the "
 
 func (wi *WebInterface) registerFleetProjectRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/fleet/projects/{id}/issues", wi.fleetHandler(false, wi.fleetProjectIssues))
+	mux.HandleFunc("GET /api/fleet/projects/{id}/milestones", wi.fleetHandler(false, wi.fleetProjectMilestones))
 	mux.HandleFunc("GET /api/fleet/projects/{id}/worktrees", wi.fleetHandler(false, wi.fleetProjectWorktrees))
 	mux.HandleFunc("POST /api/fleet/projects/{id}/verify", wi.fleetHandlerWithin(true, fleetVerifyRunTimeout, wi.fleetProjectVerify))
 	mux.HandleFunc("GET /api/fleet/costs", wi.fleetHandler(false, wi.fleetCosts))
@@ -47,7 +48,7 @@ func (wi *WebInterface) registerFleetProjectRoutes(mux *http.ServeMux) {
 }
 
 // fleetProjectIssues lists a project's open GitHub issues, marking the ones
-// an unfinished task is already working on.
+// an unfinished task is already working on, and tagging epics from config.
 func (wi *WebInterface) fleetProjectIssues(ctx context.Context, svc *FleetService, r *http.Request) (proto.Message, error) {
 	project, err := svc.Commander.GetProject(ctx, r.PathValue("id"))
 	if err != nil {
@@ -67,11 +68,33 @@ func (wi *WebInterface) fleetProjectIssues(ctx context.Context, svc *FleetServic
 			busy[task.Source.IssueNumber] = task.ID
 		}
 	}
+	epicLabels := resolvedEpicLabels(svc.Config.EpicLabels)
+	epicPattern := compileEpicPattern(svc.Config.EpicTitlePattern)
 	out := &alicev1.FleetIssueList{}
 	for _, issue := range issues {
 		out.Issues = append(out.Issues, &alicev1.FleetIssue{
 			Number: int32(issue.Number), Title: issue.Title, Labels: append([]string{}, issue.Labels...),
 			Milestone: issue.Milestone, Url: issue.URL, TaskId: busy[issue.Number],
+			IsEpic: isEpicIssue(issue.Labels, issue.Title, epicLabels, epicPattern),
+		})
+	}
+	return out, nil
+}
+
+// fleetProjectMilestones lists the open milestones of a project's GitHub repo.
+func (wi *WebInterface) fleetProjectMilestones(ctx context.Context, svc *FleetService, r *http.Request) (proto.Message, error) {
+	project, err := svc.Commander.GetProject(ctx, r.PathValue("id"))
+	if err != nil {
+		return nil, err
+	}
+	milestones, err := fleetGitHubMilestoneListFunc(ctx, project.RepoPath)
+	if err != nil {
+		return nil, err
+	}
+	out := &alicev1.FleetMilestoneList{}
+	for _, m := range milestones {
+		out.Milestones = append(out.Milestones, &alicev1.FleetMilestone{
+			Number: int32(m.Number), Title: m.Title,
 		})
 	}
 	return out, nil

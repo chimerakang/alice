@@ -58,6 +58,12 @@ type FleetConfig struct {
 	// DashboardURL is the dashboard's address as the owner reaches it, e.g.
 	// "http://localhost:3939". When set, task cards link to it.
 	DashboardURL string `json:"dashboard_url"`
+	// EpicLabels are the GitHub label names that mark an issue as an epic.
+	// Defaults to ["epic"] when empty.
+	EpicLabels []string `json:"epic_labels"`
+	// EpicTitlePattern is a regexp that matches epic issue titles, e.g.
+	// `^\[M\d+\] Epic:`. Empty means no title-based detection.
+	EpicTitlePattern string `json:"epic_title_pattern"`
 }
 
 // trustMode returns the configured default trust mode.
