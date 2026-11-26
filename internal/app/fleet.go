@@ -42,6 +42,10 @@ type FleetConfig struct {
 	//
 	// Deprecated: use Backend.
 	Enabled bool `json:"enabled"`
+	// ScoutBackend selects the agent for read-only tasks. Empty uses Claude.
+	ScoutBackend string `json:"scout_backend"`
+	// ScoutCodexModel overrides the Codex CLI's default model.
+	ScoutCodexModel string `json:"scout_codex_model"`
 	// WorktreeRoot is where task checkouts are created. Defaults to
 	// "worktrees" beside the database.
 	WorktreeRoot string `json:"worktree_root"`
@@ -178,6 +182,14 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 		ReportRoot:   cfg.ReportRoot,
 		DefaultModel: defaultModel,
 		Budget:       budget,
+	}
+	switch cfg.ScoutBackend {
+	case "", "claude":
+	case "codex":
+		runner.CodexScoutBinary = "codex"
+		runner.CodexScoutModel = cfg.ScoutCodexModel
+	default:
+		return nil, fmt.Errorf("fleet.scout_backend: expected claude or codex, got %q", cfg.ScoutBackend)
 	}
 	deliverer := &fleet.Deliverer{Store: store}
 	// The tracker still ticks checklist items; what the issue is told, and
