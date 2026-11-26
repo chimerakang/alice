@@ -40,6 +40,7 @@ export interface FleetProject {
   topics: FleetTopic[];
   created_at: string | null;
   updated_at: string | null;
+  github_available: boolean;
 }
 
 export interface FleetTask {
@@ -70,6 +71,10 @@ export interface FleetTask {
   started_at: string | null;
   finished_at: string | null;
   last_activity_at: string | null;
+  /** Set in dispatch response when a GitHub issue was just created. */
+  issue_url?: string;
+  /** Non-fatal warning from dispatch, e.g. epic update failed. */
+  warning?: string;
 }
 
 export interface FleetEvent {
@@ -165,6 +170,14 @@ export interface FleetDispatchRequest {
   model?: string;
   budget_usd?: number;
   priority?: number;
+  create_issue?: boolean;
+  milestone?: string;
+  epic_issue?: number;
+}
+
+export interface FleetMilestone {
+  number: number;
+  title: string;
 }
 
 export interface FleetProjectRequest {
@@ -184,6 +197,8 @@ export interface FleetIssue {
   url: string;
   /** The unfinished task already working on this issue, if any. */
   task_id: string;
+  /** True when the issue is an epic (by label or title pattern). */
+  is_epic: boolean;
 }
 
 export interface FleetWorktree {

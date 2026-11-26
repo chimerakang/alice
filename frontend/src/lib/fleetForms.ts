@@ -11,6 +11,15 @@ export const MAX_BATCH = 20;
 
 export type DispatchError = "" | "project" | "empty" | "budget" | "too_many";
 
+/** The "create GitHub issue" box starts checked. */
+export const DEFAULT_CREATE_ISSUE = true;
+
+export interface GitHubDispatchOptions {
+  createIssue: boolean;
+  milestone: string;
+  epicIssue: number | null;
+}
+
 /** What the dispatch form would send, one request per task. */
 export function buildDispatchRequests(input: {
   mode: DispatchMode;
@@ -21,6 +30,7 @@ export function buildDispatchRequests(input: {
   goal: string;
   batch: string;
   issues: number[];
+  github?: GitHubDispatchOptions;
 }): { requests: FleetDispatchRequest[]; error: DispatchError } {
   if (!input.project) return { requests: [], error: "project" };
   const base: FleetDispatchRequest = { project_id: input.project, shape: input.shape };
@@ -29,6 +39,12 @@ export function buildDispatchRequests(input: {
     const usd = Number(input.budget.trim().replace(/^\$/, ""));
     if (!Number.isFinite(usd) || usd <= 0) return { requests: [], error: "budget" };
     base.budget_usd = usd;
+  }
+  // GitHub issue creation is only supported for single-task mode.
+  if (input.github?.createIssue && input.mode === "single") {
+    base.create_issue = true;
+    if (input.github.milestone.trim()) base.milestone = input.github.milestone.trim();
+    if (input.github.epicIssue != null && input.github.epicIssue > 0) base.epic_issue = input.github.epicIssue;
   }
   let requests: FleetDispatchRequest[] = [];
   if (input.mode === "single") {

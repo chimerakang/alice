@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -258,15 +259,16 @@ func fleetTimePtr(t *time.Time) *timestamppb.Timestamp {
 
 func fleetProjectProto(p fleet.Project, topics []topicBinding) *alicev1.FleetProject {
 	out := &alicev1.FleetProject{
-		Id:             p.ID,
-		Name:           p.Name,
-		RepoPath:       p.RepoPath,
-		Remote:         p.Remote,
-		DefaultBranch:  p.DefaultBranch,
-		TrustMode:      string(p.TrustMode),
-		VerifyCommands: append([]string{}, p.VerifyCommands...),
-		MaxConcurrent:  int32(p.MaxConcurrent),
-		BranchPrefix:   p.BranchPrefix,
+		Id:              p.ID,
+		Name:            p.Name,
+		RepoPath:        p.RepoPath,
+		Remote:          p.Remote,
+		DefaultBranch:   p.DefaultBranch,
+		TrustMode:       string(p.TrustMode),
+		VerifyCommands:  append([]string{}, p.VerifyCommands...),
+		MaxConcurrent:   int32(p.MaxConcurrent),
+		BranchPrefix:    p.BranchPrefix,
+		GithubAvailable: p.Remote != "",
 		Budget: &alicev1.FleetProjectBudget{
 			TaskCostUsd:  p.Budget.Task.CostUSD,
 			DailyCostUsd: p.Budget.Daily.CostUSD,
@@ -686,9 +688,17 @@ func (wi *WebInterface) fleetDispatchTask(ctx context.Context, svc *FleetService
 		return nil, fleetBadRequest("issue and budget_usd cannot be negative")
 	case req.Issue == 0 && strings.TrimSpace(req.Goal) == "":
 		return nil, fleetBadRequest("a goal or an issue is required")
+	case req.CreateIssue && req.Issue != 0:
+		return nil, fleetBadRequest("create_issue cannot be used together with an existing issue number")
 	}
-	task, err := svc.Commander.Dispatch(ctx, wi.fleetWebActor(), fleet.DispatchRequest{
-		ProjectID: strings.TrimSpace(req.ProjectId),
+
+	actor, projectID := wi.fleetWebActor(), strings.TrimSpace(req.ProjectId)
+	if req.CreateIssue {
+		return wi.fleetDispatchWithNewIssue(ctx, svc, actor, &req, shape)
+	}
+
+	task, err := svc.Commander.Dispatch(ctx, actor, fleet.DispatchRequest{
+		ProjectID: projectID,
 		Goal:      strings.TrimSpace(req.Goal),
 		Issue:     int(req.Issue),
 		Shape:     shape,
@@ -700,6 +710,62 @@ func (wi *WebInterface) fleetDispatchTask(ctx context.Context, svc *FleetService
 		return nil, err
 	}
 	return wi.fleetTaskReply(ctx, svc, task), nil
+}
+
+// fleetDispatchWithNewIssue creates a GitHub issue from the goal (with its
+// milestone), dispatches from that issue, then appends it to the epic. A
+// failure before the issue exists dispatches nothing; once it exists, an epic
+// failure only becomes a warning on the reply.
+func (wi *WebInterface) fleetDispatchWithNewIssue(ctx context.Context, svc *FleetService, actor fleet.Actor, req *alicev1.FleetDispatchRequest, shape fleet.Shape) (proto.Message, error) {
+	project, err := svc.Commander.GetProject(ctx, strings.TrimSpace(req.ProjectId))
+	if err != nil {
+		return nil, err
+	}
+	goal := strings.TrimSpace(req.Goal)
+	title := firstNonEmptyLine(goal)
+
+	var milestoneNumber int
+	if ms := strings.TrimSpace(req.Milestone); ms != "" {
+		if milestoneNumber, err = fleetGitHubMilestoneGetOrCreate(ctx, project.RepoPath, ms); err != nil {
+			return nil, err
+		}
+	}
+	created, err := fleetGitHubIssueCreateFunc(ctx, project.RepoPath, title, goal, milestoneNumber)
+	if err != nil {
+		return nil, err
+	}
+
+	task, err := fleetDispatchFromIssueFunc(ctx, svc, actor, project.ID, created.Number, fleet.DispatchRequest{
+		ProjectID: project.ID,
+		Issue:     created.Number,
+		Shape:     shape,
+		Model:     strings.TrimSpace(req.Model),
+		Priority:  int(req.Priority),
+		Budget:    fleet.Limit{CostUSD: req.BudgetUsd},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("issue #%d was created (%s) but dispatch failed: %w", created.Number, created.HTMLURL, err)
+	}
+
+	out := wi.fleetTaskReply(ctx, svc, task)
+	out.IssueUrl = created.HTMLURL
+	if epic := int(req.EpicIssue); epic > 0 {
+		if err := fleetGitHubEpicUpdateFunc(ctx, project.RepoPath, epic, created.Number, title); err != nil {
+			out.Warning = fmt.Sprintf("issue #%d created but epic #%d could not be updated: %s", created.Number, epic, err)
+		}
+	}
+	return out, nil
+}
+
+// firstNonEmptyLine returns the first non-blank line of s, trimmed of
+// whitespace. If s has no non-blank lines it returns s itself trimmed.
+func firstNonEmptyLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			return t
+		}
+	}
+	return strings.TrimSpace(s)
 }
 
 // fleetTaskAction handles POST /api/fleet/tasks/{id}/{action}.

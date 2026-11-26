@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_BATCH, buildDispatchRequests } from "@/lib/fleetForms";
+import { DEFAULT_CREATE_ISSUE, MAX_BATCH, buildDispatchRequests } from "@/lib/fleetForms";
 
 const base = { mode: "single" as const, project: "app", shape: "ship" as const, model: "", budget: "", goal: "", batch: "", issues: [] as number[] };
 
@@ -39,5 +39,42 @@ describe("buildDispatchRequests", () => {
     const many = Array.from({ length: MAX_BATCH + 1 }, (_, i) => `task ${i}`).join("\n");
     expect(buildDispatchRequests({ ...base, mode: "batch", batch: many }).error).toBe("too_many");
     expect(buildDispatchRequests({ ...base, mode: "batch", batch: many.split("\n").slice(1).join("\n") }).error).toBe("");
+  });
+});
+
+describe("buildDispatchRequests with GitHub options", () => {
+  it("starts with create issue checked", () => {
+    expect(DEFAULT_CREATE_ISSUE).toBe(true);
+  });
+
+  const github = { createIssue: true, milestone: " v2 ", epicIssue: 181 };
+
+  it("sends create_issue, milestone and epic_issue for a single task", () => {
+    expect(buildDispatchRequests({ ...base, goal: "fix it", github }).requests).toEqual([
+      { project_id: "app", shape: "ship", goal: "fix it", create_issue: true, milestone: "v2", epic_issue: 181 },
+    ]);
+    // Milestone and epic are optional.
+    expect(buildDispatchRequests({ ...base, goal: "fix it", github: { createIssue: true, milestone: "", epicIssue: null } }).requests).toEqual([
+      { project_id: "app", shape: "ship", goal: "fix it", create_issue: true },
+    ]);
+  });
+
+  it("sends none of them when unchecked, exactly as before", () => {
+    const off = { createIssue: false, milestone: "v2", epicIssue: 181 };
+    expect(buildDispatchRequests({ ...base, goal: "fix it", github: off }).requests).toEqual(
+      buildDispatchRequests({ ...base, goal: "fix it" }).requests,
+    );
+    expect(buildDispatchRequests({ ...base, goal: "fix it", github: off }).requests[0]).not.toHaveProperty("create_issue");
+  });
+
+  it("leaves batch and issues modes alone", () => {
+    const batch = buildDispatchRequests({ ...base, mode: "batch", batch: "a\nb", github }).requests;
+    expect(batch).toEqual([
+      { project_id: "app", shape: "ship", goal: "a" },
+      { project_id: "app", shape: "ship", goal: "b" },
+    ]);
+    expect(buildDispatchRequests({ ...base, mode: "issues", issues: [3], github }).requests).toEqual([
+      { project_id: "app", shape: "ship", issue: 3 },
+    ]);
   });
 });

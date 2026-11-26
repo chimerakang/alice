@@ -9,6 +9,7 @@ import type {
   FleetErrorBody,
   FleetEventList,
   FleetIssue,
+  FleetMilestone,
   FleetProject,
   FleetProjectRequest,
   FleetTask,
@@ -142,6 +143,8 @@ export const fleetApi = {
 
   listProjectIssues: async (id: string) =>
     (await request<{ issues?: FleetIssue[] }>("GET", `/api/fleet/projects/${enc(id)}/issues`)).issues ?? [],
+  listProjectMilestones: async (id: string) =>
+    (await request<{ milestones?: FleetMilestone[] }>("GET", `/api/fleet/projects/${enc(id)}/milestones`)).milestones ?? [],
   listProjectWorktrees: async (id: string) =>
     (await request<{ worktrees?: FleetWorktree[] }>("GET", `/api/fleet/projects/${enc(id)}/worktrees`)).worktrees ?? [],
   /** Runs the project's saved verify commands once and returns each outcome. */

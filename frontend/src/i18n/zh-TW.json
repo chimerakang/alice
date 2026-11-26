@@ -965,7 +965,16 @@
       "error_project": "請先選擇專案。",
       "error_empty": "沒有可派發的任務。",
       "error_budget": "預算需為大於 0 的金額。",
-      "error_too_many": "一次最多派發 {{max}} 個任務。"
+      "error_too_many": "一次最多派發 {{max}} 個任務。",
+      "github_section": "GitHub",
+      "github_create_issue": "從此任務建立 GitHub issue",
+      "github_no_remote": "此專案未設定 GitHub remote。",
+      "github_milestone_label": "Milestone",
+      "github_milestone_placeholder": "Milestone 名稱（不存在時自動建立）",
+      "github_epic_label": "Epic",
+      "github_epic_placeholder": "選擇要掛入的 epic",
+      "github_issue_created": "已建立 GitHub issue #{{number}}。",
+      "github_epic_warning": "警告：{{message}}"
     },
     "task": {
       "back": "回到看板",
