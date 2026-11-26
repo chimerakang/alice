@@ -34,9 +34,10 @@
 
   "model_routing": {
     "enable_dynamic_routing": false,
-    "fast_model": "claude-haiku-4-5-20251001",
-    "smart_model": "claude-sonnet-4-6",
-    "deep_model": "claude-opus-4-7",
+    "fast_model": "claude-haiku-5-5",
+    "smart_model": "claude-sonnet-5-5",
+    "deep_model": "claude-opus-5-5",
+    "flagship_model": "claude-fable-5-2",
     "codex_fast_model": "gpt-5.4-mini",
     "codex_smart_model": "gpt-5.4",
     "codex_deep_model": "gpt-5.5",
@@ -110,7 +111,15 @@
     "daily_budget_usd": 0,
     "task_budget_usd": 0,
     "dashboard_url": "",
-    "owner_user_id": 0
+    "owner_user_id": 0,
+    "auto_model": true,
+    "tier_labels": {
+      "docs": "fast",
+      "size:L": "deep",
+      "size:XL": "flagship"
+    },
+    "scout_backend": "claude",
+    "scout_codex_tiers": []
   },
 
   "security": {

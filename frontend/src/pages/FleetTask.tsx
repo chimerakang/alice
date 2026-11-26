@@ -1,3 +1,4 @@
+import ModelChoice from "@/components/fleet/ModelChoice";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -177,7 +178,14 @@ export default function FleetTaskPage() {
           {task.model && (
             <div>
               <dt className="inline">{t("fleet.task.model")}: </dt>
-              <dd className="inline text-gray-300">{task.model}</dd>
+              <dd className="inline text-gray-300">
+                {task.model}
+                {task.model_source && (
+                  <span className="ml-2 text-xs text-gray-500" data-testid="model-choice">
+                    (<ModelChoice task={task} />)
+                  </span>
+                )}
+              </dd>
             </div>
           )}
           {task.branch && (

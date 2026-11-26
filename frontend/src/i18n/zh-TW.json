@@ -976,6 +976,17 @@
       "github_issue_created": "已建立 GitHub issue #{{number}}。",
       "github_epic_warning": "警告：{{message}}"
     },
+    "model_choice": {
+      "manual": "由你指定",
+      "commander": "由指揮層選擇：{{tier}}，{{reason}}",
+      "tier": { "fast": "fast", "smart": "smart", "deep": "deep", "flagship": "flagship" },
+      "reason": {
+        "label": "issue 標籤 {{detail}}",
+        "complexity": "任務文字符合 {{detail}}",
+        "default": "拿不準，使用預設等級",
+        "escalated": "失敗後重試升級（{{detail}}）"
+      }
+    },
     "task": {
       "back": "回到看板",
       "not_found": "找不到任務 {{id}}。",

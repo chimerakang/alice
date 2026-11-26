@@ -92,6 +92,15 @@ message FleetTask {
   // A non-fatal warning from the dispatch, e.g. the epic could not be updated.
   // Not persisted; only set in the dispatch response.
   string warning = 29;
+  // Who chose the model: "manual" or "commander". Empty when the task runs on
+  // the default model.
+  string model_source = 30;
+  // The commander's tier ("fast", "smart", "deep", "flagship"), if it chose.
+  string model_tier = 31;
+  // Why: a reason code ("label", "complexity", "default", "escalated") and
+  // its detail (the label, matched rule, or "deep→flagship").
+  string model_reason = 32;
+  string model_reason_detail = 33;
 }
 
 message FleetTaskList {

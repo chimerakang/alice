@@ -976,6 +976,17 @@
       "github_issue_created": "GitHub issue #{{number}} created.",
       "github_epic_warning": "Warning: {{message}}"
     },
+    "model_choice": {
+      "manual": "Chosen by you",
+      "commander": "Chosen by the commander: {{tier}} — {{reason}}",
+      "tier": { "fast": "fast", "smart": "smart", "deep": "deep", "flagship": "flagship" },
+      "reason": {
+        "label": "issue label {{detail}}",
+        "complexity": "task text matched {{detail}}",
+        "default": "not sure, so the default tier",
+        "escalated": "retried after a failure ({{detail}})"
+      }
+    },
     "task": {
       "back": "Back to the board",
       "not_found": "Task {{id}} was not found.",

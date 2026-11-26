@@ -64,7 +64,30 @@ type FleetConfig struct {
 	// EpicTitlePattern is a regexp that matches epic issue titles, e.g.
 	// `^\[M\d+\] Epic:`. Empty means no title-based detection.
 	EpicTitlePattern string `json:"epic_title_pattern"`
+
+	// AutoModel lets the commander choose a model tier for tasks dispatched
+	// without one, and escalate auto-chosen models when a task is retried.
+	// Nil means on; false restores the single-default-model behaviour. It
+	// does nothing unless model_routing.smart_model is set.
+	AutoModel *bool `json:"auto_model"`
+	// TierLabels maps an issue label (case-insensitive) to a tier: "fast",
+	// "smart", "deep" or "flagship". When several labels match, the highest
+	// tier wins. Labels not listed here have no effect.
+	TierLabels map[string]string `json:"tier_labels"`
+	// ScoutBackend is "claude", "codex" or "auto" (the commander decides).
+	// Empty means "claude".
+	ScoutBackend string `json:"scout_backend"`
+	// ScoutCodexTiers lists the tiers whose Scout tasks "auto" may hand to
+	// Codex. Empty means auto never picks Codex.
+	ScoutCodexTiers []string `json:"scout_codex_tiers"`
+	// NoEscalateReasons are lower-case fragments of a task's status reason
+	// that mean it stopped for a reason unrelated to model ability (quota,
+	// budget, lost process). Empty uses a built-in list.
+	NoEscalateReasons []string `json:"no_escalate_reasons"`
 }
+
+// autoModelEnabled reports whether the commander picks models.
+func (c FleetConfig) autoModelEnabled() bool { return c.AutoModel == nil || *c.AutoModel }
 
 // trustMode returns the configured default trust mode.
 func (c FleetConfig) trustMode() (fleet.TrustMode, error) {
@@ -78,6 +101,8 @@ func (c FleetConfig) trustMode() (fleet.TrustMode, error) {
 type FleetService struct {
 	Config    FleetConfig
 	TrustMode fleet.TrustMode
+	// Routing supplies the tiered models the commander chooses from.
+	Routing ModelRoutingConfig
 
 	Store     *fleet.Store
 	Runner    *fleet.Runner

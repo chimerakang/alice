@@ -36,7 +36,7 @@ func (t *TelegramBot) fleetCompat(ctx context.Context, key chatKey, userID int64
 		return t.fleetCompatAct(ctx, key, userID, command, parts, "/fleet tasks",
 			[]fleet.Status{fleet.StatusFailed, fleet.StatusNeedsDecision},
 			func(id string) error {
-				_, err := t.fleet.Commander.Retry(ctx, fleetActor(userID), id)
+				_, err := fleetCommanderRetry(ctx, t.fleet, fleetActor(userID), id)
 				return err
 			}, "fleet_compat_retried")
 	case "/resume":

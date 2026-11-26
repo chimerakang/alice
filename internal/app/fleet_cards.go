@@ -394,6 +394,10 @@ func (m *fleetCardManager) render(ctx context.Context, chatID int64, task fleet.
 		"{elapsed}": fleetElapsed(task, m.clock()),
 		"{cost}":    fmt.Sprintf("%.2f", task.CostUSD),
 	}))
+	if line := m.modelLine(ctx, loc, task); line != "" {
+		b.WriteString("\n")
+		b.WriteString(line)
+	}
 	if line := m.actionLine(loc, task, action); line != "" {
 		b.WriteString("\n▸ ")
 		b.WriteString(line)
@@ -553,4 +557,20 @@ func fleetClip(s string, max int) string {
 		return s
 	}
 	return string(runes[:max-1]) + "…"
+}
+
+// modelLine says which model a task runs on and who chose it, or "" when it
+// runs on the default.
+func (m *fleetCardManager) modelLine(ctx context.Context, loc func(string, map[string]string) string, task fleet.Task) string {
+	if task.Model == "" {
+		return ""
+	}
+	if c := fleetLastModelChoice(ctx, m.Fleet.Store, task.ID); c != nil && c.Source == fleetModelSourceCommander && c.Model == task.Model {
+		return loc("fleet_card_model_commander", map[string]string{
+			"{model}":  task.Model,
+			"{tier}":   c.Tier,
+			"{reason}": loc("fleet_model_reason_"+c.Reason, map[string]string{"{detail}": c.Detail}),
+		})
+	}
+	return loc("fleet_card_model_manual", map[string]string{"{model}": task.Model})
 }

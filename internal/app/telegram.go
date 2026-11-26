@@ -9945,6 +9945,10 @@ func evaluateTaskComplexity(userMessage string) string {
 // 比本地啟發式算法更準確，且無需額外 API 金鑰（使用已有的 Claude 授權）
 // 返回值: "fast", "balanced", 或 "deep"
 func (t *TelegramBot) triageWithHaiku(ctx context.Context, userMessage string) string {
+	triageModel := strings.TrimSpace(t.config.ModelRouting.FastModel)
+	if triageModel == "" {
+		return evaluateTaskComplexity(userMessage)
+	}
 	triageCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
@@ -9962,7 +9966,7 @@ Reply only with: fast / balanced / deep`
 	args := []string{
 		"-p",
 		"--output-format", "json",
-		"--model", "claude-haiku-4-5-20251001",
+		"--model", triageModel,
 		"--dangerously-skip-permissions",
 		"--max-turns", "1",
 		prompt,
