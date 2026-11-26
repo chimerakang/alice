@@ -64,6 +64,9 @@ type FleetConfig struct {
 	// EpicTitlePattern is a regexp that matches epic issue titles, e.g.
 	// `^\[M\d+\] Epic:`. Empty means no title-based detection.
 	EpicTitlePattern string `json:"epic_title_pattern"`
+	// EpicChildrenHeading titles the sub-issue section appended to epics the
+	// dashboard creates. Defaults to "Sub-issues" when empty.
+	EpicChildrenHeading string `json:"epic_children_heading"`
 }
 
 // trustMode returns the configured default trust mode.

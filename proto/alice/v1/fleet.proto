@@ -285,6 +285,39 @@ message FleetDispatchRequest {
   int32 epic_issue = 10;
 }
 
+// Body of POST /api/fleet/epics: creates an epic issue on GitHub. No task is
+// dispatched.
+message FleetEpicRequest {
+  string project_id = 1;
+  // The epic's description: its first non-blank line is the title.
+  string description = 2;
+  // Optional milestone name. Created if it does not exist.
+  string milestone = 3;
+}
+
+// Reply of POST /api/fleet/epics.
+message FleetEpicReply {
+  int32 number = 1;
+  string title = 2;
+  string url = 3;
+  // The label that marks the issue as an epic.
+  string label = 4;
+  // True when the label did not exist in the repo and was created.
+  bool label_created = 5;
+  // Set when fleet.epic_title_pattern is configured and the title does not
+  // match it. The title is never rewritten.
+  bool title_pattern_mismatch = 6;
+  string title_pattern = 7;
+}
+
+// Reply of GET /api/fleet/projects/{id}/github: whether GitHub issues can be
+// written for the project right now.
+message FleetGitHubStatus {
+  bool available = 1;
+  // When not available: "no_remote" or "auth_required".
+  string reason = 2;
+}
+
 // Body of POST /api/fleet/tasks/{id}/reply.
 message FleetReplyRequest {
   string text = 1;

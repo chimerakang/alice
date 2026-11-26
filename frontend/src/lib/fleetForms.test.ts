@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_CREATE_ISSUE, MAX_BATCH, buildDispatchRequests, projectDraft, projectRequest } from "@/lib/fleetForms";
+import { DEFAULT_CREATE_ISSUE, DEFAULT_GITHUB_KIND, MAX_BATCH, buildDispatchRequests, buildEpicRequest, projectDraft, projectRequest, taskFieldsDisabled, withCreatedEpic } from "@/lib/fleetForms";
 import type { FleetProject } from "@/types/fleet";
 
 const base = { mode: "single" as const, project: "app", shape: "ship" as const, model: "", budget: "", goal: "", batch: "", issues: [] as number[] };
@@ -93,5 +93,35 @@ describe("buildDispatchRequests with GitHub options", () => {
     expect(buildDispatchRequests({ ...base, mode: "issues", issues: [3], github }).requests).toEqual([
       { project_id: "app", shape: "ship", issue: 3 },
     ]);
+  });
+});
+
+describe("epic creation", () => {
+  it("assembles the request from the description and milestone", () => {
+    expect(buildEpicRequest({ project: "app", goal: " Plan\nmore ", milestone: " v2 " })).toEqual({
+      request: { project_id: "app", description: "Plan\nmore", milestone: "v2" },
+      error: "",
+    });
+    expect(buildEpicRequest({ project: "app", goal: "Plan", milestone: "" }).request).toEqual({ project_id: "app", description: "Plan" });
+  });
+
+  it("refuses an empty description or no project", () => {
+    expect(buildEpicRequest({ project: "app", goal: "  ", milestone: "" }).error).toBe("empty");
+    expect(buildEpicRequest({ project: "", goal: "x", milestone: "" }).error).toBe("project");
+  });
+
+  it("disables the task-only fields for an epic, in single mode only", () => {
+    expect(taskFieldsDisabled("epic", "single")).toBe(true);
+    expect(taskFieldsDisabled("issue", "single")).toBe(false);
+    expect(taskFieldsDisabled("epic", "batch")).toBe(false);
+    expect(DEFAULT_GITHUB_KIND).toBe("issue");
+  });
+
+  it("puts the new epic in the list so it can be preselected", () => {
+    const existing = [{ number: 1, title: "old", labels: [], milestone: "", url: "", task_id: "", is_epic: true }];
+    const created = { number: 7, title: "new", url: "u" };
+    expect(withCreatedEpic(existing, created).map((e) => e.number)).toEqual([1, 7]);
+    // Already reloaded: no duplicate.
+    expect(withCreatedEpic(withCreatedEpic(existing, created), created)).toHaveLength(2);
   });
 });

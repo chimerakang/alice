@@ -8,6 +8,9 @@ import type {
   FleetDispatchRequest,
   FleetErrorBody,
   FleetEventList,
+  FleetEpicReply,
+  FleetEpicRequest,
+  FleetGitHubStatus,
   FleetIssue,
   FleetMilestone,
   FleetProject,
@@ -121,6 +124,9 @@ export const fleetApi = {
     ).tasks ?? [],
   getTask: (id: string) => request<FleetTask>("GET", `/api/fleet/tasks/${enc(id)}`),
   dispatch: (req: FleetDispatchRequest) => request<FleetTask>("POST", "/api/fleet/tasks", req, true),
+  /** Creates an epic issue on GitHub. No task is dispatched. */
+  createEpic: (req: FleetEpicRequest) => request<FleetEpicReply>("POST", "/api/fleet/epics", req, true),
+  getProjectGitHub: (id: string) => request<FleetGitHubStatus>("GET", `/api/fleet/projects/${enc(id)}/github`),
   act: (id: string, action: FleetTaskAction, body?: { text?: string; ignore_budget?: boolean; reason?: string }) =>
     request<FleetTask>("POST", `/api/fleet/tasks/${enc(id)}/${action}`, body ?? {}, true),
 

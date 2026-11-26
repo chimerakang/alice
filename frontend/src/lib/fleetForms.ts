@@ -2,7 +2,7 @@
 // rendering anything.
 
 import { parseBatchGoals } from "@/lib/fleet";
-import type { FleetDispatchRequest, FleetProject, FleetProjectRequest, FleetShape, FleetTrustMode } from "@/types/fleet";
+import type { FleetDispatchRequest, FleetEpicRequest, FleetIssue, FleetProject, FleetProjectRequest, FleetShape, FleetTrustMode } from "@/types/fleet";
 
 export type DispatchMode = "single" | "batch" | "issues";
 
@@ -104,4 +104,37 @@ export function projectRequest(d: ProjectDraft): { req: FleetProjectRequest | nu
     },
     error: "",
   };
+}
+
+/** What the GitHub section creates: an issue to dispatch, or an epic to plan under. */
+export type GitHubKind = "issue" | "epic";
+
+/** The default is an ordinary issue, so the dispatch behaves as it always did. */
+export const DEFAULT_GITHUB_KIND: GitHubKind = "issue";
+
+/** Shape, model and budget cap only mean something for a task, not an epic. */
+export function taskFieldsDisabled(kind: GitHubKind, mode: DispatchMode): boolean {
+  return mode === "single" && kind === "epic";
+}
+
+/** What the form would send to create an epic. */
+export function buildEpicRequest(input: {
+  project: string;
+  goal: string;
+  milestone: string;
+}): { request: FleetEpicRequest | null; error: "" | "project" | "empty" } {
+  if (!input.project) return { request: null, error: "project" };
+  if (!input.goal.trim()) return { request: null, error: "empty" };
+  const request: FleetEpicRequest = { project_id: input.project, description: input.goal.trim() };
+  if (input.milestone.trim()) request.milestone = input.milestone.trim();
+  return { request, error: "" };
+}
+
+/** The epic list with the just-created epic in it, whether or not the reload has seen it yet. */
+export function withCreatedEpic(epics: FleetIssue[], created: { number: number; title: string; url: string }): FleetIssue[] {
+  if (epics.some((e) => e.number === created.number)) return epics;
+  return [
+    ...epics,
+    { number: created.number, title: created.title, labels: [], milestone: "", url: created.url, task_id: "", is_epic: true },
+  ];
 }

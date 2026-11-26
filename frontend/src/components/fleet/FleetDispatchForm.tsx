@@ -4,9 +4,20 @@ import { useTranslation } from "react-i18next";
 import { X } from "lucide-react";
 import { FleetApiError, fleetApi, getApiToken, setApiToken } from "@/lib/fleetApi";
 import { parseBatchGoals } from "@/lib/fleet";
-import { DEFAULT_CREATE_ISSUE, MAX_BATCH, buildDispatchRequests, type DispatchMode, type GitHubDispatchOptions } from "@/lib/fleetForms";
+import {
+  DEFAULT_CREATE_ISSUE,
+  DEFAULT_GITHUB_KIND,
+  MAX_BATCH,
+  buildDispatchRequests,
+  buildEpicRequest,
+  taskFieldsDisabled,
+  withCreatedEpic,
+  type DispatchMode,
+  type GitHubDispatchOptions,
+  type GitHubKind,
+} from "@/lib/fleetForms";
 import { useFleetStore } from "@/stores/fleetStore";
-import type { FleetIssue, FleetMilestone, FleetProject, FleetShape } from "@/types/fleet";
+import type { FleetGitHubStatus, FleetIssue, FleetMilestone, FleetProject, FleetShape } from "@/types/fleet";
 
 type Mode = DispatchMode;
 
@@ -47,7 +58,15 @@ export default function FleetDispatchForm({ projects, defaultProject = "", onClo
 
   // GitHub section state (single mode only)
   const currentProject = projects.find((p) => p.id === project);
-  const githubAvailable = currentProject?.github_available ?? false;
+  // The project having a remote is not enough: gh must also be logged in.
+  // What was checked for another project counts as not checked.
+  const [loadedStatus, setLoadedStatus] = useState<{ project: string; status: FleetGitHubStatus | null } | null>(null);
+  const hasRemote = currentProject?.github_available ?? false;
+  const ghStatus = loadedStatus?.project === project ? loadedStatus.status : null;
+  const githubAvailable = hasRemote && ghStatus?.available === true;
+  const githubReason = !hasRemote ? "no_remote" : (ghStatus?.reason ?? "");
+  const [kind, setKind] = useState<GitHubKind>(DEFAULT_GITHUB_KIND);
+  const [epicNote, setEpicNote] = useState<{ number: number; labelCreated: string; mismatch: string } | null>(null);
   const [createIssue, setCreateIssue] = useState(DEFAULT_CREATE_ISSUE);
   const [ghMilestone, setGhMilestone] = useState("");
   const [ghEpicIssue, setGhEpicIssue] = useState<number | null>(null);
@@ -75,6 +94,18 @@ export default function FleetDispatchForm({ projects, defaultProject = "", onClo
     };
   }, [mode, project]);
 
+  // Check gh access up front, so the section is disabled with a reason
+  // instead of failing on submit.
+  useEffect(() => {
+    if (mode !== "single" || !project || !hasRemote) return;
+    let stale = false;
+    fleetApi
+      .getProjectGitHub(project)
+      .then((status) => { if (!stale) setLoadedStatus({ project, status }); })
+      .catch(() => { if (!stale) setLoadedStatus({ project, status: { available: false, reason: "" } }); });
+    return () => { stale = true; };
+  }, [mode, project, hasRemote]);
+
   // Load milestones and epics for the GitHub section (single mode + github available).
   useEffect(() => {
     if (mode !== "single" || !project || !githubAvailable) return;
@@ -88,7 +119,45 @@ export default function FleetDispatchForm({ projects, defaultProject = "", onClo
     return () => { stale = true; };
   }, [mode, project, githubAvailable]);
 
+  const epicMode = taskFieldsDisabled(kind, mode) && githubAvailable;
+
+  async function submitEpic() {
+    const built = buildEpicRequest({ project, goal, milestone: ghMilestone });
+    if (built.error || !built.request) {
+      setError(t(`fleet.dispatch.error_${built.error}`));
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setResults(null);
+    setEpicNote(null);
+    try {
+      const epic = await fleetApi.createEpic(built.request);
+      // Reload the epics, make sure the new one is in the list, and preselect
+      // it so the first sub-task can be typed and attached right away.
+      const reloaded = await fleetApi
+        .listProjectIssues(project)
+        .then((list) => list.filter((i) => i.is_epic))
+        .catch(() => loadedEpics ?? []);
+      setLoadedEpics(withCreatedEpic(reloaded, epic));
+      setGhEpicIssue(epic.number);
+      setKind("issue");
+      setGoal("");
+      setEpicNote({
+        number: epic.number,
+        labelCreated: epic.label_created ? epic.label : "",
+        mismatch: epic.title_pattern_mismatch ? epic.title_pattern : "",
+      });
+    } catch (err) {
+      if (err instanceof FleetApiError && err.unauthorized) setNeedToken(true);
+      setError(err instanceof Error ? err.message : String(err));
+    }
+    setBusy(false);
+  }
+
   async function submit() {
+    if (epicMode) return submitEpic();
+    setEpicNote(null);
     const github: GitHubDispatchOptions | undefined =
       mode === "single" && githubAvailable
         ? { createIssue, milestone: ghMilestone, epicIssue: ghEpicIssue }
@@ -156,6 +225,13 @@ export default function FleetDispatchForm({ projects, defaultProject = "", onClo
             onChange={(e) => {
               setProject(e.target.value);
               setPicked([]); // issue numbers mean nothing in another project
+              // Milestones and epics belong to the project's repo too.
+              setGhMilestone("");
+              setGhEpicIssue(null);
+              setLoadedMilestones(null);
+              setLoadedEpics(null);
+              setKind(DEFAULT_GITHUB_KIND);
+              setEpicNote(null);
             }}
             className={input}
           >
@@ -168,18 +244,18 @@ export default function FleetDispatchForm({ projects, defaultProject = "", onClo
         </label>
         <label className="space-y-1 text-xs text-gray-400">
           {t("fleet.dispatch.shape")}
-          <select value={shape} onChange={(e) => setShape(e.target.value as FleetShape)} className={input}>
+          <select value={shape} disabled={epicMode} title={epicMode ? t("fleet.dispatch.epic_fields_na") : undefined} onChange={(e) => setShape(e.target.value as FleetShape)} className={input}>
             <option value="ship">{t("fleet.shape.ship")}</option>
             <option value="scout">{t("fleet.shape.scout")}</option>
           </select>
         </label>
         <label className="space-y-1 text-xs text-gray-400">
           {t("fleet.dispatch.model")}
-          <input value={model} onChange={(e) => setModel(e.target.value)} placeholder={t("fleet.dispatch.model_default")} className={input} />
+          <input value={model} disabled={epicMode} onChange={(e) => setModel(e.target.value)} placeholder={t("fleet.dispatch.model_default")} className={input} />
         </label>
         <label className="space-y-1 text-xs text-gray-400">
           {t("fleet.dispatch.budget")}
-          <input value={budget} onChange={(e) => setBudget(e.target.value)} inputMode="decimal" placeholder={t("fleet.dispatch.budget_default")} className={input} />
+          <input value={budget} disabled={epicMode} onChange={(e) => setBudget(e.target.value)} inputMode="decimal" placeholder={t("fleet.dispatch.budget_default")} className={input} />
         </label>
       </div>
 
@@ -206,9 +282,21 @@ export default function FleetDispatchForm({ projects, defaultProject = "", onClo
           <div className="rounded-md border border-gray-800 p-3 space-y-2">
             <p className="text-xs font-medium text-gray-400">{t("fleet.dispatch.github_section")}</p>
             {!githubAvailable ? (
-              <p className="text-xs text-gray-500">{t("fleet.dispatch.github_no_remote")}</p>
+              <p className="text-xs text-gray-500" data-testid="github-unavailable">
+                {githubReason ? t(`fleet.dispatch.github_reason_${githubReason}`) : t("fleet.dispatch.github_checking")}
+              </p>
             ) : (
               <>
+                <div className="flex flex-wrap items-center gap-3 text-sm text-gray-200">
+                  <span className="text-xs text-gray-400">{t("fleet.dispatch.github_kind_label")}</span>
+                  {(["issue", "epic"] as GitHubKind[]).map((k) => (
+                    <label key={k} className="flex items-center gap-1.5 cursor-pointer">
+                      <input type="radio" name="github-kind" checked={kind === k} onChange={() => setKind(k)} className="accent-primary" />
+                      {t(`fleet.dispatch.github_kind_${k}`)}
+                    </label>
+                  ))}
+                </div>
+                {kind === "issue" && (
                 <label className="flex items-center gap-2 text-sm text-gray-200 cursor-pointer">
                   <input
                     type="checkbox"
@@ -218,7 +306,8 @@ export default function FleetDispatchForm({ projects, defaultProject = "", onClo
                   />
                   {t("fleet.dispatch.github_create_issue")}
                 </label>
-                {createIssue && (
+                )}
+                {(createIssue || kind === "epic") && (
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 pl-5">
                     <label className="space-y-1 text-xs text-gray-400">
                       {t("fleet.dispatch.github_milestone_label")}
@@ -242,6 +331,7 @@ export default function FleetDispatchForm({ projects, defaultProject = "", onClo
                         />
                       )}
                     </label>
+                    {kind === "issue" && (
                     <label className="space-y-1 text-xs text-gray-400">
                       {t("fleet.dispatch.github_epic_label")}
                       <select
@@ -255,6 +345,7 @@ export default function FleetDispatchForm({ projects, defaultProject = "", onClo
                         ))}
                       </select>
                     </label>
+                    )}
                   </div>
                 )}
               </>
@@ -321,6 +412,13 @@ export default function FleetDispatchForm({ projects, defaultProject = "", onClo
         </form>
       )}
       {error && !needToken && <p className="text-xs text-error break-words">{error}</p>}
+      {epicNote && (
+        <div className="text-xs space-y-1" data-testid="epic-created">
+          <p className="text-success">{t("fleet.dispatch.epic_created", { number: epicNote.number })}</p>
+          {epicNote.labelCreated && <p className="text-gray-400">{t("fleet.dispatch.epic_label_created", { label: epicNote.labelCreated })}</p>}
+          {epicNote.mismatch && <p className="text-warning break-words">{t("fleet.dispatch.epic_title_mismatch", { pattern: epicNote.mismatch })}</p>}
+        </div>
+      )}
       {results && (
         <div className="text-xs space-y-1">
           {results.ok > 0 && <p className="text-success">{t("fleet.dispatch.done", { count: results.ok })}</p>}
@@ -345,7 +443,7 @@ export default function FleetDispatchForm({ projects, defaultProject = "", onClo
           onClick={() => void submit()}
           className="rounded-md border border-primary/30 bg-primary/15 px-4 py-1.5 text-sm font-medium text-primary hover:bg-primary/25 disabled:opacity-50"
         >
-          {busy ? t("fleet.actions.working") : t("fleet.dispatch.submit", { count })}
+          {busy ? t("fleet.actions.working") : epicMode ? t("fleet.dispatch.submit_epic") : t("fleet.dispatch.submit", { count })}
         </button>
       </div>
     </div>
