@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"strconv"
@@ -50,8 +51,12 @@ type Config struct {
 	// Web Interface Settings
 	EnableWebInterface bool   `json:"enable_web_interface"`
 	WebPort            string `json:"web_port"`
-	WebStaticDir       string `json:"web_static_dir"`
-	WebAPIToken        string `json:"web_api_token"` // Bearer token for control endpoints
+	// WebBindAddress is the address the web interface listens on. The default
+	// is loopback: the dashboard reaches it through the host, and nothing else
+	// on the network should. Set it to "0.0.0.0" to listen on every interface.
+	WebBindAddress string `json:"web_bind_address"`
+	WebStaticDir   string `json:"web_static_dir"`
+	WebAPIToken    string `json:"web_api_token"` // Bearer token for control endpoints
 
 	// Transparency Settings
 	EnableDecisionLogging bool   `json:"enable_decision_logging"`
@@ -369,6 +374,7 @@ func LoadConfig() (*Config, error) {
 		Model:                       "sonnet",
 		DefaultProjectDir:           ".",
 		WebPort:                     "8080",
+		WebBindAddress:              "127.0.0.1",
 		WebStaticDir:                "./static",
 		EnableDecisionLogging:       true,
 		DecisionLogLevel:            "detailed",
@@ -480,6 +486,9 @@ func LoadConfig() (*Config, error) {
 	}
 	if v := os.Getenv("WEB_PORT"); v != "" {
 		config.WebPort = v
+	}
+	if v := os.Getenv("WEB_BIND_ADDRESS"); v != "" {
+		config.WebBindAddress = v
 	}
 	if v := os.Getenv("WEB_STATIC_DIR"); v != "" {
 		config.WebStaticDir = v
@@ -640,7 +649,7 @@ func Main() {
 	log.Printf("   Allowed users: %v", config.AllowedUserIDs)
 
 	if config.EnableWebInterface {
-		log.Printf("   Web interface: enabled on port %s", config.WebPort)
+		log.Printf("   Web interface: enabled on %s", net.JoinHostPort(config.WebBindAddress, config.WebPort))
 		log.Printf("   Static directory: %s", config.WebStaticDir)
 	}
 
@@ -969,7 +978,7 @@ func Main() {
 	var webInterface *WebInterface
 	var webErrCh <-chan error
 	if config.EnableWebInterface {
-		webInterface = NewWebInterface(tgBot, config.WebPort, config.WebStaticDir, config.WebAPIToken)
+		webInterface = NewWebInterface(tgBot, config.WebBindAddress, config.WebPort, config.WebStaticDir, config.WebAPIToken)
 		errCh := make(chan error, 1)
 		webErrCh = errCh
 		go func() {

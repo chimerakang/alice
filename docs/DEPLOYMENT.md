@@ -89,6 +89,7 @@ sudo systemctl status alice
 | `CLAUDE_MODEL` | Claude model name | `sonnet` | ❌ |
 | `ENABLE_WEB_INTERFACE` | Enable web dashboard | `true` | ❌ |
 | `WEB_PORT` | Web interface port | `8080` | ❌ |
+| `WEB_BIND_ADDRESS` | Address the web interface listens on (`web_bind_address` in `config.json`); `0.0.0.0` for every interface | `127.0.0.1` | ❌ |
 | `ENABLE_RATE_LIMITING` | Enable rate limiting | `true` | ❌ |
 | `RATE_LIMIT_RPM` | Requests per minute limit | `60` | ❌ |
 | `ENABLE_PII_DETECTION` | Enable PII detection | `true` | ❌ |
