@@ -20,6 +20,9 @@ var errFleetNoProject = errors.New("topic is not bound to a fleet project")
 // fleetCommandTimeout bounds the fleet work done for one Telegram command.
 const fleetCommandTimeout = 30 * time.Second
 
+// Leave time for both issue read attempts, the retry delay and task creation.
+const fleetDispatchTimeout = 75 * time.Second
+
 // fleetMsg returns a fleet message in the chat's language. Placeholders are
 // written with their braces, as they appear in the locale files:
 // {"{name}": "alice"}.
@@ -159,10 +162,14 @@ func (t *TelegramBot) handleFleetCommand(key chatKey, userID int64, text string)
 	if len(parts) == 0 {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), fleetCommandTimeout)
-	defer cancel()
-
 	command := strings.Split(parts[0], "@")[0]
+	timeout := fleetCommandTimeout
+	switch command {
+	case "/ship", "/scout", "/hermes", "/ghermes":
+		timeout = fleetDispatchTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	// What follows the command word, with its line breaks intact.
 	rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), parts[0]))
 	switch command {

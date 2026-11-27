@@ -294,18 +294,21 @@ func TestFleetDispatchRefusals(t *testing.T) {
 
 func TestFleetShipIssueGoesThroughTheQualityGate(t *testing.T) {
 	e := newCardEnv(t)
-	prev := hermesFetchIssue
-	defer func() { hermesFetchIssue = prev }()
+	prev := fleetFetchIssue
+	defer func() { fleetFetchIssue = prev }()
 
 	var asked struct {
 		dir    string
 		number int
 	}
-	hermesFetchIssue = func(_ context.Context, dir string, number int) (*hermes.IssueContext, error) {
+	fleetFetchIssue = func(_ context.Context, dir string, number int) (*hermes.IssueContext, error) {
 		asked.dir, asked.number = dir, number
 		return &hermes.IssueContext{Number: number, Title: "t", State: "CLOSED", Body: strings.Repeat("x", 200)}, nil
 	}
 	e.bot.handleFleetCommand(e.key, 42, "/ship #12")
+	if got := nextFleetMessage(t, e.bot); !strings.Contains(got, "fleet_issue_reading") {
+		t.Fatalf("issue read acknowledgement: message = %q", got)
+	}
 	if got := nextFleetMessage(t, e.bot); !strings.Contains(got, "#12") || !strings.Contains(got, "closed") {
 		t.Fatalf("closed issue: message = %q", got)
 	}
@@ -313,18 +316,24 @@ func TestFleetShipIssueGoesThroughTheQualityGate(t *testing.T) {
 		t.Fatalf("issue fetched as %+v, want #12 in %s", asked, e.project.RepoPath)
 	}
 
-	hermesFetchIssue = func(context.Context, string, int) (*hermes.IssueContext, error) {
+	fleetFetchIssue = func(context.Context, string, int) (*hermes.IssueContext, error) {
 		return &hermes.IssueContext{Number: 13, Title: "t", State: "OPEN", Body: "too short"}, nil
 	}
 	e.bot.handleFleetCommand(e.key, 42, "/ship #13")
+	if got := nextFleetMessage(t, e.bot); !strings.Contains(got, "fleet_issue_reading") {
+		t.Fatalf("issue read acknowledgement: message = %q", got)
+	}
 	if got := nextFleetMessage(t, e.bot); !strings.Contains(got, "#13") {
 		t.Fatalf("vague issue: message = %q", got)
 	}
 
-	hermesFetchIssue = func(context.Context, string, int) (*hermes.IssueContext, error) {
+	fleetFetchIssue = func(context.Context, string, int) (*hermes.IssueContext, error) {
 		return nil, errors.New("gh: not found")
 	}
 	e.bot.handleFleetCommand(e.key, 42, "/ship #14")
+	if got := nextFleetMessage(t, e.bot); !strings.Contains(got, "fleet_issue_reading") {
+		t.Fatalf("issue read acknowledgement: message = %q", got)
+	}
 	if got := nextFleetMessage(t, e.bot); !strings.Contains(got, "fleet_issue_read_failed") {
 		t.Fatalf("unreadable issue: message = %q", got)
 	}
