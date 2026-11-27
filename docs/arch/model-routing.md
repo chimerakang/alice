@@ -137,8 +137,10 @@ Retrying a `failed` or `needs_decision` task whose model the commander chose
 moves it up one configured tier (fast → smart → deep → flagship) and records a
 `model.selected` event with reason `escalated`. It does not escalate when the
 model was set by hand, the task is already on the top tier, or the status
-reason contains one of `fleet.no_escalate_reasons` (default: budget limits,
-lost agent process, quota / rate / usage limit).
+reason contains a built-in exclusion (budget limits, lost agent process,
+interrupted verification, quota / rate / usage limit) or an entry in
+`fleet.no_escalate_reasons`. Configured entries add to the built-in list; they
+do not replace it.
 
 The retry and the new model decision are written in one transaction before
 the scheduler can start the next run. The runner consults Scout routing at
