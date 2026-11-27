@@ -113,6 +113,7 @@
     "task_budget_usd": 0,
     "verify_step_timeout_minutes": 20,
     "dashboard_url": "",
+    "startup_resume_limit": 2,
     "owner_user_id": 0
   },
 

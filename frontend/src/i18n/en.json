@@ -1054,6 +1054,8 @@
     },
     "task": {
       "original_brief": "Original task brief",
+      "startup_recovered": "Automatically resumed after a service restart",
+      "startup_resume_capped": "Automatic restart recovery limit reached. A decision is needed.",
       "back": "Back to the board",
       "not_found": "Task {{id}} was not found.",
       "elapsed": "Elapsed",

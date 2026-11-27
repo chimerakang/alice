@@ -56,6 +56,8 @@ type FleetConfig struct {
 	// MaxConcurrent caps active tasks across all projects. Zero uses the
 	// fleet's default.
 	MaxConcurrent int `json:"max_concurrent"`
+	// Zero disables startup recovery. Positive values cap attempts per task.
+	StartupResumeLimit int `json:"startup_resume_limit"`
 	// DefaultTrustMode is given to newly registered projects: "local-only"
 	// (default), "direct-pr" or "no-mistakes".
 	DefaultTrustMode string `json:"default_trust_mode"`
@@ -167,6 +169,9 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 	if db == nil {
 		return nil, fmt.Errorf("fleet needs persistence: enable_persistence must be on")
 	}
+	if cfg.StartupResumeLimit < 0 {
+		return nil, fmt.Errorf("fleet.startup_resume_limit must be non-negative")
+	}
 	mode, err := cfg.trustMode()
 	if err != nil {
 		return nil, fmt.Errorf("fleet.default_trust_mode: %w", err)
@@ -220,13 +225,14 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 	// when it is closed, is FleetIssueSync's.
 	issues := &fleet.IssueTracker{Store: store, NoComments: true}
 	sched := &fleet.Scheduler{
-		Store:         store,
-		Runner:        runner,
-		Verifier:      &fleet.Verifier{Store: store, ReportRoot: runner.ReportRoot, StepTimeout: verifyStepTimeout},
-		Deliverer:     deliverer,
-		Issues:        issues,
-		MaxConcurrent: cfg.MaxConcurrent,
-		OnRecovery:    logFleetRecovery,
+		Store:              store,
+		Runner:             runner,
+		Verifier:           &fleet.Verifier{Store: store, ReportRoot: runner.ReportRoot, StepTimeout: verifyStepTimeout},
+		Deliverer:          deliverer,
+		Issues:             issues,
+		MaxConcurrent:      cfg.MaxConcurrent,
+		OnRecovery:         logFleetRecovery,
+		StartupResumeLimit: cfg.StartupResumeLimit,
 	}
 	return &FleetService{
 		Config:    cfg,

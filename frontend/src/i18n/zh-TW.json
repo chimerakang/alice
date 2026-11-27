@@ -1053,6 +1053,8 @@
     },
     "task": {
       "original_brief": "原始任務說明",
+      "startup_recovered": "服務重啟後已自動續跑",
+      "startup_resume_capped": "已達重啟自動續跑上限，需要人工處理。",
       "back": "回到看板",
       "not_found": "找不到任務 {{id}}。",
       "elapsed": "耗時",

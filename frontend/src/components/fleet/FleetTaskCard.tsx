@@ -33,7 +33,12 @@ export default function FleetTaskCard({ task, showProject = true }: { task: Flee
         {task.issue_number > 0 && <span className="text-primary mr-1">#{task.issue_number}</span>}
         {firstLine(task.goal) || "—"}
       </p>
-      {task.status_reason && task.status !== "queued" && (
+      {(task.startup_recovered || task.startup_resume_capped) && (
+          <p className="text-xs text-gray-400">
+            {t(task.startup_resume_capped ? "fleet.task.startup_resume_capped" : "fleet.task.startup_recovered")}
+          </p>
+        )}
+        {task.status_reason && task.status !== "queued" && (
         <p className="mt-1 text-xs text-gray-500 line-clamp-2 break-words">{firstLine(task.status_reason)}</p>
       )}
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">

@@ -183,6 +183,11 @@ export default function FleetTaskPage() {
           {task.issue_number > 0 && <span className="text-primary mr-2">#{task.issue_number}</span>}
           {title}
         </h1>
+        {(task.startup_recovered || task.startup_resume_capped) && (
+          <p className="text-xs text-gray-400">
+            {t(task.startup_resume_capped ? "fleet.task.startup_resume_capped" : "fleet.task.startup_recovered")}
+          </p>
+        )}
         {task.status_reason && !needsDecision && <p className="text-sm text-gray-400 break-words">{task.status_reason}</p>}
         <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-500">
           <div>
