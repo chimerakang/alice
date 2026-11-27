@@ -59,7 +59,7 @@ func (s *SQLiteStorage) ListGeneralMemoryCards(ctx context.Context, req MemoryRe
 		return nil, err
 	}
 
-	currentNorm := normalizeHermesGoal(stripLanguageDirective(req.UserMessage))
+	currentNorm := normalizeMemoryGoal(stripLanguageDirective(req.UserMessage))
 	cards := make([]GeneralMemoryCard, 0, limit)
 	for rows.Next() {
 		card, err := scanGeneralMemoryCard(rows)
@@ -69,7 +69,7 @@ func (s *SQLiteStorage) ListGeneralMemoryCards(ctx context.Context, req MemoryRe
 		if issueNumber > 0 && card.GithubIssueNumber != issueNumber && !memoryTextReferencesIssue(card.Goal, issueNumber) {
 			continue
 		}
-		if currentNorm != "" && normalizeHermesGoal(stripLanguageDirective(card.Goal)) == currentNorm {
+		if currentNorm != "" && normalizeMemoryGoal(stripLanguageDirective(card.Goal)) == currentNorm {
 			continue
 		}
 		cards = append(cards, card)

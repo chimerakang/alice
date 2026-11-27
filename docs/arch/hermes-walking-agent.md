@@ -1,3 +1,5 @@
+> **已移除（歷史文件）**：Hermes 任務系統已從 Alice 移除，任務改由 Fleet 執行。以下內容不再描述現行行為。
+
 # Hermes Walking-Agent Architecture
 
 Hermes Executor 改造設計：將「每個 sub-task 開新 CLI session」轉為「同角色內共用單一 Claude session」，省下 cold-start 與 cache_creation 重複付費。

@@ -1,105 +1,70 @@
 package app
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
-
-	"claude-tg-agent/internal/app/hermes"
 )
 
 func TestHandleHermesSnapshotsIncludesTaskUsageDetails(t *testing.T) {
 	prev := globalStorage
-	globalStorage = newTestSQLiteStorage(t)
+	storage := newTestSQLiteStorage(t)
+	globalStorage = storage
 	t.Cleanup(func() { globalStorage = prev })
 
-	taskStoreAny := buildHermesTaskStore()
-	taskStore, ok := taskStoreAny.(*hermes.SQLiteTaskStore)
-	if !ok {
-		t.Fatalf("buildHermesTaskStore returned %T, want *hermes.SQLiteTaskStore", taskStoreAny)
+	db := storage.GetDB().(*sql.DB)
+	hermesFixture(t, db)
+	if _, err := db.Exec(`UPDATE hermes_task_states SET
+		model_usages = '[{"model":"gpt-5.5","cache_read_input_tokens":20}]',
+		phase_usages = '[{"phase":"executor"}]' WHERE id = 't1'`); err != nil {
+		t.Fatal(err)
 	}
 
-	now := time.Now().UTC().Truncate(time.Second)
-	task, err := taskStore.CreateTask(hermes.TaskState{
-		ID:         "task-hermes-snapshot",
-		ChatID:     42,
-		ThreadID:   7,
-		ProjectDir: "/repo",
-		Goal:       "diagnose checklist sync",
-		Status:     hermes.TaskStatusExecuting,
-		TokenBudget: hermes.TokenBudget{
-			MaxTotalTokens: 1000,
-			UsedTokens:     100,
-			StartedAt:      now.Add(-time.Hour),
-		},
-		CreatedAt: now.Add(-2 * time.Hour),
-		UpdatedAt: now.Add(-time.Hour),
-	})
-	if err != nil {
-		t.Fatalf("CreateTask: %v", err)
-	}
-	if err := taskStore.AddModelUsageBreakdown(task.ID, "gpt-5.5", hermes.TokenUsageBreakdown{
-		UncachedInputTokens:      10,
-		CacheReadInputTokens:     20,
-		CacheCreationInputTokens: 5,
-		OutputTokens:             8,
-		CostUSD:                  0.42,
-	}); err != nil {
-		t.Fatalf("AddModelUsageBreakdown: %v", err)
-	}
-	if err := taskStore.AddPhaseUsageBreakdown(task.ID, "executor", "gpt-5.5", hermes.TokenUsageBreakdown{
-		UncachedInputTokens:  10,
-		CacheReadInputTokens: 20,
-		OutputTokens:         8,
-		CostUSD:              0.21,
-	}); err != nil {
-		t.Fatalf("AddPhaseUsageBreakdown: %v", err)
-	}
-
-	status := hermes.TaskStatusExecuting
-	currentIdx := 0
-	plan := []hermes.SubTask{
-		{ID: "s1", Description: "sync checklist", Status: hermes.SubTaskDone, Result: "done"},
-	}
-	if _, err := taskStore.CommitRuntimeStep(hermes.RuntimeCommit{
-		TaskID:     task.ID,
-		Updates:    []hermes.StateUpdate{{Status: &status, CurrentIdx: &currentIdx, Plan: plan}},
-		NextStep:   hermes.RuntimeStepExecutor,
-		SourceNode: hermes.RuntimeStepExecutor,
-		Metadata: hermes.SnapshotMetadata{
-			Source: "test",
-			Reason: "seed_snapshot",
-		},
-	}); err != nil {
-		t.Fatalf("CommitRuntimeStep: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodGet, "/api/hermes/snapshots?task_id="+task.ID, nil)
 	w := httptest.NewRecorder()
-	(&WebInterface{}).handleHermesSnapshots(w, req)
-
+	(&WebInterface{}).handleHermesSnapshots(w, httptest.NewRequest(http.MethodGet, "/api/hermes/snapshots?task_id=t1", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}
 
 	var resp struct {
-		TaskID      string           `json:"task_id"`
 		Total       int              `json:"total"`
 		Accumulated string           `json:"accumulated"`
-		Task        hermes.TaskState `json:"task"`
+		LatestPlan  []map[string]any `json:"latest_plan"`
+		Task        struct {
+			ID          string           `json:"id"`
+			ModelUsages []map[string]any `json:"model_usages"`
+			PhaseUsages []map[string]any `json:"phase_usages"`
+		} `json:"task"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.TaskID != task.ID || resp.Total != 1 {
-		t.Fatalf("unexpected response header: %+v", resp)
+	if resp.Total != 2 || resp.Accumulated != "result" || len(resp.LatestPlan) != 1 || resp.Task.ID != "t1" {
+		t.Fatalf("unexpected response: %s", w.Body.String())
 	}
 	if len(resp.Task.ModelUsages) != 1 || len(resp.Task.PhaseUsages) != 1 {
-		t.Fatalf("usage details missing from task payload: %+v", resp.Task)
+		t.Fatalf("usage details missing from task payload: %s", w.Body.String())
 	}
-	if resp.Task.ModelUsages[0].CacheReadInputTokens != 20 || resp.Task.PhaseUsages[0].Phase != "executor" {
-		t.Fatalf("usage payload mismatch: %+v %+v", resp.Task.ModelUsages[0], resp.Task.PhaseUsages[0])
+}
+
+// A database that never ran the old system still serves empty history pages.
+func TestHermesHistoryEndpointsWithoutTables(t *testing.T) {
+	prev := globalStorage
+	globalStorage = newTestSQLiteStorage(t)
+	t.Cleanup(func() { globalStorage = prev })
+
+	wi := &WebInterface{}
+	for path, handler := range map[string]http.HandlerFunc{
+		"/api/hermes/tasks":                 wi.handleHermesTasks,
+		"/api/hermes/stats":                 wi.handleHermesStats,
+		"/api/hermes/snapshots?task_id=any": wi.handleHermesSnapshots,
+	} {
+		w := httptest.NewRecorder()
+		handler(w, httptest.NewRequest(http.MethodGet, path, nil))
+		if w.Code != http.StatusOK {
+			t.Errorf("%s: status = %d body=%s", path, w.Code, w.Body.String())
+		}
 	}
 }

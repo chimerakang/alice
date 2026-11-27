@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"claude-tg-agent/internal/app/hermes"
+	"github.com/chimerakang/alice-core/ghissue"
 )
 
 func TestDecideIssueQualityGateSkipsClosedIssue(t *testing.T) {
-	issue := &hermes.IssueContext{
+	issue := &ghissue.IssueContext{
 		Number: 148,
 		Title:  "Already closed",
 		State:  "CLOSED",
@@ -25,12 +25,12 @@ func TestDecideIssueQualityGateSkipsClosedIssue(t *testing.T) {
 
 func TestDecideIssueQualityGateSkipsRecentCompletion(t *testing.T) {
 	completedAt := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
-	issue := &hermes.IssueContext{
+	issue := &ghissue.IssueContext{
 		Number: 148,
 		Title:  "Recently completed",
 		State:  "OPEN",
 		Body:   "Run Hermes",
-		Comments: []hermes.IssueComment{
+		Comments: []ghissue.IssueComment{
 			{
 				Author:    "alice",
 				CreatedAt: completedAt,
@@ -50,7 +50,7 @@ func TestDecideIssueQualityGateSkipsRecentCompletion(t *testing.T) {
 }
 
 func TestDecideIssueQualityGateNeedsClarificationForEmptyIssue(t *testing.T) {
-	issue := &hermes.IssueContext{Number: 148, Title: "Empty", State: "OPEN"}
+	issue := &ghissue.IssueContext{Number: 148, Title: "Empty", State: "OPEN"}
 
 	decision := decideIssueQualityGate(issue, false)
 
@@ -60,7 +60,7 @@ func TestDecideIssueQualityGateNeedsClarificationForEmptyIssue(t *testing.T) {
 }
 
 func TestDecideIssueQualityGateNeedsClarificationForThinIssue(t *testing.T) {
-	issue := &hermes.IssueContext{
+	issue := &ghissue.IssueContext{
 		Number: 148,
 		Title:  "Thin",
 		State:  "OPEN",
@@ -75,12 +75,12 @@ func TestDecideIssueQualityGateNeedsClarificationForThinIssue(t *testing.T) {
 }
 
 func TestDecideIssueQualityGateAllowsThinIssueWithChecklist(t *testing.T) {
-	issue := &hermes.IssueContext{
+	issue := &ghissue.IssueContext{
 		Number:    148,
 		Title:     "Thin but structured",
 		State:     "OPEN",
 		Body:      "fix it",
-		Checklist: []hermes.ChecklistItem{{Text: "Acceptance item", Checked: false}},
+		Checklist: []ghissue.ChecklistItem{{Text: "Acceptance item", Checked: false}},
 	}
 
 	decision := decideIssueQualityGate(issue, false)
@@ -96,14 +96,14 @@ func TestRecordIssueQualityGateDecisionPersistsRuntimeEvent(t *testing.T) {
 	globalStorage = s
 	t.Cleanup(func() { globalStorage = prev })
 
-	issue := &hermes.IssueContext{
+	issue := &ghissue.IssueContext{
 		Number: 148,
 		State:  "OPEN",
-		Checklist: []hermes.ChecklistItem{
+		Checklist: []ghissue.ChecklistItem{
 			{Text: "done", Checked: true},
 			{Text: "todo", Checked: false},
 		},
-		Comments: []hermes.IssueComment{{Body: "**Hermes 完成** 2/2 SubTasks"}},
+		Comments: []ghissue.IssueComment{{Body: "**Hermes 完成** 2/2 SubTasks"}},
 	}
 	decision := decideIssueQualityGate(issue, false)
 	recordIssueQualityGateDecision(context.Background(), chatKey{chatID: 42, threadID: 7}, issue, decision, false)
@@ -124,39 +124,5 @@ func TestRecordIssueQualityGateDecisionPersistsRuntimeEvent(t *testing.T) {
 	}
 	if got.Payload["unchecked_count"] != float64(1) || got.Payload["checked_count"] != float64(1) {
 		t.Fatalf("payload checklist counts = %+v", got.Payload)
-	}
-}
-
-func TestStartHermesFromIssueModeQualityGateSkipsClosedIssue(t *testing.T) {
-	oldFetch := hermesFetchIssue
-	prevStorage := globalStorage
-	s := newTestSQLiteStorage(t)
-	globalStorage = s
-	t.Cleanup(func() {
-		hermesFetchIssue = oldFetch
-		globalStorage = prevStorage
-	})
-
-	hermesFetchIssue = func(ctx context.Context, projectDir string, issueNumber int) (*hermes.IssueContext, error) {
-		if projectDir != "/repo" || issueNumber != 148 {
-			t.Fatalf("unexpected fetch args: %q #%d", projectDir, issueNumber)
-		}
-		return &hermes.IssueContext{Number: 148, Title: "Closed", State: "CLOSED", Body: "done"}, nil
-	}
-	bot := &TelegramBot{
-		config:       &Config{},
-		messageQueue: make(chan *TelegramMessage, 2),
-	}
-	key := chatKey{chatID: 42, threadID: 7}
-
-	bot.startHermesFromIssueMode(key, 148, "/repo", false)
-
-	assertQueuedMessageContains(t, bot.messageQueue, "已經是 closed")
-	events, err := s.GetRuntimeEventsByType("IssueQualityGate", 10)
-	if err != nil {
-		t.Fatalf("GetRuntimeEventsByType: %v", err)
-	}
-	if len(events) != 1 || events[0].Payload["reason"] != "issue_closed" {
-		t.Fatalf("events = %+v, want issue_closed gate event", events)
 	}
 }

@@ -338,7 +338,7 @@ func fleetIssueText(ctx context.Context, svc *FleetService, projectID string, nu
 	if err != nil {
 		return "", nil
 	}
-	issue, err := hermesFetchIssue(ctx, p.RepoPath, number)
+	issue, err := ghFetchIssue(ctx, p.RepoPath, number)
 	if err != nil || issue == nil {
 		return "", nil
 	}

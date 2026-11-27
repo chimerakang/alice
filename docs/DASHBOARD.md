@@ -314,3 +314,8 @@ Your Alice AI Agent Monitoring Dashboard is now complete with:
 ✅ **Performance Optimized** for production deployment
 
 Start the server and navigate to `http://localhost:8080` to see your dashboard in action! 🚀
+## Legacy coordination pages (read-only)
+
+The `/hermes-tasks`, `/reviews` and `/quality` pages are **read-only history views** of the removed task system.
+`/api/hermes/tasks`, `/api/hermes/snapshots`, `/api/hermes/stats` and `/api/quality/*` serve stored data and never write
+the `hermes_*` tables; a database without those tables returns empty results. Live task control goes through Fleet.

@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -282,10 +284,13 @@ func TestIssueSyncOperatorAuthorizationCloses(t *testing.T) {
 func TestIssueSyncLocalOnlyNeverCloses(t *testing.T) {
 	e := newIssueSyncEnv(t)
 	task := e.task(213, fleet.TrustLocalOnly, &yes, append(toReview, fleet.StatusDone)...)
-	_, _ = e.svc.Store.AppendEvent(context.Background(), task.ID, fleet.EventDeliveryApproved, map[string]any{"landed": "fast-forwarded main"})
+	if _, err := e.storage.db.Exec("UPDATE fleet_tasks SET target_branch = 'develop' WHERE id = ?", task.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = e.svc.Store.AppendEvent(context.Background(), task.ID, fleet.EventDeliveryApproved, map[string]any{"landed": "fast-forwarded develop"})
 	e.tick("first", "second")
 	res := e.run(task, IssueSyncOptions{AuthorizeClose: true})
-	contains(t, e.host.commentFor(task.ID), "僅合併至本機", "沒有推送到遠端", "abcdef12", "只合併到本機")
+	contains(t, e.host.commentFor(task.ID), "僅合併至本機", "沒有推送到遠端", "abcdef12", "只合併到本機的 `develop`")
 	if res.Closed {
 		t.Fatal("local-only merge closed the issue")
 	}
@@ -467,5 +472,176 @@ func TestIssueSyncDoesNotCloseUsingPreviousRunChecks(t *testing.T) {
 				t.Fatalf("issue should stay open without checks from the current run: %+v", res)
 			}
 		})
+	}
+}
+
+func TestIssueSyncReviewReadyNoticesForgeMergeAndClose(t *testing.T) {
+	for _, tc := range []struct{ state, want string }{
+		{"MERGED", "已合併"},
+		{"CLOSED", "PR 已關閉，未合併"},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			e := newIssueSyncEnv(t)
+			task := e.task(213, fleet.TrustNoMistakes, &yes, toReview...)
+			e.setPR(task, 9, "OPEN")
+			e.sync.Reconcile(context.Background())
+			contains(t, e.host.commentFor(task.ID), "PR 就緒", "維持開啟")
+			e.setPR(task, 9, tc.state)
+			e.sync.Reconcile(context.Background())
+			contains(t, e.host.commentFor(task.ID), tc.want, "維持開啟")
+			if len(e.host.closed) != 0 {
+				t.Fatalf("closed without authorization: %v", e.host.closed)
+			}
+		})
+	}
+}
+
+func TestIssueSyncLocalMergeIncludesSummary(t *testing.T) {
+	e := newIssueSyncEnv(t)
+	task := e.task(213, fleet.TrustLocalOnly, &yes, append(toReview, fleet.StatusDone)...)
+	_, _ = e.svc.Store.AppendEvent(context.Background(), task.ID, fleet.EventDeliveryApproved, nil)
+	e.run(task, IssueSyncOptions{})
+	contains(t, e.host.commentFor(task.ID), "僅合併至本機", "變更摘要", "ship it", "abcdef12")
+}
+
+func TestIssueSyncOperatorAuthorizationSurvivesGitHubFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		break_, mend_ func(*fakeIssueHost)
+	}{
+		{"close", func(h *fakeIssueHost) { h.failClose = errors.New("gh: 500") }, func(h *fakeIssueHost) { h.failClose = nil }},
+		{"pull request", func(h *fakeIssueHost) { h.failPR = errors.New("gh: 500") }, func(h *fakeIssueHost) { h.failPR = nil }},
+		{"comment", func(h *fakeIssueHost) { h.failComm, h.failPR = errors.New("gh: 500"), errors.New("gh: 500") }, func(h *fakeIssueHost) { h.failComm, h.failPR = nil, nil }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newIssueSyncEnv(t)
+			e.tick("first", "second")
+			task := e.task(213, fleet.TrustNoMistakes, &yes, append(toReview, fleet.StatusDone)...)
+			e.setPR(task, 9, "MERGED")
+			// Already settled as merged but unauthorized.
+			e.run(task, IssueSyncOptions{})
+			tc.break_(e.host)
+			_, _ = e.sync.Sync(context.Background(), task.ID, IssueSyncOptions{AuthorizeClose: true})
+			e.sync.Reconcile(context.Background())
+			tc.mend_(e.host)
+			e.sync.Reconcile(context.Background())
+			if len(e.host.closed) != 1 {
+				t.Fatalf("closed = %v, want one close", e.host.closed)
+			}
+			contains(t, e.host.commentFor(task.ID), "已關閉")
+		})
+	}
+}
+
+func TestIssueSyncOperatorAuthorizationIsUsedUpByAnAnswer(t *testing.T) {
+	e := newIssueSyncEnv(t)
+	task := e.task(213, fleet.TrustNoMistakes, &yes, append(toReview, fleet.StatusDone)...)
+	e.setPR(task, 9, "MERGED")
+	// Criteria are still open, so the go-ahead is answered with a refusal.
+	e.run(task, IssueSyncOptions{AuthorizeClose: true})
+	contains(t, e.host.commentFor(task.ID), "部分交付")
+	e.tick("first", "second")
+	e.run(task, IssueSyncOptions{})
+	if len(e.host.closed) != 0 {
+		t.Fatalf("an old authorization closed the issue: %v", e.host.closed)
+	}
+}
+
+func TestGHFleetIssueHostCommentLookup(t *testing.T) {
+	bin := t.TempDir()
+	calls := filepath.Join(bin, "calls")
+	reply := filepath.Join(bin, "reply")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + calls + "\ncase \"$*\" in *--paginate*) cat " + reply + ";; esac\n"
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	run := func(out string) (string, error) {
+		_ = os.Remove(calls)
+		if err := os.WriteFile(reply, []byte(out), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		err := ghFleetIssueHost{}.UpsertComment(context.Background(), bin, 213, fleetIssueMarker("abc"), "new body")
+		log, _ := os.ReadFile(calls)
+		return string(log), err
+	}
+
+	log, err := run(`{"id":7,"body":"<!-- alice-fleet:task=abc --> old"}` + "\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	contains(t, log, `select(.body | contains("<!-- alice-fleet:task=abc -->"))`, "-X PATCH", "issues/comments/7")
+
+	// A cut-off listing may hide the comment: fail, and do not post another.
+	log, err = run(strings.Repeat("x", 300*1024))
+	if err == nil || strings.Contains(log, "issue comment") {
+		t.Fatalf("err = %v, calls = %.200s", err, log)
+	}
+}
+
+func TestIssueSyncKeepsIssueOpenWhenPRMergedToWrongBranch(t *testing.T) {
+	e := newIssueSyncEnv(t)
+	task := e.task(213, fleet.TrustDirectPR, &yes, toReview...)
+	// Set the pinned target explicitly. The forge fixture reports a merge into main.
+	if _, err := e.storage.db.Exec("UPDATE fleet_tasks SET target_branch = 'develop' WHERE id = ?", task.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.setPR(task, 9, "MERGED")
+	e.tick("first", "second")
+	if result := e.run(task, IssueSyncOptions{AuthorizeClose: true}); result.Closed {
+		t.Fatal("PR merged into main closed a task pinned to develop")
+	}
+	contains(t, e.host.commentFor(task.ID), "PR 已合併到 main", "任務目標分支為 develop")
+}
+
+func TestIssueSyncReconcilesExternallyMergedReviewTask(t *testing.T) {
+	e := newIssueSyncEnv(t)
+	task := e.task(213, fleet.TrustDirectPR, &yes, toReview...)
+	e.setPR(task, 9, "MERGED")
+	e.tick("first", "second")
+	result := e.run(task, IssueSyncOptions{AuthorizeClose: true})
+	if !result.Closed {
+		t.Fatalf("fixture did not observe the merge: %+v", result)
+	}
+	got, err := e.svc.Store.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != fleet.StatusDone || e.svc.TaskActions(context.Background(), got).Can(fleetOpMerge) {
+		t.Fatal("GitHub is closed but Fleet still offers merge on the review task")
+	}
+}
+
+func TestIssueSyncExternallyMergedTaskWaitsForStructuredAcceptance(t *testing.T) {
+	e := newIssueSyncEnv(t)
+	ctx := context.Background()
+	task := e.task(213, fleet.TrustDirectPR, &yes, toReview...)
+	e.setPR(task, 9, "MERGED")
+	e.tick("first", "second")
+	decision := acceptDecisionPending
+	e.sync.Acceptance = func(context.Context, string) (acceptState, error) {
+		state := acceptStateOf(decision, decision)
+		state.Items[0].Text, state.Items[1].Text = "first", "second"
+		return state, nil
+	}
+
+	result := e.run(task, IssueSyncOptions{})
+	got, err := e.svc.Store.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := e.svc.TaskActions(ctx, got)
+	if result.Closed || got.Status != fleet.StatusReviewReady || actions.Can(fleetOpMerge) || actions.Can(fleetOpApprove) {
+		t.Fatalf("expected review without merge actions, got status %s, result %+v, actions %+v", got.Status, result, actions)
+	}
+
+	decision = acceptDecisionApproved
+	result = e.run(task, IssueSyncOptions{AuthorizeClose: true})
+	got, err = e.svc.Store.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Closed || got.Status != fleet.StatusDone {
+		t.Fatalf("expected completed task and closed issue after approval, got status %s, result %+v", got.Status, result)
 	}
 }

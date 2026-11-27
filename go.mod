@@ -4,9 +4,8 @@ go 1.24.0
 
 require (
 	github.com/anthropics/anthropic-sdk-go v1.38.0
-	github.com/chimerakang/alice-core v0.0.0-20261127124909-63a1bf1ebc01
+	github.com/chimerakang/alice-core v0.0.0-20261127175217-39e99cdf2a03
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/robfig/cron/v3 v3.0.1
 	google.golang.org/grpc v1.78.0
@@ -18,6 +17,7 @@ require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.2 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/invopop/jsonschema v0.13.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

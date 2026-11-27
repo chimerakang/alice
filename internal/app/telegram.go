@@ -23,12 +23,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	appengine "claude-tg-agent/internal/app/engine"
-	"claude-tg-agent/internal/app/engine/errorclass"
-	"claude-tg-agent/internal/app/hermes"
-	"claude-tg-agent/internal/app/issueops"
 	"claude-tg-agent/internal/app/security"
-	"claude-tg-agent/internal/app/task"
+
+	appengine "github.com/chimerakang/alice-core/engine"
+	"github.com/chimerakang/alice-core/engine/errorclass"
+	"github.com/chimerakang/alice-core/ghissue"
 
 	"github.com/chimerakang/alice-core/fleet"
 )
@@ -127,12 +126,12 @@ type TelegramMessage struct {
 }
 
 type TelegramBot struct {
-	agents   map[chatKey]*Agent // 每個 chat/topic 一個 agent
-	agentsMu sync.RWMutex       // 保護 agents map 的讀寫鎖
-	client   Client
-	allowIDs map[int64]bool // 白名單
-	config   *Config
-	i18n     *I18nManager // 多國語系管理器
+	agents         map[chatKey]*Agent // 每個 chat/topic 一個 agent
+	agentsMu       sync.RWMutex       // 保護 agents map 的讀寫鎖
+	client         Client
+	allowIDs       map[int64]bool // 白名單
+	config         *Config
+	i18n           *I18nManager // 多國語系管理器
 	pollHTTPClient *http.Client
 	pollHealth     telegramPollingHealth
 
@@ -178,39 +177,6 @@ type TelegramBot struct {
 
 	// Screenshot manager for /preview command
 	screenshotManager *ScreenshotManager
-
-	// Hermes Brain-Executor coordinators (per chat)
-	hermesCoords map[chatKey]*hermesCoord
-	hermesMu     sync.RWMutex
-
-	// IssueOps service drives post-run issue reconciliation.
-	issueOps issueops.IssueOps
-
-	// In-flight /retry registry. Stop() iterates these on shutdown so users
-	// don't see /retry calls vanish silently when the process is killed
-	// mid-flight (was a recurring "did /retry break?" symptom).
-	retryInflight map[string]*retryInflightEntry
-	retryMu       sync.Mutex
-
-	// Unified task graph — single TaskService instance shared across /retry,
-	// Hermes coordinator, and dashboard read paths for a consistent view.
-	taskSvc *task.Service
-}
-
-func (t *TelegramBot) issueOpsService() issueops.IssueOps {
-	if t != nil && t.issueOps != nil {
-		return t.issueOps
-	}
-	return issueops.New()
-}
-
-// retryInflightEntry tracks one running /retry attempt so Stop() can notify
-// the chat and cancel the underlying context cleanly.
-type retryInflightEntry struct {
-	key        chatKey
-	displayIdx int
-	cancel     context.CancelFunc
-	startedAt  time.Time
 }
 
 type telegramProgressSink struct {
@@ -243,77 +209,6 @@ func (s *telegramProgressSink) OnSubTaskDone(idx int, result string) {}
 
 func (s *telegramProgressSink) OnComplete(summary string) {}
 
-const (
-	hermesPreviousContextHeader  = "[Previous conversation context]"
-	hermesCurrentRequestHeader   = "[Current request]"
-	hermesContextMaxChars        = 2000
-	telegramAPITimeout           = 20 * time.Second
-	telegramLongPollTimeout      = 75 * time.Second
-	telegramDownloadTimeout      = 2 * time.Minute
-	openAIImageGenerationTimeout = 5 * time.Minute
-)
-
-var hermesFetchIssue = hermes.FetchIssue
-var hermesCloseIssue = hermes.CloseIssue
-
-var (
-	tasksGitHubIssueListFunc = listGitHubIssuesForTasks
-	tasksGitHubRepoURLFunc   = resolveGitHubRepoURL
-)
-
-var (
-	errTasksGitHubAuthRequired = errors.New("tasks github auth required")
-	errTasksNoGitHubRepo       = errors.New("tasks github repo unavailable")
-)
-
-// hermesCoord bundles the coordinator and its enabled flag for a single chat.
-type hermesCoord struct {
-	coord interface {
-		TaskID() string
-		IsRunning() bool
-	}
-	enabled             bool
-	strictModeOverride  *bool
-	tier                string        // "" or "claude" → Claude tier; "codex" → GPT tier (set by /ghermes)
-	plannerSessionID    string        // cached Planner --resume session for the current tier
-	plannerSessionTier  string        // tier that produced plannerSessionID
-	executorSessionID   string        // cached Executor thread resume ID for the current tier
-	executorSessionTier string        // tier that produced executorSessionID
-	continueCh          chan struct{} // non-nil when coordinator is paused on a budget warning
-	oneShot             bool          // true when launched via /hermes #N or /ghermes #N; disable on done
-	stopMessageID       int           // task-start message carrying the Stop button
-
-	// failureDecisionCh is non-nil when the engine is paused on a sub-task
-	// failure waiting for the operator's retry/skip/abort decision. Buffered
-	// so the callback handler never blocks; the engine consumes one value
-	// per pause.
-	failureDecisionCh chan appengine.FailurePauseChoice
-	failureCtx        *failurePauseCtx // metadata about the paused sub-task for UI rendering
-
-	// awaitingFailureHint is set when the operator clicked "💬 自訂提示" and
-	// the bot is waiting for a free-form text reply that will be packaged
-	// as the FailurePauseChoice.Hint. handleMessage intercepts the next
-	// non-command text and forwards it through failureDecisionCh.
-	awaitingFailureHint    bool
-	awaitingHintCancelTime time.Time
-}
-
-// failurePauseCtx carries the data attached to the current failure pause so
-// the callback handler can validate the click and the engine can log it.
-type failurePauseCtx struct {
-	taskID  string
-	idx     int
-	total   int
-	subDesc string
-	errText string
-	graph   bool
-}
-
-type interruptibleCoordinator interface {
-	InterruptWith(messageID int64)
-	IsRunning() bool
-}
-
 type abortTaskResult int
 
 const (
@@ -334,27 +229,6 @@ func markChatInterrupting(ctx *ChatContext, reason string) {
 }
 
 func (t *TelegramBot) abortActiveTask(key chatKey, messageID int64) abortTaskResult {
-	t.hermesMu.RLock()
-	hc := t.hermesCoords[key]
-	var coord interface {
-		TaskID() string
-		IsRunning() bool
-	}
-	if hc != nil {
-		coord = hc.coord
-	}
-	t.hermesMu.RUnlock()
-
-	if coord != nil && coord.IsRunning() {
-		markChatInterrupting(t.getChatContext(key, ""), "hermes_interrupt")
-		if interrupter, ok := coord.(interruptibleCoordinator); ok {
-			interrupter.InterruptWith(messageID)
-			t.clearHermesStopMessage(key, t.getLocalizedMessage(key.chatID, "execution_aborted", nil))
-			return abortTaskAborted
-		}
-		return abortTaskFinished
-	}
-
 	agent := t.getAgent(key)
 	if !agent.IsProcessing() {
 		return abortTaskNone
@@ -364,33 +238,6 @@ func (t *TelegramBot) abortActiveTask(key chatKey, messageID int64) abortTaskRes
 		return abortTaskAborted
 	}
 	return abortTaskFinished
-}
-
-func (t *TelegramBot) sendHermesStopMessage(key chatKey, text string) {
-	msgID, err := t.sendMessageWithStopButton(key, text)
-	if err != nil {
-		log.Printf("[hermes] send stop button failed chat=%d thread=%d: %v", key.chatID, key.threadID, err)
-		t.send(key, text)
-		return
-	}
-	t.hermesMu.Lock()
-	if hc := t.hermesCoords[key]; hc != nil {
-		hc.stopMessageID = msgID
-	}
-	t.hermesMu.Unlock()
-}
-
-func (t *TelegramBot) clearHermesStopMessage(key chatKey, text string) {
-	t.hermesMu.Lock()
-	msgID := 0
-	if hc := t.hermesCoords[key]; hc != nil {
-		msgID = hc.stopMessageID
-		hc.stopMessageID = 0
-	}
-	t.hermesMu.Unlock()
-	if msgID != 0 {
-		t.editMessageRemoveStopButton(key, msgID, text)
-	}
 }
 
 func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
@@ -461,14 +308,6 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 
 		// Screenshot manager
 		screenshotManager: NewScreenshotManager(),
-
-		// Hermes coordinators
-		hermesCoords:  make(map[chatKey]*hermesCoord),
-		issueOps:      issueops.New(),
-		retryInflight: make(map[string]*retryInflightEntry),
-
-		// Unified task graph — initialized here so all read paths share one store.
-		taskSvc: task.New(buildHermesTaskStore()),
 	}
 
 	// Start message queue worker
@@ -516,12 +355,6 @@ func (t *TelegramBot) Stop() {
 	if t == nil {
 		return
 	}
-	// Notify in-flight /retry callers before tearing down the queue, while
-	// the API client and rate limiter are still alive. Use sendCapturingID
-	// (synchronous) so messages actually reach Telegram before the process
-	// exits — the async queue would lose them when queueCancel fires.
-	t.notifyRetryInterruptedAndCancel()
-
 	if t.pollCancel != nil {
 		t.pollCancel()
 	}
@@ -529,54 +362,6 @@ func (t *TelegramBot) Stop() {
 		t.queueCancel()
 	}
 	t.pollHealth.stop()
-}
-
-// registerRetryInflight records a running /retry attempt so Stop() can notify
-// the chat and cancel the run context cleanly on shutdown.
-func (t *TelegramBot) registerRetryInflight(id string, key chatKey, displayIdx int, cancel context.CancelFunc) {
-	t.retryMu.Lock()
-	if t.retryInflight == nil {
-		t.retryInflight = map[string]*retryInflightEntry{}
-	}
-	t.retryInflight[id] = &retryInflightEntry{
-		key:        key,
-		displayIdx: displayIdx,
-		cancel:     cancel,
-		startedAt:  time.Now(),
-	}
-	t.retryMu.Unlock()
-}
-
-// unregisterRetryInflight clears a /retry attempt's entry once it completes
-// normally. Called via defer from the retry goroutine.
-func (t *TelegramBot) unregisterRetryInflight(id string) {
-	t.retryMu.Lock()
-	delete(t.retryInflight, id)
-	t.retryMu.Unlock()
-}
-
-// notifyRetryInterruptedAndCancel posts a final message to every chat with a
-// /retry running and cancels the run context. Best-effort: if the API call
-// fails we still cancel so the goroutine unblocks.
-func (t *TelegramBot) notifyRetryInterruptedAndCancel() {
-	t.retryMu.Lock()
-	entries := make([]*retryInflightEntry, 0, len(t.retryInflight))
-	for _, e := range t.retryInflight {
-		entries = append(entries, e)
-	}
-	t.retryInflight = map[string]*retryInflightEntry{}
-	t.retryMu.Unlock()
-
-	for _, e := range entries {
-		elapsed := time.Since(e.startedAt).Round(time.Second)
-		msg := fmt.Sprintf("⚠️ Bot 重啟，sub-task #%d retry 中斷（已執行 %s）。請在 bot 回來後重打 /retry。", e.displayIdx, elapsed)
-		if _, err := t.sendCapturingID(e.key, msg); err != nil {
-			log.Printf("[retry] shutdown notify failed chat=%d thread=%d: %v", e.key.chatID, e.key.threadID, err)
-		}
-		if e.cancel != nil {
-			e.cancel()
-		}
-	}
 }
 
 func (t *TelegramBot) runTrackedJob(name string, fn func()) {
@@ -599,29 +384,22 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "abort", "description": "Abort running task"},
 		{"command": "dashboard", "description": "View system monitoring dashboard"},
 		{"command": "checkpoints", "description": "View checkpoint status"},
-		{"command": "multiagent", "description": "Multi-agent coordination management"},
-		{"command": "agents", "description": "View specialized agent list"},
 		{"command": "tasks", "description": "View to-do list"},
 		{"command": "close", "description": "Close a GitHub issue"},
-		{"command": "mr", "description": "Hermes milestone review"},
 		{"command": "lang", "description": "Switch bot language"},
 		{"command": "wake", "description": "Request Mac display wake"},
 		{"command": "preview", "description": "Preview webpage screenshot"},
-		{"command": "send-file", "description": "Send a file from the project directory"},
-		{"command": "strict", "description": "Toggle strict review mode"},
-		{"command": "retry", "description": "Retry reviewed low-score sub-task"},
+		{"command": "send_file", "description": "Send a file from the project directory"},
 		{"command": "help", "description": "Show help message"},
 	}
-	if t.config.Fleet.Active() {
-		commands = append(commands,
-			map[string]string{"command": "ship", "description": "Dispatch a task to this topic's project"},
-			map[string]string{"command": "scout", "description": "Dispatch a read-only investigation"},
-			map[string]string{"command": "fleet", "description": "Fleet overview across projects"},
-			map[string]string{"command": "quiet", "description": "Only notify what needs a decision"},
-			map[string]string{"command": "afk", "description": "Away mode with an optional grant"},
-			map[string]string{"command": "back", "description": "Back to normal notifications"},
-		)
-	}
+	commands = append(commands,
+		map[string]string{"command": "ship", "description": "Dispatch a task to this topic's project"},
+		map[string]string{"command": "scout", "description": "Dispatch a read-only investigation"},
+		map[string]string{"command": "fleet", "description": "Fleet overview across projects"},
+		map[string]string{"command": "quiet", "description": "Only notify what needs a decision"},
+		map[string]string{"command": "afk", "description": "Away mode with an optional grant"},
+		map[string]string{"command": "back", "description": "Back to normal notifications"},
+	)
 
 	body, _ := json.Marshal(map[string]interface{}{"commands": commands})
 	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/setMyCommands", t.config.TelegramToken)
@@ -1051,16 +829,11 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		return
 	}
 
-	forceNormalChat := false
 	if normalText, ok := parseNormalChatBypass(text); ok {
 		text = normalText
-		forceNormalChat = true
 		if text == "" {
 			t.send(key, "請在 /chat 後面加上要一般對話處理的內容。")
 			return
-		}
-		if taskID, idx, total, subDesc, ok := t.currentHermesFailurePause(key); ok {
-			recordHermesInteractionGate(context.Background(), key, "normal_bypass", "explicit_chat_prefix", taskID, idx, total, subDesc)
 		}
 	}
 
@@ -1141,73 +914,11 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		return
 	}
 
-	// Budget-warning continuation: if the coordinator is paused waiting for the
-	// user to confirm, intercept messages that start with "繼續" (or "continue")
-	// and signal the channel instead of routing as a new task.
-	if t.trySignalBudgetContinue(key, text) {
-		return
-	}
-
-	// Failure-pause hint capture: when the operator just clicked
-	// "💬 自訂提示" the next text message is the hint for the retry, not a
-	// new conversation turn. Forward it through the pause channel.
-	if !forceNormalChat && t.trySignalHermesFailureHint(key, text) {
-		return
-	}
-
-	// Failure-pause ownership guard: a paused Hermes sub-task owns this
-	// chat/thread until the operator picks a button, provides the requested
-	// hint, or explicitly bypasses into normal chat. Without this guard,
-	// ordinary text can start a second route while the old pause later times
-	// out and posts stale status back into the same conversation.
-	if !forceNormalChat && t.tryBlockHermesFailurePauseText(key) {
-		return
-	}
-
 	// Smart intent parser: intercept natural-language shorthand for high-risk
 	// operations and surface confirmation buttons instead of executing directly.
 	if intent, ok := detectSmartIntent(text); ok {
 		t.handleSmartIntent(key, intent)
 		return
-	}
-
-	if !forceNormalChat && t.dispatchHermesNLIntent(key, text) {
-		return
-	}
-
-	// Complexity Gate auto-routing: if enabled, natural-language messages
-	// classified as complex start Hermes automatically. Continuation messages
-	// (pronouns, short follow-ups) stay on the regular routing path so we do
-	// not hijack conversational context.
-	if !forceNormalChat && t.config.Hermes.Enabled && t.config.Hermes.AutoRouteComplex && !isContinuationMessage(text) && !isHermesIssueStatusQuery(text) {
-		cl := ClassifyComplexity(text)
-		if cl.Complexity == ComplexityComplex {
-			projectDir := t.getAgent(key).ProjectDir()
-			log.Printf("[telegram] auto-route to Hermes rule=%s chatID=%d: %.80s",
-				cl.MatchedRule, key.chatID, text)
-
-			// When the trigger was an action verb + issue reference (e.g. "處理 #250"),
-			// route through startHermesFromIssue so the Planner sees the full Issue
-			// body instead of the short user message — otherwise it falls back to a
-			// research-only plan with no implementation sub-tasks.
-			if strings.HasPrefix(cl.MatchedRule, "action-verb+issue-ref:") {
-				if issueNum, ok := ParseIssueNumber(text); ok {
-					t.send(key, fmt.Sprintf("🤖 判定為複雜任務（%s）— 拉取 Issue #%d 內容後啟動 Hermes", cl.MatchedRule, issueNum))
-					_ = chatCtx.TransitionState(appengine.ChatStateDispatching, "telegram_hermes_issue")
-					go t.runTrackedJob("hermes.issue", func() {
-						t.startHermesFromIssue(key, issueNum, projectDir)
-					})
-					return
-				}
-			}
-
-			t.send(key, fmt.Sprintf("🤖 判定為複雜任務（%s）— 自動啟動 Hermes 模式", cl.MatchedRule))
-			_ = chatCtx.TransitionState(appengine.ChatStateDispatching, "telegram_hermes_task")
-			go t.runTrackedJob("hermes.task", func() {
-				t.startHermesTask(key, text, projectDir)
-			})
-			return
-		}
 	}
 
 	// 一般訊息 → agent 處理
@@ -1349,31 +1060,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		}
 	}
 
-	// Check if multi-agent coordination should be used
-	if globalAgentCoordinator.IsEnabled() && globalAgentCoordinator.ShouldUseMultiAgent(userMessage) {
-		// Use coordinated multi-agent execution
-		response, err = globalAgentCoordinator.ExecuteCoordinatedTask(userMessage, agent, createUpdateCallback())
-	} else if globalAgentCoordinator.IsEnabled() {
-		// Use single specialized agent based on task routing
-		agentType := globalAgentCoordinator.RouteTask(userMessage)
-		if agentType != GeneralAgent {
-			specializedAgent := globalAgentCoordinator.GetOrCreateAgent(agentType, agent)
-			msg := t.getLocalizedMessage(key.chatID, "using_agent", nil)
-			msg = strings.ReplaceAll(msg, "{agent}", agentType.String())
-			t.send(key, msg)
-
-			response, err = specializedAgent.ExecuteSubTask(SubTask{
-				ID:          fmt.Sprintf("single_%d", time.Now().Unix()),
-				Description: userMessage,
-				AgentType:   agentType,
-				Status:      TaskStatusInProgress,
-			}, createUpdateCallback())
-		} else {
-			// Fall back to regular agent
-			result, runErr := appengine.NewDirectEngine(agent).Run(context.Background(), userMessage, agent.chatContext, newTelegramProgressSink(createUpdateCallback()))
-			response, err = result.Text, runErr
-		}
-	} else if agent.IsPlanMode() {
+	if agent.IsPlanMode() {
 		// Plan/Execute two-phase execution
 		response, err = agent.RunWithPlan(userMessage, createUpdateCallback())
 	} else {
@@ -1517,14 +1204,10 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		help += t.getLocalizedMessage(key.chatID, "help_dashboard_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_checkpoints_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_abort_desc", nil) + "\n"
-		help += t.getLocalizedMessage(key.chatID, "help_multiagent_desc", nil) + "\n"
-		help += t.getLocalizedMessage(key.chatID, "help_agents_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_tasks_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_lang_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_send_file_desc", nil) + "\n"
 		help += "/menu - 開啟視覺化操作選單\n"
-		help += "/strict - 切換 strict review mode\n"
-		help += t.getLocalizedMessage(key.chatID, "help_mr_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_id_desc", nil)
 		t.sendMarkdown(key, help)
 
@@ -1718,17 +1401,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 				totalIncl, cacheReadPct))
 		}
 
-		// Walking-agent surface: tells operator whether opt-in flag is on so
-		// /usage is interpretable (#149). Walking-on means cache_write should
-		// be << uncached if reuse is working.
-		if t.config != nil && t.config.Hermes.WalkingAgentEnabled {
-			limit := t.config.Hermes.WalkingAgentMaxContextTokens
-			if limit <= 0 {
-				limit = 120000
-			}
-			msg.WriteString(fmt.Sprintf("🚶 Hermes walking-agent: ON (max_context=%d, force_cache_5m=on)\n", limit))
-		}
-
 		// 按模型分類顯示（從資料庫查詢最近 7 天）
 		if globalStorage != nil {
 			// 支持按項目篩選：/usage 或 /usage <project_path>
@@ -1797,28 +1469,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			}
 		}
 
-	case "/multiagent":
-		if len(parts) < 2 {
-			// Show current status
-			t.handleMultiAgentStatus(key)
-		} else {
-			action := parts[1]
-			switch action {
-			case "enable":
-				globalAgentCoordinator.SetEnabled(true)
-				t.send(key, t.getLocalizedMessage(key.chatID, "multiagent_enabled", nil))
-			case "disable":
-				globalAgentCoordinator.SetEnabled(false)
-				t.send(key, t.getLocalizedMessage(key.chatID, "multiagent_disabled", nil))
-			case "status":
-				t.handleMultiAgentStatus(key)
-			case "stats":
-				t.handleMultiAgentStats(key)
-			default:
-				t.send(key, t.getLocalizedMessage(key.chatID, "multiagent_usage", nil))
-			}
-		}
-
 	case "/abort":
 		switch t.abortActiveTask(key, 0) {
 		case abortTaskAborted:
@@ -1828,9 +1478,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		default:
 			t.send(key, t.getLocalizedMessage(key.chatID, "no_running_task", nil))
 		}
-
-	case "/agents":
-		t.handleAgentsList(key)
 
 	case "/tasks":
 		t.handleTasks(key)
@@ -1843,7 +1490,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
 		}
-		t.disableHermesChatModeIfIdle(key)
 		agent := t.getAgent(key)
 		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.FastModel)
 		t.setUserModelPreference(key, "fast")
@@ -1859,7 +1505,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
 		}
-		t.disableHermesChatModeIfIdle(key)
 		agent := t.getAgent(key)
 		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.SmartModel)
 		t.setUserModelPreference(key, "smart")
@@ -1875,7 +1520,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
 		}
-		t.disableHermesChatModeIfIdle(key)
 		agent := t.getAgent(key)
 		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.DeepModel)
 		t.setUserModelPreference(key, "deep")
@@ -1894,7 +1538,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		if !t.codexTierAvailable(key) {
 			return
 		}
-		t.disableHermesChatModeIfIdle(key)
 		agent := t.getAgent(key)
 		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.CodexFastModel)
 		t.setUserModelPreference(key, "gpt-fast")
@@ -1913,7 +1556,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		if !t.codexTierAvailable(key) {
 			return
 		}
-		t.disableHermesChatModeIfIdle(key)
 		agent := t.getAgent(key)
 		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.CodexSmartModel)
 		t.setUserModelPreference(key, "gpt-smart")
@@ -1932,7 +1574,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		if !t.codexTierAvailable(key) {
 			return
 		}
-		t.disableHermesChatModeIfIdle(key)
 		agent := t.getAgent(key)
 		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.CodexDeepModel)
 		t.setUserModelPreference(key, "gpt-deep")
@@ -1944,13 +1585,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		t.send(key, msg)
 
 	case "/auto":
-		// Also disable Hermes mode if active
-		t.hermesMu.Lock()
-		if hc := t.hermesCoords[key]; hc != nil {
-			hc.enabled = false
-		}
-		t.hermesMu.Unlock()
-
 		if !t.config.ModelRouting.EnableDynamicRouting {
 			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
@@ -1969,7 +1603,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			t.send(key, t.getLocalizedMessage(key.chatID, "routing_disabled", nil))
 			return
 		}
-		t.disableHermesChatModeIfIdle(key)
 		t.setUserModelPreference(key, "plan")
 		agent := t.getAgent(key)
 		contextReset := agent.PrepareManualModelSwitch(t.config.ModelRouting.ExecuteModel)
@@ -1990,7 +1623,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		}
 		t.handleSavingsCommand(key, projectPath)
 
-	case "/send-file":
+	case "/send_file", "/send-file":
 		// 提取檔案路徑：/send-file <path>
 		filePath := ""
 		if len(parts) > 1 {
@@ -2031,9 +1664,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		}
 		t.handlePreviewCommand(key, targetURL)
 
-	case "/strict":
-		t.handleStrictCommand(key, parts)
-
 	case "/cron":
 		t.handleCronCommand(key, parts, text)
 
@@ -2042,14 +1672,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 
 	case "/backend":
 		t.handleBackendCommand(key, parts)
-
-	case "/parallel":
-		if len(parts) < 2 {
-			t.send(key, t.getLocalizedMessage(key.chatID, "parallel_usage", nil))
-			return
-		}
-		taskText := strings.TrimSpace(text[len("/parallel"):])
-		t.handleParallelCommand(key, taskText)
 
 	case "/skills":
 		t.handleSkillsCommand(key)
@@ -2061,147 +1683,29 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			t.send(key, t.getLocalizedMessage(key.chatID, "skill_usage", nil))
 		}
 
-	case "/hermes":
-		t.handleHermesCommand(key, parts, "")
-
-	case "/ghermes":
-		if !t.codexTierAvailable(key) {
+	// The old task system is gone. With the fleet running these commands are
+	// answered by fleetCompat before they get here; what arrives had nothing
+	// in the fleet to act on, so point at the command that replaced it.
+	case "/hermes", "/ghermes":
+		if len(parts) > 1 && (parts[1] == "issues" || parts[1] == "list") {
+			t.handleListIssues(key)
 			return
 		}
-		t.handleHermesCommand(key, parts, "codex")
+		t.sendRemovedCommand(key, cmd)
 
-	case "/resume":
-		t.handleHermesResumeCommand(key, parts)
-
-	case "/hermes-stats":
-		t.handleHermesStatsCommand(key, parts)
-
-	case "/retry":
-		t.handleRetryCommand(key, parts)
-
-	case "/mr":
-		t.handleMilestoneReviewCommand(key, text)
+	case "/resume", "/retry", "/hermes-stats", "/strict", "/mr":
+		t.sendRemovedCommand(key, cmd)
 
 	default:
 		t.send(key, t.getLocalizedMessage(key.chatID, "unknown_command", nil))
 	}
 }
 
-// parseMRSelector extracts the selector from a full /mr command text.
-// The selector is everything after "/mr " with outer double-quotes stripped.
-// Examples: "/mr #129" → "#129", "/mr P15" → "P15",
-// `/mr "P15 - Hermes Cleanup"` → "P15 - Hermes Cleanup".
-func parseMRSelector(text string) string {
-	idx := strings.Index(text, " ")
-	if idx < 0 {
-		return ""
-	}
-	sel := strings.TrimSpace(text[idx+1:])
-	if len(sel) >= 2 && sel[0] == '"' && sel[len(sel)-1] == '"' {
-		sel = sel[1 : len(sel)-1]
-	}
-	return strings.TrimSpace(sel)
-}
-
-// handleMilestoneReviewCommand runs a read-only Hermes milestone review for
-// a /mr <selector> command. Supported selectors: #N (issue number), milestone
-// title query (exact / prefix / contains). Read-only: no GitHub mutations.
-func (t *TelegramBot) handleMilestoneReviewCommand(key chatKey, text string) {
-	selector := parseMRSelector(text)
-	if selector == "" {
-		t.send(key, "用法：`/mr #<issue>` 或 `/mr <milestone-title>`\n\n例：`/mr #129` 或 `/mr P15`")
-		return
-	}
-
-	projectDir := t.getAgent(key).ProjectDir()
-
-	// Step 1: resolve milestone.
-	t.send(key, fmt.Sprintf("🔍 正在解析 milestone：`%s`…", selector))
-	resolveCtx, resolveCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer resolveCancel()
-
-	ms, err := hermes.ResolveGitHubMilestone(resolveCtx, projectDir, selector)
-	if err != nil {
-		t.send(key, formatMilestoneResolveError(err))
-		return
-	}
-
-	// Step 2: load all issues.
-	t.send(key, fmt.Sprintf("📥 載入 milestone *%s* 的所有 issues…", ms.Title))
-	loadCtx, loadCancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer loadCancel()
-
-	mrc, err := hermes.LoadMilestoneReviewContext(loadCtx, projectDir, ms)
-	if err != nil {
-		t.send(key, fmt.Sprintf("❌ 無法載入 milestone issues：%s", err.Error()))
-		return
-	}
-
-	// Step 3: run LLM review.
-	reviewModel := t.config.ModelRouting.DeepModel
-	if reviewModel == "" {
-		reviewModel = t.config.ModelRouting.SmartModel
-	}
-	if reviewModel == "" {
-		t.send(key, "❌ 未設定 deep_model，無法執行 milestone review。")
-		return
-	}
-
-	totalIssues := len(mrc.Issues)
-	t.send(key, fmt.Sprintf("🧠 正在用 `%s` 審查 %d 個 issues…", reviewModel, totalIssues))
-
-	callFn := makePlanFn(t.client, reviewModel)
-	reviewCtx, reviewCancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer reviewCancel()
-
-	result, err := hermes.RunMilestoneReview(reviewCtx, callFn, projectDir, mrc)
-	if err != nil {
-		t.send(key, fmt.Sprintf("❌ Milestone review 失敗：%s", err.Error()))
-		return
-	}
-
-	// Step 4: format and send.
-	msg, err := hermes.FormatMilestoneReview(projectDir, ms, result)
-	if err != nil {
-		t.send(key, fmt.Sprintf("❌ 格式化 review 失敗：%s", err.Error()))
-		return
-	}
-	msg = t.processSendFileMarkers(key, msg, projectDir)
-	t.send(key, msg)
-}
-
-// formatMilestoneResolveError converts typed resolver errors into user-friendly
-// Telegram messages.
-func formatMilestoneResolveError(err error) string {
-	var noMS *hermes.ErrNoMilestoneOnIssue
-	if errors.As(err, &noMS) {
-		return fmt.Sprintf("⚠️ Issue #%d 沒有關聯的 milestone。\n\n請確認此 issue 已設定 milestone 後再試。", noMS.IssueNumber)
-	}
-	var notFound *hermes.ErrIssueNotFound
-	if errors.As(err, &notFound) {
-		return fmt.Sprintf("❌ 找不到 Issue #%d。", notFound.IssueNumber)
-	}
-	var noMatch *hermes.ErrNoMilestoneMatch
-	if errors.As(err, &noMatch) {
-		msg := fmt.Sprintf("❌ 找不到符合 `%s` 的 milestone。", noMatch.Query)
-		if len(noMatch.Available) > 0 {
-			msg += "\n\n目前開放的 milestones："
-			for _, m := range noMatch.Available {
-				msg += fmt.Sprintf("\n• %s", m.Title)
-			}
-		}
-		return msg
-	}
-	var ambiguous *hermes.ErrAmbiguousMilestone
-	if errors.As(err, &ambiguous) {
-		msg := fmt.Sprintf("⚠️ 查詢 `%s` 匹配到多個 milestones，請使用更精確的名稱重試：", ambiguous.Query)
-		for _, m := range ambiguous.Candidates {
-			msg += fmt.Sprintf("\n• %s", m.Title)
-		}
-		return msg
-	}
-	return fmt.Sprintf("❌ 無法解析 milestone：%s", err.Error())
-}
+// Seams for tests of /close.
+var (
+	ghFetchIssue = ghissue.FetchIssue
+	ghCloseIssue = ghissue.CloseIssue
+)
 
 var closeIssueURLPattern = regexp.MustCompile(`/issues/([0-9]+)(?:\b|$)`)
 
@@ -2215,7 +1719,7 @@ func (t *TelegramBot) handleCloseIssueCommand(key chatKey, parts []string, text 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	issue, err := hermesFetchIssue(ctx, projectDir, issueNumber)
+	issue, err := ghFetchIssue(ctx, projectDir, issueNumber)
 	if err != nil {
 		t.send(key, fmt.Sprintf("❌ 無法讀取 Issue #%d：%s", issueNumber, err.Error()))
 		return
@@ -2224,7 +1728,7 @@ func (t *TelegramBot) handleCloseIssueCommand(key chatKey, parts []string, text 
 		t.send(key, fmt.Sprintf("ℹ️ Issue #%d 已經是 closed：%s", issue.Number, issue.Title))
 		return
 	}
-	if err := hermesCloseIssue(ctx, projectDir, issueNumber); err != nil {
+	if err := ghCloseIssue(ctx, projectDir, issueNumber); err != nil {
 		t.send(key, fmt.Sprintf("❌ 關閉 Issue #%d 失敗：%s", issueNumber, err.Error()))
 		return
 	}
@@ -2258,46 +1762,6 @@ func parseCloseIssueNumber(parts []string, text string) (int, bool) {
 func (t *TelegramBot) buildContextAwareRows(key chatKey) [][]map[string]interface{} {
 	var rows [][]map[string]interface{}
 
-	// Active Hermes coordinator (in-memory).
-	t.hermesMu.RLock()
-	hc := t.hermesCoords[key]
-	t.hermesMu.RUnlock()
-	if hc != nil && hc.coord != nil && hc.coord.IsRunning() {
-		taskID := hc.coord.TaskID()
-		label := t.getLocalizedMessage(key.chatID, "menu_ctx_running", map[string]string{"{id}": shortHermesTaskID(taskID)})
-		rows = append(rows, []map[string]interface{}{
-			{"text": label, "callback_data": "menu:hermes_status"},
-			{"text": t.getLocalizedMessage(key.chatID, "menu_ctx_stop", nil), "callback_data": "menu:abort_confirm"},
-		})
-	} else {
-		// No running coordinator — check DB for a continuable task.
-		if t.taskSvc != nil {
-			if active, err := t.taskSvc.GetActiveForChat(key.chatID); err == nil && hermesTaskIsContinuable(active) {
-				label := t.getLocalizedMessage(key.chatID, "menu_ctx_continue", map[string]string{"{id}": shortHermesTaskID(active.ID)})
-				rows = append(rows, []map[string]interface{}{
-					{"text": label, "callback_data": "hermes:continue:" + active.ID},
-					{"text": t.getLocalizedMessage(key.chatID, "menu_ctx_hermes_status", nil), "callback_data": "menu:hermes_status"},
-				})
-			}
-		}
-	}
-
-	// Failed review candidates.
-	if store, ok := globalStorage.(*SQLiteStorage); ok && store != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if candidates, err := store.selectRetryTaskCandidates(ctx, key, 3); err == nil && len(candidates) > 0 {
-			totalFailed := 0
-			for _, c := range candidates {
-				totalFailed += c.FailedCount
-			}
-			label := t.getLocalizedMessage(key.chatID, "menu_ctx_review_failed", map[string]string{"{count}": fmt.Sprintf("%d", totalFailed)})
-			rows = append(rows, []map[string]interface{}{
-				{"text": label, "callback_data": "retry:menu"},
-			})
-		}
-	}
-
 	// Checkpoints.
 	agent := t.getAgent(key)
 	if globalCheckpointManager != nil && globalCheckpointManager.IsEnabled() && agent != nil && agent.projectDir != "" {
@@ -2328,10 +1792,6 @@ func (t *TelegramBot) sendMenu(key chatKey) {
 		},
 		{
 			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_tasks", nil), "callback_data": "menu:tasks"},
-			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_hermes", nil), "callback_data": "menu:hermes_status"},
-		},
-		{
-			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_retry", nil), "callback_data": "retry:menu"},
 			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_model", nil), "callback_data": "model:menu"},
 		},
 		{
@@ -2378,1139 +1838,9 @@ func (t *TelegramBot) sendMenuMessage(key chatKey, text string, rows [][]map[str
 	t.queueMessage("sendMessage", params)
 }
 
-// handleHermesCommand enables or queries Hermes mode for this chat.
-// tier: "" or "claude" → Claude tier (/hermes); "codex" → GPT tier (/ghermes).
-//
-//	/hermes          — enable Hermes mode (next message will trigger Brain-Executor)
-//	/hermes issues   — list open GitHub Issues sorted by priority
-//	/hermes status   — show current coordinator state
-//	/hermes stop     — cancel current task and disable Hermes mode
-//	/ghermes         — same as above but on the GPT/Codex tier
-//
-// findIssueRefInArgs scans command args for the first token shaped like #N and
-// returns its parsed number plus the original token. Allows /ghermes 處理 #109
-// to be treated like /ghermes #109.
-func findIssueRefInArgs(args []string) (int, string, bool) {
-	for _, a := range args {
-		if !strings.HasPrefix(a, "#") {
-			continue
-		}
-		num := 0
-		if _, err := fmt.Sscanf(strings.TrimPrefix(a, "#"), "%d", &num); err != nil {
-			return 0, a, true
-		}
-		return num, a, true
-	}
-	return 0, "", false
-}
-
-func parseHermesRestartIssue(parts []string) (int, bool) {
-	if len(parts) < 3 || !strings.EqualFold(parts[1], "restart") {
-		return 0, false
-	}
-	issueNum, _, ok := findIssueRefInArgs(parts[2:])
-	return issueNum, ok && issueNum > 0
-}
-
-// handleHermesResumeCommand processes /resume <taskID> <retry|skip|abort>.
-// It is the slash-command equivalent of clicking the inline retry / skip /
-// abort buttons; useful when the original failure-pause Telegram message
-// has been buried in chat history (#169 slice β5 nudge points here).
-//
-// Routes through the same tryColdRestartFailureResume as a button click,
-// so the snapshot-aware ApplyInterruptResolution path keeps single-source-
-// of-truth semantics. Adjust (with hint) is intentionally not supported
-// here — keep retry/skip/abort.
-func (t *TelegramBot) handleHermesResumeCommand(key chatKey, parts []string) {
-	if len(parts) < 3 {
-		t.send(key, "用法：/resume <taskID> <retry|skip|abort>")
-		return
-	}
-	taskID := strings.TrimSpace(parts[1])
-	action := strings.ToLower(strings.TrimSpace(parts[2]))
-	switch action {
-	case "retry", "skip", "abort":
-	default:
-		t.send(key, "❌ 未知動作。請使用 retry / skip / abort 之一。")
-		return
-	}
-	if t.taskSvc == nil {
-		t.send(key, "❌ 任務服務未啟動。")
-		return
-	}
-	state, err := t.taskSvc.GetTask(taskID)
-	if err != nil {
-		// Try a short-form match: user might have typed the 8-char prefix
-		// shown in the pause-reminder ("Hermes 任務 a1b2c3d4...").
-		if full, ok := t.expandShortTaskID(key, taskID); ok {
-			state, err = t.taskSvc.GetTask(full)
-			if err == nil {
-				taskID = full
-			}
-		}
-		if err != nil {
-			t.send(key, fmt.Sprintf("❌ 找不到任務 %s。", taskID))
-			return
-		}
-	}
-	if state.IsTerminal() {
-		t.send(key, fmt.Sprintf("ℹ️ 任務 %s 已是終止狀態（%s），不需 resume。", shortHermesTaskID(taskID), state.Status))
-		return
-	}
-	if state.ChatID != key.chatID || state.ThreadID != key.threadID {
-		t.send(key, "❌ 此任務不屬於本 chat / topic，無法 resume。")
-		return
-	}
-	queryID := "" // no callback query; we synthesise a click
-	if !t.tryColdRestartFailureResume(key, queryID, action, taskID, "") {
-		t.send(key, fmt.Sprintf("❌ 無法 resume 任務 %s — 該任務目前沒有等待中的暫停。", shortHermesTaskID(taskID)))
-	}
-}
-
-// expandShortTaskID resolves an 8-character prefix to the full task ID
-// using the chat's recent task list. Returns ok=false when no unique
-// match is found.
-func (t *TelegramBot) expandShortTaskID(key chatKey, prefix string) (string, bool) {
-	if t.taskSvc == nil || len(prefix) < 4 {
-		return "", false
-	}
-	tasks, err := t.taskSvc.ListForChat(key.chatID, 50)
-	if err != nil {
-		return "", false
-	}
-	matched := ""
-	for _, task := range tasks {
-		if strings.HasPrefix(task.ID, prefix) {
-			if matched != "" {
-				// Ambiguous: more than one match.
-				return "", false
-			}
-			matched = task.ID
-		}
-	}
-	return matched, matched != ""
-}
-
-func (t *TelegramBot) handleHermesCommand(key chatKey, parts []string, tier string) {
-	if !t.config.Hermes.Enabled {
-		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_disabled_config", nil))
-		return
-	}
-
-	sub := ""
-	if len(parts) > 1 {
-		sub = strings.ToLower(parts[1])
-	}
-
-	if sub == "restart" {
-		t.setHermesTier(key, tier)
-		goal := strings.TrimSpace(strings.Join(parts[2:], " "))
-		if goal == "" {
-			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_restart_usage", nil))
-			return
-		}
-		projectDir := t.getAgent(key).ProjectDir()
-		if issueNum, ok := parseHermesRestartIssue(parts); ok {
-			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_restart_ignore_issue", map[string]string{"issueNum": fmt.Sprintf("%d", issueNum)}))
-			go t.runTrackedJob("hermes.issue.restart", func() {
-				t.startHermesFreshFromIssue(key, issueNum, projectDir)
-			})
-			return
-		}
-		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_restart_ignore_progress", nil))
-		go t.runTrackedJob("hermes.restart", func() {
-			t.startHermesFreshTask(key, goal, projectDir)
-		})
-		return
-	}
-
-	// /hermes #N — fetch GitHub Issue and start task immediately.
-	// Also accepts /hermes <verb> #N (e.g. /ghermes 處理 #109) by scanning all args
-	// for the first #N token.
-	if issueNum, raw, ok := findIssueRefInArgs(parts[1:]); ok {
-		if issueNum <= 0 {
-			projectDir := t.getAgent(key).ProjectDir()
-			t.sendHermesIssueResolution(key, raw, projectDir, tier)
-			return
-		}
-		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_loading", map[string]string{"issueNum": fmt.Sprintf("%d", issueNum)}))
-		projectDir := t.getAgent(key).ProjectDir()
-		t.setHermesTier(key, tier)
-		go t.runTrackedJob("hermes.issue", func() {
-			t.startHermesFromIssue(key, issueNum, projectDir)
-		})
-		return
-	}
-
-	switch sub {
-	case "issues", "list":
-		projectDir := t.getAgent(key).ProjectDir()
-		go func() {
-			done := globalJobTracker.Start("hermes.issues")
-			var jobErr error
-			defer func() { done(jobErr) }()
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			items, err := hermes.ListIssues(ctx, projectDir, 15)
-			if err != nil {
-				jobErr = err
-				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_list_failed", map[string]string{"error": err.Error()}))
-				return
-			}
-			t.send(key, hermes.FormatIssueList(items))
-		}()
-
-	case "status":
-		t.sendHermesStatus(key, t.getAgent(key).ProjectDir())
-
-	case "continue", "resume", "replan":
-		projectDir := t.getAgent(key).ProjectDir()
-		selector := ""
-		if len(parts) > 2 {
-			selector = parts[2]
-		}
-		task, ok, ambiguous := t.resolveHermesContinuationTaskBySelector(key, projectDir, selector)
-		if ambiguous {
-			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_continuation_ambiguous", map[string]string{"selector": selector}))
-			return
-		}
-		if !ok {
-			if selector != "" {
-				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_continuation_not_found_with_selector", map[string]string{"selector": selector}))
-			} else {
-				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_continuation_not_found", nil))
-			}
-			return
-		}
-		mode := "continue"
-		if sub == "replan" {
-			mode = "replan"
-		}
-		t.setHermesTier(key, tier)
-		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_continuation_start", map[string]string{
-			"taskID": shortHermesTaskID(task.ID),
-			"action": t.getLocalizedMessage(key.chatID, hermesContinuationVerbKey(mode), nil),
-		}))
-		go t.runTrackedJob("hermes.continue", func() {
-			t.startHermesContinuationTask(key, task, projectDir, mode)
-		})
-
-	case "stop":
-		t.hermesMu.Lock()
-		hc := t.hermesCoords[key]
-		if hc != nil {
-			hc.enabled = false
-		}
-		t.hermesMu.Unlock()
-		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_disabled", nil))
-
-	default:
-		if len(parts) > 1 {
-			goal := strings.TrimSpace(strings.Join(parts[1:], " "))
-			projectDir := t.getAgent(key).ProjectDir()
-			t.setHermesTier(key, tier)
-			go t.runTrackedJob("hermes.command", func() {
-				t.startHermesGoalOrContinuation(key, goal, projectDir)
-			})
-			return
-		}
-		t.setHermesTier(key, tier)
-		t.hermesMu.Lock()
-		if hc := t.hermesCoords[key]; hc != nil {
-			hc.enabled = true
-		} else {
-			t.hermesCoords[key] = &hermesCoord{enabled: true, tier: tier}
-		}
-		t.hermesMu.Unlock()
-		if tier == "codex" {
-			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_enabled_codex", nil))
-		} else {
-			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_enabled_default", nil))
-		}
-		projectDir := t.getAgent(key).ProjectDir()
-		go func() {
-			done := globalJobTracker.Start("hermes.issues")
-			var jobErr error
-			defer func() { done(jobErr) }()
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			items, err := hermes.ListIssues(ctx, projectDir, 10)
-			if err != nil {
-				jobErr = err
-				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_list_unavailable", nil))
-				return
-			}
-			t.send(key, hermes.FormatIssueList(items))
-		}()
-	}
-}
-
-// handleHermesStatsCommand queries and reports Hermes task statistics.
-//
-//	/hermes-stats       — show most recent task summary
-//	/hermes-stats week  — show aggregated stats for past 7 days
-//	/hermes-stats chat  — show aggregated stats for this chat
-func (t *TelegramBot) handleHermesStatsCommand(key chatKey, parts []string) {
-	if !t.config.Hermes.Enabled {
-		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_disabled_simple", nil))
-		return
-	}
-
-	if len(parts) > 1 && strings.EqualFold(parts[1], "week") {
-		if globalStorage == nil {
-			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_stats_week_no_storage", nil))
-			return
-		}
-
-		windowEnd := time.Now().UTC()
-		windowStart := windowEnd.Add(-7 * 24 * time.Hour)
-		lang := t.getChatLanguage(key.chatID)
-		report, err := globalStorage.GetPlannerRulesWeeklyReport(windowStart, windowEnd, t.i18n, lang)
-		if err != nil {
-			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_stats_week_failed", map[string]string{"error": err.Error()}))
-			return
-		}
-		t.send(key, FormatPlannerRulesWeeklyReport(t.i18n, lang, report))
-		return
-	}
-
-	t.send(key, t.getLocalizedMessage(key.chatID, "hermes_stats_week_usage", nil))
-}
-
-// isHermesEnabled reports whether Hermes mode is active for this chat.
-func (t *TelegramBot) isHermesEnabled(key chatKey) bool {
-	if !t.config.Hermes.Enabled {
-		return false
-	}
-	t.hermesMu.RLock()
-	hc := t.hermesCoords[key]
-	t.hermesMu.RUnlock()
-	return hc != nil && hc.enabled
-}
-
-// disableHermesChatModeIfIdle clears the sticky "plain text starts Hermes"
-// mode when the operator explicitly switches back to a normal model. A running
-// coordinator keeps ownership so model switches cannot orphan an active task.
-func (t *TelegramBot) disableHermesChatModeIfIdle(key chatKey) {
-	if t == nil {
-		return
-	}
-	t.hermesMu.Lock()
-	defer t.hermesMu.Unlock()
-	hc := t.hermesCoords[key]
-	if hc == nil {
-		return
-	}
-	if hc.coord != nil && hc.coord.IsRunning() {
-		return
-	}
-	hc.enabled = false
-}
-
-// trySignalBudgetContinue checks whether the coordinator for this chat is paused
-// on a budget warning. If the message starts with "繼續" or "continue" (case-
-// insensitive), it signals the channel and returns true. Otherwise returns false.
-func (t *TelegramBot) trySignalBudgetContinue(key chatKey, text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	isContinue := isHermesContinuationRequest(lower)
-	if !isContinue {
-		return false
-	}
-
-	t.hermesMu.RLock()
-	hc := t.hermesCoords[key]
-	t.hermesMu.RUnlock()
-
-	if hc == nil || hc.continueCh == nil || hc.coord == nil || !hc.coord.IsRunning() {
-		return false
-	}
-
-	select {
-	case hc.continueCh <- struct{}{}:
-		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_continue_signal", nil))
-		return true
-	default:
-		// Channel already full or already consumed — not waiting.
-		return false
-	}
-}
-
-func (t *TelegramBot) sendHermesIssueResolution(key chatKey, rawQuery, projectDir, tier string) {
-	query := strings.TrimSpace(rawQuery)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	candidates, err := t.resolveTargets(ctx, ResolveTargetRequest{
-		ChatID:     key.chatID,
-		ThreadID:   key.threadID,
-		ProjectDir: projectDir,
-		Intent:     "hermes_issue",
-		Query:      query,
-		Kinds:      []TargetKind{TargetGitHubIssue},
-		Limit:      3,
-	})
-	if err != nil {
-		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_search_failed", map[string]string{"error": err.Error()}))
-		return
-	}
-	if len(candidates) == 0 {
-		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_search_no_matches", map[string]string{"query": query}))
-		return
-	}
-	rows := make([][]map[string]interface{}, 0, len(candidates)+1)
-	for _, candidate := range candidates {
-		label := fmt.Sprintf("#%s · %.0f%% · %s", candidate.ID, candidate.Score*100, truncateForTelegram(candidate.Title, 34))
-		rows = append(rows, []map[string]interface{}{
-			{"text": label, "callback_data": "hermes:issue:" + candidate.ID + ":" + tier},
-		})
-	}
-	rows = append(rows, []map[string]interface{}{{"text": t.getLocalizedMessage(key.chatID, "menu_btn_cancel", nil), "callback_data": "hermes:cancel"}})
-	t.sendMenuMessage(key, t.getLocalizedMessage(key.chatID, "hermes_issue_search_candidates", map[string]string{"count": fmt.Sprintf("%d", len(candidates))}), rows)
-}
-
-// startHermesFromIssue fetches a GitHub Issue and starts a Hermes task from it.
-func (t *TelegramBot) startHermesFromIssue(key chatKey, issueNumber int, projectDir string) {
-	t.startHermesFromIssueMode(key, issueNumber, projectDir, false)
-}
-
-func (t *TelegramBot) startHermesFreshFromIssue(key chatKey, issueNumber int, projectDir string) {
-	t.startHermesFromIssueMode(key, issueNumber, projectDir, true)
-}
-
-func (t *TelegramBot) startHermesFromIssueMode(key chatKey, issueNumber int, projectDir string, forceRestart bool) {
-	ctx := context.Background()
-	issue, err := hermesFetchIssue(ctx, projectDir, issueNumber)
-	if err != nil {
-		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_read_failed", map[string]string{
-			"issueNum": fmt.Sprintf("%d", issueNumber),
-			"error":    err.Error(),
-		}))
-		return
-	}
-
-	cfg := HermesDefaults(t.config.Hermes)
-	ghCfg := t.config.Hermes.GithubIntegration
-
-	gateDecision := decideIssueQualityGate(issue, forceRestart)
-	recordIssueQualityGateDecision(ctx, key, issue, gateDecision, forceRestart)
-	switch gateDecision.Action {
-	case issueQualityGateSkip, issueQualityGateNeedsClarification:
-		if gateDecision.Message != "" {
-			t.send(key, gateDecision.Message)
-		}
-		return
-	}
-
-	// Apply complexity label budget overrides if present
-	budget := HermesBudgetConfig{
-		MaxTotalTokens:      cfg.Budget.MaxTotalTokens,
-		MaxWallclockSeconds: cfg.Budget.MaxWallclockSeconds,
-	}
-	for _, label := range issue.Labels {
-		if override, ok := ghCfg.ComplexityBudgetMap[label]; ok {
-			budget = override
-			log.Printf("[hermes] applying budget from label %q: %+v", label, override)
-			break
-		}
-	}
-
-	goal := hermes.BuildGoalFromIssue(issue)
-	if qualityContext := currentHermesQualityContext(time.Now()); qualityContext != "" {
-		goal = strings.TrimSpace(goal) + "\n\n" + qualityContext
-	}
-	if !forceRestart {
-		if task, decision, ok := t.resolveHermesIssueTask(key, projectDir, issueNumber); ok {
-			switch decision {
-			case hermesSimilarContinue:
-				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_continue_existing", map[string]string{
-					"issueNum": fmt.Sprintf("%d", issueNumber),
-					"taskID":   shortHermesTaskID(task.ID),
-					"action":   t.getLocalizedMessage(key.chatID, hermesContinuationVerbKey("continue"), nil),
-				}))
-				t.startHermesContinuationTask(key, task, projectDir, "continue")
-				return
-			case hermesSimilarCompleted:
-				if unchecked := countUncheckedIssueChecklistItems(issue); unchecked > 0 {
-					if t.shouldDeferIssueContinuationToIssueOps(ctx, projectDir, issueNumber) {
-						t.sendHermesIssueReconciliation(ctx, key, task)
-						return
-					}
-					t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_continue_unchecked", map[string]string{
-						"issueNum": fmt.Sprintf("%d", issueNumber),
-						"taskID":   shortHermesTaskID(task.ID),
-						"count":    fmt.Sprintf("%d", unchecked),
-					}))
-					t.startHermesTaskWithIssueTier(key, goal, projectDir, issueNumber, budget, ghCfg, t.hermesTierFor(key))
-					return
-				}
-				t.sendHermesRecentCompletedIssueActions(key, issueNumber, task, t.hermesTierFor(key))
-				return
-			}
-		}
-	}
-	if forceRestart {
-		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_restart_title", map[string]string{
-			"issueNum": fmt.Sprintf("%d", issueNumber),
-			"title":    issue.Title,
-			"count": fmt.Sprintf("%d", func() int {
-				n := 0
-				for _, item := range issue.Checklist {
-					if !item.Checked {
-						n++
-					}
-				}
-				return n
-			}()),
-		}))
-		t.startHermesTaskWithIssueTier(key, goal, projectDir, issueNumber, budget, ghCfg, t.hermesTierFor(key))
-		return
-	}
-	// Phase 2.6.A: when preflight.parallel is enabled, kick off the Haiku check
-	// concurrently with the Planner instead of blocking on it. The recent-
-	// completion shortcut still runs synchronously because it is local + cheap.
-	if cfg.Preflight.Enabled && cfg.Preflight.Parallel {
-		if signal, ok := hermes.RecentSuccessfulHermesCompletion(issue); ok {
-			t.send(key, formatHermesRecentCompletionSkipMessage(issue, signal))
-			return
-		}
-		pfCh, cancelPf := t.runHermesIssuePreflightAsync(ctx, issue, projectDir, goal, cfg)
-		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_start_title", map[string]string{
-			"issueNum": fmt.Sprintf("%d", issueNumber),
-			"title":    issue.Title,
-			"count": fmt.Sprintf("%d", func() int {
-				n := 0
-				for _, item := range issue.Checklist {
-					if !item.Checked {
-						n++
-					}
-				}
-				return n
-			}()),
-		}))
-		t.startHermesTaskWithIssue(key, goal, projectDir, issueNumber, budget, ghCfg)
-		go t.runTrackedJob("hermes.preflight.parallel", func() {
-			defer cancelPf()
-			t.handleParallelPreflightVerdict(key, issueNumber, pfCh)
-		})
-		return
-	}
-	if updatedGoal, skip := t.maybeRunHermesIssuePreflight(ctx, key, issue, projectDir, goal, cfg); skip {
-		return
-	} else {
-		goal = updatedGoal
-	}
-	t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_start_title", map[string]string{
-		"issueNum": fmt.Sprintf("%d", issueNumber),
-		"title":    issue.Title,
-		"count": fmt.Sprintf("%d", func() int {
-			n := 0
-			for _, item := range issue.Checklist {
-				if !item.Checked {
-					n++
-				}
-			}
-			return n
-		}()),
-	}))
-
-	t.startHermesTaskWithIssue(key, goal, projectDir, issueNumber, budget, ghCfg)
-}
-
-func countUncheckedIssueChecklistItems(issue *hermes.IssueContext) int {
-	return len(hermes.ReconcileIssueCompletion(issue).Unchecked)
-}
-
-// startHermesTask launches a Hermes coordinator for the given goal on the chat's current tier.
-// Uses context.Background() so the task survives handler cancellation.
-func (t *TelegramBot) startHermesTask(key chatKey, goal, projectDir string) {
-	t.startHermesGoalOrContinuation(key, goal, projectDir)
-}
-
-func (t *TelegramBot) startHermesGoalOrContinuation(key chatKey, goal, projectDir string) {
-	goal = strings.TrimSpace(goal)
-	if goal == "" {
-		return
-	}
-	if task, decision, ok := t.resolveSimilarHermesTask(key, projectDir, goal); ok {
-		switch decision {
-		case hermesSimilarContinue:
-			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_goal_continue_existing", map[string]string{
-				"taskID": shortHermesTaskID(task.ID),
-				"action": t.getLocalizedMessage(key.chatID, hermesContinuationVerbKey("continue"), nil),
-			}))
-			t.startHermesContinuationTask(key, task, projectDir, "continue")
-			return
-		case hermesSimilarCompleted:
-			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_goal_recent_completed", map[string]string{
-				"taskID": shortHermesTaskID(task.ID),
-				"goal":   goal,
-			}))
-			return
-		case hermesSimilarAmbiguous:
-			t.sendHermesCandidateActions(key, t.getLocalizedMessage(key.chatID, "hermes_goal_ambiguous_candidate", map[string]string{
-				"taskID": shortHermesTaskID(task.ID),
-				"goal":   goal,
-			}), task)
-			return
-		}
-	}
-	t.startHermesTaskWithIssueTier(key, t.buildHermesGoalWithContext(key, goal), projectDir, 0, HermesBudgetConfig{}, GithubIntegrationConfig{}, t.hermesTierFor(key))
-}
-
-func (t *TelegramBot) startHermesFreshTask(key chatKey, goal, projectDir string) {
-	t.startHermesTaskWithIssueTier(key, strings.TrimSpace(goal), projectDir, 0, HermesBudgetConfig{}, GithubIntegrationConfig{}, t.hermesTierFor(key))
-}
-
-func (t *TelegramBot) startHermesContinuationTask(key chatKey, task hermes.TaskState, projectDir, mode string) {
-	projectDir = hermesContinuationProjectDir(task, projectDir)
-	if mode == "continue" {
-		if decision := appengine.DecideTaskResume(task); decision.CanResume && !decision.Terminal {
-			t.startHermesTaskWithIssueTierFromState(key, task.Goal, projectDir, task.GithubIssueNumber, HermesBudgetConfig{}, t.config.Hermes.GithubIntegration, t.hermesTierFor(key), &task)
-			return
-		}
-	}
-
-	// Re-fetch the issue body when the continuation is anchored on a GitHub
-	// issue. Across days/sessions the issue may have been edited (priorities
-	// re-ordered, requirements clarified, checklist items checked off by other
-	// people); without a refresh the planner replans against a stale view of
-	// the goal and feels like it has forgotten the original request.
-	var freshIssueBody string
-	if task.GithubIssueNumber > 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if issue, err := hermesFetchIssue(ctx, projectDir, task.GithubIssueNumber); err == nil && issue != nil {
-			freshIssueBody = strings.TrimSpace(issue.Body)
-		} else if err != nil {
-			log.Printf("[hermes] continuation issue refresh failed task=%s issue=#%d: %v", task.ID, task.GithubIssueNumber, err)
-		}
-	}
-	goal := buildHermesContinuationGoalWithIssue(task, mode, freshIssueBody)
-	t.startHermesTaskWithIssueTier(key, goal, projectDir, task.GithubIssueNumber, HermesBudgetConfig{}, t.config.Hermes.GithubIntegration, t.hermesTierFor(key))
-}
-
-// startHermesTaskWithIssue preserves the original signature for callers that don't
-// care about tier — defaults to whatever tier the chat's hermesCoord is on.
-func (t *TelegramBot) startHermesTaskWithIssue(key chatKey, goal, projectDir string, issueNumber int, budgetOverride HermesBudgetConfig, ghIntegration GithubIntegrationConfig) {
-	t.startHermesTaskWithIssueTier(key, t.buildHermesGoalWithContext(key, goal), projectDir, issueNumber, budgetOverride, ghIntegration, t.hermesTierFor(key))
-}
-
-func (t *TelegramBot) buildHermesGoalWithContext(key chatKey, currentRequest string) string {
-	currentRequest = strings.TrimSpace(currentRequest)
-	if currentRequest == "" {
-		return currentRequest
-	}
-
-	chatCtx := t.getChatContext(key, "")
-	recentMessages := chatCtx.RecentMessagesSnapshot()
-	issueNumber, hasIssueScope := ParseIssueNumber(currentRequest)
-	decision := appengine.DecideSessionPolicy(appengine.SessionPolicyRequest{
-		Mode:             "hermes",
-		HasNativeSession: chatCtx.Session(chatCtx.LastBackend) != "",
-		HasIssueScope:    hasIssueScope,
-	})
-	if !decision.AllowRecentMemory {
-		recentMessages = nil
-	}
-	var taskSource hermesMemoryTaskSource
-	if t != nil && t.taskSvc != nil {
-		taskSource = t.taskSvc
-	}
-	resolver := newMemoryResolverForSessionPolicy(taskSource, chatCtx.ProjectDir, decision)
-	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
-		ChatID:         key.chatID,
-		ThreadID:       key.threadID,
-		ProjectDir:     chatCtx.ProjectDir,
-		UserMessage:    currentRequest,
-		IssueNumber:    issueNumber,
-		Mode:           "hermes",
-		BudgetChars:    defaultMemoryBudgetChars,
-		RecentMessages: recentMessages,
-	})
-	if err != nil {
-		log.Printf("[hermes] failed to resolve memory for chat %d: %v", key.chatID, err)
-		return composeHermesGoalWithContext(currentRequest, nil, recentMessages)
-	}
-	return bundle.RenderForPrompt(currentRequest)
-}
-
-func (t *TelegramBot) resolveHermesContinuationTask(key chatKey, projectDir string) (hermes.TaskState, bool) {
-	task, ok, _ := t.resolveHermesContinuationTaskBySelector(key, projectDir, "")
-	return task, ok
-}
-
-func (t *TelegramBot) resolveHermesContinuationTaskBySelector(key chatKey, projectDir, selector string) (hermes.TaskState, bool, bool) {
-	tasks, err := t.taskSvc.ListForChat(key.chatID, 10)
-	if err != nil {
-		log.Printf("[hermes] failed to resolve continuation task for chat %d: %v", key.chatID, err)
-		return hermes.TaskState{}, false, false
-	}
-	if strings.TrimSpace(selector) != "" {
-		task, ok, ambiguous := selectHermesContinuationTaskByIDForSelectableScope(tasks, key.threadID, projectDir, selector)
-		return task, ok, ambiguous
-	}
-	candidates := resolveTargetCandidates(ResolveTargetRequest{
-		ChatID:     key.chatID,
-		ThreadID:   key.threadID,
-		ProjectDir: projectDir,
-		Intent:     "hermes_continue",
-		Kinds:      []TargetKind{TargetHermesTask},
-		Limit:      1,
-	}, targetResolverSources{Tasks: tasks, Now: time.Now()})
-	if len(candidates) == 0 {
-		return hermes.TaskState{}, false, false
-	}
-	task, err := t.taskSvc.GetTask(candidates[0].ID)
-	if err != nil {
-		log.Printf("[hermes] failed to load resolved continuation task %s: %v", candidates[0].ID, err)
-		return hermes.TaskState{}, false, false
-	}
-	return task, true, false
-}
-
-func selectHermesContinuationTask(tasks []hermes.TaskState, projectDir string) (hermes.TaskState, bool) {
-	return selectHermesContinuationTaskForScope(tasks, 0, projectDir)
-}
-
-func selectHermesContinuationTaskForScope(tasks []hermes.TaskState, threadID int, projectDir string) (hermes.TaskState, bool) {
-	candidates := selectHermesContinuationTasksForScope(tasks, threadID, projectDir, 1)
-	if len(candidates) == 0 {
-		return hermes.TaskState{}, false
-	}
-	return candidates[0], true
-}
-
-func selectHermesContinuationTaskByID(tasks []hermes.TaskState, projectDir, selector string) (hermes.TaskState, bool, bool) {
-	return selectHermesContinuationTaskByIDForScope(tasks, 0, projectDir, selector)
-}
-
-func selectHermesContinuationTaskByIDForScope(tasks []hermes.TaskState, threadID int, projectDir, selector string) (hermes.TaskState, bool, bool) {
-	return selectHermesContinuationTaskByIDWithMatcher(tasks, threadID, projectDir, selector, hermesTaskMatchesScope)
-}
-
-func selectHermesContinuationTaskByIDForSelectableScope(tasks []hermes.TaskState, threadID int, projectDir, selector string) (hermes.TaskState, bool, bool) {
-	return selectHermesContinuationTaskByIDWithMatcher(tasks, threadID, projectDir, selector, hermesTaskMatchesSelectableScope)
-}
-
-func selectHermesContinuationTaskByIDWithMatcher(tasks []hermes.TaskState, threadID int, projectDir, selector string, matches func(hermes.TaskState, int, string) bool) (hermes.TaskState, bool, bool) {
-	selector = strings.ToLower(strings.TrimSpace(selector))
-	if selector == "" {
-		return hermes.TaskState{}, false, false
-	}
-	var matched hermes.TaskState
-	matchCount := 0
-	for _, task := range tasks {
-		id := strings.ToLower(strings.TrimSpace(task.ID))
-		if id == "" || !strings.HasPrefix(id, selector) {
-			continue
-		}
-		if !matches(task, threadID, projectDir) || !hermesTaskIsContinuable(task) {
-			continue
-		}
-		matched = task
-		matchCount++
-	}
-	if matchCount == 0 {
-		return hermes.TaskState{}, false, false
-	}
-	if matchCount > 1 {
-		return hermes.TaskState{}, false, true
-	}
-	return matched, true, false
-}
-
-func selectHermesContinuationTasks(tasks []hermes.TaskState, projectDir string, limit int) []hermes.TaskState {
-	return selectHermesContinuationTasksForScope(tasks, 0, projectDir, limit)
-}
-
-func selectHermesContinuationTasksForScope(tasks []hermes.TaskState, threadID int, projectDir string, limit int) []hermes.TaskState {
-	if limit <= 0 {
-		limit = 3
-	}
-	projectDir = strings.TrimSpace(projectDir)
-	type rankedTask struct {
-		task hermes.TaskState
-		rank int
-	}
-	var ranked []rankedTask
-	for _, task := range tasks {
-		if !hermesTaskMatchesScope(task, threadID, projectDir) {
-			continue
-		}
-		rank := hermesContinuationRank(task)
-		if rank < 0 {
-			continue
-		}
-		ranked = append(ranked, rankedTask{task: task, rank: rank})
-	}
-	sort.SliceStable(ranked, func(i, j int) bool {
-		if ranked[i].rank != ranked[j].rank {
-			return ranked[i].rank < ranked[j].rank
-		}
-		return ranked[i].task.UpdatedAt.After(ranked[j].task.UpdatedAt)
-	})
-	out := make([]hermes.TaskState, 0, min(limit, len(ranked)))
-	for i := 0; i < len(ranked) && i < limit; i++ {
-		out = append(out, ranked[i].task)
-	}
-	return out
-}
-
-func selectHermesLegacyContinuationTasksForScope(tasks []hermes.TaskState, threadID int, projectDir string, limit int) []hermes.TaskState {
-	if threadID == 0 {
-		return nil
-	}
-	var legacy []hermes.TaskState
-	for _, task := range tasks {
-		if task.ThreadID != 0 {
-			continue
-		}
-		legacy = append(legacy, task)
-	}
-	return selectHermesContinuationTasksForScope(legacy, 0, projectDir, limit)
-}
-
-type hermesSimilarDecision int
-
-const (
-	hermesSimilarNone hermesSimilarDecision = iota
-	hermesSimilarContinue
-	hermesSimilarCompleted
-	hermesSimilarAmbiguous
-)
-
-func (t *TelegramBot) resolveSimilarHermesTask(key chatKey, projectDir, goal string) (hermes.TaskState, hermesSimilarDecision, bool) {
-	tasks, err := t.taskSvc.ListForChat(key.chatID, 10)
-	if err != nil {
-		log.Printf("[hermes] failed to resolve similar task for chat %d: %v", key.chatID, err)
-		return hermes.TaskState{}, hermesSimilarNone, false
-	}
-	task, decision, ok := selectSimilarHermesTaskForScope(tasks, key.threadID, projectDir, goal, time.Now())
-	return task, decision, ok
-}
-
-func (t *TelegramBot) resolveHermesIssueTask(key chatKey, projectDir string, issueNumber int) (hermes.TaskState, hermesSimilarDecision, bool) {
-	if issueNumber <= 0 {
-		return hermes.TaskState{}, hermesSimilarNone, false
-	}
-	tasks, err := t.taskSvc.ListForChat(key.chatID, 10)
-	if err != nil {
-		log.Printf("[hermes] failed to resolve issue task for chat %d issue #%d: %v", key.chatID, issueNumber, err)
-		return hermes.TaskState{}, hermesSimilarNone, false
-	}
-	return selectHermesIssueTaskForScope(tasks, key.threadID, projectDir, issueNumber)
-}
-
-func selectHermesIssueTask(tasks []hermes.TaskState, projectDir string, issueNumber int) (hermes.TaskState, hermesSimilarDecision, bool) {
-	return selectHermesIssueTaskForScope(tasks, 0, projectDir, issueNumber)
-}
-
-func selectHermesIssueTaskForScope(tasks []hermes.TaskState, threadID int, projectDir string, issueNumber int) (hermes.TaskState, hermesSimilarDecision, bool) {
-	projectDir = strings.TrimSpace(projectDir)
-	var best hermes.TaskState
-	bestDecision := hermesSimilarNone
-	bestRank := 99
-	for _, task := range tasks {
-		if task.GithubIssueNumber != issueNumber {
-			continue
-		}
-		if !hermesTaskMatchesScope(task, threadID, projectDir) {
-			continue
-		}
-		decision := hermesSimilarContinue
-		rank := hermesContinuationRank(task)
-		if task.Status == hermes.TaskStatusDone && time.Since(task.UpdatedAt) <= 24*time.Hour {
-			decision = hermesSimilarCompleted
-			rank = 4
-		} else if rank < 0 {
-			continue
-		}
-		if bestDecision == hermesSimilarNone || rank < bestRank || (rank == bestRank && task.UpdatedAt.After(best.UpdatedAt)) {
-			best = task
-			bestDecision = decision
-			bestRank = rank
-		}
-	}
-	if bestDecision == hermesSimilarNone {
-		return hermes.TaskState{}, hermesSimilarNone, false
-	}
-	return best, bestDecision, true
-}
-
-func selectSimilarHermesTask(tasks []hermes.TaskState, projectDir, goal string, now time.Time) (hermes.TaskState, hermesSimilarDecision, bool) {
-	return selectSimilarHermesTaskForScope(tasks, 0, projectDir, goal, now)
-}
-
-func selectSimilarHermesTaskForScope(tasks []hermes.TaskState, threadID int, projectDir, goal string, now time.Time) (hermes.TaskState, hermesSimilarDecision, bool) {
-	projectDir = strings.TrimSpace(projectDir)
-	goal = strings.TrimSpace(extractHermesActionableGoal(goal))
-	if goal == "" {
-		return hermes.TaskState{}, hermesSimilarNone, false
-	}
-
-	var best hermes.TaskState
-	bestScore := 0.0
-	bestDecision := hermesSimilarNone
-	for _, task := range tasks {
-		if !hermesTaskMatchesScope(task, threadID, projectDir) {
-			continue
-		}
-		taskGoal := strings.TrimSpace(extractHermesActionableGoal(task.Goal))
-		if taskGoal == "" {
-			continue
-		}
-		score := hermesGoalSimilarity(goal, taskGoal)
-		if score < 0.45 {
-			continue
-		}
-		decision := hermesSimilarContinue
-		if task.Status == hermes.TaskStatusDone && now.Sub(task.UpdatedAt) <= 24*time.Hour {
-			decision = hermesSimilarCompleted
-		} else if hermesContinuationRank(task) < 0 {
-			continue
-		}
-		if score < 0.75 {
-			decision = hermesSimilarAmbiguous
-		}
-		if score > bestScore || (score == bestScore && task.UpdatedAt.After(best.UpdatedAt)) {
-			best = task
-			bestScore = score
-			bestDecision = decision
-		}
-	}
-	if bestDecision == hermesSimilarNone {
-		return hermes.TaskState{}, hermesSimilarNone, false
-	}
-	return best, bestDecision, true
-}
-
-func hermesContinuationProjectDir(task hermes.TaskState, fallback string) string {
-	if taskProjectDir := strings.TrimSpace(task.ProjectDir); taskProjectDir != "" {
-		return taskProjectDir
-	}
-	return fallback
-}
-
-func hermesTaskMatchesProject(task hermes.TaskState, projectDir string) bool {
-	projectDir = cleanHermesProjectDir(projectDir)
-	taskProjectDir := cleanHermesProjectDir(task.ProjectDir)
-	if projectDir == "" {
-		return taskProjectDir == ""
-	}
-	return taskProjectDir == projectDir
-}
-
-func hermesTaskMatchesScope(task hermes.TaskState, threadID int, projectDir string) bool {
-	return task.ThreadID == threadID && hermesTaskMatchesProject(task, projectDir)
-}
-
-func hermesTaskMatchesSelectableScope(task hermes.TaskState, threadID int, projectDir string) bool {
-	if hermesTaskMatchesScope(task, threadID, projectDir) {
-		return true
-	}
-	return threadID != 0 && task.ThreadID == 0 && hermesTaskMatchesProject(task, projectDir)
-}
-
-func cleanHermesProjectDir(projectDir string) string {
-	projectDir = strings.TrimSpace(projectDir)
-	if projectDir == "" {
-		return ""
-	}
-	return filepath.Clean(projectDir)
-}
-
-func hermesGoalSimilarity(a, b string) float64 {
-	aNorm := strings.ToLower(normalizeHermesGoal(a))
-	bNorm := strings.ToLower(normalizeHermesGoal(b))
-	if aNorm == "" || bNorm == "" {
-		return 0
-	}
-	if aNorm == bNorm {
-		return 1
-	}
-	if strings.Contains(aNorm, bNorm) || strings.Contains(bNorm, aNorm) {
-		shorter := len([]rune(aNorm))
-		longer := len([]rune(bNorm))
-		if shorter > longer {
-			shorter, longer = longer, shorter
-		}
-		if longer == 0 {
-			return 0
-		}
-		return float64(shorter) / float64(longer)
-	}
-
-	aTokens := hermesGoalTokens(aNorm)
-	bTokens := hermesGoalTokens(bNorm)
-	if len(aTokens) == 0 || len(bTokens) == 0 {
-		return 0
-	}
-	intersect := 0
-	for token := range aTokens {
-		if _, ok := bTokens[token]; ok {
-			intersect++
-		}
-	}
-	union := len(aTokens) + len(bTokens) - intersect
-	if union == 0 {
-		return 0
-	}
-	return float64(intersect) / float64(union)
-}
-
-func hermesGoalTokens(goal string) map[string]struct{} {
-	fields := strings.FieldsFunc(goal, func(r rune) bool {
-		return r == ' ' || r == '\t' || r == '\n' || r == '\r' ||
-			r == ',' || r == '.' || r == ':' || r == ';' ||
-			r == '，' || r == '。' || r == '：' || r == '；' ||
-			r == '(' || r == ')' || r == '（' || r == '）'
-	})
-	tokens := make(map[string]struct{}, len(fields))
-	for _, field := range fields {
-		field = strings.TrimSpace(field)
-		if len([]rune(field)) < 2 {
-			continue
-		}
-		tokens[field] = struct{}{}
-	}
-	return tokens
-}
-
-func hermesContinuationRank(task hermes.TaskState) int {
-	switch task.Status {
-	case hermes.TaskStatusPlanning, hermes.TaskStatusExecuting:
-		return 0
-	case hermes.TaskStatusInterrupted:
-		return 1
-	case hermes.TaskStatusFailed:
-		if hermesTaskHasProgress(task) {
-			return 2
-		}
-		return 3
-	case hermes.TaskStatusDone:
-		if time.Since(task.UpdatedAt) <= 24*time.Hour && hermesTaskHasProgress(task) {
-			return 4
-		}
-	}
-	return -1
-}
-
-func hermesTaskIsContinuable(task hermes.TaskState) bool {
-	return hermesContinuationRank(task) >= 0
-}
-
-func hermesTaskHasProgress(task hermes.TaskState) bool {
-	if strings.TrimSpace(task.Accumulated) != "" {
-		return true
-	}
-	for _, sub := range task.Plan {
-		if sub.Status == hermes.SubTaskDone || sub.Status == hermes.SubTaskSkipped || strings.TrimSpace(sub.Result) != "" {
-			return true
-		}
-	}
-	return false
-}
-
-// hermesNLIntent classifies a natural-language message into one of the known
-// Hermes triggering paths so handleMessage can dispatch in a single switch
-// instead of cascading four overlapping if-blocks. Each branch maps onto an
-// existing startHermes* entry point — the classifier centralises the
-// precedence rules so future tweaks (status guard, tier resolution, etc.)
-// have a single source of truth.
-type hermesNLIntent int
-
-const (
-	hermesNLNone          hermesNLIntent = iota // not a Hermes intent (or Hermes disabled)
-	hermesNLRestartIssue                        // restart phrase + issue ref
-	hermesNLStartIssue                          // action-verb + issue ref or bare /hermes-style trigger
-	hermesNLChatModeIssue                       // chat is in Hermes mode and message contains issue ref
-	hermesNLChatModeFresh                       // chat is in Hermes mode, no issue, treat text as goal
-)
-
-// classifyHermesNLIntent inspects a user message and returns the matching
-// Hermes intent plus the parsed issue number when relevant. Status queries
-// containing an issue ref (e.g. "處理 #225 完成了嗎") collapse to
-// hermesNLNone so they fall through to the regular agent path.
-func (t *TelegramBot) classifyHermesNLIntent(key chatKey, text string) (hermesNLIntent, int) {
-	if !t.config.Hermes.Enabled {
-		return hermesNLNone, 0
-	}
-	if isHermesIssueStatusQuery(text) {
-		return hermesNLNone, 0
-	}
-	if isHermesIssueRestartRequest(text) {
-		issueNum, _ := ParseIssueNumber(text)
-		return hermesNLRestartIssue, issueNum
-	}
-	if isHermesIssueReferenceRequest(text) {
-		issueNum, _ := ParseIssueNumber(text)
-		return hermesNLStartIssue, issueNum
-	}
-	// Hermes chat-mode active for this topic. Continuation phrases stay on
-	// the regular agent path so check-ins like "繼續處理" do not silently
-	// revive a finished Hermes task. Issue references are intentionally not
-	// auto-launched here: operators often mention "#83" while asking Alice to
-	// inspect or edit the issue itself. Explicit issue work still routes via
-	// isHermesIssueReferenceRequest above, or via /hermes #N.
-	if t.isHermesEnabled(key) && !isHermesContinuationRequest(text) {
-		if _, ok := ParseIssueNumber(text); ok {
-			return hermesNLNone, 0
-		}
-		return hermesNLChatModeFresh, 0
-	}
-	return hermesNLNone, 0
-}
-
-// dispatchHermesNLIntent runs classifyHermesNLIntent and triggers the matching
-// Hermes start path. Returns true when an intent fired so the caller skips
-// downstream routing.
-func (t *TelegramBot) dispatchHermesNLIntent(key chatKey, text string) bool {
-	intent, issueNum := t.classifyHermesNLIntent(key, text)
-	if intent == hermesNLNone {
-		return false
-	}
-	projectDir := t.getAgent(key).ProjectDir()
-	switch intent {
-	case hermesNLRestartIssue:
-		t.send(key, fmt.Sprintf("🔄 偵測到重新處理 Issue #%d，將忽略 24 小時內完成任務並從頭開始…", issueNum))
-		go t.runTrackedJob("hermes.issue.restart", func() {
-			t.startHermesFreshFromIssue(key, issueNum, projectDir)
-		})
-	case hermesNLStartIssue:
-		t.send(key, fmt.Sprintf("🔍 偵測到指定 Issue #%d，將以該 Issue 為準啟動 Hermes…", issueNum))
-		go t.runTrackedJob("hermes.issue", func() {
-			t.startHermesFromIssue(key, issueNum, projectDir)
-		})
-	case hermesNLChatModeIssue:
-		go t.runTrackedJob("hermes.issue", func() {
-			t.startHermesFromIssue(key, issueNum, projectDir)
-		})
-	case hermesNLChatModeFresh:
-		go t.runTrackedJob("hermes.task", func() {
-			t.startHermesTask(key, text, projectDir)
-		})
-	default:
-		return false
-	}
-	return true
-}
-
-func isHermesContinuationRequest(text string) bool {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	if lower == "" {
-		return false
-	}
-	return strings.HasPrefix(lower, "繼續") ||
-		strings.HasPrefix(lower, "接續") ||
-		strings.HasPrefix(lower, "續做") ||
-		strings.HasPrefix(lower, "重新規劃") ||
-		strings.HasPrefix(lower, "continue") ||
-		strings.HasPrefix(lower, "resume") ||
-		strings.HasPrefix(lower, "replan")
-}
-
 // smartIntent represents a parsed natural-language shorthand command.
 type smartIntent struct {
-	kind string // "retry", "model", "menu"
+	kind string // "retry", "model", "menu"; "retry" only explains where retrying moved
 	// model intent carries the target mode when unambiguous
 	modelMode string
 }
@@ -3606,8 +1936,7 @@ func detectSmartIntent(text string) (smartIntent, bool) {
 func (t *TelegramBot) handleSmartIntent(key chatKey, intent smartIntent) {
 	switch intent.kind {
 	case "retry":
-		t.send(key, t.getLocalizedMessage(key.chatID, "smart_intent_retry_prompt", nil))
-		t.sendRetryMenu(key)
+		t.sendRemovedCommand(key, "/retry")
 	case "model":
 		if intent.modelMode != "" {
 			confirmText := t.getLocalizedMessage(key.chatID, "smart_intent_model_confirm", map[string]string{"{mode}": intent.modelMode})
@@ -3629,556 +1958,6 @@ func (t *TelegramBot) handleSmartIntent(key chatKey, intent smartIntent) {
 	case "menu":
 		t.sendMenu(key)
 	}
-}
-
-func hermesContinuationModeFromRequest(text string) string {
-	lower := strings.ToLower(strings.TrimSpace(text))
-	if strings.HasPrefix(lower, "重新規劃") || strings.HasPrefix(lower, "重規") || strings.HasPrefix(lower, "replan") {
-		return "replan"
-	}
-	return "continue"
-}
-
-func isHermesIssueReferenceRequest(text string) bool {
-	if _, ok := ParseIssueNumber(text); !ok {
-		return false
-	}
-	lower := strings.ToLower(strings.TrimSpace(text))
-	if lower == "" {
-		return false
-	}
-	if isHermesIssueStatusQuery(lower) {
-		return false
-	}
-	return isHermesContinuationRequest(lower) ||
-		strings.Contains(lower, "繼續") ||
-		strings.Contains(lower, "接續") ||
-		strings.Contains(lower, "續做") ||
-		strings.Contains(lower, "請處理") ||
-		strings.Contains(lower, "開始處理") ||
-		strings.HasPrefix(lower, "處理") ||
-		strings.HasPrefix(lower, "請處理") ||
-		strings.HasPrefix(lower, "開始") ||
-		strings.HasPrefix(lower, "start") ||
-		strings.HasPrefix(lower, "work on")
-}
-
-func isHermesIssueRestartRequest(text string) bool {
-	if _, ok := ParseIssueNumber(text); !ok {
-		return false
-	}
-	lower := strings.ToLower(strings.TrimSpace(text))
-	if lower == "" {
-		return false
-	}
-	if isHermesIssueStatusQuery(lower) {
-		return false
-	}
-	return strings.HasPrefix(lower, "重新處理") ||
-		strings.HasPrefix(lower, "重新開始") ||
-		strings.HasPrefix(lower, "重新執行") ||
-		strings.HasPrefix(lower, "重做") ||
-		strings.HasPrefix(lower, "重跑") ||
-		strings.HasPrefix(lower, "restart") ||
-		strings.HasPrefix(lower, "rerun") ||
-		strings.HasPrefix(lower, "redo")
-}
-
-// hermesStatusQueryPatterns mark a message containing an issue ref as a state
-// inquiry rather than a request to act ("處理完畢了嗎", "如何處理 #225"). This
-// guard is owned by the routing layer rather than the classifier so the
-// classifier stays a pure complexity heuristic.
-var hermesStatusQueryPatterns = []string{
-	"如何", "怎麼", "怎樣", "什麼時候",
-	"好了嗎", "完畢", "完成了", "完成沒",
-	"過了", "進度", "結果", "狀態",
-	"哪些", "那些", "子項目", "還有",
-	"請問", "查詢", "查看", "檢視", "看一下", "看下",
-	"是否", "有無", "為何", "為什麼",
-	"?", "？",
-	"嗎", "么", "要繼續處理嗎", "需要處理嗎", "還需要處理",
-	"還要處理", "要處理嗎", "需要繼續", "可以繼續",
-	"should we", "do we need",
-}
-
-func isHermesIssueStatusQuery(text string) bool {
-	if _, ok := ParseIssueNumber(text); !ok {
-		return false
-	}
-	lower := strings.ToLower(strings.TrimSpace(text))
-	if lower == "" {
-		return false
-	}
-	return firstMatch(lower, hermesStatusQueryPatterns) != ""
-}
-
-func buildHermesContinuationGoal(task hermes.TaskState, mode string) string {
-	return buildHermesContinuationGoalWithIssue(task, mode, "")
-}
-
-// buildHermesContinuationGoalWithIssue is the M2 form: when freshIssueBody is
-// non-empty it is injected as a "Latest issue body" block so the planner
-// re-plans against the current GitHub state, not the snapshot the task was
-// created from. Body is clamped to keep the prompt bounded.
-func buildHermesContinuationGoalWithIssue(task hermes.TaskState, mode, freshIssueBody string) string {
-	originalGoal := strings.TrimSpace(extractHermesActionableGoal(task.Goal))
-	if originalGoal == "" {
-		originalGoal = strings.TrimSpace(task.Goal)
-	}
-
-	var sb strings.Builder
-	sb.WriteString("[Hermes continuation]\n")
-	sb.WriteString("Mode: ")
-	sb.WriteString(mode)
-	sb.WriteString("\nTask ID: ")
-	sb.WriteString(task.ID)
-	sb.WriteString("\nTask status: ")
-	sb.WriteString(string(task.Status))
-	if task.GithubIssueNumber > 0 {
-		sb.WriteString(fmt.Sprintf("\nGitHub issue: #%d", task.GithubIssueNumber))
-	}
-	sb.WriteString("\n\nOriginal goal:\n")
-	sb.WriteString(originalGoal)
-	if freshIssueBody = strings.TrimSpace(freshIssueBody); freshIssueBody != "" {
-		sb.WriteString("\n\nLatest issue body (re-fetched, may differ from original):\n")
-		sb.WriteString(clampHermesContext(freshIssueBody, hermesContextMaxChars))
-	}
-	sb.WriteString("\n\nCurrent progress:\n")
-	sb.WriteString(buildHermesProgressSummary(task))
-	sb.WriteString("\n\nInstructions:\n")
-	sb.WriteString("- Treat completed/skipped subtasks as already handled.\n")
-	sb.WriteString("- Do not repeat completed work unless the progress summary says it is invalid or incomplete.\n")
-	sb.WriteString("- Re-plan only the remaining, failed, interrupted, or unverified work.\n")
-	sb.WriteString("- Preserve useful context from accumulated progress and reviewer feedback.\n")
-	sb.WriteString("- If the latest issue body diverges from the original goal, prefer the issue body.\n")
-	sb.WriteString("- Return a concrete plan for the remaining work, then execute it.\n")
-	return sb.String()
-}
-
-func buildHermesProgressSummary(task hermes.TaskState) string {
-	var lines []string
-	if acc := strings.TrimSpace(task.Accumulated); acc != "" {
-		lines = append(lines, "Accumulated summary:\n"+clampHermesContext(acc, hermesContextMaxChars))
-	}
-	if len(task.Plan) > 0 {
-		lines = append(lines, "Subtasks:")
-		for i, sub := range task.Plan {
-			desc := strings.TrimSpace(sub.Description)
-			if desc == "" {
-				desc = "(no description)"
-			}
-			line := fmt.Sprintf("%d. [%s] %s", i+1, sub.Status, desc)
-			if result := strings.TrimSpace(sub.Result); result != "" {
-				line += "\n   Result: " + clampHermesContext(result, 600)
-			}
-			lines = append(lines, line)
-		}
-	}
-	if len(lines) == 0 {
-		return "(No stored progress details.)"
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (t *TelegramBot) formatHermesStatus(key chatKey, projectDir string) string {
-	text, _ := t.hermesStatusTextAndCandidates(key, projectDir)
-	return text
-}
-
-func (t *TelegramBot) hermesStatusTextAndCandidates(key chatKey, projectDir string) (string, []hermes.TaskState) {
-	t.hermesMu.RLock()
-	hc := t.hermesCoords[key]
-	t.hermesMu.RUnlock()
-
-	lang := t.getChatLanguage(key.chatID)
-	var lines []string
-	if hc == nil || !hc.enabled {
-		lines = append(lines, t.getLocalizedMessage(key.chatID, "hermes_status_disabled", nil))
-	} else if hc.coord != nil && hc.coord.IsRunning() {
-		lines = append(lines, t.getLocalizedMessage(key.chatID, "hermes_status_running", map[string]string{"taskID": shortHermesTaskID(hc.coord.TaskID())}))
-	} else {
-		lines = append(lines, t.getLocalizedMessage(key.chatID, "hermes_status_enabled_waiting", nil))
-	}
-
-	var candidates []hermes.TaskState
-	var legacyCandidates []hermes.TaskState
-	if tasks, err := t.taskSvc.ListForChat(key.chatID, 10); err == nil {
-		candidates = selectHermesContinuationTasksForScope(tasks, key.threadID, projectDir, 3)
-		if len(candidates) == 0 {
-			legacyCandidates = selectHermesLegacyContinuationTasksForScope(tasks, key.threadID, projectDir, 3)
-		}
-	} else {
-		log.Printf("[hermes] failed to format status candidates for chat %d: %v", key.chatID, err)
-	}
-	if len(candidates) > 0 || len(legacyCandidates) > 0 {
-		lines = append(lines, "")
-		if len(candidates) > 0 {
-			lines = append(lines, t.getLocalizedMessage(key.chatID, "hermes_status_candidates_title", nil))
-			for _, task := range candidates {
-				lines = append(lines, formatHermesTaskLineWithLocale(lang, t.i18n, task))
-			}
-		} else {
-			lines = append(lines, t.getLocalizedMessage(key.chatID, "hermes_status_legacy_candidates_title", nil))
-			for _, task := range legacyCandidates {
-				lines = append(lines, formatHermesTaskLineWithLocale(lang, t.i18n, task))
-			}
-		}
-		lines = append(lines, t.getLocalizedMessage(key.chatID, "hermes_status_actions_hint", nil))
-	}
-	if len(candidates) == 0 {
-		candidates = legacyCandidates
-	}
-	return strings.Join(lines, "\n"), candidates
-}
-
-func (t *TelegramBot) sendHermesStatus(key chatKey, projectDir string) {
-	text, candidates := t.hermesStatusTextAndCandidates(key, projectDir)
-	if len(candidates) == 0 {
-		t.send(key, text)
-		return
-	}
-	t.sendHermesActionsMessage(key, text, candidates)
-}
-
-func (t *TelegramBot) sendHermesCandidateActions(key chatKey, text string, task hermes.TaskState) {
-	t.sendHermesActionsMessage(key, text, []hermes.TaskState{task})
-}
-
-func (t *TelegramBot) sendHermesRecentCompletedIssueActions(key chatKey, issueNumber int, task hermes.TaskState, tier string) {
-	shortID := shortHermesTaskID(task.ID)
-	restartData := fmt.Sprintf("hermes:issue-restart:%d", issueNumber)
-	if strings.TrimSpace(tier) != "" {
-		restartData += ":" + strings.TrimSpace(tier)
-	}
-	text := t.getLocalizedMessage(key.chatID, "hermes_issue_recent_completed_actions", map[string]string{
-		"issueNum": fmt.Sprintf("%d", issueNumber),
-		"taskID":   shortID,
-	})
-	rows := [][]map[string]interface{}{
-		{
-			{
-				"text": t.getLocalizedMessage(key.chatID, "hermes_issue_restart_btn", map[string]string{
-					"issueNum": fmt.Sprintf("%d", issueNumber),
-				}),
-				"callback_data": restartData,
-			},
-			{
-				"text": t.getLocalizedMessage(key.chatID, "hermes_candidate_replan", map[string]string{
-					"id": shortID,
-				}),
-				"callback_data": "hermes:replan:" + task.ID,
-			},
-		},
-		{
-			{
-				"text":          t.getLocalizedMessage(key.chatID, "hermes_candidate_cancel", nil),
-				"callback_data": "hermes:cancel",
-			},
-		},
-	}
-	t.sendMenuMessage(key, text, rows)
-}
-
-func (t *TelegramBot) sendHermesActionsMessage(key chatKey, text string, tasks []hermes.TaskState) {
-	keyboard := map[string]interface{}{
-		"inline_keyboard": hermesCandidateActionRows(t.getChatLanguage(key.chatID), t.i18n, tasks),
-	}
-	params := map[string]interface{}{
-		"chat_id":      strconv.FormatInt(key.chatID, 10),
-		"text":         sanitizeUTF8(text),
-		"reply_markup": keyboard,
-	}
-	if key.threadID != 0 {
-		params["message_thread_id"] = strconv.Itoa(key.threadID)
-	}
-	t.queueMessage("sendMessage", params)
-}
-
-func hermesCandidateActionRows(lang string, i18n *I18nManager, tasks []hermes.TaskState) [][]map[string]interface{} {
-	getMessage := func(key string, vars map[string]string) string {
-		if i18n == nil {
-			return key
-		}
-		return i18n.GetMessage(lang, key, vars)
-	}
-	rows := make([][]map[string]interface{}, 0, len(tasks)+1)
-	for _, task := range tasks {
-		if strings.TrimSpace(task.ID) == "" {
-			continue
-		}
-		id := task.ID
-		shortID := shortHermesTaskID(id)
-		rows = append(rows, []map[string]interface{}{
-			{
-				"text":          getMessage("hermes_candidate_continue", map[string]string{"id": shortID}),
-				"callback_data": "hermes:continue:" + id,
-			},
-			{
-				"text":          getMessage("hermes_candidate_replan", map[string]string{"id": shortID}),
-				"callback_data": "hermes:replan:" + id,
-			},
-		})
-	}
-	rows = append(rows, []map[string]interface{}{
-		{
-			"text":          getMessage("hermes_candidate_cancel", nil),
-			"callback_data": "hermes:cancel",
-		},
-	})
-	return rows
-}
-
-func formatHermesTaskLineWithLocale(lang string, i18n *I18nManager, task hermes.TaskState) string {
-	getMessage := func(key string, vars map[string]string) string {
-		if i18n == nil {
-			return key
-		}
-		return i18n.GetMessage(lang, key, vars)
-	}
-	done, total := hermesTaskProgressCounts(task)
-	goal := clampHermesContext(extractHermesActionableGoal(task.Goal), 120)
-	if goal == "" {
-		goal = getMessage("hermes_status_no_goal_summary", nil)
-	}
-	return getMessage("hermes_status_task_item", map[string]string{
-		"id":     shortHermesTaskID(task.ID),
-		"status": string(task.Status),
-		"done":   fmt.Sprintf("%d", done),
-		"total":  fmt.Sprintf("%d", total),
-		"goal":   goal,
-	})
-}
-
-func hermesTaskProgressCounts(task hermes.TaskState) (done, total int) {
-	total = len(task.Plan)
-	for _, sub := range task.Plan {
-		if sub.Status == hermes.SubTaskDone || sub.Status == hermes.SubTaskSkipped {
-			done++
-		}
-	}
-	return done, total
-}
-
-func shortHermesTaskID(id string) string {
-	id = strings.TrimSpace(id)
-	if len(id) > 8 {
-		return id[:8]
-	}
-	return id
-}
-
-func hermesContinuationVerbKey(mode string) string {
-	if mode == "replan" {
-		return "hermes_continuation_replan"
-	}
-	return "hermes_continuation_continue"
-}
-
-func (t *TelegramBot) loadHermesContextTasks(chatID int64, currentRequest string) []hermes.TaskState {
-	var taskSource hermesMemoryTaskSource
-	if t != nil && t.taskSvc != nil {
-		taskSource = t.taskSvc
-	}
-	resolver := NewMemoryResolverWithAllSources(taskSource, globalGeneralMemorySource(), nil)
-	tasks, err := resolver.loadHermesMemoryTasks(MemoryRequest{
-		ChatID:      chatID,
-		UserMessage: currentRequest,
-		Mode:        "hermes",
-	})
-	if err != nil {
-		log.Printf("[hermes] failed to list task context for chat %d: %v", chatID, err)
-		return nil
-	}
-	return tasks
-}
-
-func composeHermesGoalWithContext(currentRequest string, tasks []hermes.TaskState, recentMessages []contextMessage) string {
-	currentRequest = strings.TrimSpace(currentRequest)
-	if currentRequest == "" {
-		return ""
-	}
-
-	var sections []string
-	if taskSection := buildHermesTaskContextSection(tasks); taskSection != "" {
-		sections = append(sections, taskSection)
-	}
-	if bridge := strings.TrimSpace(buildContextBridge(recentMessages)); bridge != "" {
-		sections = append(sections, clampHermesContext(bridge, hermesContextMaxChars))
-	}
-	if len(sections) == 0 {
-		return currentRequest
-	}
-
-	var sb strings.Builder
-	sb.WriteString(hermesPreviousContextHeader)
-	sb.WriteString("\n")
-	for i, section := range sections {
-		if i > 0 {
-			sb.WriteString("\n\n")
-		}
-		sb.WriteString(section)
-	}
-	sb.WriteString("\n\n")
-	sb.WriteString(hermesCurrentRequestHeader)
-	sb.WriteString("\n")
-	sb.WriteString(currentRequest)
-	return sb.String()
-}
-
-func buildHermesTaskContextSection(tasks []hermes.TaskState) string {
-	if len(tasks) == 0 {
-		return ""
-	}
-
-	var sections []string
-	for _, task := range tasks {
-		goal := strings.TrimSpace(extractHermesActionableGoal(task.Goal))
-		progress := strings.TrimSpace(buildHermesProgressSummary(task))
-		if goal == "" && progress == "" {
-			continue
-		}
-
-		var sb strings.Builder
-		sb.WriteString("Persisted Hermes work memory")
-		if !task.UpdatedAt.IsZero() {
-			sb.WriteString(" (")
-			sb.WriteString(task.UpdatedAt.Format(time.RFC3339))
-			sb.WriteString(")")
-		}
-		sb.WriteString(":\n")
-		if task.ID != "" {
-			sb.WriteString("- Task ID: ")
-			sb.WriteString(task.ID)
-			sb.WriteString("\n")
-		}
-		if task.Status != "" {
-			sb.WriteString("- Status: ")
-			sb.WriteString(string(task.Status))
-			sb.WriteString("\n")
-		}
-		if task.GithubIssueNumber > 0 {
-			sb.WriteString(fmt.Sprintf("- GitHub issue: #%d\n", task.GithubIssueNumber))
-		}
-		if goal != "" {
-			sb.WriteString("- Original request: ")
-			sb.WriteString(clampHermesContext(goal, hermesContextMaxChars))
-			sb.WriteString("\n")
-		}
-		if progress != "" {
-			sb.WriteString("- Stored progress:\n")
-			sb.WriteString(indentHermesContext(clampHermesContext(progress, hermesContextMaxChars), "  "))
-		}
-		sections = append(sections, strings.TrimSpace(sb.String()))
-	}
-
-	if len(sections) == 0 {
-		return ""
-	}
-
-	var sb strings.Builder
-	sb.WriteString("Persisted Hermes context:\n")
-	sb.WriteString("Use this as continuity for the same issue/topic. Start from this stored state, avoid broad rediscovery, and only re-read files or GitHub issue details when a specific uncertainty must be verified.\n\n")
-	sb.WriteString(strings.Join(sections, "\n\n"))
-	return sb.String()
-}
-
-func buildHermesTaskSummary(task hermes.TaskState) string {
-	if task.Accumulated != "" {
-		return task.Accumulated
-	}
-
-	lines := make([]string, 0, len(task.Plan))
-	for _, sub := range task.Plan {
-		result := strings.TrimSpace(sub.Result)
-		if result != "" {
-			lines = append(lines, result)
-			continue
-		}
-		if sub.Status == hermes.SubTaskDone {
-			lines = append(lines, sub.Description)
-		}
-	}
-	return strings.Join(lines, "\n")
-}
-
-func extractHermesActionableGoal(goal string) string {
-	goal = strings.TrimSpace(goal)
-	if goal == "" {
-		return ""
-	}
-
-	if strings.HasPrefix(goal, "[Hermes continuation]") {
-		const originalHeader = "Original goal:"
-		const progressHeader = "\n\nCurrent progress:"
-		if start := strings.Index(goal, originalHeader); start >= 0 {
-			actionable := strings.TrimSpace(goal[start+len(originalHeader):])
-			if end := strings.Index(actionable, progressHeader); end >= 0 {
-				actionable = strings.TrimSpace(actionable[:end])
-			}
-			if actionable != "" {
-				return extractHermesActionableGoal(actionable)
-			}
-		}
-	}
-
-	idx := strings.LastIndex(goal, hermesCurrentRequestHeader)
-	if idx < 0 {
-		return goal
-	}
-
-	actionable := strings.TrimSpace(goal[idx+len(hermesCurrentRequestHeader):])
-	if actionable == "" {
-		return goal
-	}
-	return actionable
-}
-
-func normalizeHermesGoal(goal string) string {
-	return strings.Join(strings.Fields(strings.TrimSpace(goal)), " ")
-}
-
-func clampHermesContext(s string, maxRunes int) string {
-	if maxRunes <= 0 {
-		return strings.TrimSpace(s)
-	}
-	s = strings.TrimSpace(s)
-	runes := []rune(s)
-	if len(runes) <= maxRunes {
-		return s
-	}
-	return strings.TrimSpace(string(runes[:maxRunes])) + "..."
-}
-
-func indentHermesContext(s, prefix string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	lines := strings.Split(s, "\n")
-	for i, line := range lines {
-		lines[i] = prefix + line
-	}
-	return strings.Join(lines, "\n")
-}
-
-// hermesTierFor returns the active Hermes tier for this chat ("" or "codex").
-// A live Hermes coordinator wins. Otherwise an explicit GPT/Codex model
-// preference (/gfast, /gsmart, /gdeep, or /model gpt-*) should launch Hermes on
-// the Codex tier too; otherwise "繼續處理#N" after /gdeep silently falls back to
-// Claude-tier planner/executor/reviewer models.
-func (t *TelegramBot) hermesTierFor(key chatKey) string {
-	t.hermesMu.RLock()
-	if hc := t.hermesCoords[key]; hc != nil {
-		if hc.enabled || (hc.coord != nil && hc.coord.IsRunning()) {
-			t.hermesMu.RUnlock()
-			return hc.tier
-		}
-	}
-	t.hermesMu.RUnlock()
-	if modelRequiresCodex(t.modelForUserPreference(key)) {
-		return "codex"
-	}
-	return ""
 }
 
 func (t *TelegramBot) modelForUserPreference(key chatKey) string {
@@ -4233,454 +2012,6 @@ func (t *TelegramBot) applyExplicitUserModelPreference(key chatKey, agent *Agent
 	return true
 }
 
-// setHermesTier updates the active tier for a chat and clears cached Planner
-// resume state when the backend changes.
-func (t *TelegramBot) setHermesTier(key chatKey, tier string) {
-	t.hermesMu.Lock()
-	defer t.hermesMu.Unlock()
-
-	if t.hermesCoords == nil {
-		t.hermesCoords = make(map[chatKey]*hermesCoord)
-	}
-	hc := t.hermesCoords[key]
-	if hc == nil {
-		hc = &hermesCoord{}
-		t.hermesCoords[key] = hc
-	}
-	if hc.tier != tier {
-		hc.plannerSessionID = ""
-		hc.plannerSessionTier = ""
-		hc.executorSessionID = ""
-		hc.executorSessionTier = ""
-	}
-	hc.tier = tier
-}
-
-// plannerSessionForTier returns the cached Planner --resume session if it was
-// produced by the currently active tier.
-func (t *TelegramBot) plannerSessionForTier(key chatKey, tier string) string {
-	t.hermesMu.RLock()
-	defer t.hermesMu.RUnlock()
-
-	hc := t.hermesCoords[key]
-	if hc == nil || hc.plannerSessionID == "" {
-		return ""
-	}
-	if hc.tier != tier || hc.plannerSessionTier != tier {
-		return ""
-	}
-	return hc.plannerSessionID
-}
-
-// recordPlannerSession caches the latest Planner --resume session for the tier
-// that produced it. If the user already switched tiers, the cache is left alone.
-func (t *TelegramBot) recordPlannerSession(key chatKey, tier, sessionID string) {
-	if sessionID == "" {
-		return
-	}
-
-	t.hermesMu.Lock()
-	defer t.hermesMu.Unlock()
-
-	if t.hermesCoords == nil {
-		t.hermesCoords = make(map[chatKey]*hermesCoord)
-	}
-	hc := t.hermesCoords[key]
-	if hc == nil {
-		hc = &hermesCoord{}
-		t.hermesCoords[key] = hc
-	}
-	if hc.tier != tier {
-		return
-	}
-	hc.plannerSessionID = sessionID
-	hc.plannerSessionTier = tier
-}
-
-// executorSessionForTier returns the cached Executor thread resume ID if it was
-// produced by the currently active tier.
-func (t *TelegramBot) executorSessionForTier(key chatKey, tier string) string {
-	t.hermesMu.RLock()
-	defer t.hermesMu.RUnlock()
-
-	hc := t.hermesCoords[key]
-	if hc == nil || hc.executorSessionID == "" {
-		return ""
-	}
-	if hc.tier != tier || hc.executorSessionTier != tier {
-		return ""
-	}
-	return hc.executorSessionID
-}
-
-// recordExecutorSession caches the latest Executor thread resume ID for the tier
-// that produced it. If the user already switched tiers, the cache is left alone.
-func (t *TelegramBot) recordExecutorSession(key chatKey, tier, sessionID string) {
-	if sessionID == "" {
-		return
-	}
-
-	t.hermesMu.Lock()
-	defer t.hermesMu.Unlock()
-
-	if t.hermesCoords == nil {
-		t.hermesCoords = make(map[chatKey]*hermesCoord)
-	}
-	hc := t.hermesCoords[key]
-	if hc == nil {
-		hc = &hermesCoord{}
-		t.hermesCoords[key] = hc
-	}
-	if hc.tier != tier {
-		return
-	}
-	hc.executorSessionID = sessionID
-	hc.executorSessionTier = tier
-}
-
-type hermesRoleModels struct {
-	planner       string
-	executor      string
-	heavyExecutor string
-	reviewer      string
-	reviewerNote  string
-}
-
-func backendKindLabel(kind appengine.BackendKind) string {
-	switch kind {
-	case appengine.BackendClaude:
-		return "Claude/Opus"
-	case appengine.BackendCodex:
-		return "Codex/GPT"
-	default:
-		return "unknown"
-	}
-}
-
-func reviewerBackendSelectionNote(strictCfg appengine.StrictModeConfig, executorBackend, reviewBackend appengine.BackendKind, reviewModel string) string {
-	if !strictCfg.Enabled || reviewBackend == executorBackend {
-		return ""
-	}
-
-	reason := "strict review mode"
-	if strictCfg.OpponentBackend == appengine.BackendAuto {
-		reason += "（opponent backend 自動選擇）"
-	} else {
-		reason += fmt.Sprintf("（opponent backend 指定為 %s）", backendKindLabel(strictCfg.OpponentBackend))
-	}
-	return fmt.Sprintf("⚠️ %s：reviewer backend 切到 %s，因此 reviewer 使用 %s。", reason, backendKindLabel(reviewBackend), reviewModel)
-}
-
-func (t *TelegramBot) resolveHermesRoleModels(tier string, cfg HermesConfig, strictCfg appengine.StrictModeConfig) hermesRoleModels {
-	var plannerModel, executorModel, heavyExecutorModel string
-	if tier == "codex" {
-		plannerModel = cfg.CodexPlannerModel
-		if plannerModel == "" {
-			plannerModel = t.config.ModelRouting.CodexDeepModel
-		}
-		plannerModel = codexModelOrFallback(plannerModel, t.config.ModelRouting.CodexDeepModel)
-		executorModel = cfg.CodexExecutorModel
-		if executorModel == "" {
-			executorModel = t.config.ModelRouting.CodexFastModel
-		}
-		executorModel = codexModelOrFallback(executorModel, t.config.ModelRouting.CodexFastModel)
-		heavyExecutorModel = cfg.CodexHeavyExecutorModel
-		heavyExecutorModel = codexModelOrFallback(heavyExecutorModel, "")
-		// No SmartModel default for codex; if unset or misconfigured, heavy stays empty (single-tier).
-	} else {
-		plannerModel = cfg.PlannerModel
-		if plannerModel == "" {
-			plannerModel = t.config.ModelRouting.DeepModel
-		}
-		executorModel = cfg.ExecutorModel
-		if executorModel == "" {
-			executorModel = t.config.ModelRouting.FastModel
-		}
-		heavyExecutorModel = cfg.HeavyExecutorModel
-		if heavyExecutorModel == "" {
-			heavyExecutorModel = t.config.ModelRouting.SmartModel
-		}
-	}
-
-	reviewBackend := appengine.ResolveStrictReviewBackend(appengine.BackendKindForModel(executorModel), strictCfg, appengine.BackendClaude, appengine.BackendCodex)
-	var reviewModel string
-	switch reviewBackend {
-	case appengine.BackendCodex:
-		reviewModel = t.config.ModelRouting.CodexDeepModel
-		if reviewModel == "" {
-			reviewModel = plannerModel
-			log.Printf("[hermes] codex_deep_model empty; reviewer falls back to planner model %q", reviewModel)
-		}
-	default:
-		reviewModel = t.config.ModelRouting.DeepModel
-		if reviewModel == "" {
-			reviewModel = plannerModel
-			log.Printf("[hermes] deep_model empty; reviewer falls back to planner model %q", reviewModel)
-		}
-	}
-	reviewerNote := reviewerBackendSelectionNote(strictCfg, appengine.BackendKindForModel(executorModel), reviewBackend, reviewModel)
-
-	return hermesRoleModels{
-		planner:       plannerModel,
-		executor:      executorModel,
-		heavyExecutor: heavyExecutorModel,
-		reviewer:      reviewModel,
-		reviewerNote:  reviewerNote,
-	}
-}
-
-// startHermesTaskWithIssueTier is the common implementation that selects models
-// based on the tier ("" or "claude" → Claude; "codex" → GPT/Codex).
-func (t *TelegramBot) startHermesTaskWithIssueTier(key chatKey, goal, projectDir string, issueNumber int, budgetOverride HermesBudgetConfig, ghIntegration GithubIntegrationConfig, tier string) {
-	t.startHermesTaskWithIssueTierFromState(key, goal, projectDir, issueNumber, budgetOverride, ghIntegration, tier, nil)
-}
-
-// startHermesTaskWithIssueTierFromState builds and launches a Hermes
-// coordinator. When resumeTask is non-nil the coord runs RunFromState on
-// the existing task (recovering from a saved snapshot) instead of creating
-// a fresh one. Callers pass initialFailureChoice (#169 slice β1) to
-// pre-load the failure-pause decision channel so a cold-restart click
-// flows through the freshly built engine without the operator having to
-// click again.
-func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, projectDir string, issueNumber int, budgetOverride HermesBudgetConfig, ghIntegration GithubIntegrationConfig, tier string, resumeTask *hermes.TaskState, initialFailureChoice ...appengine.FailurePauseChoice) {
-	ctx := context.Background()
-	worktreeChanges, worktreeErr := checkHermesCleanWorktree(ctx, projectDir)
-	if worktreeErr != nil {
-		t.send(key, "⚠️ Hermes 未啟動：無法確認 Git 工作樹是否乾淨。\n\n錯誤："+worktreeErr.Error())
-		return
-	}
-	if len(worktreeChanges) > 0 {
-		t.send(key, formatHermesDirtyWorktreeWarning(issueNumber, worktreeChanges))
-	}
-
-	// Update tier and clear session IDs if tier changed (Issue #109)
-	t.setHermesTier(key, tier)
-
-	cfg := HermesDefaults(t.config.Hermes)
-	strictCfg := t.resolveStrictModeConfig(key, goal)
-
-	models := t.resolveHermesRoleModels(tier, cfg, strictCfg)
-	plannerModel := models.planner
-	executorModel := models.executor
-	heavyExecutorModel := models.heavyExecutor
-	reviewPhase := NewCLIReviewPhase(t.client, models.reviewer)
-	if models.reviewerNote != "" {
-		t.send(key, models.reviewerNote)
-	}
-
-	planFn := makePlanFn(t.client, plannerModel)
-
-	taskStore := hermes.TaskStateStore(t.taskSvc)
-
-	reporter := hermes.NewTextProgressReporterWithNotify(func(text string, notify bool) {
-		if notify {
-			t.send(key, text)
-			return
-		}
-		t.sendSilent(key, text)
-	}).WithEditCapability(
-		func(text string) (int, error) { return t.sendCapturingID(key, text) },
-		func(messageID int, text string) error { return t.editMessageText(key, messageID, text) },
-	)
-
-	plannerSessionID := t.plannerSessionForTier(key, tier)
-	executorSessionID := t.executorSessionForTier(key, tier)
-
-	// Budget: use override (from complexity label) or config default
-	budgetTokens := cfg.Budget.MaxTotalTokens
-	budgetSecs := cfg.Budget.MaxWallclockSeconds
-	if budgetOverride.MaxTotalTokens > 0 {
-		budgetTokens = budgetOverride.MaxTotalTokens
-	}
-	if budgetOverride.MaxWallclockSeconds > 0 {
-		budgetSecs = budgetOverride.MaxWallclockSeconds
-	}
-	budget := hermes.TokenBudget{
-		MaxTotalTokens:      budgetTokens,
-		MaxWallclockSeconds: budgetSecs,
-	}
-
-	// Load role-specific operating rules from the prompts directory.
-	// Falls back to embedded defaults if the directory is missing.
-	promptsDir := cfg.PromptsDir
-	if promptsDir == "" {
-		promptsDir = "internal/app/hermes/prompts"
-	}
-	pb := hermes.LoadPromptBuilderForTier(promptsDir, tier)
-
-	// Build GitHub integration config for coordinator
-	ghCfg := hermes.GithubCfg{
-		Enabled:         ghIntegration.Enabled,
-		SyncChecklist:   ghIntegration.SyncChecklist,
-		AutoCloseLabel:  ghIntegration.AutoCloseLabel,
-		FailureLabel:    ghIntegration.FailureLabel,
-		TriggerTaskSync: ghIntegration.TriggerTaskSync,
-	}
-	for _, ev := range ghIntegration.CommentOnEvents {
-		switch ev {
-		case "start":
-			ghCfg.CommentOnStart = true
-		case "complete":
-			ghCfg.CommentOnDone = true
-		case "fail":
-			ghCfg.CommentOnFail = true
-		case "budget_exceeded":
-			ghCfg.CommentOnBudget = true
-		}
-	}
-
-	onDoneHook := t.buildHermesOnDoneHook(key, goal)
-	oneShot := issueNumber > 0
-	onDone := func(doneCtx context.Context, state hermes.TaskState) {
-		t.clearHermesStopMessage(key, t.getLocalizedMessage(key.chatID, "execution_completed", nil))
-		t.recordPlannerSession(key, tier, state.PlannerSessionID)
-		if !cfg.WalkingAgentEnabled {
-			if sess := t.getChatContext(key, projectDir).Session(appengine.BackendKindForModel(executorModel)); sess != "" {
-				t.recordExecutorSession(key, tier, sess)
-			}
-		}
-		if oneShot {
-			t.hermesMu.Lock()
-			if hc := t.hermesCoords[key]; hc != nil {
-				hc.enabled = false
-			}
-			t.hermesMu.Unlock()
-		}
-		if onDoneHook != nil {
-			onDoneHook(doneCtx, state)
-		}
-	}
-	onReview := func(_ context.Context, state hermes.TaskState, review appengine.ReviewResult, notification appengine.ReviewNotification) {
-		t.sendReviewNotification(key, notification)
-		if globalWebSocketHub != nil {
-			BroadcastReviewEvent(notification)
-		}
-	}
-	onReviewSkipped := func(_ context.Context, state hermes.TaskState, reason error) {
-		msg := "⚠️ 複審被略過"
-		if reason != nil {
-			msg += "：" + reason.Error()
-		} else {
-			msg += "（reviewer 未產生有效結果）"
-		}
-		t.send(key, msg)
-	}
-	onTaskRetry := func(_ context.Context, attempt, maxRetries int, review appengine.ReviewResult) {
-		nextAttempt := attempt + 2 // attempt is zero-based; user sees 1-based "next round"
-		total := maxRetries + 1
-		t.send(key, fmt.Sprintf(
-			"⚠️ 重審不通過（verdict=%s, %d/100）— 自動 re-plan 重新執行（第 %d/%d 輪）",
-			review.Verdict, review.OverallScore, nextAttempt, total,
-		))
-	}
-
-	continueCh := make(chan struct{}, 1)
-	failureDecisionCh := make(chan appengine.FailurePauseChoice, 1)
-	// Pre-load the failure-pause channel for cold-restart resume (#169 β1):
-	// when a paused task's coord is reconstructed because the operator clicked
-	// the inline button after alice restarted, the click's decision is
-	// injected here so RunFromState's first interrupt encounter consumes it
-	// without re-prompting the user.
-	if len(initialFailureChoice) > 0 {
-		failureDecisionCh <- initialFailureChoice[0]
-	}
-	agent := t.getAgent(key)
-	if cfg.WalkingAgentEnabled {
-		// Walking-agent sessions are per Hermes task. Start from a clean
-		// executor/heavy-executor boundary so previous task transcripts do not
-		// inflate token use or leak context into the new task.
-		agent.ClearSessionForModel(executorModel)
-		if heavyExecutorModel != "" && heavyExecutorModel != executorModel {
-			agent.ClearSessionForModel(heavyExecutorModel)
-		}
-	} else if oneShot {
-		// Issue-launched tasks start with a fresh executor CLI session so the
-		// previous task's transcript does not bloat the prompt and trigger
-		// "Prompt is too long" on later subtasks.
-		agent.ClearSessionForModel(executorModel)
-	} else if executorSessionID != "" {
-		agent.chatContext.SetSession(appengine.BackendKindForModel(executorModel), executorSessionID)
-	}
-	direct := appengine.NewDirectEngine(newHermesExecutorRunner(agent, executorModel, heavyExecutorModel))
-	coord := appengine.NewPlanExecuteEngine(appengine.PlanExecuteConfig{
-		ChatID:                       key.chatID,
-		ThreadID:                     key.threadID,
-		ProjectDir:                   projectDir,
-		PlannerModel:                 plannerModel,
-		MaxPlannerJSONRetries:        cfg.MaxPlannerJSONRetries,
-		Budget:                       budget,
-		PlannerRules:                 pb.ForRole(hermes.RolePlanner),
-		ExecutorRules:                pb.ForRole(hermes.RoleExecutor),
-		PlannerSessionID:             plannerSessionID,
-		GithubIssueNumber:            issueNumber,
-		GithubCfg:                    ghCfg,
-		PostCompletionHook:           t.buildTaskSyncHook(ghIntegration.TriggerTaskSync, projectDir),
-		ReviewPhase:                  reviewPhase,
-		ReviewStore:                  globalStorage,
-		ReviewMode:                   reviewModeForStrict(strictCfg),
-		StrictMode:                   strictCfg,
-		OnReview:                     onReview,
-		OnReviewSkipped:              onReviewSkipped,
-		OnTaskRetry:                  onTaskRetry,
-		OnRuntimeEvent:               recordRuntimeEvent,
-		TaskRetry:                    appengine.TaskRetryConfig(cfg.TaskRetry),
-		ContinueCh:                   continueCh,
-		OnSubTaskFailurePause:        t.makeHermesFailureDecisionCallback(key, failureDecisionCh),
-		OnGraphInterrupt:             t.makeHermesGraphInterruptCallback(key),
-		OnPlanningError:              t.makeHermesPlanningErrorCallback(key, issueNumber),
-		OnDone:                       onDone,
-		WalkingAgentEnabled:          cfg.WalkingAgentEnabled,
-		WalkingAgentMaxContextTokens: cfg.WalkingAgentMaxContextTokens,
-		ExecutorModel:                executorModel,
-		HeavyExecutorModel:           heavyExecutorModel,
-	}, planFn, direct, taskStore, reporter)
-
-	t.hermesMu.Lock()
-	t.hermesCoords[key] = &hermesCoord{coord: coord, enabled: true, tier: tier, continueCh: continueCh, failureDecisionCh: failureDecisionCh, oneShot: oneShot}
-	t.hermesMu.Unlock()
-
-	if resumeTask != nil {
-		taskID := strings.TrimSpace(resumeTask.ID)
-		log.Printf("[hermes] chat %d resuming task %s", key.chatID, taskID)
-		displayTaskID := shortHermesTaskID(taskID)
-		t.sendHermesStopMessage(key, t.getLocalizedMessage(key.chatID, "hermes_task_id_label", map[string]string{"taskID": displayTaskID}))
-		go t.runTrackedJob("hermes.resume", func() {
-			var err error
-			if hermesStartViaGraph() {
-				log.Printf("[hermes] chat %d resuming task %s via ResumeViaGraph (ALICE_HERMES_START_VIA_GRAPH=on)", key.chatID, taskID)
-				err = coord.ResumeViaGraph(ctx, taskID, agent.chatContext)
-			} else {
-				_, err = coord.RunFromState(ctx, *resumeTask, agent.chatContext, nil)
-			}
-			if err != nil {
-				log.Printf("[hermes] resume task %s failed: %v", taskID, err)
-				t.clearHermesStopMessage(key, t.getLocalizedMessage(key.chatID, "execution_error", nil))
-				t.send(key, t.getLocalizedMessage(key.chatID, "hermes_start_failed", map[string]string{"error": err.Error()}))
-			}
-		})
-		return
-	}
-
-	var taskID string
-	var err error
-	if hermesStartViaGraph() {
-		log.Printf("[hermes] chat %d starting task via StartViaGraph (ALICE_HERMES_START_VIA_GRAPH=on)", key.chatID)
-		taskID, err = coord.StartViaGraph(ctx, goal, agent.chatContext)
-	} else {
-		taskID, err = coord.Start(ctx, goal, agent.chatContext)
-	}
-	if err != nil {
-		t.send(key, t.getLocalizedMessage(key.chatID, "hermes_start_failed", map[string]string{"error": err.Error()}))
-		return
-	}
-	log.Printf("[hermes] chat %d started task %s", key.chatID, taskID)
-	displayTaskID := strings.TrimSpace(taskID)
-	if len(displayTaskID) > 8 {
-		displayTaskID = displayTaskID[:8]
-	}
-	t.sendHermesStopMessage(key, t.getLocalizedMessage(key.chatID, "hermes_task_id_label", map[string]string{"taskID": displayTaskID}))
-}
-
 // buildTaskSyncHook returns a post-completion hook that refreshes MASTER_TASKS.md
 // when triggerSync is true. It intentionally uses Claude CLI because /task-sync
 // is a local Claude slash command, not a backend-neutral Alice command yet.
@@ -4690,335 +2021,6 @@ var runTaskSyncCommand = func(ctx context.Context, projectDir string) ([]byte, e
 		Env:     cleanEnvForCLI(),
 		Timeout: defaultAgentProcessTimeout,
 	}, "claude", "--print", "--dangerously-skip-permissions", "/task-sync")
-}
-
-func (t *TelegramBot) buildTaskSyncHook(triggerSync bool, projectDir string) func(ctx context.Context) {
-	if !triggerSync {
-		return nil
-	}
-	return func(ctx context.Context) {
-		out, err := runTaskSyncCommand(ctx, projectDir)
-		if err != nil {
-			log.Printf("[hermes] task-sync failed: %v (output: %s)", err, out)
-		} else {
-			log.Printf("[hermes] task-sync completed")
-		}
-	}
-}
-
-// buildHermesOnDoneHook returns a callback that writes the Hermes task result
-// back into the agent's recentMessages so the next follow-up turn can
-// reference what the previous Hermes task actually did (Issue #108).
-func (t *TelegramBot) buildHermesOnDoneHook(key chatKey, originalGoal string) func(ctx context.Context, state hermes.TaskState) {
-	return func(ctx context.Context, state hermes.TaskState) {
-		summary := state.Accumulated
-		if summary == "" {
-			// Fall back to sub-task results if no rolled-up summary exists.
-			var parts []string
-			for _, sub := range state.Plan {
-				if sub.Result != "" {
-					parts = append(parts, sub.Result)
-				}
-			}
-			if len(parts) > 0 {
-				summary = strings.Join(parts, "\n")
-			}
-		}
-		if summary != "" {
-			t.getChatContext(key, "").AddRecentMessage(originalGoal, summary)
-			log.Printf("[hermes] wrote task result back to recentMessages for chat %d (%d chars)", key.chatID, len(summary))
-		}
-		t.sendHermesIssueReconciliation(ctx, key, state)
-	}
-}
-
-func (t *TelegramBot) sendHermesIssueReconciliation(ctx context.Context, key chatKey, state hermes.TaskState) {
-	if state.GithubIssueNumber <= 0 {
-		return
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	ops := t.issueOpsService()
-	requiredCloseLabel := ""
-	if t.config != nil {
-		requiredCloseLabel = t.config.Hermes.GithubIntegration.AutoCloseLabel
-	}
-	readiness, err := ops.AssessCloseReadiness(ctx, issueops.AssessCloseReadinessRequest{
-		ProjectDir:         state.ProjectDir,
-		IssueNumber:        state.GithubIssueNumber,
-		RequiredCloseLabel: requiredCloseLabel,
-		ReviewAccepted:     true,
-		ValidationPassed:   true,
-	})
-	if err != nil {
-		log.Printf("[hermes] post-run issue reconciliation failed for #%d: %v", state.GithubIssueNumber, err)
-		if readiness.Recovery != nil {
-			t.sendIssueOpsRecoveryMessage(key, state.GithubIssueNumber, readiness.Recovery, readiness.Notes)
-		}
-		return
-	}
-	if readiness.Issue != nil {
-		fromState := hermes.IssueStateFromGitHub(readiness.Issue.State)
-		recordIssueFSMTransition(ctx, key, readiness.Issue.Number, appengine.IssueFSMTransitionPayload{
-			From:                   fromState,
-			Event:                  hermes.IssueEventForState(readiness.State),
-			To:                     readiness.State,
-			Reason:                 strings.TrimSpace(strings.Join(readiness.Notes, "\n")),
-			Source:                 "telegram.reconcile",
-			ChecklistTotal:         readiness.Reconciliation.ChecklistTotal,
-			CheckedCount:           readiness.Reconciliation.CheckedCount,
-			UncheckedCount:         len(readiness.Reconciliation.Unchecked),
-			HasBlockingLabel:       readiness.Guard.HasBlockingLabel,
-			HasRequiredLabel:       readiness.HasRequiredLabel,
-			ReviewAccepted:         readiness.Guard.ReviewAccepted,
-			ValidationPassed:       readiness.Guard.ValidationPassed,
-			ChecklistSynced:        readiness.Guard.ChecklistSynced,
-			CanAutoClose:           readiness.CanAutoClose,
-			NeedsHumanConfirmation: readiness.State == hermes.IssueStateBlocked,
-		})
-	}
-	text := formatIssueOpsReconciliationMessage(readiness)
-	if strings.TrimSpace(text) == "" {
-		return
-	}
-	switch readiness.State {
-	case hermes.IssueStateChecklistUnsynced, hermes.IssueStateReadyToClose, hermes.IssueStateBlocked:
-		t.sendIssueOpsActions(key, readiness, text)
-		return
-	}
-	t.send(key, text)
-}
-
-func (t *TelegramBot) shouldDeferIssueContinuationToIssueOps(ctx context.Context, projectDir string, issueNumber int) bool {
-	if issueNumber <= 0 {
-		return false
-	}
-	ops := t.issueOpsService()
-	readiness, err := ops.AssessCloseReadiness(ctx, issueops.AssessCloseReadinessRequest{
-		ProjectDir:       projectDir,
-		IssueNumber:      issueNumber,
-		ReviewAccepted:   true,
-		ValidationPassed: true,
-	})
-	if err != nil {
-		return false
-	}
-	return readiness.State == hermes.IssueStateChecklistUnsynced
-}
-
-func formatIssueOpsReconciliationMessage(readiness issueops.CloseReadinessResult) string {
-	issueLabel := "Issue"
-	if readiness.Issue != nil && readiness.Issue.Number > 0 {
-		issueLabel = fmt.Sprintf("Issue #%d", readiness.Issue.Number)
-	}
-	switch readiness.State {
-	case hermes.IssueStateChecklistUnsynced:
-		return fmt.Sprintf("⚠️ IssueOps 判定 %s 目前是 checklist_unsynced。\n\n%s\n\n下一步先同步 GitHub checklist，再決定是否重新驗證、重新規劃剩餘項，或關閉 issue。", issueLabel, strings.TrimSpace(strings.Join(readiness.Notes, "\n")))
-	case hermes.IssueStateReadyToClose:
-		return fmt.Sprintf("✅ IssueOps 判定 %s 已達 ready_to_close。\n\n%s\n\n可以直接關閉 issue，或先確認是否要補最後的驗證。", issueLabel, strings.TrimSpace(strings.Join(readiness.Notes, "\n")))
-	case hermes.IssueStateBlocked:
-		return fmt.Sprintf("⛔ IssueOps 判定 %s 目前 blocked。\n\n%s\n\n需要人工決策後才能繼續。", issueLabel, strings.TrimSpace(strings.Join(readiness.Notes, "\n")))
-	case hermes.IssueStateChecklistSynced:
-		return fmt.Sprintf("ℹ️ IssueOps 判定 %s checklist 已同步。\n\n%s", issueLabel, strings.TrimSpace(strings.Join(readiness.Notes, "\n")))
-	default:
-		if readiness.CanAutoClose {
-			return fmt.Sprintf("✅ IssueOps 判定 %s 可自動關閉。\n\n%s", issueLabel, strings.TrimSpace(strings.Join(readiness.Notes, "\n")))
-		}
-		if len(readiness.Notes) > 0 {
-			return fmt.Sprintf("ℹ️ IssueOps 判定 %s 目前是 %s。\n\n%s", issueLabel, readiness.State, strings.TrimSpace(strings.Join(readiness.Notes, "\n")))
-		}
-		return fmt.Sprintf("ℹ️ IssueOps 判定 %s 目前是 %s。", issueLabel, readiness.State)
-	}
-}
-
-func (t *TelegramBot) sendIssueOpsActions(key chatKey, readiness issueops.CloseReadinessResult, text string) {
-	issueNum := 0
-	if readiness.Issue != nil {
-		issueNum = readiness.Issue.Number
-	}
-	rows := make([][]map[string]interface{}, 0, 3)
-	switch readiness.State {
-	case hermes.IssueStateChecklistUnsynced:
-		rows = append(rows, []map[string]interface{}{
-			{"text": "同步 checklist", "callback_data": fmt.Sprintf("issueops:sync-checklist:%d", issueNum)},
-			{"text": "重新驗證", "callback_data": fmt.Sprintf("issueops:revalidate:%d", issueNum)},
-		})
-		rows = append(rows, []map[string]interface{}{
-			{"text": "重新規劃剩餘項", "callback_data": fmt.Sprintf("issueops:replan:%d", issueNum)},
-			{"text": "關閉 issue", "callback_data": fmt.Sprintf("issueops:close:%d", issueNum)},
-		})
-	case hermes.IssueStateReadyToClose:
-		rows = append(rows, []map[string]interface{}{
-			{"text": "關閉 issue", "callback_data": fmt.Sprintf("issueops:close:%d", issueNum)},
-			{"text": "重新驗證", "callback_data": fmt.Sprintf("issueops:revalidate:%d", issueNum)},
-		})
-		rows = append(rows, []map[string]interface{}{
-			{"text": "重新規劃剩餘項", "callback_data": fmt.Sprintf("issueops:replan:%d", issueNum)},
-		})
-	case hermes.IssueStateBlocked:
-		rows = append(rows, []map[string]interface{}{
-			{"text": "重試 blocked", "callback_data": fmt.Sprintf("issueops:retry-blocked:%d", issueNum)},
-			{"text": "重新驗證", "callback_data": fmt.Sprintf("issueops:revalidate:%d", issueNum)},
-		})
-		rows = append(rows, []map[string]interface{}{
-			{"text": "重新規劃剩餘項", "callback_data": fmt.Sprintf("issueops:replan:%d", issueNum)},
-			{"text": "關閉 issue", "callback_data": fmt.Sprintf("issueops:close:%d", issueNum)},
-		})
-	}
-	rows = append(rows, []map[string]interface{}{
-		{"text": "取消", "callback_data": "issueops:cancel"},
-	})
-	keyboard := map[string]interface{}{
-		"inline_keyboard": rows,
-	}
-	params := map[string]interface{}{
-		"chat_id":      strconv.FormatInt(key.chatID, 10),
-		"text":         sanitizeUTF8(text),
-		"reply_markup": keyboard,
-	}
-	if key.threadID != 0 {
-		params["message_thread_id"] = strconv.Itoa(key.threadID)
-	}
-	t.queueMessage("sendMessage", params)
-}
-
-func issueOpsRetryButtonLabel(action string) string {
-	switch action {
-	case "retry-sync-checklist":
-		return "重試同步"
-	case "retry-close":
-		return "重試關閉"
-	default:
-		return "重試 blocked"
-	}
-}
-
-func (t *TelegramBot) sendIssueOpsRecoveryMessage(key chatKey, issueNumber int, recovery *issueops.IssueOperationRecovery, notes []string) {
-	if recovery == nil {
-		return
-	}
-	lines := make([]string, 0, len(notes)+2)
-	if strings.TrimSpace(recovery.Message) != "" {
-		lines = append(lines, strings.TrimSpace(recovery.Message))
-	}
-	if strings.TrimSpace(recovery.Error) != "" {
-		lines = append(lines, fmt.Sprintf("錯誤：%s", strings.TrimSpace(recovery.Error)))
-	}
-	lines = append(lines, notes...)
-	body := fmt.Sprintf("⛔ IssueOps 在 %s 時進入 blocked。\n\n%s", strings.TrimSpace(recovery.Operation), strings.TrimSpace(strings.Join(lines, "\n")))
-	rows := [][]map[string]interface{}{
-		{
-			{"text": issueOpsRetryButtonLabel(recovery.RetryAction), "callback_data": fmt.Sprintf("issueops:%s:%d", strings.TrimSpace(recovery.RetryAction), issueNumber)},
-			{"text": "重新驗證", "callback_data": fmt.Sprintf("issueops:revalidate:%d", issueNumber)},
-		},
-		{
-			{"text": "重新規劃剩餘項", "callback_data": fmt.Sprintf("issueops:replan:%d", issueNumber)},
-			{"text": "取消", "callback_data": "issueops:cancel"},
-		},
-	}
-	keyboard := map[string]interface{}{
-		"inline_keyboard": rows,
-	}
-	params := map[string]interface{}{
-		"chat_id":      strconv.FormatInt(key.chatID, 10),
-		"text":         sanitizeUTF8(body),
-		"reply_markup": keyboard,
-	}
-	if key.threadID != 0 {
-		params["message_thread_id"] = strconv.Itoa(key.threadID)
-	}
-	t.queueMessage("sendMessage", params)
-}
-
-func (t *TelegramBot) handleStrictCommand(key chatKey, parts []string) {
-	sub := ""
-	if len(parts) > 1 {
-		sub = strings.ToLower(strings.TrimSpace(parts[1]))
-	}
-
-	switch sub {
-	case "", "toggle":
-		enabled := !t.strictModeEnabled(key, "")
-		t.setStrictModeOverride(key, &enabled)
-		if enabled {
-			t.send(key, "✅ strict review mode 已啟用")
-		} else {
-			t.send(key, "⛔ strict review mode 已停用")
-		}
-	case "on", "enable":
-		enabled := true
-		t.setStrictModeOverride(key, &enabled)
-		t.send(key, "✅ strict review mode 已啟用")
-	case "off", "disable":
-		enabled := false
-		t.setStrictModeOverride(key, &enabled)
-		t.send(key, "⛔ strict review mode 已停用")
-	case "status":
-		if t.strictModeEnabled(key, "") {
-			t.send(key, "strict review mode：已啟用")
-		} else {
-			t.send(key, "strict review mode：已停用")
-		}
-	default:
-		t.send(key, "用法：/strict [on|off|status]")
-	}
-}
-
-func (t *TelegramBot) strictModeEnabled(key chatKey, goal string) bool {
-	t.hermesMu.RLock()
-	hc := t.hermesCoords[key]
-	t.hermesMu.RUnlock()
-	if hc != nil && hc.strictModeOverride != nil {
-		return *hc.strictModeOverride
-	}
-
-	if t.config != nil && t.config.Hermes.StrictModeEnabled {
-		return true
-	}
-
-	return shouldAutoEnableStrict(goal)
-}
-
-func (t *TelegramBot) setStrictModeOverride(key chatKey, enabled *bool) {
-	t.hermesMu.Lock()
-	defer t.hermesMu.Unlock()
-
-	hc := t.hermesCoords[key]
-	if hc == nil {
-		hc = &hermesCoord{}
-		t.hermesCoords[key] = hc
-	}
-	if enabled == nil {
-		hc.strictModeOverride = nil
-		return
-	}
-	value := *enabled
-	hc.strictModeOverride = &value
-}
-
-func shouldAutoEnableStrict(goal string) bool {
-	goal = strings.ToLower(strings.TrimSpace(extractHermesActionableGoal(goal)))
-	if goal == "" {
-		return false
-	}
-	return containsAny(goal, []string{"commit", "push", "部署", "deploy", "ssh", "release"})
-}
-
-func reviewModeForStrict(strictCfg appengine.StrictModeConfig) appengine.ReviewMode {
-	if strictCfg.Enabled {
-		return appengine.ReviewModePerSubTask
-	}
-	return appengine.ReviewModePerTask
-}
-
-func (t *TelegramBot) resolveStrictModeConfig(key chatKey, goal string) appengine.StrictModeConfig {
-	cfg := appengine.DefaultStrictModeConfig()
-	cfg.Enabled = t.strictModeEnabled(key, goal)
-	if t != nil && t.config != nil && t.config.Hermes.ReviewTimeoutSeconds > 0 {
-		cfg.ReviewTimeout = time.Duration(t.config.Hermes.ReviewTimeoutSeconds) * time.Second
-	}
-	return cfg
 }
 
 // --- Send helpers (直接用 Telegram HTTP API 以支援 message_thread_id) ---
@@ -5673,110 +2675,6 @@ func splitMessage(text string, maxLen int) []string {
 	return chunks
 }
 
-// handleMultiAgentStatus shows the current multi-agent system status
-func (t *TelegramBot) handleMultiAgentStatus(key chatKey) {
-	stats := globalAgentCoordinator.GetAgentStats()
-
-	statusMsg := t.getLocalizedMessage(key.chatID, "multiagent_status_title", nil)
-	status := statusMsg
-
-	if globalAgentCoordinator.IsEnabled() {
-		status += t.getLocalizedMessage(key.chatID, "multiagent_status_enabled", nil) + "\n\n"
-	} else {
-		status += t.getLocalizedMessage(key.chatID, "multiagent_status_disabled", nil) + "\n\n"
-	}
-
-	totalAgents := stats["total_agents"].(int)
-	statsMsg := t.getLocalizedMessage(key.chatID, "multiagent_status_stats", nil)
-	statsMsg = strings.ReplaceAll(statsMsg, "{count}", fmt.Sprintf("%d", totalAgents))
-	status += statsMsg
-
-	if activeTask, hasTask := stats["active_task"]; hasTask && activeTask != nil {
-		taskInfo := activeTask.(map[string]interface{})
-		runningMsg := t.getLocalizedMessage(key.chatID, "multiagent_status_running", nil)
-		runningMsg = strings.ReplaceAll(runningMsg, "{id}", taskInfo["id"].(string))
-		runningMsg = strings.ReplaceAll(runningMsg, "{status}", taskInfo["status"].(string))
-		status += runningMsg
-	}
-
-	status += t.getLocalizedMessage(key.chatID, "multiagent_available_types", nil) + "\n"
-	status += "• General - " + t.getLocalizedMessage(key.chatID, "agent_general", nil) + "\n"
-	status += "• CodeReview - " + t.getLocalizedMessage(key.chatID, "agent_code_review", nil) + "\n"
-	status += "• Testing - " + t.getLocalizedMessage(key.chatID, "agent_testing", nil) + "\n"
-	status += "• Documentation - " + t.getLocalizedMessage(key.chatID, "agent_documentation", nil) + "\n"
-	status += "• Deployment - " + t.getLocalizedMessage(key.chatID, "agent_deployment", nil) + "\n"
-	status += "• Debug - " + t.getLocalizedMessage(key.chatID, "agent_debug", nil) + "\n"
-
-	t.sendMarkdown(key, status)
-}
-
-// handleMultiAgentStats shows detailed statistics about agent usage
-func (t *TelegramBot) handleMultiAgentStats(key chatKey) {
-	stats := globalAgentCoordinator.GetAgentStats()
-
-	titleMsg := t.getLocalizedMessage(key.chatID, "multiagent_usage_stats_title", nil)
-	response := titleMsg
-
-	if agents, hasAgents := stats["agents"]; hasAgents {
-		agentStats := agents.(map[string]interface{})
-
-		if len(agentStats) == 0 {
-			response += t.getLocalizedMessage(key.chatID, "multiagent_no_active", nil) + "\n"
-		} else {
-			for agentType, agentInfo := range agentStats {
-				info := agentInfo.(map[string]interface{})
-				taskCount := info["task_count"].(int)
-				lastUsed := info["last_used"].(time.Time)
-
-				headerMsg := t.getLocalizedMessage(key.chatID, "multiagent_agent_header", nil)
-				headerMsg = strings.ReplaceAll(headerMsg, "{agent_type}", agentType)
-				response += headerMsg
-
-				taskCountMsg := t.getLocalizedMessage(key.chatID, "multiagent_agent_task_count", nil)
-				taskCountMsg = strings.ReplaceAll(taskCountMsg, "{count}", fmt.Sprintf("%d", taskCount))
-				response += taskCountMsg
-
-				lastUsedMsg := t.getLocalizedMessage(key.chatID, "multiagent_agent_last_used", nil)
-				lastUsedMsg = strings.ReplaceAll(lastUsedMsg, "{time}", lastUsed.Format("2006-01-02 15:04:05"))
-				response += lastUsedMsg
-			}
-		}
-	}
-
-	t.sendMarkdown(key, response)
-}
-
-// handleAgentsList shows available agent types and their capabilities
-func (t *TelegramBot) handleAgentsList(key chatKey) {
-	response := t.getLocalizedMessage(key.chatID, "multiagent_list_response", nil) + "\n\n"
-
-	agents := []struct {
-		name    string
-		key     string
-		descKey string
-	}{
-		{"General", "agent_general", "agent_general_desc"},
-		{"CodeReview", "agent_code_review", "agent_code_review_desc"},
-		{"Testing", "agent_testing", "agent_testing_desc"},
-		{"Documentation", "agent_documentation", "agent_documentation_desc"},
-		{"Deployment", "agent_deployment", "agent_deployment_desc"},
-		{"Debug", "agent_debug", "agent_debug_desc"},
-	}
-
-	for _, agent := range agents {
-		response += fmt.Sprintf("**%s**\n", agent.name)
-		desc := t.getLocalizedMessage(key.chatID, agent.descKey, nil)
-		response += fmt.Sprintf("Description: %s\n\n", desc)
-	}
-
-	response += t.getLocalizedMessage(key.chatID, "agent_usage_title", nil) + "\n"
-	response += t.getLocalizedMessage(key.chatID, "agent_usage_auto", nil) + "\n"
-	response += t.getLocalizedMessage(key.chatID, "agent_usage_enable", nil) + "\n"
-	response += t.getLocalizedMessage(key.chatID, "agent_usage_complex", nil) + "\n"
-
-	t.sendMarkdown(key, response)
-}
-
 // handleDashboard shows system dashboard information
 func (t *TelegramBot) handleDashboard(key chatKey) {
 	log.Printf("[telegram] handleDashboard called for chat %d", key.chatID)
@@ -5800,14 +2698,6 @@ func (t *TelegramBot) handleDashboard(key chatKey) {
 	} else {
 		checkpointDisabledMsg := t.getLocalizedMessage(key.chatID, "dashboard_checkpoint_disabled", nil)
 		dashboard += checkpointDisabledMsg + "\n"
-	}
-
-	if globalAgentCoordinator != nil && globalAgentCoordinator.IsEnabled() {
-		multiagentEnabledMsg := t.getLocalizedMessage(key.chatID, "dashboard_multiagent_enabled", nil)
-		dashboard += multiagentEnabledMsg + "\n"
-	} else {
-		multiagentDisabledMsg := t.getLocalizedMessage(key.chatID, "dashboard_multiagent_disabled", nil)
-		dashboard += multiagentDisabledMsg + "\n"
 	}
 
 	// Web Interface
@@ -5844,7 +2734,6 @@ func (t *TelegramBot) handleDashboard(key chatKey) {
 	dashboard += quickActionsTitle + "\n"
 	dashboard += t.getLocalizedMessage(key.chatID, "dashboard_quick_checkpoints", nil) + "\n"
 	dashboard += t.getLocalizedMessage(key.chatID, "dashboard_quick_status", nil) + "\n"
-	dashboard += t.getLocalizedMessage(key.chatID, "dashboard_quick_multiagent", nil) + "\n"
 	dashboard += t.getLocalizedMessage(key.chatID, "dashboard_quick_button", nil) + "\n"
 
 	// Send dashboard with Web App button
@@ -6046,14 +2935,11 @@ func (t *TelegramBot) handleCallbackQuery(key chatKey, userID int64, queryID, da
 		t.answerCallbackQuery(queryID, tasksStatusMessage(t.getChatLanguage(key.chatID), state))
 	case strings.HasPrefix(data, "menu:"):
 		t.handleMenuCallback(key, queryID, data)
-	case strings.HasPrefix(data, "retry:"):
-		t.handleRetryCallback(key, queryID, data)
+	// Buttons under old messages stay pressable after the old task system is gone.
+	case strings.HasPrefix(data, "retry:"), strings.HasPrefix(data, "issueops:"), strings.HasPrefix(data, "hermes:"):
+		t.answerRemovedButton(key, queryID)
 	case strings.HasPrefix(data, "model:"):
 		t.handleModelCallback(key, queryID, data)
-	case strings.HasPrefix(data, "issueops:"):
-		t.handleIssueOpsCallback(key, queryID, data)
-	case strings.HasPrefix(data, "hermes:"):
-		t.handleHermesCallback(key, queryID, data)
 	case strings.HasPrefix(data, "stop_agent_"):
 		// Handle stop button click
 		switch t.abortActiveTask(key, 0) {
@@ -6110,8 +2996,7 @@ func (t *TelegramBot) handleMenuCallback(key chatKey, queryID, data string) {
 		t.answerCallbackQuery(queryID, "顯示 Skills")
 		t.handleCommand(key, "/skills")
 	case "hermes_status":
-		t.answerCallbackQuery(queryID, "顯示 Hermes 狀態")
-		t.handleHermesCommand(key, []string{"/hermes", "status"}, "")
+		t.answerRemovedButton(key, queryID)
 	case "help":
 		t.answerCallbackQuery(queryID, "顯示說明")
 		t.handleCommand(key, "/help")
@@ -6211,33 +3096,12 @@ func (t *TelegramBot) sendModelMenu(key chatKey) {
 			{"text": label("auto", "Auto"), "callback_data": "model:set:auto"},
 		},
 	}
-	if t.config != nil && t.config.Hermes.Enabled {
-		hermesTier := t.hermesTierFor(key)
-		hermesLabel := func(tier, display string) string {
-			if hermesTier == tier && t.isHermesEnabled(key) {
-				return "✅ " + display
-			}
-			return display
-		}
-		rows = append(rows, []map[string]interface{}{
-			{"text": hermesLabel("claude", "Hermes: Claude"), "callback_data": "model:hermes-tier:claude"},
-			{"text": hermesLabel("codex", "Hermes: GPT/Codex"), "callback_data": "model:hermes-tier:codex"},
-		})
-	}
 	rows = append(rows, []map[string]interface{}{
 		{"text": t.getLocalizedMessage(key.chatID, "menu_btn_back", nil), "callback_data": "menu:open"},
 	})
 
-	text := t.getLocalizedMessage(key.chatID, "menu_model_title", map[string]string{"{mode}": current, "{tier}": t.hermesTierLabel(key)})
+	text := t.getLocalizedMessage(key.chatID, "menu_model_title", map[string]string{"{mode}": current})
 	t.sendMenuMessage(key, text, rows)
-}
-
-func (t *TelegramBot) hermesTierLabel(key chatKey) string {
-	hermesTier := t.hermesTierFor(key)
-	if hermesTier == "codex" {
-		return "Hermes: GPT/Codex"
-	}
-	return "Hermes: Claude"
 }
 
 func (t *TelegramBot) handleModelCallback(key chatKey, queryID, data string) {
@@ -6267,1300 +3131,10 @@ func (t *TelegramBot) handleModelCallback(key chatKey, queryID, data string) {
 		t.answerCallbackQuery(queryID, "切換模型")
 		t.handleCommand(key, command)
 	case strings.HasPrefix(data, "model:hermes-tier:"):
-		tier := strings.TrimPrefix(data, "model:hermes-tier:")
-		if tier != "claude" && tier != "codex" {
-			t.answerCallbackQuery(queryID, "無法辨識 Hermes tier")
-			return
-		}
-		t.answerCallbackQuery(queryID, "切換 Hermes tier")
-		if tier == "codex" {
-			t.handleCommand(key, "/ghermes")
-		} else {
-			t.handleCommand(key, "/hermes")
-		}
+		t.answerRemovedButton(key, queryID)
 	default:
 		t.answerCallbackQuery(queryID, "無法辨識模型操作")
 	}
-}
-
-func (t *TelegramBot) sendRetryMenu(key chatKey) {
-	rows := [][]map[string]interface{}{
-		{
-			{"text": t.getLocalizedMessage(key.chatID, "menu_retry_latest", nil), "callback_data": "retry:confirm:latest"},
-			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_back", nil), "callback_data": "menu:open"},
-		},
-	}
-	text := t.getLocalizedMessage(key.chatID, "menu_retry_title", nil)
-	store, ok := globalStorage.(*SQLiteStorage)
-	if globalStorage == nil || !ok {
-		text += t.getLocalizedMessage(key.chatID, "menu_retry_no_storage", nil)
-		t.sendMenuMessage(key, text, rows)
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), retrySelectionTimeout)
-	defer cancel()
-	candidates, err := store.selectRetryTaskCandidates(ctx, key, 5)
-	if err != nil {
-		text += t.getLocalizedMessage(key.chatID, "menu_retry_load_error", map[string]string{"{error}": err.Error()})
-		t.sendMenuMessage(key, text, rows)
-		return
-	}
-	for _, candidate := range candidates {
-		rows = append(rows, []map[string]interface{}{
-			{"text": retryCandidateButtonText(candidate), "callback_data": "retry:task:" + candidate.ID},
-		})
-	}
-	if len(candidates) == 0 {
-		text += t.getLocalizedMessage(key.chatID, "menu_retry_no_candidates", nil)
-	}
-	t.sendMenuMessage(key, text, rows)
-}
-
-func (t *TelegramBot) sendReviewNotification(key chatKey, notification appengine.ReviewNotification) {
-	text := notification.TelegramText()
-	rows := reviewNotificationActionRows(key, t, notification)
-	if len(rows) == 0 {
-		t.send(key, text)
-		return
-	}
-	t.sendMenuMessage(key, text, rows)
-}
-
-func reviewNotificationActionRows(key chatKey, t *TelegramBot, notification appengine.ReviewNotification) [][]map[string]interface{} {
-	taskID := strings.TrimSpace(notification.TaskID)
-	if taskID == "" || !notification.AdvisoryRetry {
-		return nil
-	}
-	rows := make([][]map[string]interface{}, 0, 4)
-	for _, subTask := range lowScoreReviewSubTasks(notification, 3) {
-		rows = append(rows, []map[string]interface{}{
-			{
-				"text":          fmt.Sprintf("🔁 重跑低分 #%d", subTask.Index),
-				"callback_data": fmt.Sprintf("retry:run:index:%s:%d", taskID, subTask.Index),
-			},
-		})
-	}
-	if notification.FailingSubTasks > 0 {
-		rows = append(rows, []map[string]interface{}{
-			{"text": t.getLocalizedMessage(key.chatID, "menu_retry_all_failed", nil), "callback_data": "retry:confirm:all:" + taskID},
-			{"text": t.getLocalizedMessage(key.chatID, "menu_retry_lowest", nil), "callback_data": "retry:confirm:lowest:" + taskID},
-		})
-	}
-	rows = append(rows, []map[string]interface{}{
-		{"text": t.getLocalizedMessage(key.chatID, "menu_retry_title_short", nil), "callback_data": "retry:task:" + taskID},
-	})
-	return rows
-}
-
-func lowScoreReviewSubTasks(notification appengine.ReviewNotification, limit int) []appengine.ReviewNotificationSubTaskResult {
-	if limit <= 0 {
-		return nil
-	}
-	out := make([]appengine.ReviewNotificationSubTaskResult, 0, limit)
-	for _, subTask := range notification.SubTaskResults {
-		if subTask.Score >= appengine.SubTaskScoreFailingThreshold {
-			continue
-		}
-		out = append(out, subTask)
-		if len(out) >= limit {
-			break
-		}
-	}
-	return out
-}
-
-func retryCandidateButtonText(candidate retryTaskCandidate) string {
-	prefix := shortHermesTaskID(candidate.ID)
-	if candidate.GithubIssueNumber > 0 {
-		prefix = fmt.Sprintf("#%d %s", candidate.GithubIssueNumber, prefix)
-	}
-	goal := truncateForTelegram(strings.TrimSpace(candidate.Goal), 34)
-	if goal == "" {
-		goal = "untitled task"
-	}
-	return fmt.Sprintf("%s · %d failed · %s", prefix, candidate.FailedCount, goal)
-}
-
-func (t *TelegramBot) sendRetryAllFailedResolution(key chatKey) {
-	ctx, cancel := context.WithTimeout(context.Background(), retrySelectionTimeout)
-	defer cancel()
-	candidates, err := t.resolveTargets(ctx, ResolveTargetRequest{
-		ChatID:   key.chatID,
-		ThreadID: key.threadID,
-		Intent:   "retry_all_failed",
-		Kinds:    []TargetKind{TargetReviewResult},
-		Limit:    3,
-	})
-	if err != nil {
-		t.send(key, "❌ 無法解析 retry 目標："+err.Error())
-		return
-	}
-	if len(candidates) == 0 {
-		t.send(key, "✅ 找不到低分或 partial/fail 的 task 可 retry。")
-		return
-	}
-	if len(candidates) == 1 && candidates[0].Score >= 0.75 {
-		candidate := candidates[0]
-		text := fmt.Sprintf("準備 retry task `%s` 的所有 failed subtasks\n\n%s\n%s",
-			shortHermesTaskID(candidate.ID),
-			truncateForTelegram(candidate.Title, 120),
-			candidate.Reason,
-		)
-		t.sendMenuMessage(key, text, [][]map[string]interface{}{
-			{
-				{"text": t.getLocalizedMessage(key.chatID, "menu_retry_confirm_btn", nil), "callback_data": "retry:run:all:" + candidate.ID},
-				{"text": t.getLocalizedMessage(key.chatID, "menu_btn_cancel", nil), "callback_data": "retry:cancel"},
-			},
-			{
-				{"text": t.getLocalizedMessage(key.chatID, "menu_btn_back", nil), "callback_data": "retry:menu"},
-			},
-		})
-		return
-	}
-	rows := make([][]map[string]interface{}, 0, len(candidates)+1)
-	for _, candidate := range candidates {
-		label := fmt.Sprintf("%s · %.0f%% · %s", shortHermesTaskID(candidate.ID), candidate.Score*100, truncateForTelegram(candidate.Title, 34))
-		rows = append(rows, []map[string]interface{}{{"text": label, "callback_data": "retry:task:" + candidate.ID}})
-	}
-	rows = append(rows, []map[string]interface{}{{"text": t.getLocalizedMessage(key.chatID, "menu_btn_cancel", nil), "callback_data": "retry:cancel"}})
-	t.sendMenuMessage(key, "你要 retry 哪個 task？", rows)
-}
-
-func (t *TelegramBot) sendRetryTaskMenu(key chatKey, taskID string) {
-	if globalStorage == nil {
-		t.send(key, t.getLocalizedMessage(key.chatID, "menu_retry_no_storage_alert", nil))
-		return
-	}
-	store, ok := globalStorage.(*SQLiteStorage)
-	if !ok {
-		t.send(key, t.getLocalizedMessage(key.chatID, "menu_retry_backend_unsupported", nil))
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), retrySelectionTimeout)
-	defer cancel()
-	selections, err := store.selectRetryTargetsAllFailed(ctx, taskID)
-	if err != nil {
-		t.send(key, "❌ "+err.Error())
-		return
-	}
-	taskTitle := t.getLocalizedMessage(key.chatID, "menu_retry_task_title", map[string]string{"{id}": shortHermesTaskID(taskID)})
-	if len(selections) == 0 {
-		if diag, diagErr := store.retryNoLowScoreDiagnostic(ctx, taskID); diagErr == nil && strings.TrimSpace(diag) != "" {
-			t.sendMenuMessage(key, taskTitle+"\n\n"+diag, [][]map[string]interface{}{
-				{{"text": t.getLocalizedMessage(key.chatID, "menu_retry_back", nil), "callback_data": "retry:menu"}},
-			})
-			return
-		}
-		t.sendMenuMessage(key, taskTitle+"\n\n✅ 找不到低分 sub-task 可 retry。", [][]map[string]interface{}{
-			{{"text": t.getLocalizedMessage(key.chatID, "menu_retry_back", nil), "callback_data": "retry:menu"}},
-		})
-		return
-	}
-	rows := [][]map[string]interface{}{
-		{
-			{"text": t.getLocalizedMessage(key.chatID, "menu_retry_lowest", nil), "callback_data": "retry:confirm:lowest:" + taskID},
-			{"text": t.getLocalizedMessage(key.chatID, "menu_retry_all_failed", nil), "callback_data": "retry:confirm:all:" + taskID},
-		},
-	}
-	for _, selection := range selections {
-		rows = append(rows, []map[string]interface{}{
-			{
-				"text":          fmt.Sprintf("#%d · %d/100 · %s", selection.DisplaySubTaskIdx, selection.SubTaskReview.Score, truncateForTelegram(selection.SubTask.Description, 30)),
-				"callback_data": fmt.Sprintf("retry:run:index:%s:%d", taskID, selection.DisplaySubTaskIdx),
-			},
-		})
-	}
-	rows = append(rows, []map[string]interface{}{{"text": t.getLocalizedMessage(key.chatID, "menu_retry_back", nil), "callback_data": "retry:menu"}})
-	t.sendMenuMessage(key, taskTitle, rows)
-}
-
-func (t *TelegramBot) sendRetryConfirmation(key chatKey, mode, taskID string, idx int) {
-	label := "latest low-score sub-task"
-	runData := "retry:run:latest"
-	switch mode {
-	case "lowest":
-		label = t.getLocalizedMessage(key.chatID, "retry_label_lowest", nil)
-		runData = "retry:run:lowest:" + taskID
-	case "all":
-		label = t.getLocalizedMessage(key.chatID, "retry_label_all", nil)
-		runData = "retry:run:all:" + taskID
-	case "index":
-		label = t.getLocalizedMessage(key.chatID, "retry_label_index", map[string]string{"idx": fmt.Sprintf("%d", idx)})
-		runData = fmt.Sprintf("retry:run:index:%s:%d", taskID, idx)
-	}
-	confirmText := t.getLocalizedMessage(key.chatID, "menu_retry_confirm_text", map[string]string{"label": label})
-	t.sendMenuMessage(key, confirmText, [][]map[string]interface{}{
-		{
-			{"text": t.getLocalizedMessage(key.chatID, "menu_retry_confirm_btn", nil), "callback_data": runData},
-			{"text": t.getLocalizedMessage(key.chatID, "menu_btn_cancel", nil), "callback_data": "retry:cancel"},
-		},
-	})
-}
-
-func (t *TelegramBot) handleRetryCallback(key chatKey, queryID, data string) {
-	switch {
-	case data == "retry:menu":
-		t.answerCallbackQuery(queryID, "顯示 retry 選單")
-		t.sendRetryMenu(key)
-	case data == "retry:cancel":
-		t.answerCallbackQuery(queryID, "已取消")
-	case data == "retry:confirm:latest":
-		t.answerCallbackQuery(queryID, "請確認 retry")
-		t.sendRetryConfirmation(key, "latest", "", 0)
-	case strings.HasPrefix(data, "retry:task:"):
-		taskID := strings.TrimPrefix(data, "retry:task:")
-		t.answerCallbackQuery(queryID, "選擇 retry 範圍")
-		t.sendRetryTaskMenu(key, taskID)
-	case strings.HasPrefix(data, "retry:confirm:"):
-		t.handleRetryConfirmCallback(key, queryID, data)
-	case strings.HasPrefix(data, "retry:run:"):
-		t.handleRetryRunCallback(key, queryID, data)
-	default:
-		t.answerCallbackQuery(queryID, "無法辨識 retry 操作")
-	}
-}
-
-func parseIssueOpsCallbackData(data string) (action string, issueNumber int, ok bool) {
-	if data == "issueops:cancel" {
-		return "cancel", 0, true
-	}
-	if !strings.HasPrefix(data, "issueops:") {
-		return "", 0, false
-	}
-	rest := strings.TrimPrefix(data, "issueops:")
-	parts := strings.SplitN(rest, ":", 2)
-	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
-		return "", 0, false
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if err != nil || n <= 0 {
-		return "", 0, false
-	}
-	return parts[0], n, true
-}
-
-func (t *TelegramBot) handleIssueOpsCallback(key chatKey, queryID, data string) {
-	action, issueNumber, ok := parseIssueOpsCallbackData(data)
-	if !ok {
-		t.answerCallbackQuery(queryID, "❌ 無效的 IssueOps 操作")
-		return
-	}
-	if action == "cancel" {
-		t.answerCallbackQuery(queryID, "已取消")
-		return
-	}
-
-	ctx := context.Background()
-	projectDir := t.getAgent(key).ProjectDir()
-
-	ops := t.issueOpsService()
-
-	switch action {
-	case "sync-checklist", "retry-sync-checklist":
-		task, _, found := t.resolveHermesIssueTask(key, projectDir, issueNumber)
-		if found && strings.TrimSpace(task.ProjectDir) != "" {
-			projectDir = task.ProjectDir
-		}
-		if !found || len(task.Plan) == 0 {
-			t.answerCallbackQuery(queryID, "❌ 找不到可同步的 Hermes task")
-			return
-		}
-		result, err := ops.SyncChecklist(ctx, issueops.SyncChecklistRequest{
-			ProjectDir:  projectDir,
-			IssueNumber: issueNumber,
-			SubTasks:    task.Plan,
-		})
-		if err != nil || (result.Recovery != nil && result.Recovery.State == hermes.IssueStateBlocked) {
-			t.answerCallbackQuery(queryID, "⛔ 同步 checklist 失敗，已轉入 blocked")
-			if result.Recovery != nil {
-				t.sendIssueOpsRecoveryMessage(key, issueNumber, result.Recovery, result.Notes)
-			} else {
-				t.send(key, fmt.Sprintf("⚠️ Issue #%d checklist 同步失敗：%v", issueNumber, err))
-			}
-			return
-		}
-		if action == "retry-sync-checklist" {
-			t.answerCallbackQuery(queryID, "🔁 已重試同步 checklist")
-		} else {
-			t.answerCallbackQuery(queryID, "✅ 已同步 checklist")
-		}
-		if len(result.Notes) > 0 {
-			t.send(key, strings.Join(result.Notes, "\n"))
-		}
-		t.sendHermesIssueReconciliation(ctx, key, hermes.TaskState{
-			ProjectDir:        projectDir,
-			GithubIssueNumber: issueNumber,
-		})
-	case "revalidate", "retry-blocked":
-		ack := "✅ 已重新驗證"
-		if action == "retry-blocked" {
-			ack = "🔁 已重試 blocked 狀態"
-		}
-		t.answerCallbackQuery(queryID, ack)
-		t.sendHermesIssueReconciliation(ctx, key, hermes.TaskState{
-			ProjectDir:        projectDir,
-			GithubIssueNumber: issueNumber,
-		})
-	case "replan":
-		issue, err := ops.LoadIssue(ctx, projectDir, issueNumber)
-		if err != nil {
-			t.answerCallbackQuery(queryID, "❌ 無法重新讀取 issue")
-			return
-		}
-		goal := hermes.BuildGoalFromIssue(issue)
-		ghCfg := GithubIntegrationConfig{}
-		if t.config != nil {
-			ghCfg = t.config.Hermes.GithubIntegration
-		}
-		t.answerCallbackQuery(queryID, "🔄 已開始重新規劃")
-		go t.startHermesTaskWithIssueTier(key, goal, projectDir, issueNumber, HermesBudgetConfig{}, ghCfg, t.hermesTierFor(key))
-	case "close", "retry-close":
-		readiness, err := ops.CloseIssue(ctx, issueops.CloseIssueRequest{
-			AssessCloseReadinessRequest: issueops.AssessCloseReadinessRequest{
-				ProjectDir:  projectDir,
-				IssueNumber: issueNumber,
-				RequiredCloseLabel: func() string {
-					if t.config != nil {
-						return t.config.Hermes.GithubIntegration.AutoCloseLabel
-					}
-					return ""
-				}(),
-				ReviewAccepted:   true,
-				ValidationPassed: true,
-			},
-		})
-		if err != nil || (readiness.Recovery != nil && readiness.Recovery.State == hermes.IssueStateBlocked) {
-			t.answerCallbackQuery(queryID, "⛔ 關閉 issue 失敗，已轉入 blocked")
-			if readiness.Recovery != nil {
-				t.sendIssueOpsRecoveryMessage(key, issueNumber, readiness.Recovery, readiness.Notes)
-			} else {
-				t.send(key, fmt.Sprintf("⚠️ Issue #%d 關閉失敗：%v", issueNumber, err))
-			}
-			return
-		}
-		if action == "retry-close" {
-			t.answerCallbackQuery(queryID, "🔁 已重試關閉 issue")
-		} else if readiness.Closed {
-			t.answerCallbackQuery(queryID, "✅ 已關閉 issue")
-		} else {
-			t.answerCallbackQuery(queryID, "ℹ️ 尚未符合自動關閉條件")
-		}
-		t.sendHermesIssueReconciliation(ctx, key, hermes.TaskState{
-			ProjectDir:        projectDir,
-			GithubIssueNumber: issueNumber,
-		})
-	default:
-		t.answerCallbackQuery(queryID, "❌ 未知的 IssueOps 操作")
-	}
-}
-
-func (t *TelegramBot) handleRetryConfirmCallback(key chatKey, queryID, data string) {
-	parts := strings.Split(data, ":")
-	if len(parts) < 3 {
-		t.answerCallbackQuery(queryID, "無法辨識 retry 操作")
-		return
-	}
-	switch parts[2] {
-	case "lowest":
-		if len(parts) != 4 {
-			t.answerCallbackQuery(queryID, "缺少 task id")
-			return
-		}
-		t.answerCallbackQuery(queryID, "請確認 retry")
-		t.sendRetryConfirmation(key, "lowest", parts[3], 0)
-	case "all":
-		if len(parts) != 4 {
-			t.answerCallbackQuery(queryID, "缺少 task id")
-			return
-		}
-		t.answerCallbackQuery(queryID, "請確認 retry all")
-		t.sendRetryConfirmation(key, "all", parts[3], 0)
-	case "index":
-		if len(parts) != 5 {
-			t.answerCallbackQuery(queryID, "缺少 sub-task 編號")
-			return
-		}
-		idx, err := strconv.Atoi(parts[4])
-		if err != nil || idx <= 0 {
-			t.answerCallbackQuery(queryID, "sub-task 編號無效")
-			return
-		}
-		t.answerCallbackQuery(queryID, "請確認 retry")
-		t.sendRetryConfirmation(key, "index", parts[3], idx)
-	default:
-		t.answerCallbackQuery(queryID, "無法辨識 retry 操作")
-	}
-}
-
-func (t *TelegramBot) handleRetryRunCallback(key chatKey, queryID, data string) {
-	parts := strings.Split(data, ":")
-	if len(parts) < 3 {
-		t.answerCallbackQuery(queryID, "無法辨識 retry 操作")
-		return
-	}
-	t.answerCallbackQuery(queryID, "開始 retry")
-	switch parts[2] {
-	case "latest":
-		t.handleRetryCommand(key, []string{"/retry", "latest"})
-	case "lowest":
-		if len(parts) == 4 {
-			t.handleRetryCommand(key, []string{"/retry", parts[3]})
-		}
-	case "all":
-		if len(parts) == 4 {
-			t.handleRetryCommand(key, []string{"/retry", parts[3], "all-failed"})
-		}
-	case "index":
-		if len(parts) == 5 {
-			t.handleRetryCommand(key, []string{"/retry", parts[3], parts[4]})
-		}
-	default:
-		t.answerCallbackQuery(queryID, "無法辨識 retry 操作")
-	}
-}
-
-func parseHermesCallbackData(data string) (mode string, taskID string, ok bool) {
-	if data == "hermes:cancel" {
-		return "cancel", "", true
-	}
-	if strings.HasPrefix(data, "hermes:issue-restart:") {
-		rest := strings.TrimPrefix(data, "hermes:issue-restart:")
-		issueID, tier, _ := strings.Cut(rest, ":")
-		if strings.TrimSpace(issueID) == "" {
-			return "", "", false
-		}
-		if tier != "" {
-			return "issue-restart:" + tier, issueID, true
-		}
-		return "issue-restart", issueID, true
-	}
-	if strings.HasPrefix(data, "hermes:issue:") {
-		rest := strings.TrimPrefix(data, "hermes:issue:")
-		issueID, tier, _ := strings.Cut(rest, ":")
-		if strings.TrimSpace(issueID) == "" {
-			return "", "", false
-		}
-		if tier != "" {
-			return "issue:" + tier, issueID, true
-		}
-		return "issue", issueID, true
-	}
-	mode, taskID, found := strings.Cut(strings.TrimPrefix(data, "hermes:"), ":")
-	if !found || taskID == "" {
-		return "", "", false
-	}
-	switch mode {
-	case "continue", "replan":
-		return mode, taskID, true
-	default:
-		return "", "", false
-	}
-}
-
-// hermesFailureDecisionTimeout is how long the engine waits for an operator
-// click before falling back to skip. Keep generous; the operator may need to
-// open another window to read the diagnostic.
-const hermesFailureDecisionTimeout = 10 * time.Minute
-
-func hermesStartViaGraph() bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv("ALICE_HERMES_START_VIA_GRAPH")))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
-}
-
-// makeHermesFailureDecisionCallback returns the OnSubTaskFailurePause hook
-// passed to PlanExecuteConfig. It posts an inline-button message describing
-// the failure and blocks until the operator clicks one of the buttons or the
-// timeout expires.
-func (t *TelegramBot) makeHermesFailureDecisionCallback(key chatKey, ch chan appengine.FailurePauseChoice) func(ctx context.Context, idx, total int, sub hermes.SubTask, errText string, kind hermes.FailureKind) appengine.FailurePauseChoice {
-	return func(ctx context.Context, idx, total int, sub hermes.SubTask, errText string, kind hermes.FailureKind) appengine.FailurePauseChoice {
-		// Drain stale signals from a prior pause before announcing this one.
-		select {
-		case <-ch:
-		default:
-		}
-
-		t.hermesMu.Lock()
-		hc, ok := t.hermesCoords[key]
-		if ok {
-			hc.failureCtx = &failurePauseCtx{
-				taskID:  hc.coord.TaskID(),
-				idx:     idx,
-				total:   total,
-				subDesc: sub.Description,
-				errText: errText,
-			}
-			hc.awaitingFailureHint = false
-		}
-		t.hermesMu.Unlock()
-
-		taskID := ""
-		if ok {
-			taskID = hc.coord.TaskID()
-		}
-
-		header := fmt.Sprintf("⏸ 子任務 %d/%d 失敗（%s）— 請選擇下一步", idx+1, total, kind.Label())
-		body := strings.TrimSpace(sub.Description)
-		if body != "" {
-			header += "\n• " + body
-		}
-		if detail := formatHermesFailurePauseDetail(errText); detail != "" {
-			header += "\n\n" + detail
-		}
-		header += "\n\n按鈕無回應 10 分鐘將自動跳過。"
-
-		btns := [][]map[string]interface{}{
-			{
-				{"text": "🔁 重試", "callback_data": fmt.Sprintf("hermes:fail:retry:%s:%d", taskID, idx)},
-				{"text": "✏️ 修正方向", "callback_data": fmt.Sprintf("hermes:fail:adjust:%s:%d", taskID, idx)},
-			},
-			{
-				{"text": "💬 自訂提示", "callback_data": fmt.Sprintf("hermes:fail:hint:%s:%d", taskID, idx)},
-			},
-			{
-				{"text": "⏭ 跳過", "callback_data": fmt.Sprintf("hermes:fail:skip:%s:%d", taskID, idx)},
-				{"text": "🛑 中止任務", "callback_data": fmt.Sprintf("hermes:fail:abort:%s:%d", taskID, idx)},
-			},
-		}
-		t.sendMenuMessage(key, header, btns)
-
-		clear := func() bool {
-			return t.clearHermesFailurePause(key, taskID, idx)
-		}
-
-		select {
-		case choice := <-ch:
-			clear()
-			return choice
-		case <-time.After(hermesFailureDecisionTimeout):
-			if !clear() {
-				log.Printf("[hermes] stale failure pause timeout suppressed (key chat=%d thread=%d task=%s idx=%d)",
-					key.chatID, key.threadID, taskID, idx)
-				recordHermesInteractionGate(context.Background(), key, "stale_timeout_suppressed", "pause_context_changed", taskID, idx, total, sub.Description)
-				return appengine.FailurePauseChoice{Decision: appengine.FailureSkip}
-			}
-			log.Printf("[hermes] failure pause timeout (key chat=%d thread=%d task=%s idx=%d) — defaulting to skip",
-				key.chatID, key.threadID, taskID, idx)
-			recordHermesInteractionGate(context.Background(), key, "timeout_skip", "failure_pause_timeout", taskID, idx, total, sub.Description)
-			t.send(key, fmt.Sprintf("⏰ 失敗暫停超時（%v），自動跳過子任務 %d/%d。", hermesFailureDecisionTimeout, idx+1, total))
-			return appengine.FailurePauseChoice{Decision: appengine.FailureSkip}
-		case <-ctx.Done():
-			clear()
-			return appengine.FailurePauseChoice{Decision: appengine.FailureSkip}
-		}
-	}
-}
-
-// makeHermesGraphInterruptCallback is the non-blocking graph-native pause UI.
-// The graph Walker has already halted after committing an Interrupt; button
-// clicks resolve the snapshot and re-enter ResumeViaGraph instead of sending to
-// the legacy in-process failureDecisionCh.
-func (t *TelegramBot) makeHermesGraphInterruptCallback(key chatKey) func(ctx context.Context, state hermes.TaskState, interrupt hermes.HermesInterrupt) {
-	return func(ctx context.Context, state hermes.TaskState, interrupt hermes.HermesInterrupt) {
-		taskID := strings.TrimSpace(state.ID)
-		if taskID == "" {
-			return
-		}
-		// Budget interrupts have a separate UX (just "continue / abort"
-		// rather than retry/skip/adjust). Routed via the same
-		// ApplyInterruptResolution path so the persisted snapshot stays
-		// the source of truth for resumption. See #171 Class B follow-up.
-		if interrupt.Reason == "budget_exceeded" {
-			t.handleHermesBudgetInterrupt(key, state, interrupt)
-			return
-		}
-		idx, total, subDesc, errText := hermesGraphInterruptDetails(interrupt)
-		if total <= 0 {
-			total = len(state.Plan)
-		}
-		if idx < 0 {
-			idx = state.CurrentIdx
-		}
-		if subDesc == "" && idx >= 0 && idx < len(state.Plan) {
-			subDesc = state.Plan[idx].Description
-		}
-		kind := hermes.ClassifyFailure(errText)
-		if kind == hermes.FailureUnknown {
-			kind = hermes.FailureContent
-		}
-
-		t.hermesMu.Lock()
-		if hc := t.hermesCoords[key]; hc != nil {
-			hc.failureCtx = &failurePauseCtx{
-				taskID:  taskID,
-				idx:     idx,
-				total:   total,
-				subDesc: subDesc,
-				errText: errText,
-				graph:   true,
-			}
-			hc.awaitingFailureHint = false
-		}
-		t.hermesMu.Unlock()
-
-		header := fmt.Sprintf("⏸ 子任務 %d/%d 失敗（%s）— 請選擇下一步", idx+1, total, kind.Label())
-		if subDesc != "" {
-			header += "\n• " + strings.TrimSpace(subDesc)
-		}
-		if detail := formatHermesFailurePauseDetail(errText); detail != "" {
-			header += "\n\n" + detail
-		}
-		header += "\n\n此暫停已寫入 snapshot；按 retry / skip / abort 後會從同一個任務繼續。"
-
-		btns := [][]map[string]interface{}{
-			{
-				{"text": "🔁 重試", "callback_data": fmt.Sprintf("hermes:fail:retry:%s:%d", taskID, idx)},
-			},
-			{
-				{"text": "⏭ 跳過", "callback_data": fmt.Sprintf("hermes:fail:skip:%s:%d", taskID, idx)},
-				{"text": "🛑 中止任務", "callback_data": fmt.Sprintf("hermes:fail:abort:%s:%d", taskID, idx)},
-			},
-		}
-		t.sendMenuMessage(key, header, btns)
-
-		if ctx != nil && ctx.Err() != nil {
-			log.Printf("[hermes.graph] interrupt callback context ended after menu task=%s: %v", taskID, ctx.Err())
-		}
-	}
-}
-
-// handleHermesBudgetInterrupt posts the budget-exceeded UX (continue /
-// abort) and registers a per-key context so the click handler knows
-// which task to resolve. Mirrors the failure-pause path but with a
-// different button set + callback prefix.
-func (t *TelegramBot) handleHermesBudgetInterrupt(key chatKey, state hermes.TaskState, interrupt hermes.HermesInterrupt) {
-	taskID := strings.TrimSpace(state.ID)
-	if taskID == "" {
-		return
-	}
-	used, max := budgetTokensFromInterrupt(interrupt)
-	header := "💸 Hermes 預算上限觸發 — 任務已暫停"
-	if max > 0 {
-		header += fmt.Sprintf("\n• tokens 用量：%d / %d", used, max)
-	} else if used > 0 {
-		header += fmt.Sprintf("\n• tokens 用量：%d", used)
-	}
-	header += "\n\n按「繼續」會重置 wallclock 計時器後繼續執行（已用 token 不會清零；若 token 上限是主因，下一輪仍會再次暫停）。按「中止」直接結束此任務。"
-
-	btns := [][]map[string]interface{}{
-		{
-			{"text": "▶️ 繼續", "callback_data": fmt.Sprintf("hermes:budget:continue:%s", taskID)},
-			{"text": "🛑 中止任務", "callback_data": fmt.Sprintf("hermes:budget:abort:%s", taskID)},
-		},
-	}
-	t.sendMenuMessage(key, header, btns)
-}
-
-func budgetTokensFromInterrupt(interrupt hermes.HermesInterrupt) (used, max int) {
-	payload, ok := interrupt.Payload.(map[string]any)
-	if !ok {
-		return 0, 0
-	}
-	used = intFromInterruptPayload(payload["used_tokens"])
-	max = intFromInterruptPayload(payload["max_total_tokens"])
-	return used, max
-}
-
-// makeHermesPlanningErrorCallback formats friendly Telegram messages
-// for typed planner errors and posts an action menu (open issue /
-// cancel). Mirrors handlePlanningError from the legacy run() path,
-// extended with structured buttons because retry alone does not help
-// when the issue body is the source of the rejection.
-func (t *TelegramBot) makeHermesPlanningErrorCallback(key chatKey, issueNumber int) func(ctx context.Context, taskID string, err error) {
-	return func(_ context.Context, taskID string, err error) {
-		if err == nil {
-			return
-		}
-		var (
-			checklist *hermes.ErrPlannerChecklistViolation
-			jfail     *hermes.ErrPlannerJSONFailed
-			empty     *hermes.ErrPlannerEmptyPlan
-			header    string
-			detail    string
-		)
-		switch {
-		case errors.As(err, &checklist):
-			header = "❌ Hermes Planner 拒絕計畫：checklist 覆蓋不足"
-			detail = fmt.Sprintf(
-				"以下 acceptance item(s) 沒有任何 sub-task 在 checklist_item_ids 裡 claim：\n• %s\n\n"+
-					"重試 LLM 通常無效（會繼續漏 cover）。請打開 Issue 把不需要的 item 勾掉或刪掉，再重發 /hermes。",
-				strings.Join(checklist.Missing, ", "),
-			)
-		case errors.As(err, &empty):
-			header = "❌ Hermes Planner：判定無事可做"
-			detail = "Planner 連續多次回空計畫 — 目標可能已完成或無法拆解。請檢查目前程式碼／Issue 狀態，必要時手動關閉 Issue 或調整目標描述。"
-		case errors.As(err, &jfail):
-			header = "❌ Hermes Planner JSON 解析失敗"
-			detail = "Planner 多次重試後仍無法產出合法 JSON，已降級終止。可重發 /hermes 重試（這類錯誤通常是暫時性的）。"
-		default:
-			return // not actionable; OnError already fired
-		}
-
-		body := header
-		if detail != "" {
-			body += "\n\n" + detail
-		}
-		if taskID != "" {
-			body += "\n\n📌 任務：" + shortHermesTaskID(taskID)
-		}
-
-		btns := [][]map[string]interface{}{}
-		row := []map[string]interface{}{}
-		if issueNumber > 0 {
-			if repoURL, repoErr := resolveGitHubRepoURL(""); repoErr == nil && repoURL != "" {
-				row = append(row, map[string]interface{}{
-					"text": fmt.Sprintf("📝 開啟 Issue #%d", issueNumber),
-					"url":  fmt.Sprintf("%s/issues/%d", strings.TrimRight(repoURL, "/"), issueNumber),
-				})
-			}
-		}
-		row = append(row, map[string]interface{}{
-			"text":          "🛑 取消任務",
-			"callback_data": "hermes:cancel",
-		})
-		btns = append(btns, row)
-		t.sendMenuMessage(key, body, btns)
-	}
-}
-
-func hermesGraphInterruptDetails(interrupt hermes.HermesInterrupt) (idx, total int, subDesc, errText string) {
-	idx = -1
-	if got, ok := hermes.InterruptSubTaskIdx(&interrupt); ok {
-		idx = got
-	}
-	payload, ok := interrupt.Payload.(map[string]any)
-	if !ok {
-		return idx, 0, "", ""
-	}
-	total = intFromInterruptPayload(payload["total"])
-	if s, ok := payload["sub_task_desc"].(string); ok {
-		subDesc = strings.TrimSpace(s)
-	}
-	if s, ok := payload["error_text"].(string); ok {
-		errText = strings.TrimSpace(s)
-	}
-	return idx, total, subDesc, errText
-}
-
-func intFromInterruptPayload(v any) int {
-	switch n := v.(type) {
-	case int:
-		return n
-	case int64:
-		return int(n)
-	case float64:
-		return int(n)
-	default:
-		return 0
-	}
-}
-
-// NotifyPendingPause sends a Telegram reminder for one task whose pause
-// outlived a previous alice process. Implements the pauseReminder
-// interface so RemindPendingPauses can be unit-tested without coupling
-// to the bot's full state.
-func (t *TelegramBot) NotifyPendingPause(chatID int64, threadID int, taskID string, interrupt hermes.HermesInterrupt, pausedFor time.Duration) {
-	if t == nil {
-		return
-	}
-	displayTaskID := shortHermesTaskID(taskID)
-	subTaskRef := ""
-	if payload, ok := interrupt.Payload.(map[string]any); ok {
-		// JSON unmarshalling produces float64 for numeric fields.
-		if v, ok := payload["sub_task_idx"].(float64); ok {
-			total := 0
-			if tv, ok := payload["total"].(float64); ok {
-				total = int(tv)
-			}
-			if total > 0 {
-				subTaskRef = fmt.Sprintf("（子任務 %d/%d）", int(v)+1, total)
-			} else {
-				subTaskRef = fmt.Sprintf("（子任務 %d）", int(v)+1)
-			}
-		}
-	}
-	body := fmt.Sprintf(
-		"♻️ 偵測到 Hermes 任務 %s%s 仍在等待您的決定（已暫停 %s）。\n\n"+
-			"請點選原本的 retry / skip / abort 按鈕，或使用 /resume %s retry|skip|abort 直接套用。",
-		displayTaskID, subTaskRef, pausedFor, displayTaskID,
-	)
-	t.send(chatKey{chatID: chatID, threadID: threadID}, body)
-}
-
-// tryColdRestartFailureResume applies the operator's pause decision to
-// the task's snapshot and (for retry / skip) reconstructs a Hermes
-// coordinator to continue execution. Returns true when the click was
-// handled — the caller should not fall through to the legacy "task not
-// waiting" answer.
-//
-// Resolution semantics (#169 slice β2):
-//
-//	abort → MarkTaskFailedDurable; no coord rebuild.
-//	skip  → snapshot marks plan[idx]=Skipped + advances CurrentIdx +
-//	        ClearInterrupt; coord rebuild + RunFromState picks up at
-//	        idx+1 without re-running the failed sub-task.
-//	retry → ClearInterrupt; coord rebuild + RunFromState re-executes
-//	        the still-in-progress sub-task (operator's intent).
-//
-// Constraints:
-//   - "adjust" / "hint" paths are not supported because post-restart
-//     custom hint state is not persisted.
-//   - Resume only proceeds when the task's latest snapshot carries an
-//     Interrupt — otherwise the task is not actually paused and we
-//     decline rather than risk re-running an already-finished task.
-//   - The chatKey from the click must match the task's recorded
-//     chat_id / thread_id. Cross-chat resume is not supported.
-func (t *TelegramBot) tryColdRestartFailureResume(key chatKey, queryID, action, taskIDStr, idxStr string) bool {
-	if action == "adjust" || action == "hint" {
-		return false
-	}
-	if t.taskSvc == nil {
-		return false
-	}
-	state, err := t.taskSvc.GetTask(taskIDStr)
-	if err != nil || state.IsTerminal() {
-		return false
-	}
-	if state.ChatID != key.chatID || state.ThreadID != key.threadID {
-		return false
-	}
-	snap, ok := t.taskSvc.LatestSnapshot(taskIDStr)
-	if !ok || snap.State.Interrupt == nil {
-		return false
-	}
-	if !coldResumeButtonMatchesInterrupt(idxStr, snap.State.Interrupt) {
-		t.answerCallbackQuery(queryID, "❌ 此暫停已失效")
-		return true
-	}
-
-	var resolution hermes.InterruptResolution
-	var ack string
-	switch action {
-	case "retry":
-		resolution = hermes.InterruptResolutionRetry
-		ack = "🔁 alice 重啟後 resume — 重試中"
-	case "skip":
-		resolution = hermes.InterruptResolutionSkip
-		ack = "⏭ alice 重啟後 resume — 跳過此 sub-task"
-	case "abort":
-		resolution = hermes.InterruptResolutionAbort
-		ack = "🛑 alice 重啟後 resume — 中止任務"
-	default:
-		return false
-	}
-
-	supported, err := t.taskSvc.ApplyInterruptResolution(taskIDStr, resolution)
-	if err != nil {
-		log.Printf("[hermes.resume] apply resolution task=%s decision=%s: %v", taskIDStr, resolution, err)
-		t.answerCallbackQuery(queryID, "❌ 重啟後恢復失敗，請查看 log")
-		return true
-	}
-	if !supported {
-		// Storage doesn't support snapshot-driven resolution; decline so
-		// the caller's existing fallback message fires.
-		return false
-	}
-
-	log.Printf("[hermes.resume] cold-restart failure resume task=%s decision=%s chat=%d thread=%d",
-		taskIDStr, resolution, state.ChatID, state.ThreadID)
-	t.answerCallbackQuery(queryID, ack)
-
-	if resolution == hermes.InterruptResolutionAbort {
-		t.send(key, fmt.Sprintf("🛑 alice 重啟後 resume：任務 %s 已中止。", shortHermesTaskID(taskIDStr)))
-		return true
-	}
-
-	t.send(key, fmt.Sprintf("♻️ 偵測到 alice 重啟後仍在等待的暫停 (任務 %s)，重新建立 Hermes 協調器並套用您的選擇 (%s)。", shortHermesTaskID(taskIDStr), resolution))
-
-	// Re-fetch state — the resolution commit changed plan + interrupt;
-	// RunFromState needs the post-resolution state to pick up correctly.
-	resumeState, err := t.taskSvc.GetTask(taskIDStr)
-	if err != nil {
-		log.Printf("[hermes.resume] reload task after resolution failed: %v", err)
-		return true
-	}
-	go t.runTrackedJob("hermes.cold_resume", func() {
-		t.startHermesTaskWithIssueTierFromState(
-			key,
-			resumeState.Goal,
-			resumeState.ProjectDir,
-			resumeState.GithubIssueNumber,
-			HermesBudgetConfig{},
-			t.config.Hermes.GithubIntegration,
-			t.hermesTierFor(key),
-			&resumeState,
-		)
-	})
-	return true
-}
-
-// handleHermesBudgetDecisionCallback processes a click on the
-// budget-exceeded Continue / Abort buttons. callback_data is
-// "hermes:budget:<continue|abort>:<taskID>". Returns true when the
-// callback was a budget decision so the dispatcher knows to stop.
-//
-// "continue" routes through ApplyInterruptResolutionRetry which, for
-// budget interrupts, clears the Interrupt + resets BudgetStartedAt +
-// commits at the snapshot's ResumeStep. "abort" goes through the same
-// ApplyInterruptResolutionAbort path the failure-pause flow uses.
-//
-// After the resolution is applied, we re-launch Hermes via
-// startHermesTaskWithIssueTierFromState — same path
-// tryColdRestartFailureResume uses, so live and post-restart budget
-// resumes share one re-entry point.
-func (t *TelegramBot) handleHermesBudgetDecisionCallback(key chatKey, queryID, data string) bool {
-	if !strings.HasPrefix(data, "hermes:budget:") {
-		return false
-	}
-	rest := strings.TrimPrefix(data, "hermes:budget:")
-	parts := strings.SplitN(rest, ":", 2)
-	if len(parts) < 2 {
-		t.answerCallbackQuery(queryID, "❌ 無效的預算按鈕")
-		return true
-	}
-	action, taskID := parts[0], parts[1]
-
-	if t.taskSvc == nil {
-		t.answerCallbackQuery(queryID, "❌ task service unavailable")
-		return true
-	}
-	state, err := t.taskSvc.GetTask(taskID)
-	if err != nil || state.IsTerminal() {
-		t.answerCallbackQuery(queryID, "❌ 任務已結束或不存在")
-		return true
-	}
-	if state.ChatID != key.chatID || state.ThreadID != key.threadID {
-		t.answerCallbackQuery(queryID, "❌ 此預算暫停屬於其他對話")
-		return true
-	}
-	snap, ok := t.taskSvc.LatestSnapshot(taskID)
-	if !ok || snap.State.Interrupt == nil || snap.State.Interrupt.Reason != "budget_exceeded" {
-		t.answerCallbackQuery(queryID, "❌ 此預算暫停已失效")
-		return true
-	}
-
-	var resolution hermes.InterruptResolution
-	var ack string
-	switch action {
-	case "continue":
-		resolution = hermes.InterruptResolutionRetry
-		ack = "▶️ 重置 wallclock 後繼續"
-	case "abort":
-		resolution = hermes.InterruptResolutionAbort
-		ack = "🛑 已中止任務"
-	default:
-		t.answerCallbackQuery(queryID, "❌ 不支援的預算決策")
-		return true
-	}
-
-	supported, err := t.taskSvc.ApplyInterruptResolution(taskID, resolution)
-	if err != nil {
-		log.Printf("[hermes.budget] apply resolution task=%s decision=%s: %v", taskID, resolution, err)
-		t.answerCallbackQuery(queryID, "❌ 套用決策失敗，請查看 log")
-		return true
-	}
-	if !supported {
-		t.answerCallbackQuery(queryID, "❌ task store 不支援 snapshot resolution")
-		return true
-	}
-	t.answerCallbackQuery(queryID, ack)
-
-	if resolution == hermes.InterruptResolutionAbort {
-		t.send(key, fmt.Sprintf("🛑 任務 %s 已中止。", shortHermesTaskID(taskID)))
-		return true
-	}
-
-	resumeState, err := t.taskSvc.GetTask(taskID)
-	if err != nil {
-		log.Printf("[hermes.budget] reload task after resolution failed: %v", err)
-		return true
-	}
-	t.send(key, fmt.Sprintf("▶️ 任務 %s — 預算已重置，繼續執行。", shortHermesTaskID(taskID)))
-	go t.runTrackedJob("hermes.budget_resume", func() {
-		t.startHermesTaskWithIssueTierFromState(
-			key,
-			resumeState.Goal,
-			resumeState.ProjectDir,
-			resumeState.GithubIssueNumber,
-			HermesBudgetConfig{},
-			t.config.Hermes.GithubIntegration,
-			t.hermesTierFor(key),
-			&resumeState,
-		)
-	})
-	return true
-}
-
-func formatHermesFailurePauseDetail(errText string) string {
-	errText = strings.TrimSpace(errText)
-	if errText == "" {
-		return ""
-	}
-	if !strings.HasPrefix(errText, "PARTIAL") {
-		return "錯誤摘要：\n" + truncateRunesText(errText, 700)
-	}
-
-	body := strings.TrimSpace(strings.TrimPrefix(errText, "PARTIAL"))
-	executorText := body
-	reviewerText := ""
-	if before, after, ok := strings.Cut(body, "\n\nReviewer feedback:"); ok {
-		executorText = strings.TrimSpace(before)
-		reviewerText = strings.TrimSpace(after)
-	}
-
-	parts := make([]string, 0, 2)
-	if reviewerText != "" {
-		parts = append(parts, "Reviewer 擋下原因：\n"+truncateRunesText(reviewerText, 900))
-	}
-	if executorText != "" {
-		parts = append(parts, "Executor 摘要：\n"+truncateRunesText(extractHermesExecutorSummary(executorText), 500))
-	}
-	if len(parts) == 0 {
-		return "部分完成，但缺少可顯示的 reviewer/executor 摘要。"
-	}
-	return strings.Join(parts, "\n\n")
-}
-
-func hermesFailureAutoRetryHint(errText string) string {
-	errText = strings.TrimSpace(errText)
-	if errText == "" {
-		return ""
-	}
-	reviewerText := ""
-	if _, after, ok := strings.Cut(errText, "\n\nReviewer feedback:"); ok {
-		reviewerText = strings.TrimSpace(after)
-	} else if strings.HasPrefix(errText, "Reviewer feedback:") {
-		reviewerText = strings.TrimSpace(strings.TrimPrefix(errText, "Reviewer feedback:"))
-	}
-	if reviewerText != "" {
-		return "請依照以下 reviewer feedback 修正後重新執行；不要只重述，必須補足 reviewer 指出的缺口與驗證證據：\n" +
-			truncateRunesText(reviewerText, 1400)
-	}
-	return "請依照以下失敗摘要修正後重新執行，補足缺口與驗證證據：\n" + truncateRunesText(errText, 1400)
-}
-
-func extractHermesExecutorSummary(text string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return ""
-	}
-
-	for _, marker := range []string{"**結論**", "結論：", "結論:"} {
-		if idx := strings.Index(text, marker); idx >= 0 {
-			summary := strings.TrimSpace(text[idx:])
-			for _, endMarker := range []string{"\n\n**證據**", "\n\n證據：", "\n\n證據:"} {
-				if end := strings.Index(summary, endMarker); end >= 0 {
-					return strings.TrimSpace(summary[:end])
-				}
-			}
-			return summary
-		}
-	}
-	return text
-}
-
-func (t *TelegramBot) clearHermesFailurePause(key chatKey, taskID string, idx int) bool {
-	t.hermesMu.Lock()
-	defer t.hermesMu.Unlock()
-	hc := t.hermesCoords[key]
-	if hc == nil || hc.failureCtx == nil {
-		return false
-	}
-	if hc.failureCtx.taskID != taskID || hc.failureCtx.idx != idx {
-		return false
-	}
-	hc.failureCtx = nil
-	hc.awaitingFailureHint = false
-	hc.awaitingHintCancelTime = time.Time{}
-	return true
-}
-
-// handleHermesFailureDecisionCallback processes a click on one of the
-// retry/skip/abort buttons posted during a failure pause. data shape:
-// "hermes:fail:<retry|skip|abort>:<taskID>:<idx>". Returns true when the
-// callback was for a failure-decision button so the caller can short-circuit.
-func (t *TelegramBot) handleHermesFailureDecisionCallback(key chatKey, queryID, data string) bool {
-	if !strings.HasPrefix(data, "hermes:fail:") {
-		return false
-	}
-	rest := strings.TrimPrefix(data, "hermes:fail:")
-	parts := strings.SplitN(rest, ":", 3)
-	if len(parts) < 3 {
-		t.answerCallbackQuery(queryID, "❌ 無效的失敗按鈕")
-		return true
-	}
-	action, taskID, idxStr := parts[0], parts[1], parts[2]
-
-	t.hermesMu.Lock()
-	hc, ok := t.hermesCoords[key]
-	t.hermesMu.Unlock()
-	if !ok || hc == nil || hc.failureDecisionCh == nil {
-		// Cold-restart resume (#169 β1): no live coord because alice was
-		// restarted while the task was paused. If the latest snapshot
-		// still carries a HermesInterrupt, reconstruct the Hermes coord
-		// with the operator's choice pre-loaded into the failure
-		// decision channel so RunFromState consumes it on the first
-		// pause encounter.
-		if t.tryColdRestartFailureResume(key, queryID, action, taskID, idxStr) {
-			return true
-		}
-		// β6: adjust / hint paths are not supported in cold-restart because they
-		// would require persisting awaiting-hint state across restarts.
-		// Surface a clear message instead of the generic "task not
-		// waiting" so the operator knows what to do.
-		if action == "adjust" || action == "hint" {
-			t.answerCallbackQuery(queryID, "✏️ alice 重啟後提示路徑暫不支援")
-			t.send(key, fmt.Sprintf("⚠️ alice 重啟後，提示式重試路徑暫不支援。請改點 retry / skip / abort，或使用 /resume %s retry|skip|abort 直接套用。", shortHermesTaskID(taskID)))
-			return true
-		}
-		t.answerCallbackQuery(queryID, "❌ 任務不在等待狀態")
-		return true
-	}
-	if hc.failureCtx == nil || hc.failureCtx.taskID != taskID {
-		t.answerCallbackQuery(queryID, "❌ 此暫停已失效")
-		return true
-	}
-	if idxStr != fmt.Sprintf("%d", hc.failureCtx.idx) {
-		t.answerCallbackQuery(queryID, "❌ 此暫停已失效")
-		return true
-	}
-	idx := hc.failureCtx.idx
-	total := hc.failureCtx.total
-	subDesc := strings.TrimSpace(hc.failureCtx.subDesc)
-	graphPause := hc.failureCtx.graph
-
-	if graphPause {
-		if action == "adjust" || action == "hint" {
-			t.answerCallbackQuery(queryID, "✏️ graph 暫停暫不支援提示重試")
-			t.send(key, fmt.Sprintf("⚠️ graph-native 暫停目前先支援 retry / skip / abort。請改點上方按鈕，或使用 /resume %s retry|skip|abort。", shortHermesTaskID(taskID)))
-			return true
-		}
-		if t.tryColdRestartFailureResume(key, queryID, action, taskID, idxStr) {
-			t.clearHermesFailurePause(key, taskID, idx)
-			return true
-		}
-		t.answerCallbackQuery(queryID, "❌ 無法從 snapshot 繼續")
-		return true
-	}
-
-	if action == "adjust" {
-		hint := hermesFailureAutoRetryHint(hc.failureCtx.errText)
-		if hint == "" {
-			hint = "請依照上方 reviewer feedback 修正缺口，補足驗證與 traceability 後重新回報。"
-		}
-		visible := fmt.Sprintf("✏️ 已收到，將依 reviewer feedback 重新執行子任務 %d/%d。", idx+1, total)
-		if subDesc != "" {
-			visible += "\n• " + truncateRunesText(subDesc, 180)
-		}
-		select {
-		case hc.failureDecisionCh <- appengine.FailurePauseChoice{Decision: appengine.FailureRetry, Hint: hint}:
-			t.answerCallbackQuery(queryID, "✏️ 依 review 修正")
-			t.send(key, visible)
-		default:
-			t.answerCallbackQuery(queryID, "（已收到上一次選擇）")
-		}
-		return true
-	}
-
-	// "hint" parks the pause in awaiting-hint mode and waits for the next
-	// text message in this chat. The choice is not sent to the channel yet;
-	// trySignalHermesFailureHint forwards it once the operator replies.
-	if action == "hint" {
-		t.hermesMu.Lock()
-		hc.awaitingFailureHint = true
-		hc.awaitingHintCancelTime = time.Now().Add(hermesFailureDecisionTimeout)
-		t.hermesMu.Unlock()
-		t.answerCallbackQuery(queryID, "💬 請輸入自訂提示")
-		t.send(key, fmt.Sprintf("💬 請在這個 topic 輸入自訂提示一句話（10 分鐘內）。\n收到後會以此為提示重新執行子任務 #%d。", hc.failureCtx.idx+1))
-		return true
-	}
-
-	var decision appengine.FailureDecision
-	var ack string
-	var visible string
-	switch action {
-	case "retry":
-		decision = appengine.FailureRetry
-		ack = "🔁 重試中"
-		visible = fmt.Sprintf("🔁 已收到，正在重新執行子任務 %d/%d。", idx+1, total)
-	case "skip":
-		decision = appengine.FailureSkip
-		ack = "⏭ 跳過"
-		visible = fmt.Sprintf("⏭ 已收到，將跳過子任務 %d/%d 並繼續後續流程。", idx+1, total)
-	case "abort":
-		decision = appengine.FailureAbort
-		ack = "🛑 已中止"
-		visible = fmt.Sprintf("🛑 已收到，正在中止 Hermes 任務（停在子任務 %d/%d）。", idx+1, total)
-	default:
-		t.answerCallbackQuery(queryID, "❌ 未知操作")
-		return true
-	}
-	if subDesc != "" {
-		visible += "\n• " + truncateRunesText(subDesc, 180)
-	}
-
-	select {
-	case hc.failureDecisionCh <- appengine.FailurePauseChoice{Decision: decision}:
-		t.answerCallbackQuery(queryID, ack)
-		t.send(key, visible)
-	default:
-		// Channel full means a decision was already sent; ignore this click.
-		t.answerCallbackQuery(queryID, "（已收到上一次選擇）")
-	}
-	return true
-}
-
-func coldResumeButtonMatchesInterrupt(idxStr string, interrupt *hermes.HermesInterrupt) bool {
-	idxStr = strings.TrimSpace(idxStr)
-	if idxStr == "" {
-		return true
-	}
-	want, err := strconv.Atoi(idxStr)
-	if err != nil {
-		return false
-	}
-	got, ok := hermes.InterruptSubTaskIdx(interrupt)
-	return ok && got == want
-}
-
-// trySignalHermesFailureHint inspects an incoming text message and, when the
-// active Hermes coord is awaiting an operator hint after a "✏️ 修正方向"
-// click, forwards it as FailurePauseChoice{Retry, hint}. Returns true when
-// the message was consumed so handleMessage skips downstream routing.
-func (t *TelegramBot) trySignalHermesFailureHint(key chatKey, text string) bool {
-	t.hermesMu.RLock()
-	hc, ok := t.hermesCoords[key]
-	awaiting := ok && hc != nil && hc.awaitingFailureHint && hc.failureDecisionCh != nil
-	expired := awaiting && !hc.awaitingHintCancelTime.IsZero() && time.Now().After(hc.awaitingHintCancelTime)
-	t.hermesMu.RUnlock()
-	if expired {
-		t.hermesMu.Lock()
-		if current := t.hermesCoords[key]; current != nil {
-			current.awaitingFailureHint = false
-			current.awaitingHintCancelTime = time.Time{}
-		}
-		t.hermesMu.Unlock()
-		t.send(key, "✏️ 修正方向等待已逾時。請先使用上方 Hermes 失敗暫停按鈕選擇下一步，或用 /chat <內容> 明確切回一般對話。")
-		return true
-	}
-	if !ok || hc == nil || !hc.awaitingFailureHint || hc.failureDecisionCh == nil {
-		return false
-	}
-	hint := strings.TrimSpace(text)
-	if hint == "" {
-		return false
-	}
-
-	t.hermesMu.Lock()
-	hc.awaitingFailureHint = false
-	t.hermesMu.Unlock()
-
-	select {
-	case hc.failureDecisionCh <- appengine.FailurePauseChoice{Decision: appengine.FailureRetry, Hint: hint}:
-		t.send(key, fmt.Sprintf("✅ 已收到修正方向，將以下提示重新執行子任務：\n%s", truncateRunesText(hint, 280)))
-	default:
-		// Channel full → another decision raced ahead. Treat as no-op.
-	}
-	return true
 }
 
 func parseNormalChatBypass(text string) (string, bool) {
@@ -7576,128 +3150,6 @@ func parseNormalChatBypass(text string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimSpace(trimmed[len("/chat"):]), true
-}
-
-func (t *TelegramBot) tryBlockHermesFailurePauseText(key chatKey) bool {
-	taskID, idx, total, subDesc, ok := t.currentHermesFailurePause(key)
-	if !ok {
-		return false
-	}
-
-	recordHermesInteractionGate(context.Background(), key, "block_until_choice", "failure_pause_active", taskID, idx, total, subDesc)
-	displayID := taskID
-	if rs := []rune(displayID); len(rs) > 8 {
-		displayID = string(rs[:8])
-	}
-	msg := fmt.Sprintf("⏸ Hermes 任務 %s 目前停在子任務 %d/%d，正在等待你按上方按鈕選擇「重試 / 修正方向 / 跳過 / 中止」。", displayID, idx+1, total)
-	if strings.TrimSpace(subDesc) != "" {
-		msg += "\n• " + truncateRunesText(strings.TrimSpace(subDesc), 180)
-	}
-	msg += "\n\n這則文字沒有送進新的 Hermes 任務，避免跟暫停中的任務混在一起。若要改用一般對話，請輸入：\n/chat 你的問題"
-	t.send(key, msg)
-	return true
-}
-
-func (t *TelegramBot) currentHermesFailurePause(key chatKey) (taskID string, idx int, total int, subDesc string, ok bool) {
-	t.hermesMu.RLock()
-	defer t.hermesMu.RUnlock()
-	hc := t.hermesCoords[key]
-	if hc == nil || hc.failureCtx == nil || hc.failureDecisionCh == nil {
-		return "", 0, 0, "", false
-	}
-	return hc.failureCtx.taskID, hc.failureCtx.idx, hc.failureCtx.total, hc.failureCtx.subDesc, true
-}
-
-func truncateRunesText(s string, max int) string {
-	rs := []rune(s)
-	if len(rs) <= max {
-		return s
-	}
-	return string(rs[:max]) + "…"
-}
-
-func (t *TelegramBot) handleHermesCallback(key chatKey, queryID, data string) {
-	if t.handleHermesFailureDecisionCallback(key, queryID, data) {
-		return
-	}
-	if t.handleHermesBudgetDecisionCallback(key, queryID, data) {
-		return
-	}
-	mode, taskID, ok := parseHermesCallbackData(data)
-	if !ok {
-		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_unknown_operation", nil))
-		return
-	}
-	if mode == "cancel" {
-		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_cancelled", nil))
-		return
-	}
-	if strings.HasPrefix(mode, "issue") {
-		issueNumber, err := strconv.Atoi(taskID)
-		if err != nil || issueNumber <= 0 {
-			t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_invalid_issue_number", nil))
-			return
-		}
-		forceRestart := strings.HasPrefix(mode, "issue-restart")
-		tier := ""
-		if _, rawTier, found := strings.Cut(mode, ":"); found {
-			tier = rawTier
-		}
-		projectDir := t.getAgent(key).ProjectDir()
-		t.setHermesTier(key, tier)
-		if forceRestart {
-			t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_issue_restart_loading", map[string]string{"issueNum": fmt.Sprintf("%d", issueNumber)}))
-			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_restart_loading", map[string]string{"issueNum": fmt.Sprintf("%d", issueNumber)}))
-		} else {
-			t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_issue_loading", map[string]string{"issueNum": fmt.Sprintf("%d", issueNumber)}))
-			t.send(key, t.getLocalizedMessage(key.chatID, "hermes_issue_loading", map[string]string{"issueNum": fmt.Sprintf("%d", issueNumber)}))
-		}
-		go t.runTrackedJob("hermes.issue.callback", func() {
-			if forceRestart {
-				t.startHermesFreshFromIssue(key, issueNumber, projectDir)
-				return
-			}
-			t.startHermesFromIssue(key, issueNumber, projectDir)
-		})
-		return
-	}
-
-	hermesTask, err := t.taskSvc.GetTask(taskID)
-	if err != nil {
-		log.Printf("[hermes] callback task lookup failed (task=%s): %v", taskID, err)
-		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_task_not_found", nil))
-		return
-	}
-	task := hermesTask
-	if task.ChatID != key.chatID {
-		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_not_current_chat", nil))
-		return
-	}
-	projectDir := t.getAgent(key).ProjectDir()
-	if !hermesTaskMatchesSelectableScope(task, key.threadID, projectDir) {
-		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_not_current_topic", nil))
-		return
-	}
-
-	if !hermesTaskMatchesProject(task, projectDir) {
-		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_not_current_project", nil))
-		return
-	}
-	if !hermesTaskIsContinuable(task) {
-		t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_not_continuable", nil))
-		return
-	}
-
-	t.answerCallbackQuery(queryID, t.getLocalizedMessage(key.chatID, "hermes_callback_preparing", map[string]string{
-		"action": t.getLocalizedMessage(key.chatID, hermesContinuationVerbKey(mode), nil),
-	}))
-	t.send(key, t.getLocalizedMessage(key.chatID, "hermes_continuation_start", map[string]string{
-		"taskID": shortHermesTaskID(task.ID),
-		"action": t.getLocalizedMessage(key.chatID, hermesContinuationVerbKey(mode), nil),
-	}))
-	go t.runTrackedJob("hermes.callback", func() {
-		t.startHermesContinuationTask(key, task, projectDir, mode)
-	})
 }
 
 // answerCallbackQuery answers callback query to remove loading indicator
@@ -7795,33 +3247,6 @@ func (t *TelegramBot) editMessageRemoveStopButton(key chatKey, messageID int, ne
 	}
 }
 
-// sendCapturingID sends a message synchronously and returns its Telegram
-// message_id. Used by the Hermes progress reporter to anchor an
-// edit-in-place progress line. Returns 0 + error on failure so the caller
-// can fall back to the async send path.
-func (t *TelegramBot) sendCapturingID(key chatKey, text string) (int, error) {
-	params := map[string]interface{}{
-		"chat_id": key.chatID,
-		"text":    sanitizeUTF8(text),
-	}
-	if key.threadID != 0 {
-		params["message_thread_id"] = key.threadID
-	}
-	resp, err := t.sendMessageSync("sendMessage", params)
-	if err != nil {
-		return 0, err
-	}
-	result, ok := resp["result"].(map[string]interface{})
-	if !ok {
-		return 0, fmt.Errorf("sendCapturingID: missing result")
-	}
-	idF, ok := result["message_id"].(float64)
-	if !ok {
-		return 0, fmt.Errorf("sendCapturingID: missing message_id")
-	}
-	return int(idF), nil
-}
-
 // runAgentWithStopButton runs agent.Run() with a stop button on the first status update,
 // and cleans up the stop button after completion. Used by multimedia handlers (photo/voice/document).
 func (t *TelegramBot) runAgentWithStopButton(key chatKey, agent *Agent, prompt string) (string, error) {
@@ -7886,46 +3311,6 @@ func (t *TelegramBot) runAgentForStopButtonMode(key chatKey, agent *Agent, promp
 	}
 	result, err := appengine.NewDirectEngine(agent).Run(context.Background(), prompt, agent.chatContext, newTelegramProgressSink(updateCallback))
 	return result.Text, err
-}
-
-func (t *TelegramBot) resolveTelegramRunnerMemoryPrompt(ctx context.Context, key chatKey, agent *Agent, prompt, mode string) string {
-	if agent == nil {
-		return prompt
-	}
-	ps := agent.current()
-	if ps == nil || ps.ctx == nil {
-		return prompt
-	}
-	var taskSource hermesMemoryTaskSource
-	if t != nil && t.taskSvc != nil {
-		taskSource = t.taskSvc
-	}
-	issueNumber, hasIssueScope := ParseIssueNumber(prompt)
-	decision := appengine.DecideSessionPolicy(appengine.SessionPolicyRequest{
-		Mode:             mode,
-		HasNativeSession: ps.ctx.Session(ps.ctx.LastBackend) != "",
-		HasIssueScope:    hasIssueScope,
-	})
-	recentMessages := ps.ctx.RecentMessagesSnapshot()
-	if !decision.AllowRecentMemory {
-		recentMessages = nil
-	}
-	resolver := newMemoryResolverForSessionPolicy(taskSource, agent.ProjectDir(), decision)
-	bundle, err := resolver.Resolve(ctx, MemoryRequest{
-		ChatID:         key.chatID,
-		ThreadID:       key.threadID,
-		ProjectDir:     agent.ProjectDir(),
-		UserMessage:    prompt,
-		IssueNumber:    issueNumber,
-		Mode:           mode,
-		BudgetChars:    defaultMemoryBudgetChars,
-		RecentMessages: recentMessages,
-	})
-	if err != nil {
-		log.Printf("[telegram] memory resolve failed mode=%s chat=%d thread=%d: %v", mode, key.chatID, key.threadID, err)
-		return prompt
-	}
-	return bundle.RenderForPrompt(prompt)
 }
 
 // sendTelegram sends JSON data to Telegram API via the message queue
@@ -8605,41 +3990,6 @@ func repoURLFromIssueURL(issueURL string) string {
 	return ""
 }
 
-func resolveGitHubRepoURL(projectDir string) (string, error) {
-	tryRemote := func(remote string) string {
-		return normalizeGitHubRepoURL(remote)
-	}
-
-	output, err := runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "remote", "get-url", "origin")
-	if err == nil {
-		if repoURL := tryRemote(string(output)); repoURL != "" {
-			return repoURL, nil
-		}
-	}
-
-	output, err = runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "remote")
-	if err != nil {
-		return "", fmt.Errorf("no remotes found: %w", err)
-	}
-
-	remotes := strings.Fields(strings.TrimSpace(string(output)))
-	if len(remotes) == 0 {
-		return "", fmt.Errorf("no remotes configured")
-	}
-
-	for _, remote := range remotes {
-		output, err = runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "remote", "get-url", remote)
-		if err != nil {
-			continue
-		}
-		if repoURL := tryRemote(string(output)); repoURL != "" {
-			return repoURL, nil
-		}
-	}
-
-	return "", fmt.Errorf("no GitHub remote found")
-}
-
 func listGitHubIssuesForTasks(ctx context.Context, projectDir, state string, limit int) ([]tasksGitHubIssue, error) {
 	if state != "open" && state != "closed" {
 		return nil, fmt.Errorf("unsupported issue state: %s", state)
@@ -8786,25 +4136,6 @@ func (t *TelegramBot) sendTasksMessage(key chatKey, projectDir, state string) er
 	}
 	t.sendTelegram("sendMessage", msg)
 	return nil
-}
-
-func (t *TelegramBot) resolveTasksProjectDir(key chatKey) (string, error) {
-	if key.threadID == 0 {
-		return "", errTasksNoGitHubRepo
-	}
-
-	if globalStorage != nil {
-		if saved, err := globalStorage.GetTopicSetting(key.chatID, key.threadID); err == nil && saved != "" {
-			return saved, nil
-		}
-		return "", errTasksNoGitHubRepo
-	}
-
-	projectDir := t.getAgent(key).ProjectDir()
-	if projectDir == "" {
-		return "", errTasksNoGitHubRepo
-	}
-	return projectDir, nil
 }
 
 func (t *TelegramBot) buildTasksKeyboard(chatID int64, repoURL, state string) map[string]interface{} {
@@ -10929,57 +6260,6 @@ func (t *TelegramBot) handleSkillDeleteCommand(key chatKey, skillID string) {
 	t.send(key, msg)
 }
 
-// handleParallelCommand handles /parallel command for concurrent task execution
-func (t *TelegramBot) handleParallelCommand(key chatKey, taskText string) {
-	if globalOrchestrator == nil {
-		t.send(key, t.getLocalizedMessage(key.chatID, "parallel_disabled", nil))
-		return
-	}
-
-	tasks := ParseParallelTasks(taskText)
-	if len(tasks) < 2 {
-		t.send(key, t.getLocalizedMessage(key.chatID, "parallel_min_tasks", nil))
-		return
-	}
-
-	if len(tasks) > 5 {
-		t.send(key, t.getLocalizedMessage(key.chatID, "parallel_max_tasks", nil))
-		return
-	}
-
-	// Send initial status
-	startMsg := t.getLocalizedMessage(key.chatID, "parallel_started", map[string]string{
-		"{count}": fmt.Sprintf("%d", len(tasks)),
-	})
-	t.send(key, startMsg)
-
-	// Execute in background
-	go func() {
-		done := globalJobTracker.Start("parallel.command")
-		defer done(nil)
-		execution := globalOrchestrator.ExecuteParallel(
-			tasks,
-			t.client,
-			t.getAgent(key).ProjectDir(),
-			key.chatID,
-			key.threadID,
-			func(taskID, status, result string) {
-				// Send progress update
-				progressMsg := t.getLocalizedMessage(key.chatID, "parallel_progress", map[string]string{
-					"{task_id}": taskID,
-					"{status}":  status,
-				})
-				t.send(key, progressMsg)
-			},
-			0, // use default timeout
-		)
-
-		// Send final results
-		resultMsg := FormatParallelResults(execution)
-		t.sendMarkdown(key, resultMsg)
-	}()
-}
-
 // handleCronCommand handles all /cron subcommands
 func (t *TelegramBot) handleCronCommand(key chatKey, parts []string, fullText string) {
 	if globalCronScheduler == nil {
@@ -11242,22 +6522,6 @@ func isShellCommand(payload string) bool {
 	return false
 }
 
-// codexTierAvailable reports whether the active client supports codex/GPT models,
-// sending a localized notice to the chat and returning false otherwise.
-// Called by /gfast /gsmart /gdeep and /model gpt-* before mutating user preference.
-func (t *TelegramBot) codexTierAvailable(key chatKey) bool {
-	mb, ok := t.client.(*MultiBackendClient)
-	if !ok {
-		t.send(key, t.getLocalizedMessage(key.chatID, "codex_tier_requires_multi_backend", nil))
-		return false
-	}
-	if !mb.HasCodex() {
-		t.send(key, t.getLocalizedMessage(key.chatID, "codex_tier_no_openai_key", nil))
-		return false
-	}
-	return true
-}
-
 // modelRequiresCodex reports whether a raw model name routes to the codex backend.
 // Mirrors MultiBackendClient.routeFor's gpt-/o3/o4/codex prefix logic.
 func modelRequiresCodex(model string) bool {
@@ -11266,13 +6530,6 @@ func modelRequiresCodex(model string) bool {
 		strings.HasPrefix(lower, "o3") ||
 		strings.HasPrefix(lower, "o4") ||
 		strings.Contains(lower, "codex")
-}
-
-func codexModelOrFallback(model, fallback string) string {
-	if modelRequiresCodex(model) {
-		return model
-	}
-	return fallback
 }
 
 // handleModelCommand handles /model command for explicit model switching.
@@ -11393,3 +6650,126 @@ func (t *TelegramBot) handleBackendHealth(key chatKey) {
 
 	t.send(key, msg)
 }
+
+func resolveGitHubRepoURL(projectDir string) (string, error) {
+	tryRemote := func(remote string) string {
+		return normalizeGitHubRepoURL(remote)
+	}
+
+	output, err := runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "remote", "get-url", "origin")
+	if err == nil {
+		if repoURL := tryRemote(string(output)); repoURL != "" {
+			return repoURL, nil
+		}
+	}
+
+	output, err = runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "remote")
+	if err != nil {
+		return "", fmt.Errorf("no remotes found: %w", err)
+	}
+
+	remotes := strings.Fields(strings.TrimSpace(string(output)))
+	if len(remotes) == 0 {
+		return "", fmt.Errorf("no remotes configured")
+	}
+
+	for _, remote := range remotes {
+		output, err = runProcessOutput(context.Background(), ProcessOptions{Dir: projectDir}, "git", "remote", "get-url", remote)
+		if err != nil {
+			continue
+		}
+		if repoURL := tryRemote(string(output)); repoURL != "" {
+			return repoURL, nil
+		}
+	}
+
+	return "", fmt.Errorf("no GitHub remote found")
+}
+
+func (t *TelegramBot) resolveTasksProjectDir(key chatKey) (string, error) {
+	if key.threadID == 0 {
+		return "", errTasksNoGitHubRepo
+	}
+
+	if globalStorage != nil {
+		if saved, err := globalStorage.GetTopicSetting(key.chatID, key.threadID); err == nil && saved != "" {
+			return saved, nil
+		}
+		return "", errTasksNoGitHubRepo
+	}
+
+	projectDir := t.getAgent(key).ProjectDir()
+	if projectDir == "" {
+		return "", errTasksNoGitHubRepo
+	}
+	return projectDir, nil
+}
+
+func (t *TelegramBot) resolveTelegramRunnerMemoryPrompt(ctx context.Context, key chatKey, agent *Agent, prompt, mode string) string {
+	if agent == nil {
+		return prompt
+	}
+	ps := agent.current()
+	if ps == nil || ps.ctx == nil {
+		return prompt
+	}
+	issueNumber, hasIssueScope := ParseIssueNumber(prompt)
+	decision := appengine.DecideSessionPolicy(appengine.SessionPolicyRequest{
+		Mode:             mode,
+		HasNativeSession: ps.ctx.Session(ps.ctx.LastBackend) != "",
+		HasIssueScope:    hasIssueScope,
+	})
+	recentMessages := ps.ctx.RecentMessagesSnapshot()
+	if !decision.AllowRecentMemory {
+		recentMessages = nil
+	}
+	resolver := newMemoryResolverForSessionPolicy(agent.ProjectDir(), decision)
+	bundle, err := resolver.Resolve(ctx, MemoryRequest{
+		ChatID:         key.chatID,
+		ThreadID:       key.threadID,
+		ProjectDir:     agent.ProjectDir(),
+		UserMessage:    prompt,
+		IssueNumber:    issueNumber,
+		Mode:           mode,
+		BudgetChars:    defaultMemoryBudgetChars,
+		RecentMessages: recentMessages,
+	})
+	if err != nil {
+		log.Printf("[telegram] memory resolve failed mode=%s chat=%d thread=%d: %v", mode, key.chatID, key.threadID, err)
+		return prompt
+	}
+	return bundle.RenderForPrompt(prompt)
+}
+
+// codexTierAvailable reports whether the active client supports codex/GPT models,
+// sending a localized notice to the chat and returning false otherwise.
+// Called by /gfast /gsmart /gdeep and /model gpt-* before mutating user preference.
+func (t *TelegramBot) codexTierAvailable(key chatKey) bool {
+	mb, ok := t.client.(*MultiBackendClient)
+	if !ok {
+		t.send(key, t.getLocalizedMessage(key.chatID, "codex_tier_requires_multi_backend", nil))
+		return false
+	}
+	if !mb.HasCodex() {
+		t.send(key, t.getLocalizedMessage(key.chatID, "codex_tier_no_openai_key", nil))
+		return false
+	}
+	return true
+}
+
+var (
+	errTasksGitHubAuthRequired = errors.New("tasks github auth required")
+	errTasksNoGitHubRepo       = errors.New("tasks github repo unavailable")
+)
+
+var (
+	tasksGitHubIssueListFunc = listGitHubIssuesForTasks
+	tasksGitHubRepoURLFunc   = resolveGitHubRepoURL
+)
+
+const (
+	telegramAPITimeout           = 20 * time.Second
+	telegramLongPollTimeout      = 75 * time.Second
+	telegramDownloadTimeout      = 2 * time.Minute
+	openAIImageGenerationTimeout = 5 * time.Minute
+)

@@ -230,6 +230,7 @@ func (m *fleetCardManager) Run(ctx context.Context) error {
 
 // cardEvents are the events that change what a card shows.
 var cardEvents = map[string]bool{
+	fleetEventPRLanded:             true,
 	fleet.EventStatus:              true,
 	fleet.EventStartupResumed:      true,
 	fleet.EventQuotaTransferred:    true,

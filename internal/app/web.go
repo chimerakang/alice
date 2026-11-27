@@ -16,8 +16,9 @@ import (
 	"sync"
 	"time"
 
-	appengine "claude-tg-agent/internal/app/engine"
 	"claude-tg-agent/internal/app/security"
+
+	appengine "github.com/chimerakang/alice-core/engine"
 )
 
 // AgentInfo represents agent information for the API
@@ -112,8 +113,6 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/decisions/sources/stats", wi.handleSourceStats)
 	mux.HandleFunc("/api/decisions/sources/performance", wi.handleSourcePerformance)
 	mux.HandleFunc("/api/tasks", wi.handleUnifiedTasks)
-	mux.HandleFunc("/api/hermes/active", wi.handleHermesActive)
-	mux.HandleFunc("/api/hermes/resolve", wi.handleHermesResolve)
 	mux.HandleFunc("/api/hermes/tasks", wi.handleHermesTasks)
 	mux.HandleFunc("/api/hermes/snapshots", wi.handleHermesSnapshots)
 	mux.HandleFunc("/api/hermes/stats", wi.handleHermesStats)
@@ -122,9 +121,6 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/quality/decomposition", wi.handleQualityDecomposition)
 	mux.HandleFunc("/api/quality/scores", wi.handleQualityScores)
 	mux.HandleFunc("/api/quality/insights", wi.handleQualityInsights)
-	mux.HandleFunc("/api/multiagent/status", wi.handleMultiAgentStatus)
-	mux.HandleFunc("/api/multiagent/stats", wi.handleMultiAgentStats)
-	mux.HandleFunc("/api/multiagent/agents", wi.handleMultiAgentAgents)
 
 	// Performance Monitoring APIs
 	mux.HandleFunc("/api/performance/analytics", wi.handlePerformanceAnalytics)
@@ -287,7 +283,6 @@ func (wi *WebInterface) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"telegram":  telegram,
 			"jobs":      globalJobTracker.Summary(),
 			"storage":   runtimeStorageHealth(),
-			"hermes":    runtimeHermesStatus(wi.bot),
 		}
 		if !lastSuccess.IsZero() {
 			status["telegram_last_success"] = lastSuccess
@@ -339,34 +334,6 @@ func (wi *WebInterface) handleHealthLive(w http.ResponseWriter, r *http.Request)
 	})(w, r)
 }
 
-// runtimeHermesStatus surfaces Hermes feature toggles + walking-agent state
-// so dashboards / external probes can confirm whether walking is active and
-// at what watermark. Returns minimal info when bot or config is nil; never
-// includes credentials. Issue #149.
-func runtimeHermesStatus(bot *TelegramBot) map[string]interface{} {
-	out := map[string]interface{}{
-		"enabled": false,
-	}
-	if bot == nil || bot.config == nil {
-		return out
-	}
-	out["enabled"] = bot.config.Hermes.Enabled
-	out["strict_mode_enabled"] = bot.config.Hermes.StrictModeEnabled
-	out["auto_route_complex"] = bot.config.Hermes.AutoRouteComplex
-	out["walking_agent_enabled"] = bot.config.Hermes.WalkingAgentEnabled
-	maxCtx := bot.config.Hermes.WalkingAgentMaxContextTokens
-	if maxCtx <= 0 {
-		maxCtx = 120000
-	}
-	out["walking_agent_max_context_tokens"] = maxCtx
-	if bot.config.Hermes.ReviewTimeoutSeconds > 0 {
-		out["review_timeout_seconds"] = bot.config.Hermes.ReviewTimeoutSeconds
-	} else {
-		out["review_timeout_seconds"] = 120
-	}
-	return out
-}
-
 func runtimeStorageHealth() map[string]interface{} {
 	status := map[string]interface{}{
 		"enabled": globalStorage != nil,
@@ -396,20 +363,6 @@ func runtimeStorageHealth() map[string]interface{} {
 		status["active_tasks"] = count
 	} else {
 		status["active_tasks_error"] = err.Error()
-	}
-	// After #169 slice 3d the legacy hermes_task_states.status column is no
-	// longer authoritative. Active-task count derives from the latest
-	// snapshot's denormalized state_status, falling back to the legacy
-	// column for tasks created before the first CommitRuntimeStep.
-	if count, err := countRows(db, `
-		SELECT COUNT(*) FROM hermes_task_states AS task
-		WHERE COALESCE((
-			SELECT s.state_status FROM hermes_snapshots s
-			WHERE s.task_id = task.id ORDER BY s.step DESC LIMIT 1
-		), task.status) IN ('planning','executing','validating')`); err == nil {
-		status["active_hermes_tasks"] = count
-	} else {
-		status["active_hermes_tasks_error"] = err.Error()
 	}
 	return status
 }
@@ -1159,10 +1112,6 @@ func (wi *WebInterface) handleMemoryPreview(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		var taskSource hermesMemoryTaskSource
-		if wi != nil && wi.bot != nil && wi.bot.taskSvc != nil {
-			taskSource = wi.bot.taskSvc
-		}
 		if wi != nil && wi.bot != nil {
 			ctx := wi.bot.getChatContext(chatKey{chatID: req.ChatID, threadID: req.ThreadID}, req.ProjectDir)
 			req.RecentMessages = ctx.RecentMessagesSnapshot()
@@ -1171,7 +1120,7 @@ func (wi *WebInterface) handleMemoryPreview(w http.ResponseWriter, r *http.Reque
 			}
 		}
 
-		resolver := NewMemoryResolverWithAllSources(taskSource, globalGeneralMemorySource(), defaultStaticHintSourceForProject(req.ProjectDir))
+		resolver := NewMemoryResolverWithAllSources(globalGeneralMemorySource(), defaultStaticHintSourceForProject(req.ProjectDir))
 		bundle, err := resolver.Resolve(r.Context(), req)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -1571,113 +1520,6 @@ func (wi *WebInterface) handleWithRecovery(handler http.HandlerFunc) http.Handle
 
 		handler(w, r)
 	}
-}
-
-// handleMultiAgentStatus returns multi-agent system status
-func (wi *WebInterface) handleMultiAgentStatus(w http.ResponseWriter, r *http.Request) {
-	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		stats := globalAgentCoordinator.GetAgentStats()
-		stats["enabled"] = globalAgentCoordinator.IsEnabled()
-
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"multi_agent_status": stats,
-			"timestamp":          time.Now(),
-		})
-	})(w, r)
-}
-
-// handleMultiAgentStats returns detailed multi-agent statistics
-func (wi *WebInterface) handleMultiAgentStats(w http.ResponseWriter, r *http.Request) {
-	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		stats := globalAgentCoordinator.GetAgentStats()
-
-		// Calculate additional statistics
-		agents := stats["agents"].(map[string]interface{})
-		totalTasks := 0
-		activeAgents := 0
-
-		for _, agentInfo := range agents {
-			info := agentInfo.(map[string]interface{})
-			if taskCount, ok := info["task_count"].(int); ok {
-				totalTasks += taskCount
-			}
-			if lastUsed, ok := info["last_used"].(time.Time); ok {
-				if time.Since(lastUsed) < time.Hour {
-					activeAgents++
-				}
-			}
-		}
-
-		response := map[string]interface{}{
-			"enabled":       globalAgentCoordinator.IsEnabled(),
-			"total_agents":  len(agents),
-			"active_agents": activeAgents,
-			"total_tasks":   totalTasks,
-			"agent_details": agents,
-			"available_types": []string{
-				"General", "CodeReview", "Testing", "Documentation", "Deployment", "Debug",
-			},
-			"timestamp": time.Now(),
-		}
-
-		json.NewEncoder(w).Encode(response)
-	})(w, r)
-}
-
-// handleMultiAgentAgents returns available agent types and their capabilities
-func (wi *WebInterface) handleMultiAgentAgents(w http.ResponseWriter, r *http.Request) {
-	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		agentTypes := []map[string]interface{}{
-			{
-				"type":         "General",
-				"description":  "通用代理，處理一般任務",
-				"skills":       []string{"一般協助", "程式碼生成", "檔案操作"},
-				"capabilities": []string{"can_read_files", "can_write_files", "can_execute_commands"},
-			},
-			{
-				"type":         "CodeReview",
-				"description":  "程式碼審查專家",
-				"skills":       []string{"程式碼分析", "安全審查", "效能審查", "最佳實務"},
-				"capabilities": []string{"can_analyze_code_quality", "can_identify_security_issues", "can_suggest_improvements"},
-			},
-			{
-				"type":         "Testing",
-				"description":  "測試專家",
-				"skills":       []string{"單元測試", "整合測試", "測試自動化", "覆蓋率分析"},
-				"capabilities": []string{"can_write_tests", "can_run_tests", "can_analyze_coverage"},
-			},
-			{
-				"type":         "Documentation",
-				"description":  "文件撰寫專家",
-				"skills":       []string{"API 文件", "README 撰寫", "程式碼註解", "使用指南"},
-				"capabilities": []string{"can_generate_docs", "can_update_readme", "can_write_comments"},
-			},
-			{
-				"type":         "Deployment",
-				"description":  "部署和 DevOps 專家",
-				"skills":       []string{"CI/CD", "Docker", "Kubernetes", "雲端部署", "監控"},
-				"capabilities": []string{"can_build_images", "can_deploy_apps", "can_manage_infrastructure"},
-			},
-			{
-				"type":         "Debug",
-				"description":  "除錯專家",
-				"skills":       []string{"錯誤分析", "日誌分析", "效能除錯", "問題排解"},
-				"capabilities": []string{"can_analyze_errors", "can_debug_issues", "can_trace_problems"},
-			},
-		}
-
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"agent_types": agentTypes,
-			"enabled":     globalAgentCoordinator.IsEnabled(),
-			"timestamp":   time.Now(),
-		})
-	})(w, r)
 }
 
 // === Performance Monitoring API Handlers ===
@@ -2443,23 +2285,6 @@ func generatePrometheusMetrics() string {
 			metrics.WriteString("# HELP alice_active_visitors Current active visitors for rate limiting\n")
 			metrics.WriteString("# TYPE alice_active_visitors gauge\n")
 			metrics.WriteString(fmt.Sprintf("alice_active_visitors %d\n", activeVisitors))
-		}
-	}
-
-	// Multi-agent metrics
-	if globalAgentCoordinator != nil && globalAgentCoordinator.IsEnabled() {
-		stats := globalAgentCoordinator.GetAgentStats()
-
-		if totalTasks, ok := stats["total_tasks"].(int64); ok {
-			metrics.WriteString("# HELP alice_multiagent_tasks_total Total multi-agent tasks\n")
-			metrics.WriteString("# TYPE alice_multiagent_tasks_total counter\n")
-			metrics.WriteString(fmt.Sprintf("alice_multiagent_tasks_total %d\n", totalTasks))
-		}
-
-		if activeTasks, ok := stats["active_tasks"].(int); ok {
-			metrics.WriteString("# HELP alice_multiagent_active_tasks Current active tasks\n")
-			metrics.WriteString("# TYPE alice_multiagent_active_tasks gauge\n")
-			metrics.WriteString(fmt.Sprintf("alice_multiagent_active_tasks %d\n", activeTasks))
 		}
 	}
 

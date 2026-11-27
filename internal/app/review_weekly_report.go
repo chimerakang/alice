@@ -214,55 +214,6 @@ func plannerRuleRecommendations(i18n *I18nManager, lang string, tags []PlannerRu
 	return recommendations
 }
 
-// FormatPlannerRulesWeeklyReport renders the weekly tuner report for Telegram/chat output.
-func FormatPlannerRulesWeeklyReport(i18n *I18nManager, lang string, report PlannerRulesWeeklyReport) string {
-	var b strings.Builder
-	b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_title", nil))
-	b.WriteString("\n")
-	b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_period", map[string]string{
-		"start": report.WindowStart.Format("2006-01-02"),
-		"end":   report.WindowEnd.Format("2006-01-02"),
-	}))
-	b.WriteString("\n")
-	b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_summary", map[string]string{
-		"review_count":  fmt.Sprintf("%d", report.ReviewCount),
-		"subtask_count": fmt.Sprintf("%d", report.ReviewedSubTaskCount),
-		"average_score": fmt.Sprintf("%.1f", report.AverageOverallScore),
-	}))
-	b.WriteString("\n")
-	b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_verdicts", map[string]string{
-		"pass":    fmt.Sprintf("%d", report.VerdictCounts["pass"]),
-		"partial": fmt.Sprintf("%d", report.VerdictCounts["partial"]),
-		"fail":    fmt.Sprintf("%d", report.VerdictCounts["fail"]),
-	}))
-	b.WriteString("\n")
-
-	b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_top_issue_tags_title", nil))
-	if len(report.TopIssueTags) == 0 {
-		b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_no_top_issue_tags", nil))
-		b.WriteString("\n")
-	} else {
-		b.WriteString("\n")
-		for i, tag := range report.TopIssueTags {
-			b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_issue_tag_item", map[string]string{
-				"index":         fmt.Sprintf("%d", i+1),
-				"tag":           tag.Tag,
-				"count":         fmt.Sprintf("%d", tag.Count),
-				"task_count":    fmt.Sprintf("%d", tag.TaskCount),
-				"subtask_count": fmt.Sprintf("%d", tag.SubTaskCount),
-			}))
-			b.WriteString("\n")
-		}
-	}
-
-	b.WriteString(plannerWeeklyReportMessage(i18n, lang, "review_weekly_report_recommendations_title", nil))
-	b.WriteString("\n")
-	for i, rec := range report.Recommendations {
-		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, rec))
-	}
-	return strings.TrimSpace(b.String())
-}
-
 func plannerWeeklyReportMessage(i18n *I18nManager, lang, key string, vars map[string]string) string {
 	if i18n == nil {
 		return key

@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"claude-tg-agent/internal/app/hermes"
 	"github.com/chimerakang/alice-core/fleet"
 )
 
@@ -193,7 +192,7 @@ func (t *TelegramBot) fleetPostCard(ctx context.Context, key chatKey, task fleet
 	}))
 }
 
-var fleetFetchIssue = hermes.FetchIssueForDispatch
+var fleetFetchIssue = FetchIssueForDispatch
 
 // fleetIssuePassesGate applies the existing issue quality check before an
 // issue is dispatched. It reports whether to go ahead; when not, the reason
