@@ -127,6 +127,12 @@
     "startup_resume_limit": 2,
     "owner_user_id": 0,
     "auto_model": true,
+    "milestone": {
+      "dependency_markers": ["依賴", "相依", "Depends on", "Blocked by"],
+      "blocked_labels": ["blocked"],
+      "exclude_labels": ["duplicate", "invalid", "wontfix"],
+      "reconcile_seconds": 120
+    },
     "tier_labels": {
       "docs": "fast",
       "size:L": "deep",

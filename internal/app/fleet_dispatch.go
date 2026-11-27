@@ -143,6 +143,15 @@ func (t *TelegramBot) fleetDispatch(ctx context.Context, key chatKey, userID int
 	if !ok {
 		return
 	}
+	// An issue in a milestone may be an instruction to work through it all.
+	if shape == fleet.ShapeShip && args.Issue > 0 && t.fleetMilestoneShip(ctx, key, userID, project, args) {
+		return
+	}
+	t.fleetDispatchOne(ctx, key, userID, shape, project, args)
+}
+
+// fleetDispatchOne queues exactly one task for the parsed command.
+func (t *TelegramBot) fleetDispatchOne(ctx context.Context, key chatKey, userID int64, shape fleet.Shape, project fleet.Project, args fleetDispatchArgs) {
 	if args.Issue > 0 {
 		t.send(key, t.fleetMsg(key.chatID, "fleet_issue_reading", map[string]string{
 			"{project}": project.Name,

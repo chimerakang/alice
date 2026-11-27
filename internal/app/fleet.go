@@ -85,6 +85,8 @@ type FleetConfig struct {
 	// EpicTitlePattern is a regexp that matches epic issue titles, e.g.
 	// `^\[M\d+\] Epic:`. Empty means no title-based detection.
 	EpicTitlePattern string `json:"epic_title_pattern"`
+	// Milestone holds the rules for working through a whole milestone.
+	Milestone fleetMilestoneConfig `json:"milestone"`
 	// EpicChildrenHeading titles the sub-issue section appended to epics the
 	// dashboard creates. Defaults to "Sub-issues" when empty.
 	EpicChildrenHeading string `json:"epic_children_heading"`
@@ -171,6 +173,8 @@ type FleetService struct {
 	IssueSync *FleetIssueSync
 	// Accept is the per-item acceptance log.
 	Accept *acceptStore
+	// Milestones works through whole GitHub milestones.
+	Milestones *milestoneBatches
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -283,6 +287,9 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 	}
 	deliverer.BeforeLanding = svc.checkAcceptanceBeforeLanding
 	svc.IssueSync.Acceptance = svc.Acceptance
+	if err := svc.attachMilestones(db); err != nil {
+		return nil, err
+	}
 	switch strings.ToLower(strings.TrimSpace(cfg.ScoutBackend)) {
 	case "", fleetBackendClaude:
 	case fleetBackendAuto, fleetBackendCodex:
@@ -323,6 +330,7 @@ func (f *FleetService) Start(ctx context.Context) error {
 	f.run("fleet.scheduler", func() error { return f.Scheduler.Run(ctx) })
 	f.run("fleet.watcher", func() error { return f.Watcher.Run(ctx) })
 	f.run("fleet.issue_sync", func() error { return f.IssueSync.Run(ctx, f.Bus) })
+	f.run("fleet.milestones", func() error { return f.Milestones.Run(ctx, f.Bus) })
 	return nil
 }
 
