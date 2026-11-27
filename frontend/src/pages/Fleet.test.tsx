@@ -17,7 +17,7 @@ function task(over: Partial<FleetTask>): FleetTask {
   return {
     id: "aaaaaaaaaaaa", project_id: "app", project_name: "My App", shape: "ship", goal: "修好登入測試\n第二行",
     source_kind: "manual", issue_number: 0, trust_mode: "local-only", model: "", priority: 0, status: "queued",
-    status_reason: "", liveness: "unknown", branch: "", worktree_path: "", session_id: "", pr_url: "", pr_number: 0,
+    actions: [], status_reason: "", liveness: "unknown", branch: "", worktree_path: "", session_id: "", pr_url: "", pr_number: 0,
     input_tokens: 0, output_tokens: 0, cost_usd: 0, budget_cost_usd: 0, created_at: "2026-01-01T10:00:00Z",
     updated_at: "2026-01-01T10:00:00Z", started_at: null, finished_at: null, last_activity_at: null, ...over,
   };
@@ -83,8 +83,8 @@ describe("Fleet board", () => {
       task({ id: "q1", status: "queued" }),
       task({ id: "r1", status: "running", liveness: "busy", project_id: "web", project_name: "Web" }),
       task({ id: "v1", status: "verifying" }),
-      task({ id: "rr", status: "review_ready", pr_number: 9 }),
-      task({ id: "nd", status: "needs_decision", status_reason: "verification failed 3 times" }),
+      task({ id: "rr", actions: ["approve", "reply", "discard"], status: "review_ready", pr_number: 9 }),
+      task({ id: "nd", actions: ["reply", "retry", "pass", "discard"], status: "needs_decision", status_reason: "verification failed 3 times" }),
       task({ id: "d1", status: "done" }),
       task({ id: "f1", status: "failed", liveness: "dead" }),
     ]);
@@ -170,8 +170,8 @@ describe("Fleet board", () => {
 describe("Fleet inbox", () => {
   it("lists what waits on the owner, decisions first, with the actions to take", () => {
     state.current = loadedState([
-      task({ id: "rr", status: "review_ready" }),
-      task({ id: "nd", status: "needs_decision", status_reason: "agent is waiting for an answer", issue_number: 12 }),
+      task({ id: "rr", actions: ["approve", "reply", "discard"], status: "review_ready" }),
+      task({ id: "nd", actions: ["reply", "retry", "pass", "discard"], status: "needs_decision", status_reason: "agent is waiting for an answer", issue_number: 12 }),
       task({ id: "r1", status: "running" }),
       task({ id: "d1", status: "done" }),
     ]);
@@ -194,6 +194,17 @@ describe("Fleet inbox", () => {
     for (const action of ["approve", "reply", "discard"]) expect(item("rr")).toContain(`data-action="${action}"`);
     expect(item("rr")).not.toContain('data-action="retry"');
     expect(item("nd")).toContain('href="/fleet/tasks/nd"');
+  });
+
+  it("does not render approval when the backend blocks direct-pr tasks without a PR", () => {
+    state.current = loadedState([
+      task({id:"goll70",status:"review_ready",trust_mode:"direct-pr",pr_number:0,actions:["reply","discard"]}),
+      task({id:"goll71",status:"review_ready",trust_mode:"direct-pr",pr_number:0,actions:["reply","discard"]}),
+    ]);
+    const html=renderToStaticMarkup(<FleetInbox />);
+    expect(html).not.toContain('data-action="approve"');
+    expect(html).toContain('data-action="reply"');
+    expect(html).toContain('data-action="discard"');
   });
 
   it("says so when nothing is waiting", () => {

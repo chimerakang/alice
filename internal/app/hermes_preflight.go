@@ -268,7 +268,8 @@ func (t *TelegramBot) maybeRunHermesIssuePreflight(ctx context.Context, key chat
 		model = strings.TrimSpace(t.config.ModelRouting.FastModel)
 	}
 	if model == "" {
-		model = "claude-haiku-4-5-20251001"
+		// No preflight or fast model configured: skip rather than guess one.
+		return goal, false
 	}
 	result, err := t.runHermesIssuePreflight(ctx, issue, projectDir, model, pf)
 	if err != nil {
@@ -357,7 +358,10 @@ func (t *TelegramBot) runHermesIssuePreflightAsync(parent context.Context, issue
 		model = strings.TrimSpace(t.config.ModelRouting.FastModel)
 	}
 	if model == "" {
-		model = "claude-haiku-4-5-20251001"
+		out <- hermesPreflightVerdict{skip: false}
+		close(out)
+		cancel()
+		return out, cancel
 	}
 	threshold := pf.CompletionThreshold
 	if threshold <= 0 {

@@ -152,7 +152,7 @@ func (t *TelegramBot) fleetDispatch(ctx context.Context, key chatKey, userID int
 		}
 	}
 
-	task, err := t.fleet.Commander.Dispatch(ctx, fleetActor(userID), fleet.DispatchRequest{
+	task, err := fleetCommanderDispatch(ctx, t.fleet, fleetActor(userID), fleet.DispatchRequest{
 		ProjectID: project.ID,
 		Goal:      args.Goal,
 		Issue:     args.Issue,

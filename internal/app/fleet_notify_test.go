@@ -175,7 +175,7 @@ func TestFleetPromptButtonsByTrouble(t *testing.T) {
 		{fleet.WakeStuck, []string{"fleet:cancel:" + id}},
 	}
 	for _, c := range cases {
-		got := buttonData(e.notices.promptButtons(loc, task, c.kind))
+		got := buttonData(e.notices.promptButtons(loc, task, c.kind, fleetAllowAll()))
 		if strings.Join(got, " ") != strings.Join(c.want, " ") {
 			t.Errorf("%s: buttons = %v, want %v", c.kind, got, c.want)
 		}
@@ -295,9 +295,9 @@ func TestFleetResultButtonsByTrustMode(t *testing.T) {
 		want []string
 		next string
 	}{
-		{"local-only awaiting review", fleet.Task{Status: fleet.StatusReviewReady, TrustMode: fleet.TrustLocalOnly},
+		{"local-only awaiting review", fleet.Task{Status: fleet.StatusReviewReady, Shape: fleet.ShapeShip, TrustMode: fleet.TrustLocalOnly},
 			[]string{"fleet:approve:" + id, "fleet:pdiscard:" + id}, "fleet_result_next_local"},
-		{"no-mistakes offers the one approval", fleet.Task{Status: fleet.StatusReviewReady, TrustMode: fleet.TrustNoMistakes, PRNumber: 9},
+		{"no-mistakes offers the one approval", fleet.Task{Status: fleet.StatusReviewReady, Shape: fleet.ShapeShip, TrustMode: fleet.TrustNoMistakes, PRNumber: 9},
 			[]string{"fleet:approve:" + id}, "fleet_result_next_no_mistakes"},
 		{"direct-pr done with its PR open", fleet.Task{Status: fleet.StatusDone, TrustMode: fleet.TrustDirectPR, PRNumber: 9},
 			[]string{"fleet:merge:" + id}, "fleet_result_next_direct_pr"},
@@ -305,7 +305,7 @@ func TestFleetResultButtonsByTrustMode(t *testing.T) {
 	}
 	for _, c := range cases {
 		c.task.ID = id
-		buttons := e.notices.resultButtons(loc, c.task)
+		buttons := e.notices.resultButtons(loc, c.task, fleetTaskActions(fleetActionInput{Task: c.task}))
 		if got := buttonData(buttons); strings.Join(got, " ") != strings.Join(c.want, " ") {
 			t.Errorf("%s: buttons = %v, want %v", c.name, got, c.want)
 		}
@@ -314,7 +314,7 @@ func TestFleetResultButtonsByTrustMode(t *testing.T) {
 		}
 	}
 	// The no-mistakes button says what it does.
-	b := e.notices.resultButtons(loc, fleet.Task{ID: id, Status: fleet.StatusReviewReady, TrustMode: fleet.TrustNoMistakes})
+	b := e.notices.resultButtons(loc, fleet.Task{ID: id, Status: fleet.StatusReviewReady, TrustMode: fleet.TrustNoMistakes}, fleetAllowAll())
 	if b[0][0].Text != "fleet_btn_approve_merge" {
 		t.Errorf("no-mistakes button text = %q", b[0][0].Text)
 	}

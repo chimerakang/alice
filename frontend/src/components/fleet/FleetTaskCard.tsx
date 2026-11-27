@@ -1,3 +1,4 @@
+import ModelChoice from "@/components/fleet/ModelChoice";
 import { clsx } from "clsx";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -38,8 +39,13 @@ export default function FleetTaskCard({ task, showProject = true }: { task: Flee
             {t(task.startup_resume_capped ? "fleet.task.startup_resume_capped" : "fleet.task.startup_recovered")}
           </p>
         )}
-        {task.status_reason && task.status !== "queued" && (
+        {task.status_reason && (
         <p className="mt-1 text-xs text-gray-500 line-clamp-2 break-words">{firstLine(task.status_reason)}</p>
+      )}
+      {task.model && task.model_source && (
+        <p className="mt-1 text-[11px] text-gray-500 line-clamp-1 break-words" data-testid="model-choice">
+          {task.model} · <ModelChoice task={task} />
+        </p>
       )}
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
         {showProject && <span className="text-gray-400 truncate max-w-[10rem]">{task.project_name || task.project_id}</span>}

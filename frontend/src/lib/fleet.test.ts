@@ -55,25 +55,20 @@ describe("board columns", () => {
 });
 
 describe("taskActions", () => {
-  it("offers what each status allows", () => {
-    expect(taskActions(task({ status: "queued" }))).toEqual(["cancel"]);
-    expect(taskActions(task({ status: "running" }))).toEqual(["cancel"]);
-    expect(taskActions(task({ status: "review_ready" }))).toEqual(["approve", "reply", "discard"]);
-    expect(taskActions(task({ status: "needs_decision" }))).toEqual(["reply", "retry", "pass", "discard"]);
-    expect(taskActions(task({ status: "failed" }))).toEqual(["retry", "reply", "discard"]);
-    expect(taskActions(task({ status: "cancelled" }))).toEqual([]);
-  });
-
-  it("offers merge only for a finished direct-pr task with a pull request", () => {
-    expect(taskActions(task({ status: "done" }))).toEqual([]);
-    expect(taskActions(task({ status: "done", trust_mode: "direct-pr" }))).toEqual([]);
-    expect(taskActions(task({ status: "done", trust_mode: "direct-pr", pr_number: 7 }))).toEqual(["merge"]);
-    expect(taskActions(task({ status: "done", trust_mode: "no-mistakes", pr_number: 7 }))).toEqual([]);
-  });
-
-  it("knows which statuses wait on the owner", () => {
-    expect(FLEET_STATUSES.filter(needsOwner)).toEqual(["review_ready", "needs_decision"]);
-  });
+ it("knows which statuses wait on the owner", () => {
+  expect(FLEET_STATUSES.filter(needsOwner)).toEqual(["review_ready","needs_decision"]);
+ });
+ it("uses backend permissions even when the status could otherwise suggest approval", () => {
+  expect(taskActions(task({status:"review_ready",trust_mode:"direct-pr",pr_number:0,actions:["reply","discard"]}))).toEqual(["reply","discard"]);
+ });
+ it("respects an empty or missing backend action set", () => {
+  expect(taskActions(task({status:"review_ready",actions:[]}))).toEqual([]);
+  expect(taskActions(task({status:"review_ready"}))).toEqual([]);
+ });
+ it("keeps lawful approval and merge supplied by the backend", () => {
+  expect(taskActions(task({status:"review_ready",actions:["approve","reply","discard"]}))).toEqual(["approve","reply","discard"]);
+  expect(taskActions(task({status:"done",actions:["merge"]}))).toEqual(["merge"]);
+ });
 });
 
 describe("liveness", () => {

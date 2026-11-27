@@ -480,9 +480,29 @@ func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, da
 	}
 	// Landing work is the owner's decision alone.
 	switch action {
-	case fleetActApprove, fleetActMerge, fleetActPass:
+	case fleetActApprove, fleetActMerge, fleetActPass, fleetOpFinishEvidence:
 		if !t.fleetIsOwner(userID) {
 			answer("fleet_cb_owner_only", nil)
+			return
+		}
+	}
+
+	// An old card or prompt may show a button the task no longer allows:
+	// say why, and redraw the card with what it allows now.
+	if op := fleetCallbackOp(action); op != "" {
+		task, _, err := t.fleet.CheckActorAction(ctx, fleetActor(userID), taskID, op)
+		var refused *fleetActionError
+		if errors.As(err, &refused) {
+			loc := func(k string, v map[string]string) string { return t.fleetMsg(key.chatID, k, v) }
+			answer("fleet_cb_unavailable", fleetBlockVars(loc, refused.Block, task.Status))
+			if t.fleetCards != nil {
+				// Leaving any confirmation redraws the card right away.
+				t.fleetCards.SetConfirm(ctx, taskID, "")
+			}
+			return
+		}
+		if err != nil {
+			answer("fleet_error", map[string]string{"{error}": err.Error()})
 			return
 		}
 	}
@@ -495,11 +515,13 @@ func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, da
 	case fleetActCancel:
 		_, err = cmd.Cancel(ctx, actor, taskID, "")
 	case fleetActRetry:
-		_, err = cmd.Retry(ctx, actor, taskID)
+		_, err = fleetCommanderRetry(ctx, t.fleet, actor, taskID)
+	case fleetOpFinishEvidence:
+		task, err = t.fleet.FinishEvidence(ctx, actor, taskID)
 	case fleetActApprove:
-		task, err = cmd.Approve(ctx, actor, taskID)
+		task, err = t.fleet.Approve(ctx, actor, taskID, false)
 	case fleetActMerge:
-		task, err = cmd.Merge(ctx, actor, taskID)
+		task, err = t.fleet.Approve(ctx, actor, taskID, true)
 	case fleetActDiscard:
 		// Discarding removes the checkout, uncommitted work included, so
 		// it takes a second press.
@@ -520,7 +542,7 @@ func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, da
 			t.fleetCards.SetConfirm(ctx, taskID, "")
 		}
 	case fleetActPass:
-		_, err = cmd.Pass(ctx, actor, taskID)
+		_, err = t.fleet.Pass(ctx, actor, taskID)
 	case fleetActGoOn:
 		_, err = cmd.Reply(ctx, actor, fleet.ReplyRequest{TaskID: taskID, IgnoreBudget: true})
 	case fleetActHint:

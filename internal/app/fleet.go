@@ -47,6 +47,8 @@ type FleetConfig struct {
 	ScoutBackend string `json:"scout_backend"`
 	// ScoutCodexModel overrides the Codex CLI's default model.
 	ScoutCodexModel string `json:"scout_codex_model"`
+	// ScoutQuota optionally prefers the eligible backend with more estimated capacity.
+	ScoutQuota fleetScoutQuotaConfig `json:"scout_quota"`
 	// WorktreeRoot is where task checkouts are created. Defaults to
 	// "worktrees" beside the database.
 	WorktreeRoot string `json:"worktree_root"`
@@ -86,6 +88,25 @@ type FleetConfig struct {
 	// EpicChildrenHeading titles the sub-issue section appended to epics the
 	// dashboard creates. Defaults to "Sub-issues" when empty.
 	EpicChildrenHeading string `json:"epic_children_heading"`
+	// AutoModel lets the commander choose a model tier for tasks dispatched
+	// without one, and escalate auto-chosen models when a task is retried.
+	// Nil means on; false restores the single-default-model behaviour. It
+	// does nothing unless model_routing.smart_model is set.
+	AutoModel *bool `json:"auto_model"`
+	// TierLabels maps an issue label (case-insensitive) to a tier: "fast",
+	// "smart", "deep" or "flagship". When several labels match, the highest
+	// tier wins. Labels not listed here have no effect.
+	TierLabels map[string]string `json:"tier_labels"`
+	// ScoutBackend is "claude", "codex" or "auto" (the commander decides).
+	// Empty means "claude".
+	ScoutCodexBinary string `json:"scout_codex_binary"`
+	// ScoutCodexTiers lists the tiers whose Scout tasks "auto" may hand to
+	// Codex. Empty means auto never picks Codex.
+	ScoutCodexTiers []string `json:"scout_codex_tiers"`
+	// NoEscalateReasons are lower-case fragments of a task's status reason
+	// that mean it stopped for a reason unrelated to model ability (quota,
+	// budget, lost process). Custom entries extend the built-in list.
+	NoEscalateReasons []string `json:"no_escalate_reasons"`
 }
 
 const (
@@ -123,6 +144,9 @@ func (c FleetConfig) validateBackend() error {
 	return fmt.Errorf("fleet.backend %q: must be %q or %q", c.Backend, fleetBackendFleet, fleetBackendHermes)
 }
 
+// autoModelEnabled reports whether the commander picks models.
+func (c FleetConfig) autoModelEnabled() bool { return c.AutoModel == nil || *c.AutoModel }
+
 // trustMode returns the configured default trust mode.
 func (c FleetConfig) trustMode() (fleet.TrustMode, error) {
 	if strings.TrimSpace(c.DefaultTrustMode) == "" {
@@ -135,6 +159,8 @@ func (c FleetConfig) trustMode() (fleet.TrustMode, error) {
 type FleetService struct {
 	Config    FleetConfig
 	TrustMode fleet.TrustMode
+	// Routing supplies the tiered models the commander chooses from.
+	Routing ModelRoutingConfig
 
 	Store     *fleet.Store
 	Runner    *fleet.Runner
@@ -143,6 +169,8 @@ type FleetService struct {
 	Commander *fleet.Commander
 	Bus       *fleet.Bus
 	IssueSync *FleetIssueSync
+	// Accept is the per-item acceptance log.
+	Accept *acceptStore
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -212,14 +240,6 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 		DefaultModel: defaultModel,
 		Budget:       budget,
 	}
-	switch cfg.ScoutBackend {
-	case "", "claude":
-	case "codex":
-		runner.CodexScoutBinary = "codex"
-		runner.CodexScoutModel = cfg.ScoutCodexModel
-	default:
-		return nil, fmt.Errorf("fleet.scout_backend: expected claude or codex, got %q", cfg.ScoutBackend)
-	}
 	deliverer := &fleet.Deliverer{Store: store}
 	// The tracker still ticks checklist items; what the issue is told, and
 	// when it is closed, is FleetIssueSync's.
@@ -234,7 +254,12 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 		OnRecovery:         logFleetRecovery,
 		StartupResumeLimit: cfg.StartupResumeLimit,
 	}
-	return &FleetService{
+	accept, err := newAcceptStore(db)
+	if err != nil {
+		return nil, err
+	}
+	svc := &FleetService{
+		Accept:    accept,
 		Config:    cfg,
 		TrustMode: mode,
 		Store:     store,
@@ -244,7 +269,37 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 		Commander: &fleet.Commander{Store: store, Scheduler: sched, Deliverer: deliverer, Issues: issues},
 		Bus:       &fleet.Bus{Store: store},
 		IssueSync: &FleetIssueSync{Store: store, Host: ghFleetIssueHost{}},
-	}, nil
+	}
+	matcher, err := cfg.ScoutQuota.errorMatcher()
+	if err != nil {
+		return nil, err
+	}
+	runner.MatchQuotaError = matcher
+	runner.QuotaUnknownResetAfter = time.Duration(cfg.ScoutQuota.WindowMinutes) * time.Minute
+	sched.PauseAutomaticResume = svc.AutoRerunPaused
+	deliverer.RequireDirectPRReview = func(ctx context.Context, taskID string) bool {
+		state, err := svc.Acceptance(ctx, taskID)
+		return err != nil || state.Structured
+	}
+	deliverer.BeforeLanding = svc.checkAcceptanceBeforeLanding
+	svc.IssueSync.Acceptance = svc.Acceptance
+	switch strings.ToLower(strings.TrimSpace(cfg.ScoutBackend)) {
+	case "", fleetBackendClaude:
+	case fleetBackendAuto, fleetBackendCodex:
+		runner.CodexScoutBinary = strings.TrimSpace(cfg.ScoutCodexBinary)
+		if runner.CodexScoutBinary == "" {
+			runner.CodexScoutBinary = "codex"
+		}
+		runner.CodexScoutModel = cfg.ScoutCodexModel
+		if strings.EqualFold(strings.TrimSpace(cfg.ScoutBackend), fleetBackendAuto) {
+			runner.ScoutRoute = svc.routeScout
+			runner.ConfigureScoutQuotaAdmission(svc.planScoutRoute)
+			runner.ConfigureScoutQuotaFallback(cfg.ScoutQuota.MaxTransfers, svc.scoutQuotaFallback)
+		}
+	default:
+		return nil, fmt.Errorf("fleet.scout_backend %q: must be claude, codex or auto", cfg.ScoutBackend)
+	}
+	return svc, nil
 }
 
 // Start runs the scheduler, the watcher and the event forwarder until ctx
