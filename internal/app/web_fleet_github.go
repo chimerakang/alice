@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -82,15 +84,17 @@ func listFleetGitHubMilestones(ctx context.Context, repoPath string) ([]fleetMil
 	return list, nil
 }
 
-func getOrCreateFleetGitHubMilestone(ctx context.Context, repoPath, title string) (int, error) {
+// getOrCreateFleetGitHubMilestone returns the number of the open milestone with
+// that title, creating it when there is none, and reports whether it did.
+func getOrCreateFleetGitHubMilestone(ctx context.Context, repoPath, title string) (int, bool, error) {
 	milestones, err := listFleetGitHubMilestones(ctx, repoPath)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	want := strings.ToLower(strings.TrimSpace(title))
 	for _, m := range milestones {
 		if strings.ToLower(strings.TrimSpace(m.Title)) == want {
-			return m.Number, nil
+			return m.Number, false, nil
 		}
 	}
 	// Milestone not found; create it.
@@ -99,13 +103,13 @@ func getOrCreateFleetGitHubMilestone(ctx context.Context, repoPath, title string
 		"-f", "title="+strings.TrimSpace(title),
 	)
 	if err != nil {
-		return 0, ghWrapError(out, err, "create milestone")
+		return 0, false, ghWrapError(out, err, "create milestone")
 	}
 	var created fleetMilestoneJSON
 	if err := json.Unmarshal(out, &created); err != nil {
-		return 0, fmt.Errorf("parse created milestone: %w", err)
+		return 0, false, fmt.Errorf("parse created milestone: %w", err)
 	}
-	return created.Number, nil
+	return created.Number, true, nil
 }
 
 type fleetIssueBodyJSON struct {
@@ -135,19 +139,44 @@ func appendToFleetGitHubEpic(ctx context.Context, repoPath string, epicNumber, i
 	return nil
 }
 
-// appendEpicChild adds a child item at the end of an epic body. When the body
-// ends with the (empty) sub-issue heading that createEpicBody leaves, the item
-// goes under it, separated by a blank line; otherwise it follows the last line.
+// epicChildItem matches a checklist line that refers to an issue, which is what
+// tells an epic's list of children from its other checklists.
+var epicChildItem = regexp.MustCompile(`^\s*[-*+] \[[ xX]\] .*#\d+`)
+
+// appendEpicChild adds a child item at the end of an epic's list of children.
+// When the body ends with the (empty) sub-issue heading that createEpicBody
+// leaves, the item goes under it, separated by a blank line. Otherwise it
+// follows the last child already listed, and failing that the last line.
 func appendEpicChild(body, item string) string {
 	body = strings.TrimRight(body, "\r\n \t")
 	if body == "" {
 		return item
 	}
-	last := body[strings.LastIndex(body, "\n")+1:]
-	if strings.HasPrefix(strings.TrimSpace(last), "#") {
+	lines := strings.Split(body, "\n")
+	if strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "#") {
 		return body + "\n\n" + item
 	}
-	return body + "\n" + item
+	last, fenced := -1, false
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+		} else if !fenced && epicChildItem.MatchString(line) {
+			last = i
+		}
+	}
+	if last < 0 {
+		return body + "\n" + item
+	}
+	// Step over what is indented beneath the last child.
+	indent := func(line string) int { return len(line) - len(strings.TrimLeft(line, " \t")) }
+	end := last + 1
+	for end < len(lines) && strings.TrimSpace(lines[end]) != "" && indent(lines[end]) > indent(lines[last]) {
+		end++
+	}
+	if strings.HasSuffix(lines[last], "\r") {
+		item += "\r"
+	}
+	return strings.Join(slices.Insert(lines, end, item), "\n")
 }
 
 // buildEpicBody is the description followed by an empty sub-issue section,
@@ -181,6 +210,46 @@ func checkFleetGitHubStatus(ctx context.Context, repoPath string) error {
 		return ghWrapError(out, err, "check github")
 	}
 	return nil
+}
+
+// Commands under which GitHub writes appear in the fleet's audit log.
+const (
+	fleetAuditCreateMilestone = "create_milestone"
+	fleetAuditCreateLabel     = "create_label"
+	fleetAuditCreateIssue     = "create_issue"
+	fleetAuditCreateEpic      = "create_epic"
+	fleetAuditUpdateEpic      = "update_epic"
+)
+
+// auditGitHubWrite records one change made on GitHub. The core only records its
+// own commands, so this writes the shared audit schema, as CheckActorAction
+// does. A failure to record never fails the command.
+func (f *FleetService) auditGitHubWrite(ctx context.Context, actor fleet.Actor, command, projectID, taskID, detail string, err error) {
+	if f.Accept == nil {
+		return
+	}
+	failure := ""
+	if err != nil {
+		failure = fleetClip(err.Error(), 500)
+	}
+	// The write has happened even if the request has already gone away.
+	_, auditErr := f.Accept.db.ExecContext(context.WithoutCancel(ctx), `INSERT INTO fleet_audit
+		(actor,via,command,project_id,task_id,detail,ok,error,created_at)
+		VALUES (?,?,?,?,?,?,?,?,?)`, actor.ID, actor.Via, command, projectID, taskID,
+		fleetClip(detail, 500), err == nil, failure, time.Now().UnixMilli())
+	if auditErr != nil {
+		log.Printf("[fleet] record %s audit: %v", command, auditErr)
+	}
+}
+
+// githubMilestone finds or creates the milestone, recording a creation or a
+// failure. Using an existing one changes nothing and is not recorded.
+func (f *FleetService) githubMilestone(ctx context.Context, actor fleet.Actor, project fleet.Project, title string) (int, error) {
+	number, created, err := fleetGitHubMilestoneGetOrCreate(ctx, project.RepoPath, title)
+	if created || err != nil {
+		f.auditGitHubWrite(ctx, actor, fleetAuditCreateMilestone, project.ID, "", title, err)
+	}
+	return number, err
 }
 
 // ghWrapError maps gh CLI errors onto the sentinel errors used by the fleet API.
@@ -270,6 +339,7 @@ func (wi *WebInterface) fleetCreateEpic(ctx context.Context, svc *FleetService, 
 	if err != nil {
 		return nil, err
 	}
+	actor := wi.fleetWebActor()
 	title := firstNonEmptyLine(description)
 	heading := strings.TrimSpace(svc.Config.EpicChildrenHeading)
 	if heading == "" {
@@ -279,15 +349,23 @@ func (wi *WebInterface) fleetCreateEpic(ctx context.Context, svc *FleetService, 
 
 	var milestoneNumber int
 	if ms := strings.TrimSpace(req.Milestone); ms != "" {
-		if milestoneNumber, err = fleetGitHubMilestoneGetOrCreate(ctx, project.RepoPath, ms); err != nil {
+		if milestoneNumber, err = svc.githubMilestone(ctx, actor, project, ms); err != nil {
 			return nil, err
 		}
 	}
 	labelCreated, err := fleetGitHubLabelEnsureFunc(ctx, project.RepoPath, label)
+	if labelCreated || err != nil {
+		svc.auditGitHubWrite(ctx, actor, fleetAuditCreateLabel, project.ID, "", label, err)
+	}
 	if err != nil {
 		return nil, err
 	}
 	created, err := fleetGitHubLabeledIssueFunc(ctx, project.RepoPath, title, buildEpicBody(description, heading), milestoneNumber, []string{label})
+	detail := title
+	if err == nil {
+		detail = fmt.Sprintf("#%d %s", created.Number, title)
+	}
+	svc.auditGitHubWrite(ctx, actor, fleetAuditCreateEpic, project.ID, "", detail, err)
 	if err != nil {
 		return nil, err
 	}

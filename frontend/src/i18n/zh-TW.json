@@ -987,7 +987,8 @@
       "epic_fields_na": "建立 epic 時不適用。",
       "github_checking": "正在檢查 GitHub 存取…",
       "github_reason_no_remote": "無法使用 GitHub：此專案沒有 GitHub remote。",
-      "github_reason_auth_required": "無法使用 GitHub：gh 尚未登入。請在 Alice 主機執行 `gh auth login`。"
+      "github_reason_auth_required": "無法使用 GitHub：gh 尚未登入。請在 Alice 主機執行 `gh auth login`。",
+      "github_reason_check_failed": "無法使用 GitHub：存取檢查失敗。仍可直接以文字派工。"
     },
     "decision_context": {
       "title": "目前卡在哪裡",

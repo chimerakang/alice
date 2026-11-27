@@ -31,7 +31,7 @@ func TestFleetCreateEpic(t *testing.T) {
 			got = created{title, body, ms, labels}
 			return fleetCreatedIssue{Number: 60, HTMLURL: "https://github.com/test/repo/issues/60"}, nil
 		}
-		fleetGitHubMilestoneGetOrCreate = func(context.Context, string, string) (int, error) { return 0, nil }
+		fleetGitHubMilestoneGetOrCreate = func(context.Context, string, string) (int, bool, error) { return 0, false, nil }
 	}
 	tasksBefore := func() int {
 		ts, _ := e.svc.Store.ListTasks(context.Background(), fleet.TaskFilter{})
@@ -97,7 +97,7 @@ func TestFleetCreateEpic(t *testing.T) {
 	t.Run("milestone is created by name", func(t *testing.T) {
 		stub(false)
 		var name string
-		fleetGitHubMilestoneGetOrCreate = func(_ context.Context, _ string, n string) (int, error) { name = n; return 9, nil }
+		fleetGitHubMilestoneGetOrCreate = func(_ context.Context, _ string, n string) (int, bool, error) { name = n; return 9, true, nil }
 		status, body := e.call(http.MethodPost, path, `{"project_id":"`+e.project.ID+`","description":"Plan","milestone":"v3"}`, true)
 		if status != http.StatusOK || name != "v3" || got.milestone != 9 {
 			t.Fatalf("status = %d, body = %v, name = %q, milestone = %d", status, body, name, got.milestone)
@@ -167,5 +167,33 @@ func TestFleetProjectGitHubStatus(t *testing.T) {
 	fleetGitHubStatusFunc = func(context.Context, string) error { return nil }
 	if body := e.get(url); body["available"] != true {
 		t.Errorf("logged in: %v", body)
+	}
+}
+
+// A child joins the end of the epic's list of children, not the end of the body.
+func TestAppendEpicChildAfterLastChild(t *testing.T) {
+	const item = "- [ ] #9 New"
+	for name, tc := range map[string]struct{ body, want string }{
+		"sections follow the list": {
+			"## Tasks\n- [x] #1 A\n- [ ] #2 B\n  detail\n\n## Notes\ntext",
+			"## Tasks\n- [x] #1 A\n- [ ] #2 B\n  detail\n- [ ] #9 New\n\n## Notes\ntext",
+		},
+		"another checklist follows": {
+			"- [ ] #1 A\n\n## Done when\n- [ ] it works",
+			"- [ ] #1 A\n- [ ] #9 New\n\n## Done when\n- [ ] it works",
+		},
+		"fenced example is not the list": {
+			"- [ ] #1 A\n```\n- [ ] #2 example\n```",
+			"- [ ] #1 A\n- [ ] #9 New\n```\n- [ ] #2 example\n```",
+		},
+		"CRLF body": {
+			"- [ ] #1 A\r\n\r\nend",
+			"- [ ] #1 A\r\n- [ ] #9 New\r\n\r\nend",
+		},
+		"no children yet": {"intro", "intro\n- [ ] #9 New"},
+	} {
+		if got := appendEpicChild(tc.body, item); got != tc.want {
+			t.Errorf("%s: got %q, want %q", name, got, tc.want)
+		}
 	}
 }

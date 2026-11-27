@@ -777,11 +777,16 @@ func (wi *WebInterface) fleetDispatchWithNewIssue(ctx context.Context, svc *Flee
 
 	var milestoneNumber int
 	if ms := strings.TrimSpace(req.Milestone); ms != "" {
-		if milestoneNumber, err = fleetGitHubMilestoneGetOrCreate(ctx, project.RepoPath, ms); err != nil {
+		if milestoneNumber, err = svc.githubMilestone(ctx, actor, project, ms); err != nil {
 			return nil, err
 		}
 	}
 	created, err := fleetGitHubIssueCreateFunc(ctx, project.RepoPath, title, goal, milestoneNumber)
+	detail := title
+	if err == nil {
+		detail = fmt.Sprintf("#%d %s", created.Number, title)
+	}
+	svc.auditGitHubWrite(ctx, actor, fleetAuditCreateIssue, project.ID, "", detail, err)
 	if err != nil {
 		return nil, err
 	}
@@ -801,7 +806,10 @@ func (wi *WebInterface) fleetDispatchWithNewIssue(ctx context.Context, svc *Flee
 	out := wi.fleetTaskReply(ctx, svc, task)
 	out.IssueUrl = created.HTMLURL
 	if epic := int(req.EpicIssue); epic > 0 {
-		if err := fleetGitHubEpicUpdateFunc(ctx, project.RepoPath, epic, created.Number, title); err != nil {
+		err := fleetGitHubEpicUpdateFunc(ctx, project.RepoPath, epic, created.Number, title)
+		svc.auditGitHubWrite(ctx, actor, fleetAuditUpdateEpic, project.ID, task.ID,
+			fmt.Sprintf("epic #%d + #%d", epic, created.Number), err)
+		if err != nil {
 			out.Warning = fmt.Sprintf("issue #%d created but epic #%d could not be updated: %s", created.Number, epic, err)
 		}
 	}
