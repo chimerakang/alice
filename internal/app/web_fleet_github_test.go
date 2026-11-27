@@ -61,8 +61,8 @@ func TestFleetDispatchCreateIssue(t *testing.T) {
 			createCalled.milestone = milestone
 			return fleetCreatedIssue{Number: 42, HTMLURL: "https://github.com/test/repo/issues/42"}, nil
 		}
-		fleetGitHubEpicUpdateFunc = func(context.Context, string, int, int, string) error { return nil }
-		fleetGitHubMilestoneGetOrCreate = func(context.Context, string, string) (int, error) { return 0, nil }
+		fleetGitHubEpicUpdateFunc = func(context.Context, string, int, int, string, string) error { return nil }
+		fleetGitHubMilestoneGetOrCreate = func(context.Context, string, string) (int, bool, error) { return 0, false, nil }
 
 		status, body := e.call(http.MethodPost, "/api/fleet/tasks",
 			`{"project_id":"`+e.project.ID+`","goal":"Fix the login bug\n\nDetails here","create_issue":true}`,
@@ -91,16 +91,16 @@ func TestFleetDispatchCreateIssue(t *testing.T) {
 
 	t.Run("success: creates milestone when given a name", func(t *testing.T) {
 		var msName string
-		fleetGitHubMilestoneGetOrCreate = func(_ context.Context, _ string, name string) (int, error) {
+		fleetGitHubMilestoneGetOrCreate = func(_ context.Context, _ string, name string) (int, bool, error) {
 			msName = name
-			return 7, nil
+			return 7, true, nil
 		}
 		var issueMilestone int
 		fleetGitHubIssueCreateFunc = func(_ context.Context, _, _, _ string, milestone int) (fleetCreatedIssue, error) {
 			issueMilestone = milestone
 			return fleetCreatedIssue{Number: 43, HTMLURL: "https://github.com/test/repo/issues/43"}, nil
 		}
-		fleetGitHubEpicUpdateFunc = func(context.Context, string, int, int, string) error { return nil }
+		fleetGitHubEpicUpdateFunc = func(context.Context, string, int, int, string, string) error { return nil }
 
 		status, body := e.call(http.MethodPost, "/api/fleet/tasks",
 			`{"project_id":"`+e.project.ID+`","goal":"Add dark mode","create_issue":true,"milestone":"v2.0"}`,
@@ -124,11 +124,11 @@ func TestFleetDispatchCreateIssue(t *testing.T) {
 		fleetGitHubIssueCreateFunc = func(context.Context, string, string, string, int) (fleetCreatedIssue, error) {
 			return fleetCreatedIssue{Number: 44, HTMLURL: "https://github.com/test/repo/issues/44"}, nil
 		}
-		fleetGitHubEpicUpdateFunc = func(_ context.Context, _ string, epicNum, issueNum int, title string) error {
+		fleetGitHubEpicUpdateFunc = func(_ context.Context, _ string, epicNum, issueNum int, title, _ string) error {
 			epicCalled.epicNum, epicCalled.issueNum, epicCalled.issueTitle = epicNum, issueNum, title
 			return nil
 		}
-		fleetGitHubMilestoneGetOrCreate = func(context.Context, string, string) (int, error) { return 0, nil }
+		fleetGitHubMilestoneGetOrCreate = func(context.Context, string, string) (int, bool, error) { return 0, false, nil }
 
 		status, body := e.call(http.MethodPost, "/api/fleet/tasks",
 			`{"project_id":"`+e.project.ID+`","goal":"Refactor auth","create_issue":true,"epic_issue":10}`,
@@ -148,10 +148,10 @@ func TestFleetDispatchCreateIssue(t *testing.T) {
 		fleetGitHubIssueCreateFunc = func(context.Context, string, string, string, int) (fleetCreatedIssue, error) {
 			return fleetCreatedIssue{Number: 45, HTMLURL: "https://github.com/test/repo/issues/45"}, nil
 		}
-		fleetGitHubEpicUpdateFunc = func(context.Context, string, int, int, string) error {
+		fleetGitHubEpicUpdateFunc = func(context.Context, string, int, int, string, string) error {
 			return errors.New("not found")
 		}
-		fleetGitHubMilestoneGetOrCreate = func(context.Context, string, string) (int, error) { return 0, nil }
+		fleetGitHubMilestoneGetOrCreate = func(context.Context, string, string) (int, bool, error) { return 0, false, nil }
 
 		status, body := e.call(http.MethodPost, "/api/fleet/tasks",
 			`{"project_id":"`+e.project.ID+`","goal":"Improve caching","create_issue":true,"epic_issue":99}`,
@@ -174,7 +174,7 @@ func TestFleetDispatchCreateIssue(t *testing.T) {
 		}
 		existing, _ := e.svc.Store.ListTasks(context.Background(), fleet.TaskFilter{})
 		before := len(existing)
-		fleetGitHubMilestoneGetOrCreate = func(context.Context, string, string) (int, error) { return 0, nil }
+		fleetGitHubMilestoneGetOrCreate = func(context.Context, string, string) (int, bool, error) { return 0, false, nil }
 
 		status, body := e.call(http.MethodPost, "/api/fleet/tasks",
 			`{"project_id":"`+e.project.ID+`","goal":"Something","create_issue":true}`,
@@ -331,5 +331,52 @@ func TestFleetProjectIssuesEpicDetection(t *testing.T) {
 	}
 	if issues[2]["is_epic"] != false {
 		t.Errorf("issue 3 (normal) is_epic = %v, want false", issues[2]["is_epic"])
+	}
+}
+
+// Every change made on GitHub leaves its own audit entry, successful or not.
+func TestFleetDispatchAuditsGitHubWrites(t *testing.T) {
+	e := newWebFleetEnv(t)
+	prevCreate, prevMS, prevEpic := fleetGitHubIssueCreateFunc, fleetGitHubMilestoneGetOrCreate, fleetGitHubEpicUpdateFunc
+	t.Cleanup(func() {
+		fleetGitHubIssueCreateFunc, fleetGitHubMilestoneGetOrCreate, fleetGitHubEpicUpdateFunc = prevCreate, prevMS, prevEpic
+	})
+	stubDispatchFromIssue(t, e.svc)
+	fleetGitHubMilestoneGetOrCreate = func(context.Context, string, string) (int, bool, error) { return 3, true, nil }
+	fleetGitHubIssueCreateFunc = func(context.Context, string, string, string, int) (fleetCreatedIssue, error) {
+		return fleetCreatedIssue{Number: 50}, nil
+	}
+	fleetGitHubEpicUpdateFunc = func(context.Context, string, int, int, string, string) error { return errors.New("epic locked") }
+
+	status, body := e.call(http.MethodPost, "/api/fleet/tasks",
+		`{"project_id":"`+e.project.ID+`","goal":"Audit me","create_issue":true,"milestone":"v3","epic_issue":10}`, true)
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, body = %v", status, body)
+	}
+	entries, err := e.svc.Commander.Audit(context.Background(), fleet.AuditFilter{ProjectID: e.project.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]fleet.AuditEntry{}
+	for _, entry := range entries {
+		got[entry.Command] = entry
+	}
+	for command, ok := range map[string]bool{fleetAuditCreateMilestone: true, fleetAuditCreateIssue: true, fleetAuditUpdateEpic: false} {
+		entry, found := got[command]
+		if !found || entry.OK != ok || entry.Via != "web" {
+			t.Errorf("%s: found=%v entry=%+v, want ok=%v", command, found, entry, ok)
+		}
+	}
+
+	fleetGitHubIssueCreateFunc = func(context.Context, string, string, string, int) (fleetCreatedIssue, error) {
+		return fleetCreatedIssue{}, errors.New("gh down")
+	}
+	e.call(http.MethodPost, "/api/fleet/tasks", `{"project_id":"`+e.project.ID+`","goal":"Fails","create_issue":true}`, true)
+	entries, err = e.svc.Commander.Audit(context.Background(), fleet.AuditFilter{ProjectID: e.project.ID, Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Command != fleetAuditCreateIssue || entries[0].OK || entries[0].Error != "gh down" {
+		t.Errorf("failed creation entry = %+v", entries)
 	}
 }

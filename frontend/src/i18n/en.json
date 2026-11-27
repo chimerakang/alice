@@ -987,7 +987,8 @@
       "epic_fields_na": "Not used when creating an epic.",
       "github_checking": "Checking GitHub access…",
       "github_reason_no_remote": "GitHub is unavailable: this project has no GitHub remote.",
-      "github_reason_auth_required": "GitHub is unavailable: gh is not logged in. Run `gh auth login` on the Alice host."
+      "github_reason_auth_required": "GitHub is unavailable: gh is not logged in. Run `gh auth login` on the Alice host.",
+      "github_reason_check_failed": "GitHub is unavailable: access could not be checked. You can still dispatch as text."
     },
     "decision_context": {
       "title": "What needs your decision",

@@ -102,7 +102,7 @@ export default function FleetDispatchForm({ projects, defaultProject = "", onClo
     fleetApi
       .getProjectGitHub(project)
       .then((status) => { if (!stale) setLoadedStatus({ project, status }); })
-      .catch(() => { if (!stale) setLoadedStatus({ project, status: { available: false, reason: "" } }); });
+      .catch(() => { if (!stale) setLoadedStatus({ project, status: { available: false, reason: "check_failed" } }); });
     return () => { stale = true; };
   }, [mode, project, hasRemote]);
 
@@ -282,9 +282,16 @@ export default function FleetDispatchForm({ projects, defaultProject = "", onClo
           <div className="rounded-md border border-gray-800 p-3 space-y-2">
             <p className="text-xs font-medium text-gray-400">{t("fleet.dispatch.github_section")}</p>
             {!githubAvailable ? (
-              <p className="text-xs text-gray-500" data-testid="github-unavailable">
-                {githubReason ? t(`fleet.dispatch.github_reason_${githubReason}`) : t("fleet.dispatch.github_checking")}
-              </p>
+              <>
+                {/* Shown unticked and disabled, so it is plain no issue will be made. */}
+                <label className="flex items-center gap-2 text-sm text-gray-500">
+                  <input type="checkbox" checked={false} disabled readOnly data-testid="github-create-disabled" />
+                  {t("fleet.dispatch.github_create_issue")}
+                </label>
+                <p className="text-xs text-gray-500" data-testid="github-unavailable">
+                  {githubReason ? t(`fleet.dispatch.github_reason_${githubReason}`) : t("fleet.dispatch.github_checking")}
+                </p>
+              </>
             ) : (
               <>
                 <div className="flex flex-wrap items-center gap-3 text-sm text-gray-200">
@@ -311,25 +318,19 @@ export default function FleetDispatchForm({ projects, defaultProject = "", onClo
                   <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 pl-5">
                     <label className="space-y-1 text-xs text-gray-400">
                       {t("fleet.dispatch.github_milestone_label")}
-                      {loadedMilestones && loadedMilestones.length > 0 ? (
-                        <select
-                          value={ghMilestone}
-                          onChange={(e) => setGhMilestone(e.target.value)}
-                          className={input}
-                        >
-                          <option value="">{t("fleet.dispatch.github_milestone_placeholder")}</option>
-                          {loadedMilestones.map((m) => (
-                            <option key={m.number} value={m.title}>{m.title}</option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          value={ghMilestone}
-                          onChange={(e) => setGhMilestone(e.target.value)}
-                          placeholder={t("fleet.dispatch.github_milestone_placeholder")}
-                          className={input}
-                        />
-                      )}
+                      {/* Pick an open milestone, or type a new name to create it. */}
+                      <input
+                        value={ghMilestone}
+                        onChange={(e) => setGhMilestone(e.target.value)}
+                        list="fleet-milestones"
+                        placeholder={t("fleet.dispatch.github_milestone_placeholder")}
+                        className={input}
+                      />
+                      <datalist id="fleet-milestones">
+                        {(loadedMilestones ?? []).map((m) => (
+                          <option key={m.number} value={m.title} />
+                        ))}
+                      </datalist>
                     </label>
                     {kind === "issue" && (
                     <label className="space-y-1 text-xs text-gray-400">

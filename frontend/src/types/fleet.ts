@@ -322,7 +322,7 @@ export interface FleetEpicReply {
 /** Whether GitHub can be written for a project right now. */
 export interface FleetGitHubStatus {
   available: boolean;
-  reason: "" | "no_remote" | "auth_required";
+  reason: "" | "no_remote" | "auth_required" | "check_failed";
 }
 
 export interface FleetMilestone {
