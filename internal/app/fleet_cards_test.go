@@ -294,18 +294,21 @@ func TestFleetDispatchRefusals(t *testing.T) {
 
 func TestFleetShipIssueGoesThroughTheQualityGate(t *testing.T) {
 	e := newCardEnv(t)
-	prev := hermesFetchIssue
-	defer func() { hermesFetchIssue = prev }()
+	prev := fleetFetchIssue
+	defer func() { fleetFetchIssue = prev }()
 
 	var asked struct {
 		dir    string
 		number int
 	}
-	hermesFetchIssue = func(_ context.Context, dir string, number int) (*hermes.IssueContext, error) {
+	fleetFetchIssue = func(_ context.Context, dir string, number int) (*hermes.IssueContext, error) {
 		asked.dir, asked.number = dir, number
 		return &hermes.IssueContext{Number: number, Title: "t", State: "CLOSED", Body: strings.Repeat("x", 200)}, nil
 	}
 	e.bot.handleFleetCommand(e.key, 42, "/ship #12")
+	if got := nextFleetMessage(t, e.bot); !strings.Contains(got, "fleet_issue_reading") {
+		t.Fatalf("issue read acknowledgement: message = %q", got)
+	}
 	if got := nextFleetMessage(t, e.bot); !strings.Contains(got, "#12") || !strings.Contains(got, "closed") {
 		t.Fatalf("closed issue: message = %q", got)
 	}
@@ -313,18 +316,24 @@ func TestFleetShipIssueGoesThroughTheQualityGate(t *testing.T) {
 		t.Fatalf("issue fetched as %+v, want #12 in %s", asked, e.project.RepoPath)
 	}
 
-	hermesFetchIssue = func(context.Context, string, int) (*hermes.IssueContext, error) {
+	fleetFetchIssue = func(context.Context, string, int) (*hermes.IssueContext, error) {
 		return &hermes.IssueContext{Number: 13, Title: "t", State: "OPEN", Body: "too short"}, nil
 	}
 	e.bot.handleFleetCommand(e.key, 42, "/ship #13")
+	if got := nextFleetMessage(t, e.bot); !strings.Contains(got, "fleet_issue_reading") {
+		t.Fatalf("issue read acknowledgement: message = %q", got)
+	}
 	if got := nextFleetMessage(t, e.bot); !strings.Contains(got, "#13") {
 		t.Fatalf("vague issue: message = %q", got)
 	}
 
-	hermesFetchIssue = func(context.Context, string, int) (*hermes.IssueContext, error) {
+	fleetFetchIssue = func(context.Context, string, int) (*hermes.IssueContext, error) {
 		return nil, errors.New("gh: not found")
 	}
 	e.bot.handleFleetCommand(e.key, 42, "/ship #14")
+	if got := nextFleetMessage(t, e.bot); !strings.Contains(got, "fleet_issue_reading") {
+		t.Fatalf("issue read acknowledgement: message = %q", got)
+	}
 	if got := nextFleetMessage(t, e.bot); !strings.Contains(got, "fleet_issue_read_failed") {
 		t.Fatalf("unreadable issue: message = %q", got)
 	}
@@ -605,6 +614,29 @@ func TestFleetCardShowsLatestToolAndClearsItOnStatusChange(t *testing.T) {
 	e.cards.handleEvent(ctx, fleet.Event{TaskID: task.ID, Type: fleet.EventStatus})
 	if got := e.msgr.lastEdit(t).Text; strings.Contains(got, "Bash") || !strings.Contains(got, "fleet_card_action_verifying") {
 		t.Fatalf("verifying card:\n%s", got)
+	}
+}
+
+func TestFleetCardExplainsRetryVersusReplyWhenASessionExists(t *testing.T) {
+	e := newCardEnv(t)
+	ctx := context.Background()
+	task := e.dispatch("/ship fix it")
+	if _, err := e.svc.Store.Transition(ctx, task.ID, fleet.StatusRunning, "slot free"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Store.Transition(ctx, task.ID, fleet.StatusNeedsDecision, "runner stopped: context canceled"); err != nil {
+		t.Fatal(err)
+	}
+	e.cards.handleEvent(ctx, fleet.Event{TaskID: task.ID, Type: fleet.EventStatus})
+	if got := e.msgr.lastEdit(t).Text; strings.Contains(got, "fleet_card_retry_vs_reply") {
+		t.Fatalf("no session yet, but the card explains Retry vs Reply:\n%s", got)
+	}
+	if err := e.svc.Store.SetSession(ctx, task.ID, "sess-1"); err != nil {
+		t.Fatal(err)
+	}
+	e.cards.handleEvent(ctx, fleet.Event{TaskID: task.ID, Type: fleet.EventStatus})
+	if got := e.msgr.lastEdit(t).Text; !strings.Contains(got, "fleet_card_retry_vs_reply") {
+		t.Fatalf("card with a session lacks the Retry vs Reply note:\n%s", got)
 	}
 }
 

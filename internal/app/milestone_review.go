@@ -97,6 +97,58 @@ type ghIssueWithMilestoneJSON struct {
 	} `json:"comments"`
 }
 
+// issueContext converts the parsed gh JSON into a hermes.IssueContext with the
+// given issue number (callers that did not request the "number" field pass the
+// number they asked gh for).
+func (raw ghIssueWithMilestoneJSON) issueContext(number int) *hermes.IssueContext {
+	labels := make([]string, len(raw.Labels))
+	for i, l := range raw.Labels {
+		labels[i] = l.Name
+	}
+	comments := make([]hermes.IssueComment, 0, len(raw.Comments))
+	for _, c := range raw.Comments {
+		comments = append(comments, hermes.IssueComment{
+			Author:    c.Author.Login,
+			Body:      c.Body,
+			CreatedAt: c.CreatedAt,
+		})
+	}
+	return &hermes.IssueContext{
+		Number:    number,
+		Title:     raw.Title,
+		Body:      raw.Body,
+		State:     raw.State,
+		Labels:    labels,
+		Checklist: hermes.ExtractChecklist(raw.Body),
+		Comments:  comments,
+	}
+}
+
+// ghTimeoutDispatch is the per-attempt limit for the issue read behind a
+// Telegram Fleet dispatch. It carries over the 25s value PR #225 introduced
+// (FetchIssueForDispatch) because the default ghTimeoutShort (10s) was too
+// tight for dispatch reads.
+const ghTimeoutDispatch = 25 * time.Second
+
+// FetchIssueForDispatch is FetchIssue with the longer dispatch time limit. It
+// reads `gh issue view N --json title,body,state,labels,comments` and retries
+// once on transient failures via ghOutputWithRetry. The returned Number is the
+// requested one, matching alice-core's ghissue.FetchIssue.
+func FetchIssueForDispatch(ctx context.Context, projectDir string, number int) (*hermes.IssueContext, error) {
+	out, err := ghOutputWithRetry(ctx, projectDir, ghTimeoutDispatch, "issue", "view",
+		fmt.Sprintf("%d", number),
+		"--json", "title,body,state,labels,comments",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("gh issue view %d: %w", number, err)
+	}
+	var raw ghIssueWithMilestoneJSON
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parse issue JSON: %w", err)
+	}
+	return raw.issueContext(number), nil
+}
+
 // FetchMilestones returns all milestones (open + closed) for the repo rooted
 // at projectDir by calling `gh api repos/:owner/:repo/milestones?state=all`.
 func FetchMilestones(ctx context.Context, projectDir string) ([]MilestoneItem, error) {
@@ -152,27 +204,7 @@ func FetchIssueWithMilestone(ctx context.Context, projectDir string, issueNum in
 		return nil, nil, fmt.Errorf("parse issue JSON: %w", err)
 	}
 
-	labels := make([]string, len(raw.Labels))
-	for i, l := range raw.Labels {
-		labels[i] = l.Name
-	}
-	comments := make([]hermes.IssueComment, 0, len(raw.Comments))
-	for _, c := range raw.Comments {
-		comments = append(comments, hermes.IssueComment{
-			Author:    c.Author.Login,
-			Body:      c.Body,
-			CreatedAt: c.CreatedAt,
-		})
-	}
-	issue := &hermes.IssueContext{
-		Number:    raw.Number,
-		Title:     raw.Title,
-		Body:      raw.Body,
-		State:     raw.State,
-		Labels:    labels,
-		Checklist: hermes.ExtractChecklist(raw.Body),
-		Comments:  comments,
-	}
+	issue := raw.issueContext(raw.Number)
 
 	if raw.Milestone == nil {
 		return issue, nil, nil

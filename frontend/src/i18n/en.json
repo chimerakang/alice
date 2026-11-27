@@ -929,7 +929,8 @@
       "reply_placeholder_review": "What should change? It continues in the same session.",
       "reply_placeholder_blocked": "Answer the agent's question, or add instructions. Leave empty to say \"carry on\".",
       "send_reply": "Send",
-      "carry_on": "Carry on"
+      "carry_on": "Carry on",
+      "retry_vs_reply_hint": "Retry starts a new session and redoes the task from its original goal; earlier instructions are lost. Send instructions continues in the existing session."
     },
     "confirm": {
       "cancel_title": "Cancel this task?",
@@ -987,6 +988,20 @@
       "github_reason_no_remote": "GitHub is unavailable: this project has no GitHub remote.",
       "github_reason_auth_required": "GitHub is unavailable: gh is not logged in. Run `gh auth login` on the Alice host."
     },
+    "decision_context": {
+      "title": "What needs your decision",
+      "interrupted": "The runner was interrupted. Fleet stopped the task before it could finish.",
+      "reason_unavailable": "No stop reason was recorded.",
+      "checks_loading": "Loading delivery details…",
+      "checks_unavailable": "Verification details are not available.",
+      "changed_files_one": "{{count}} changed file",
+      "changed_files_other": "{{count}} changed files",
+      "reply": "To continue in the existing session, choose Send instructions and then Continue as-is, or add your instructions.",
+      "no_session": "There is no saved session. Choose Retry if the task should start again.",
+      "retry": "Retry starts a new session from the original task brief.",
+      "pass": "Pass skips the verification gate and sends the current changes forward for delivery.",
+      "discard": "Discard removes the worktree and any uncommitted changes."
+    },
     "delivery": {
       "title": "Delivery summary",
       "verify_passed": "Checks passed",
@@ -1038,6 +1053,9 @@
       }
     },
     "task": {
+      "original_brief": "Original task brief",
+      "startup_recovered": "Automatically resumed after a service restart",
+      "startup_resume_capped": "Automatic restart recovery limit reached. A decision is needed.",
       "back": "Back to the board",
       "not_found": "Task {{id}} was not found.",
       "elapsed": "Elapsed",
