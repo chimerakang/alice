@@ -39,6 +39,8 @@ const (
 	fleetEventIssueSyncResult = "issue_sync.result"
 	fleetEventIssueSyncError  = "issue_sync.error"
 	fleetEventIssueClosed     = "issue_sync.closed"
+	// An operator's go-ahead to close, kept until a sync gets an answer.
+	fleetEventIssueCloseAuthorized = "issue_sync.close_authorized"
 
 	fleetIssueSyncTimeout  = 2 * time.Minute
 	fleetIssueSyncInterval = 2 * time.Minute
@@ -109,6 +111,9 @@ type IssueSyncResult struct {
 	KeptOpen    string `json:"kept_open,omitempty"`
 	Settled     bool   `json:"settled"`
 	CommentHash string `json:"comment_hash"`
+
+	// inconclusive: the forge could not be read, so nothing was decided.
+	inconclusive bool
 }
 
 // Stages of a task as its issue is told about them.
@@ -199,9 +204,23 @@ type issueSyncRecord struct {
 	Status  string `json:"status"`
 }
 
+// closeAuthorizationPending reports whether an operator's go-ahead is still
+// waiting for a sync that got an answer.
+func (s *FleetIssueSync) closeAuthorizationPending(ctx context.Context, taskID string) bool {
+	auth, ok, _ := s.Store.LastEvent(ctx, taskID, fleetEventIssueCloseAuthorized)
+	if !ok {
+		return false
+	}
+	res, answered, _ := s.Store.LastEvent(ctx, taskID, fleetEventIssueSyncResult)
+	return !answered || auth.ID > res.ID
+}
+
 // settled reports whether the last sync of a task is final for its present
 // status, so there is nothing to re-check.
 func (s *FleetIssueSync) settled(ctx context.Context, task fleet.Task) bool {
+	if s.closeAuthorizationPending(ctx, task.ID) {
+		return false
+	}
 	res, ok, err := s.Store.LastEvent(ctx, task.ID, fleetEventIssueSyncResult)
 	if err != nil || !ok {
 		return false
@@ -241,15 +260,27 @@ func (s *FleetIssueSync) Sync(ctx context.Context, taskID string, opts IssueSync
 	if err != nil {
 		return nil, err
 	}
+	if opts.AuthorizeClose {
+		if _, err := s.Store.AppendEvent(ctx, task.ID, fleetEventIssueCloseAuthorized, map[string]any{"issue": task.Source.IssueNumber}); err != nil {
+			return nil, err
+		}
+	}
+	// A retry carries the go-ahead of the attempt that GitHub failed.
+	pending := s.closeAuthorizationPending(ctx, task.ID)
+	opts.AuthorizeClose = opts.AuthorizeClose || pending
 	res, err := s.sync(ctx, task, project, opts)
 	if err != nil {
 		s.recordError(ctx, task, err)
 		return res, err
 	}
+	if pending && res.inconclusive {
+		// Recording a result would use up the go-ahead.
+		return res, nil
+	}
 	payload := issueSyncRecord{Stage: res.Stage, Hash: res.CommentHash, Settled: res.Settled, Status: string(task.Status)}
 	// Record a result only when something changed: a quiet re-check must
 	// not grow the task's history.
-	if last, ok, _ := s.Store.LastEvent(ctx, task.ID, fleetEventIssueSyncResult); !ok || !sameSyncRecord(last.Payload, payload) || s.errorAfter(ctx, task.ID, last.ID) {
+	if last, ok, _ := s.Store.LastEvent(ctx, task.ID, fleetEventIssueSyncResult); !ok || pending || !sameSyncRecord(last.Payload, payload) || s.errorAfter(ctx, task.ID, last.ID) {
 		_, _ = s.Store.AppendEvent(ctx, task.ID, fleetEventIssueSyncResult, payload)
 	}
 	return res, nil
@@ -444,6 +475,7 @@ func renderIssueComment(in issueSyncInput, d closeDecision) string {
 			fmt.Fprintf(&sb, "- Commit: `%s` %s\n", shortSHA(in.LocalSHA), in.LocalSubject)
 		}
 		writeIssueFacts(&sb, task)
+		writeIssueSummary(&sb, in)
 		writeIssueAcceptance(&sb, in, true)
 	case issueStageUnconfirmed:
 		fmt.Fprintf(&sb, "❓ **無法確認是否已合併**（任務 `%s`）\n\n", task.ID)
@@ -597,7 +629,8 @@ func (s *FleetIssueSync) sync(ctx context.Context, task fleet.Task, project flee
 	case fleet.StatusReviewReady:
 		in.Stage = issueStageReview
 		if task.PRNumber > 0 {
-			in.Stage = issueStagePRReady
+			// It may have been merged or closed on the forge.
+			s.resolvePR(ctx, &in)
 		}
 	case fleet.StatusDone:
 		s.resolveDone(ctx, &in)
@@ -656,6 +689,7 @@ func (s *FleetIssueSync) sync(ctx context.Context, task fleet.Task, project flee
 		_, _ = s.Store.AppendEvent(ctx, task.ID, fleetEventIssueClosed, map[string]any{"issue": task.Source.IssueNumber})
 	}
 	res.Settled = settledStage(in, d)
+	res.inconclusive = (needIssue && in.Issue == nil) || (task.PRNumber > 0 && in.Stage == issueStageUnconfirmed)
 	return res, nil
 }
 
@@ -713,6 +747,12 @@ func (s *FleetIssueSync) resolveDone(ctx context.Context, in *issueSyncInput) {
 		in.PRError = "任務沒有 PR，也沒有本機合併紀錄"
 		return
 	}
+	s.resolvePR(ctx, in)
+}
+
+// resolvePR sets the stage from what the forge says about the pull request.
+func (s *FleetIssueSync) resolvePR(ctx context.Context, in *issueSyncInput) {
+	task, project := in.Task, in.Project
 	pr, err := s.Host.PullRequest(ctx, project.RepoPath, task.PRNumber)
 	if err != nil {
 		in.Stage = issueStageUnconfirmed
