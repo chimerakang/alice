@@ -47,6 +47,8 @@ type FleetConfig struct {
 	ScoutBackend string `json:"scout_backend"`
 	// ScoutCodexModel overrides the Codex CLI's default model.
 	ScoutCodexModel string `json:"scout_codex_model"`
+	// ScoutQuota optionally prefers the eligible backend with more estimated capacity.
+	ScoutQuota fleetScoutQuotaConfig `json:"scout_quota"`
 	// WorktreeRoot is where task checkouts are created. Defaults to
 	// "worktrees" beside the database.
 	WorktreeRoot string `json:"worktree_root"`

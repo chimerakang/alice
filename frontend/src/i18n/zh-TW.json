@@ -1129,6 +1129,16 @@
       "error_budget": "預算需為 0 以上的金額；留空表示沿用預設。"
     },
     "costs": {
+      "by_backend": "後端用量（最近 {{days}} 天）",
+      "no_backend_usage": "這段期間沒有後端用量資料。",
+      "unattributed": "未歸屬",
+      "backend_columns": {
+        "backend": "後端",
+        "input_tokens": "輸入 token",
+        "output_tokens": "輸出 token",
+        "cost_usd": "已回報費用",
+        "tasks": "任務數"
+      },
       "title": "Fleet 成本與預算",
       "today": "今日",
       "period": "近 {{days}} 天",

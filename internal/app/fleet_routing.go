@@ -314,7 +314,7 @@ func (s *FleetService) routeScout(ctx context.Context, task fleet.Task, usdLimit
 			break
 		}
 	}
-	choice := s.chooseScoutBackend(string(tier), usdLimited)
+	choice := s.preferScoutByEstimatedQuota(ctx, s.chooseScoutBackend(string(tier), usdLimited))
 	s.recordEvent(context.WithoutCancel(ctx), task.ID, fleetEventScoutBackend, choice)
 	model := task.Model
 	if codexModel := s.Routing.fleetCodexTierModel(tier); codexModel != "" {

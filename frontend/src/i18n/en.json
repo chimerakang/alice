@@ -1130,6 +1130,16 @@
       "error_budget": "A budget must be 0 or more; leave it empty to use the default."
     },
     "costs": {
+      "by_backend": "Backend usage · Last {{days}} days",
+      "no_backend_usage": "No backend usage in this period.",
+      "unattributed": "Unattributed",
+      "backend_columns": {
+        "backend": "Backend",
+        "input_tokens": "Input tokens",
+        "output_tokens": "Output tokens",
+        "cost_usd": "Reported cost",
+        "tasks": "Tasks"
+      },
       "title": "Fleet cost and budgets",
       "today": "Today",
       "period": "Last {{days}} days",

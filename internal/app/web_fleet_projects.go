@@ -43,6 +43,7 @@ func (wi *WebInterface) registerFleetProjectRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/fleet/projects/{id}/github", wi.fleetHandler(false, wi.fleetProjectGitHub))
 	mux.HandleFunc("GET /api/fleet/projects/{id}/worktrees", wi.fleetHandler(false, wi.fleetProjectWorktrees))
 	mux.HandleFunc("POST /api/fleet/projects/{id}/verify", wi.fleetHandlerWithin(true, fleetVerifyRunTimeout, wi.fleetProjectVerify))
+	mux.HandleFunc("GET /api/fleet/usage/backends", wi.fleetHandler(false, wi.fleetBackendUsage))
 	mux.HandleFunc("GET /api/fleet/costs", wi.fleetHandler(false, wi.fleetCosts))
 	// The same view under the existing cost endpoints, where the Performance
 	// page reads the rest of its numbers.
