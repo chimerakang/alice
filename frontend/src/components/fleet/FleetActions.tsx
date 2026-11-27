@@ -94,6 +94,12 @@ export default function FleetActions({ task, onDone, compact = false }: Props) {
         ))}
       </div>
 
+      {task.status === "needs_decision" && task.session_id && (
+        <p className="text-xs text-gray-400" data-testid="fleet-retry-vs-reply">
+          {t("fleet.actions.retry_vs_reply_hint")}
+        </p>
+      )}
+
       {replying && (
         <div className="space-y-2">
           <textarea
