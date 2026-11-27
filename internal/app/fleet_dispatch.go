@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"claude-tg-agent/internal/app/hermes"
 	"github.com/chimerakang/alice-core/fleet"
 )
 
@@ -142,8 +143,14 @@ func (t *TelegramBot) fleetDispatch(ctx context.Context, key chatKey, userID int
 	if !ok {
 		return
 	}
-	if args.Issue > 0 && !t.fleetIssuePassesGate(ctx, key, project, args.Issue) {
-		return
+	if args.Issue > 0 {
+		t.send(key, t.fleetMsg(key.chatID, "fleet_issue_reading", map[string]string{
+			"{project}": project.Name,
+			"{number}":  strconv.Itoa(args.Issue),
+		}))
+		if !t.fleetIssuePassesGate(ctx, key, project, args.Issue) {
+			return
+		}
 	}
 
 	task, err := t.fleet.Commander.Dispatch(ctx, fleetActor(userID), fleet.DispatchRequest{
@@ -177,11 +184,13 @@ func (t *TelegramBot) fleetPostCard(ctx context.Context, key chatKey, task fleet
 	}))
 }
 
+var fleetFetchIssue = hermes.FetchIssueForDispatch
+
 // fleetIssuePassesGate applies the existing issue quality check before an
 // issue is dispatched. It reports whether to go ahead; when not, the reason
 // has been sent.
 func (t *TelegramBot) fleetIssuePassesGate(ctx context.Context, key chatKey, project fleet.Project, number int) bool {
-	issue, err := hermesFetchIssue(ctx, project.RepoPath, number)
+	issue, err := fleetFetchIssue(ctx, project.RepoPath, number)
 	if err != nil {
 		t.send(key, t.fleetMsg(key.chatID, "fleet_issue_read_failed", map[string]string{
 			"{number}": strconv.Itoa(number),
