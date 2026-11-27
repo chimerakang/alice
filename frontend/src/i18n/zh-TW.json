@@ -1129,6 +1129,13 @@
       "error_budget": "預算需為 0 以上的金額；留空表示沿用預設。"
     },
     "costs": {
+      "quota_blocked": "後端額度已用盡",
+      "quota_no_block": "目前無額度阻擋紀錄",
+      "quota_unknown": "剩餘額度未知",
+      "quota_provider": "供應商回報剩餘 {{percent}}%",
+      "quota_estimate": "Fleet 估計剩餘 {{percent}}%",
+      "quota_reset": "重置時間 {{time}}",
+      "quota_reset_unknown": "重置時間未知",
       "by_backend": "後端用量（最近 {{days}} 天）",
       "no_backend_usage": "這段期間沒有後端用量資料。",
       "unattributed": "未歸屬",

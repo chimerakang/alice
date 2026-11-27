@@ -93,46 +93,122 @@ func matchFleetQuotaError(message string, patterns []*regexp.Regexp, layout stri
 
 // These allowances are Fleet-local estimates over a rolling window.
 type fleetScoutQuotaConfig struct {
-	MaxTransfers  int   `json:"max_transfers"`
-	WindowMinutes int64 `json:"window_minutes"`
-	ClaudeTokens  int64 `json:"claude_tokens"`
-	CodexTokens   int64 `json:"codex_tokens"`
+	MaxTransfers  int      `json:"max_transfers"`
+	WindowMinutes int64    `json:"window_minutes"`
+	ClaudeTokens  int64    `json:"claude_tokens"`
+	CodexTokens   int64    `json:"codex_tokens"`
+	ClaudeErrors  []string `json:"claude_error_patterns"`
+	CodexErrors   []string `json:"codex_error_patterns"`
+	ResetLayout   string   `json:"reset_layout"`
+	ResetTimezone string   `json:"reset_timezone"`
 }
 
-func (s *FleetService) preferScoutByEstimatedQuota(ctx context.Context, choice fleetScoutBackendChoice) fleetScoutBackendChoice {
-	cfg := s.Config.ScoutQuota
-	if choice.Backend != fleetBackendCodex || choice.Reason != fleetReasonAuto ||
-		cfg.WindowMinutes <= 0 || cfg.WindowMinutes > int64((1<<63-1)/time.Minute) ||
-		cfg.ClaudeTokens <= 0 || cfg.CodexTokens <= 0 {
-		return choice
+func (cfg fleetScoutQuotaConfig) errorMatcher() (func(string, string) (bool, time.Time), error) {
+	if cfg.MaxTransfers < 0 || cfg.WindowMinutes < 0 || cfg.WindowMinutes > int64(math.MaxInt64)/int64(time.Minute) ||
+		cfg.ClaudeTokens < 0 || cfg.CodexTokens < 0 {
+		return nil, fmt.Errorf("fleet.scout_quota: invalid transfer limit, window or token allowance")
 	}
-	if s.Store == nil {
-		return choice
+	layout := cfg.ResetLayout
+	if layout == "" {
+		layout = time.RFC3339
 	}
+	location := time.UTC
+	if cfg.ResetTimezone != "" {
+		var err error
+		location, err = time.LoadLocation(cfg.ResetTimezone)
+		if err != nil {
+			return nil, fmt.Errorf("fleet.scout_quota.reset_timezone: %w", err)
+		}
+	}
+	compiled := make(map[string][]*regexp.Regexp)
+	for backend, patterns := range map[string][]string{fleetBackendClaude: cfg.ClaudeErrors, fleetBackendCodex: cfg.CodexErrors} {
+		for _, pattern := range patterns {
+			if strings.TrimSpace(pattern) == "" {
+				return nil, fmt.Errorf("fleet.scout_quota: empty %s error pattern", backend)
+			}
+			expr, err := regexp.Compile(pattern)
+			if err != nil {
+				return nil, fmt.Errorf("fleet.scout_quota: invalid %s error pattern: %w", backend, err)
+			}
+			compiled[backend] = append(compiled[backend], expr)
+		}
+	}
+	return func(backend, diagnostic string) (bool, time.Time) {
+		blocked, reset, _ := matchFleetQuotaError(diagnostic, compiled[backend], layout, location)
+		return blocked, reset
+	}, nil
+}
 
-	claudeRemaining, codexRemaining := 1.0, 1.0
-	now := time.Now()
+func (s *FleetService) estimatedBackendQuota(ctx context.Context, now time.Time) (map[string]float64, error) {
+	cfg := s.Config.ScoutQuota
+	remaining := make(map[string]float64, 2)
+	if s.Store == nil || cfg.WindowMinutes <= 0 {
+		return remaining, nil
+	}
+	allowance := map[string]int64{fleetBackendClaude: cfg.ClaudeTokens, fleetBackendCodex: cfg.CodexTokens}
+	for backend, limit := range allowance {
+		if limit > 0 {
+			remaining[backend] = 1
+		}
+	}
+	if len(remaining) == 0 {
+		return remaining, nil
+	}
 	start := now.Add(-time.Duration(cfg.WindowMinutes) * time.Minute)
 	err := s.Store.VisitBackendUsage(ctx, start, now, func(backend string, input, output int64, _ float64, _ int64) {
-		used := float64(input) + float64(output)
-		switch backend {
-		case fleetBackendClaude:
-			claudeRemaining = 1 - used/float64(cfg.ClaudeTokens)
-		case fleetBackendCodex:
-			codexRemaining = 1 - used/float64(cfg.CodexTokens)
+		if limit := allowance[backend]; limit > 0 {
+			remaining[backend] = math.Max(0, 1-(float64(input)+float64(output))/float64(limit))
 		}
 	})
-	if err != nil {
+	return remaining, err
+}
+
+func (s *FleetService) preferScoutByQuota(ctx context.Context, choice fleetScoutBackendChoice) fleetScoutBackendChoice {
+	if choice.Backend != fleetBackendCodex || choice.Reason != fleetReasonAuto || s.Store == nil {
 		return choice
 	}
-	// Estimates only affect preference. Fleet-local observations do not
-	// establish provider exhaustion and must not leave a task waiting.
-	claudeRemaining = math.Max(0, claudeRemaining)
-	codexRemaining = math.Max(0, codexRemaining)
-	decision := routeWithQuota(now, choice.Backend, true,
-		fleetQuotaSnapshot{Remaining: &claudeRemaining}, fleetQuotaSnapshot{Remaining: &codexRemaining})
-	if decision.Backend == fleetBackendClaude {
-		return fleetScoutBackendChoice{Backend: fleetBackendClaude, Reason: "estimated_quota"}
+	now := time.Now()
+	var snapshots [2]fleetQuotaSnapshot
+	var sources [2]string
+	var estimates map[string]float64
+	for i, backend := range []string{fleetBackendClaude, fleetBackendCodex} {
+		blocked, reset, err := s.Store.BackendQuotaBlocked(ctx, backend)
+		if err != nil {
+			return choice
+		}
+		snapshots[i] = fleetQuotaSnapshot{Blocked: blocked, ResetsAt: reset}
+		value, measurementReset, known, err := s.Store.BackendQuotaMeasurement(ctx, backend)
+		if err == nil && known {
+			snapshots[i].Remaining = &value
+			sources[i] = "provider"
+			if !blocked {
+				snapshots[i].ResetsAt = measurementReset
+			}
+			continue
+		}
+		if estimates == nil {
+			estimates, _ = s.estimatedBackendQuota(ctx, now)
+		}
+		if estimate, ok := estimates[backend]; ok {
+			snapshots[i].Remaining = &estimate
+			sources[i] = "estimate"
+			if !blocked {
+				snapshots[i].ResetsAt = time.Time{}
+			}
+		}
+	}
+	decision := routeWithQuota(now, choice.Backend, true, snapshots[0], snapshots[1])
+	if decision.Backend == "" {
+		return choice // the scheduler holds the task until a backend is available
+	}
+	if snapshots[0].Blocked || snapshots[1].Blocked {
+		return fleetScoutBackendChoice{Backend: decision.Backend, Reason: "quota_available"}
+	}
+	if a, known := snapshots[0].remaining(now); known {
+		if b, known := snapshots[1].remaining(now); known {
+			return fleetScoutBackendChoice{Backend: decision.Backend, Reason: fmt.Sprintf(
+				"quota_remaining: claude=%.0f%% (%s), codex=%.0f%% (%s)", 100*a, sources[0], 100*b, sources[1])}
+		}
 	}
 	return choice
 }

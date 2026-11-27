@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { clsx } from "clsx";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { fleetApi, FleetApiError, type FleetBackendUsage } from "@/lib/fleetApi";
+import { fleetApi, FleetApiError, type FleetBackendUsage, type FleetBackendQuota } from "@/lib/fleetApi";
 import { budgetUse, firstLine, formatCost } from "@/lib/fleet";
 import type { FleetCosts } from "@/types/fleet";
 
@@ -113,15 +113,15 @@ export function FleetCostView({ costs, days }: { costs: FleetCosts; days: number
 
 function FleetBackendUsageView({ days }: { days: number }) {
   const { t } = useTranslation();
-  const [usage, setUsage] = useState<{ rows: FleetBackendUsage[] } | { error: string } | null>(null);
+  const [usage, setUsage] = useState<{ rows: FleetBackendUsage[]; quota: FleetBackendQuota[] } | { error: string } | null>(null);
 
   useEffect(() => {
     let stale = false;
     const until = new Date();
     const since = new Date(until.getTime() - days * 86_400_000);
     fleetApi.getBackendUsage(since.toISOString(), until.toISOString()).then(
-      ({ backends }) => {
-        if (!stale) setUsage({ rows: backends });
+      ({ backends, quota }) => {
+        if (!stale) setUsage({ rows: backends, quota: quota ?? [] });
       },
       (err: unknown) => {
         if (!stale) setUsage({ error: err instanceof Error ? err.message : String(err) });
@@ -135,6 +135,26 @@ function FleetBackendUsageView({ days }: { days: number }) {
       <h4 className="text-sm font-semibold text-gray-200">{t("fleet.costs.by_backend", { days })}</h4>
       {!usage && <p className="text-xs text-gray-500">{t("common.loading")}</p>}
       {usage && "error" in usage && <p className="text-xs text-error">{usage.error}</p>}
+      {usage && "rows" in usage && usage.quota.length > 0 && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {usage.quota.map((row) => (
+            <div key={row.backend} className="rounded-md border border-gray-800 p-3 text-xs text-gray-300">
+              <p className="font-medium capitalize text-white">{row.backend}</p>
+              <p className={row.blocked ? "text-warning" : undefined}>
+                {t(row.blocked ? "fleet.costs.quota_blocked" : "fleet.costs.quota_no_block")}
+              </p>
+              <p>{row.provider_remaining !== undefined
+                ? t("fleet.costs.quota_provider", { percent: Math.round(row.provider_remaining * 100) })
+                : row.estimated_remaining === undefined
+                ? t("fleet.costs.quota_unknown")
+                : t("fleet.costs.quota_estimate", { percent: Math.round(row.estimated_remaining * 100) })}</p>
+              <p>{row.resets_at
+                ? t("fleet.costs.quota_reset", { time: new Date(row.resets_at).toLocaleString() })
+                : row.blocked && t("fleet.costs.quota_reset_unknown")}</p>
+            </div>
+          ))}
+        </div>
+      )}
       {usage && "rows" in usage && (usage.rows.length === 0 ? (
         <p className="text-xs text-gray-500">{t("fleet.costs.no_backend_usage")}</p>
       ) : (

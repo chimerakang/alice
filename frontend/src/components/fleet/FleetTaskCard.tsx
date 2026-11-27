@@ -39,7 +39,7 @@ export default function FleetTaskCard({ task, showProject = true }: { task: Flee
             {t(task.startup_resume_capped ? "fleet.task.startup_resume_capped" : "fleet.task.startup_recovered")}
           </p>
         )}
-        {task.status_reason && task.status !== "queued" && (
+        {task.status_reason && (
         <p className="mt-1 text-xs text-gray-500 line-clamp-2 break-words">{firstLine(task.status_reason)}</p>
       )}
       {task.model && task.model_source && (

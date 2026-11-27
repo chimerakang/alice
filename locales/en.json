@@ -568,6 +568,8 @@
     "fleet_wake_question": "The agent has a question",
     "fleet_wake_needs_decision": "Needs your decision",
     "fleet_wake_stuck": "Task may be stuck",
+    "fleet_card_quota_transfer": "Switched from {from} to {to} due to provider quota",
+    "fleet_wake_provider_quota": "Claude and Codex quotas are exhausted. Eligible Fleet tasks will stay queued until quota is available.",
     "fleet_wake_over_budget": "Over budget",
     "fleet_prompt_hint_question": "↩️ Reply to this message to answer; your text goes into this task's session.",
     "fleet_prompt_hint_needs_decision": "Retry runs it again from the start. Retry with a hint: reply to this message and it continues in the same session. Wave through sends it to review as it stands.",

@@ -1,9 +1,13 @@
 package app
 
 import (
+	"context"
+	"net/http"
 	"regexp"
 	"testing"
 	"time"
+
+	"github.com/chimerakang/alice-core/fleet"
 )
 
 func TestRouteWithQuota(t *testing.T) {
@@ -53,5 +57,34 @@ func TestMatchFleetQuotaError(t *testing.T) {
 				t.Fatalf("wrong parsed reset: %v %v", reset, err)
 			}
 		}
+	}
+}
+
+func TestFleetBackendUsageFilterAndQuotaEstimate(t *testing.T) {
+	e := newWebFleetEnv(t)
+	e.svc.Config.ScoutQuota = fleetScoutQuotaConfig{WindowMinutes: 60, ClaudeTokens: 100, CodexTokens: 100}
+	task := e.dispatch("/ship quota fixture")
+	if err := e.svc.Store.AddBackendUsage(context.Background(), task.ID, "claude", "test-model", fleet.Usage{InputTokens: 25}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.Store.AddUsage(context.Background(), task.ID, fleet.Usage{InputTokens: 10}); err != nil {
+		t.Fatal(err)
+	}
+	until := time.Now().UTC().Add(time.Second).Format(time.RFC3339)
+	result := e.get("/api/fleet/usage/backends?backend=claude&until=" + until)
+	rows := list(t, result, "backends")
+	if len(rows) != 1 || rows[0]["backend"] != "claude" || rows[0]["input_tokens"] != "25" {
+		t.Fatalf("filtered backend usage = %v", rows)
+	}
+	rows = list(t, e.get("/api/fleet/usage/backends?backend=unattributed&until="+until), "backends")
+	if len(rows) != 1 || rows[0]["input_tokens"] != "10" {
+		t.Fatalf("unattributed usage = %v", rows)
+	}
+	estimates, err := e.svc.estimatedBackendQuota(context.Background(), time.Now().Add(time.Second))
+	if err != nil || estimates[fleetBackendClaude] != 0.75 || estimates[fleetBackendCodex] != 1 {
+		t.Fatalf("estimates = %v, err %v", estimates, err)
+	}
+	if code, _ := e.call(http.MethodGet, "/api/fleet/usage/backends?backend=invalid", "", false); code != http.StatusBadRequest {
+		t.Fatalf("invalid backend returned %d", code)
 	}
 }

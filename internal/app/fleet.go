@@ -263,6 +263,12 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 		Bus:       &fleet.Bus{Store: store},
 		IssueSync: &FleetIssueSync{Store: store, Host: ghFleetIssueHost{}},
 	}
+	matcher, err := cfg.ScoutQuota.errorMatcher()
+	if err != nil {
+		return nil, err
+	}
+	runner.MatchQuotaError = matcher
+	runner.QuotaUnknownResetAfter = time.Duration(cfg.ScoutQuota.WindowMinutes) * time.Minute
 	switch strings.ToLower(strings.TrimSpace(cfg.ScoutBackend)) {
 	case "", fleetBackendClaude:
 	case fleetBackendAuto, fleetBackendCodex:

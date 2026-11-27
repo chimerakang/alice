@@ -320,19 +320,7 @@ func (s *FleetService) planScoutRoute(ctx context.Context, task fleet.Task, usdL
 			break
 		}
 	}
-	eligible := s.chooseScoutBackend(string(tier), usdLimited)
-	choice := s.preferScoutByEstimatedQuota(ctx, eligible)
-	if eligible.Backend == fleetBackendCodex && s.Store != nil {
-		alternate := fleetBackendClaude
-		if choice.Backend == fleetBackendClaude {
-			alternate = fleetBackendCodex
-		}
-		blocked, _, err := s.Store.BackendQuotaBlocked(ctx, choice.Backend)
-		alternateBlocked, _, alternateErr := s.Store.BackendQuotaBlocked(ctx, alternate)
-		if err == nil && blocked && alternateErr == nil && !alternateBlocked {
-			choice = fleetScoutBackendChoice{Backend: alternate, Reason: "quota_available"}
-		}
-	}
+	choice := s.preferScoutByQuota(ctx, s.chooseScoutBackend(string(tier), usdLimited))
 	model := task.Model
 	if codexModel := s.Routing.fleetCodexTierModel(tier); codexModel != "" {
 		model = codexModel

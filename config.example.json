@@ -106,6 +106,16 @@
     "backend": "fleet",
     "scout_backend": "claude",
     "scout_codex_model": "",
+    "scout_quota": {
+      "max_transfers": 0,
+      "window_minutes": 0,
+      "claude_tokens": 0,
+      "codex_tokens": 0,
+      "claude_error_patterns": [],
+      "codex_error_patterns": [],
+      "reset_layout": "2006-01-02T15:04:05Z07:00",
+      "reset_timezone": "UTC"
+    },
     "worktree_root": "./data/worktrees",
     "report_root": "./data/fleet-reports",
     "max_concurrent": 2,
