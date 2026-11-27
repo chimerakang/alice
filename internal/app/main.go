@@ -100,239 +100,20 @@ type Config struct {
 	// Backend Execution Settings
 	Backends BackendConfig `json:"backends"`
 
-	// Hermes Settings
+	// Settings kept from the removed Hermes system
 	Hermes HermesConfig `json:"hermes"`
 
 	// Fleet Settings
 	Fleet FleetConfig `json:"fleet"`
 }
 
-// HermesConfig controls Hermes Brain-Executor mode settings.
+// HermesConfig is what is left of the removed task system's settings. The
+// "hermes" block of an old config still parses; its other keys are ignored.
 type HermesConfig struct {
-	Enabled bool              `json:"enabled"`
-	Hooks   HermesHooksConfig `json:"hooks"`
-
-	// StrictModeEnabled enables hard review gating by default.
-	StrictModeEnabled bool `json:"strict_mode_enabled"`
-
-	// ReviewTimeoutSeconds caps the per-review CLI call. 0 = use engine default
-	// (currently 120s). Operators bump this when reviewing on opus or with very
-	// large prompts; lower it when running haiku. See issue #147.
-	ReviewTimeoutSeconds int `json:"review_timeout_seconds"`
-
-	// WalkingAgentEnabled keeps the same Claude session alive across consecutive
-	// Executor sub-tasks of one Hermes task (when they share a model), instead of
-	// the legacy "clear session per sub-task" pattern. Saves cache_creation
-	// surcharge (1.25x rate) and cold-start latency. Round 2+ sub-tasks send
-	// only the new sub-task description; the session transcript carries goal +
-	// rules + prior sub-task outcomes. Falls back to a fresh session when the
-	// model changes (heavy <-> light executor) or accumulated context exceeds
-	// WalkingAgentMaxContextTokens. See issue #149 + docs/arch/hermes-walking-agent.md.
-	WalkingAgentEnabled bool `json:"walking_agent_enabled"`
-
-	// WalkingAgentMaxContextTokens is the watermark above which the walking
-	// session is force-cleared to avoid hitting the 200K context window. 0 =
-	// engine default 120000. See issue #149.
-	WalkingAgentMaxContextTokens int `json:"walking_agent_max_context_tokens"`
-
-	// Model overrides (defaults to ModelRoutingConfig values when empty)
-	PlannerModel  string `json:"planner_model"`  // e.g. "claude-opus-4-7"
-	ExecutorModel string `json:"executor_model"` // e.g. "claude-haiku-4-5-20251001"
-
-	// PlannerEffort caps the CLI --effort level for the Planner phase
-	// (low/medium/high/xhigh/max). Opus 4.8 defaults effort to "high" on every
-	// surface, which makes the Planner over-reason and emit a prose summary
-	// ("Plan emitted successfully…") instead of firing the emit_plan tool —
-	// the JSON parse then fails after retries. Planning is schema-filling, not
-	// deep reasoning, so a lower effort keeps the model on-task. Empty falls
-	// back to defaultPlannerEffort; "off"/"none" omits the flag entirely. See #178.
+	// PlannerEffort caps the CLI --effort level for the planning phase of
+	// /plan mode (low/medium/high/xhigh/max). Empty falls back to
+	// defaultPlannerEffort; "off"/"none" omits the flag entirely. See #178.
 	PlannerEffort string `json:"planner_effort"`
-
-	// Fast Mode toggles (per-phase; inert until Claude Code CLI exposes a
-	// headless fast-mode flag — see #178). Recommended targets: planner
-	// (pure reasoning, no tools) and reviewer (JSON-only output). Executor
-	// stays on standard tier because Fast Mode does not accelerate tool
-	// execution (file_patch / build / test dominate wall time).
-	PlannerFastMode  bool `json:"planner_fast_mode"`
-	ReviewerFastMode bool `json:"reviewer_fast_mode"`
-
-	// HeavyExecutorModel overrides ExecutorModel for sub-tasks classified as
-	// substantive code work (Edit/Write tool hints or implementation verbs in
-	// the description). Defaults to ModelRoutingConfig.SmartModel when empty.
-	// Set equal to ExecutorModel to disable the upgrade.
-	HeavyExecutorModel string `json:"heavy_executor_model"`
-
-	// Codex tier overrides — used by /ghermes to run Hermes on the GPT/Codex backend
-	// instead of Claude. Each falls back to ModelRoutingConfig.Codex*Model when empty.
-	CodexPlannerModel       string `json:"codex_planner_model"`
-	CodexExecutorModel      string `json:"codex_executor_model"`
-	CodexHeavyExecutorModel string `json:"codex_heavy_executor_model"`
-
-	// Retry limits
-	MaxRetriesPerSubtask  int `json:"max_retries_per_subtask"`  // default 3
-	MaxPlannerJSONRetries int `json:"max_planner_json_retries"` // default 3
-
-	// InterruptPolicy is retained as an unused field so existing config.json
-	// files load without "unknown field" errors. Behaviour is fixed at "inject"
-	// (incoming messages append to Accumulated as user feedback); the runtime
-	// no longer reads this value.
-	InterruptPolicy string `json:"interrupt_policy,omitempty"`
-
-	// ProgressVerbosity is retained as an unused field so existing config.json
-	// files load without "unknown field" errors. The reporter now emits a
-	// fixed, minimal sequence (plan summary + failure diagnostics + OnDone);
-	// operators rely on the dashboard for in-progress detail.
-	ProgressVerbosity string `json:"progress_verbosity,omitempty"`
-
-	// AutoRouteComplex enables Complexity Gate auto-routing: natural-language
-	// messages classified as complex start Hermes automatically without
-	// requiring the /hermes command. Moderate and trivial messages keep
-	// going through the regular model routing path.
-	AutoRouteComplex bool `json:"auto_route_complex"` // default false
-
-	// Resource limits
-	Budget HermesBudgetConfig `json:"budget"`
-
-	// Preflight optionally runs a cheap completion check before starting an
-	// issue-backed Hermes task. It can stop duplicate runs before planner/executor
-	// spend Opus/Sonnet-scale tokens.
-	Preflight HermesPreflightConfig `json:"preflight"`
-
-	// TaskRetry controls task-level re-plan retry on low review score.
-	// Disabled by default; opt in via "task_retry": {"enabled": true}.
-	// See engine.TaskRetryConfig for field semantics.
-	TaskRetry HermesTaskRetryConfig `json:"task_retry"`
-
-	// PromptsDir is the directory containing planner_rules.md and executor_rules.md.
-	// Defaults to "internal/app/prompts" relative to the working directory.
-	PromptsDir string `json:"prompts_dir"`
-
-	// Summary controls task completion summary reporting.
-	Summary HermesSummaryConfig `json:"summary"`
-
-	// GithubIntegration controls Hermes ↔ GitHub Issue integration.
-	GithubIntegration GithubIntegrationConfig `json:"github_integration"`
-}
-
-// GithubIntegrationConfig controls how Hermes interacts with GitHub Issues.
-type GithubIntegrationConfig struct {
-	Enabled bool `json:"enabled"`
-
-	// Comment events: "start", "complete", "fail", "budget_exceeded"
-	CommentOnEvents []string `json:"comment_on_events"`
-
-	// SyncChecklist updates Issue `- [ ]` items as SubTasks complete.
-	SyncChecklist bool `json:"sync_checklist"`
-
-	// AutoCloseLabel: if the Issue has this label, close it when all SubTasks succeed.
-	AutoCloseLabel string `json:"auto_close_on_label"`
-
-	// FailureLabel is added to the Issue when Hermes execution fails.
-	FailureLabel string `json:"mark_failure_label"`
-
-	// TriggerTaskSync runs the local /task-sync maintenance command on Hermes completion (best-effort).
-	TriggerTaskSync bool `json:"trigger_task_sync_on_complete"`
-
-	// ComplexityBudgetMap maps complexity labels (e.g. "complexity:small") to budget overrides.
-	ComplexityBudgetMap map[string]HermesBudgetConfig `json:"complexity_budget_map"`
-}
-
-// HermesBudgetConfig sets task-level resource limits.
-type HermesBudgetConfig struct {
-	MaxTotalTokens      int `json:"max_total_tokens"`      // default 500000; 0 = unlimited
-	MaxWallclockSeconds int `json:"max_wallclock_seconds"` // default 600; 0 = unlimited
-}
-
-type HermesPreflightConfig struct {
-	Enabled             bool   `json:"enabled"`
-	Model               string `json:"model"`                // default ModelRouting.FastModel / Haiku
-	CompletionThreshold int    `json:"completion_threshold"` // default 90
-	TimeoutSeconds      int    `json:"timeout_seconds"`      // default 20
-	// Parallel runs the preflight Haiku check concurrently with the Planner
-	// (Phase 2.6.A, OpenAI Agents SDK `run_in_parallel=True` pattern).
-	// When tripwired (verdict says skip), the running task is interrupted.
-	// When false (default), preflight blocks before the Planner kicks off
-	// and its augmented goal is forwarded to the Planner.
-	Parallel bool `json:"parallel"`
-}
-
-// HermesTaskRetryConfig is the JSON-config mirror of engine.TaskRetryConfig.
-// Keep fields aligned with engine.TaskRetryConfig — telegram.go converts
-// between the two via direct type conversion.
-type HermesTaskRetryConfig struct {
-	Enabled        bool `json:"enabled"`          // default false
-	ScoreThreshold int  `json:"score_threshold"`  // default 60 (applied in engine)
-	MaxTaskRetries int  `json:"max_task_retries"` // default 1 (applied in engine)
-}
-
-// HermesHooksConfig controls which tool execution hooks are active.
-type HermesHooksConfig struct {
-	PathGuard      bool     `json:"path_guard"`       // block writes to protected paths; auto-enabled in Hermes mode
-	ExtraDenyPaths []string `json:"extra_deny_paths"` // additional path patterns to block
-	PostValidators []string `json:"post_validators"`  // "go_build", "tsc_check", "json_lint"
-	WorkDir        string   `json:"work_dir"`         // root for build validators; defaults to project dir
-}
-
-// CostRateConfig defines pricing for a model.
-type CostRateConfig struct {
-	InputPerMToken  float64 `json:"input_per_mtok"`  // cost per 1M input tokens
-	OutputPerMToken float64 `json:"output_per_mtok"` // cost per 1M output tokens
-}
-
-// HermesSummaryConfig controls task completion summary reporting.
-type HermesSummaryConfig struct {
-	Enabled        bool                      `json:"enabled"`   // whether to generate summaries
-	Verbosity      string                    `json:"verbosity"` // "minimal" or "detailed"
-	IncludeCostEst bool                      `json:"include_cost_estimate"`
-	Targets        []string                  `json:"targets"`    // where to push summaries ("telegram", "github")
-	CostRates      map[string]CostRateConfig `json:"cost_rates"` // per-model pricing
-}
-
-// HermesDefaults returns a HermesConfig with sensible defaults filled in.
-func HermesDefaults(cfg HermesConfig) HermesConfig {
-	if cfg.MaxRetriesPerSubtask == 0 {
-		cfg.MaxRetriesPerSubtask = 3
-	}
-	if cfg.MaxPlannerJSONRetries == 0 {
-		cfg.MaxPlannerJSONRetries = 3
-	}
-	if cfg.PlannerEffort == "" {
-		cfg.PlannerEffort = defaultPlannerEffort
-	}
-	if cfg.Preflight.CompletionThreshold == 0 {
-		cfg.Preflight.CompletionThreshold = 90
-	}
-	if cfg.Preflight.TimeoutSeconds == 0 {
-		cfg.Preflight.TimeoutSeconds = 20
-	}
-	// Budget defaults intentionally not filled in: 0 means unlimited and
-	// must flow through unchanged. Operators set explicit caps in config.json.
-	if cfg.Summary.Verbosity == "" {
-		cfg.Summary.Verbosity = "minimal"
-	}
-	if len(cfg.Summary.Targets) == 0 {
-		cfg.Summary.Targets = []string{"telegram"}
-	}
-	if cfg.Summary.CostRates == nil {
-		cfg.Summary.CostRates = make(map[string]CostRateConfig)
-		cfg.Summary.CostRates["claude-opus-4-7"] = CostRateConfig{
-			InputPerMToken:  5.0,
-			OutputPerMToken: 25.0,
-		}
-		cfg.Summary.CostRates["claude-opus-4-7-fast"] = CostRateConfig{
-			InputPerMToken:  10.0,
-			OutputPerMToken: 50.0,
-		}
-		cfg.Summary.CostRates["claude-sonnet-4-6"] = CostRateConfig{
-			InputPerMToken:  3.0,
-			OutputPerMToken: 15.0,
-		}
-		cfg.Summary.CostRates["claude-haiku-4-5-20251001"] = CostRateConfig{
-			InputPerMToken:  1.0,
-			OutputPerMToken: 5.0,
-		}
-	}
-	return cfg
 }
 
 // BackendConfig configures execution backends
@@ -622,6 +403,13 @@ func isClaudeCodeEnvironment() bool {
 }
 
 func Main() {
+	if len(os.Args) > 1 && os.Args[1] == "export-hermes-history" {
+		if err := exportHermesHistory(os.Args[2:], os.Stdout); err != nil {
+			log.Fatalf("export hermes history: %v", err)
+		}
+		return
+	}
+
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 
 	config, err := LoadConfig()
@@ -654,23 +442,8 @@ func Main() {
 	// Planner effort: cap the CLI --effort for the planning phase below Opus
 	// 4.8's "high" surface default so it fires emit_plan rather than narrating
 	// a prose plan summary. See HermesConfig.PlannerEffort + #178.
-	SetPlannerEffort(HermesDefaults(config.Hermes).PlannerEffort)
-	log.Printf("   Hermes planner effort: %s", currentPlannerEffort())
-
-	// Walking-agent (issue #149) forces 5m prompt-cache TTL on every claude
-	// CLI invocation when enabled. Otherwise keep Anthropic's default
-	// (currently 1h on most builds — 2x cache_write rate, fine for long
-	// interactive sessions but expensive for short sub-task workflows).
-	if config.Hermes.WalkingAgentEnabled {
-		SetForcePromptCaching5m(true)
-		log.Printf("   Hermes walking-agent: enabled (FORCE_PROMPT_CACHING_5M=1, max_context=%d)",
-			func() int {
-				if config.Hermes.WalkingAgentMaxContextTokens > 0 {
-					return config.Hermes.WalkingAgentMaxContextTokens
-				}
-				return 120000
-			}())
-	}
+	SetPlannerEffort(config.Hermes.PlannerEffort)
+	log.Printf("   Planner effort: %s", currentPlannerEffort())
 
 	// Initialize Git integration
 	InitGitIntegration()
@@ -898,49 +671,30 @@ func Main() {
 		log.Printf("   Codex session watcher: enabled")
 	}
 
-	// Sweep tasks whose human-in-the-loop pause outlived a previous alice
-	// process (e.g. restart while the operator was away). Without this,
-	// the legacy task table would show those tasks as still 'executing'
-	// even though no engine goroutine is running. See #169 slice 2 / #166.
-	if hermesStore, ok := buildHermesTaskStore().(staleInterruptStore); ok {
-		SweepStaleHermesInterrupts(appCtx, hermesStore)
+	if warning := config.Fleet.backendWarning(); warning != "" {
+		log.Printf("⚠️ Warning: %s", warning)
 	}
-	// β5: surface tasks that are still legitimately paused (younger than
-	// 24h) by sending a Telegram reminder. Does not auto-decide for the
-	// operator — the original retry/skip/abort buttons (or /resume
-	// command) remain the canonical resolution path. See #169 slice β5.
-	if hermesStore, ok := buildHermesTaskStore().(pendingInterruptStore); ok {
-		RemindPendingPauses(appCtx, hermesStore, tgBot)
+	svc, err := NewFleetService(config.Fleet, fleetDatabase(), config.DatabasePath, config.Model)
+	if err == nil {
+		svc.Routing = config.ModelRouting
+		err = svc.Start(appCtx)
 	}
-
-	// Start the fleet unless fleet.backend selects hermes. Nothing is built
-	// or started otherwise.
-	if err := config.Fleet.validateBackend(); err != nil {
-		log.Printf("⚠️ Warning: %v; using fleet", err)
-	}
-	if config.Fleet.Active() {
-		svc, err := NewFleetService(config.Fleet, fleetDatabase(), config.DatabasePath, config.Model)
-		if err == nil {
-			svc.Routing = config.ModelRouting
-			err = svc.Start(appCtx)
+	if err != nil {
+		log.Printf("⚠️ Warning: fleet disabled: %v", err)
+	} else {
+		globalFleet = svc
+		if err := tgBot.attachFleet(appCtx, svc, fleetDatabase()); err != nil {
+			log.Printf("⚠️ Warning: fleet task cards unavailable: %v", err)
+			tgBot.fleet = svc
 		}
-		if err != nil {
-			log.Printf("⚠️ Warning: fleet disabled: %v", err)
-		} else {
-			globalFleet = svc
-			if err := tgBot.attachFleet(appCtx, svc, fleetDatabase()); err != nil {
-				log.Printf("⚠️ Warning: fleet task cards unavailable: %v", err)
-				tgBot.fleet = svc
+		if lister, ok := globalStorage.(topicProjectDirLister); ok {
+			if n, err := svc.BackfillTopicProjects(appCtx, lister); err != nil {
+				log.Printf("⚠️ Warning: fleet project backfill: %v", err)
+			} else if n > 0 {
+				log.Printf("   Fleet: registered %d project(s) from existing topics", n)
 			}
-			if lister, ok := globalStorage.(topicProjectDirLister); ok {
-				if n, err := svc.BackfillTopicProjects(appCtx, lister); err != nil {
-					log.Printf("⚠️ Warning: fleet project backfill: %v", err)
-				} else if n > 0 {
-					log.Printf("   Fleet: registered %d project(s) from existing topics", n)
-				}
-			}
-			log.Printf("   Fleet: enabled (worktrees=%s, trust=%s)", svc.Config.WorktreeRoot, svc.TrustMode)
 		}
+		log.Printf("   Fleet: enabled (worktrees=%s, trust=%s)", svc.Config.WorktreeRoot, svc.TrustMode)
 	}
 
 	// Initialize Cron Scheduler

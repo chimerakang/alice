@@ -2,11 +2,9 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -14,20 +12,9 @@ import (
 	"time"
 
 	"claude-tg-agent/internal/app/security"
-	appengine "github.com/chimerakang/alice-core/engine"
-	"github.com/chimerakang/alice-core/hermes"
-)
 
-// directPlanViaGraph reports whether the direct-chat plan/execute path
-// (Class A in #171) should dispatch via the Walker-driven RunViaGraph
-// instead of the legacy Run(). Gated on ALICE_DIRECT_PLAN_VIA_GRAPH so
-// we can flip it per-deploy without a rebuild and revert if a
-// regression slips through bake-in. Default off until the rollout is
-// observed clean.
-func directPlanViaGraph() bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv("ALICE_DIRECT_PLAN_VIA_GRAPH")))
-	return v == "1" || v == "true" || v == "yes" || v == "on"
-}
+	appengine "github.com/chimerakang/alice-core/engine"
+)
 
 // TokenStats tracks cumulative token usage for an agent session.
 type TokenStats struct {
@@ -1161,7 +1148,7 @@ func (a *Agent) resolveAgentMemoryBridge(ctx context.Context, ps *projectState, 
 		Mode:          mode,
 		HasIssueScope: hasIssueScope,
 	})
-	resolver := newMemoryResolverForSessionPolicy(nil, ps.ctx.ProjectDir, decision)
+	resolver := newMemoryResolverForSessionPolicy(ps.ctx.ProjectDir, decision)
 	recentMessages := ps.ctx.RecentMessagesSnapshot()
 	if !decision.AllowRecentMemory {
 		recentMessages = nil
@@ -1217,85 +1204,12 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 		cancel()
 	}()
 
-	planFn := func(ctx context.Context, _ string, projectDir, sessionID string) (hermes.CallPlanResult, error) {
-		if onUpdate != nil {
-			onUpdate(fmt.Sprintf("🧠 Phase 1: Planning with %s...", modelStatusName(a.planModel)), false)
-		}
-		log.Printf("[agent] plan/execute via PlanExecuteEngine: calling plan model=%s, project=%s", a.planModel, projectDir)
-		planResp, err := a.client.CallPlan(ctx, opusPlanPrompt(userMessage), projectDir, sessionID, a.planModel, func(contentType, text string) {
-			if onUpdate != nil && contentType == "text" && text != "" {
-				preview := text
-				if len(preview) > 100 {
-					preview = preview[:100] + "..."
-				}
-				onUpdate(fmt.Sprintf("🧠 Planning: %s", preview), true)
-			}
-		})
-		if err != nil {
-			return hermes.CallPlanResult{}, err
-		}
-		planText := planResp.Result
-		if planText == "" {
-			planText = planResp.TextContent
-		}
-		desc := fmt.Sprintf("Follow this execution plan to complete the original request.\n\nPlan:\n%s\n\nOriginal user request:\n%s", planText, userMessage)
-		raw, _ := json.Marshal([]hermes.SubTask{{
-			ID:          "s1",
-			Description: desc,
-			Status:      hermes.SubTaskPending,
-		}})
-		cost := planResp.TotalCostUSD
-		if cost <= 0 {
-			cost = EstimateClaudeCost(
-				a.planModel,
-				planResp.Usage.InputTokens,
-				planResp.Usage.CacheReadInputTokens,
-				planResp.Usage.CacheCreationInputTokens,
-				planResp.Usage.OutputTokens,
-			)
-		}
-		return hermes.CallPlanResult{
-			Text:         "```json\n" + string(raw) + "\n```",
-			SessionID:    planResp.SessionID,
-			InputTokens:  planResp.TotalInputTokensWithCache(),
-			OutputTokens: planResp.Usage.OutputTokens,
-			CostUSD:      cost,
-		}, nil
+	if onUpdate != nil {
+		onUpdate(fmt.Sprintf("🧠 Phase 1: Planning with %s...", modelStatusName(a.planModel)), false)
 	}
-
-	direct := appengine.NewDirectEngine(&metricsForwardingRunner{
-		run: func(msg string, update func(string, bool)) (string, error) {
-			if onUpdate != nil {
-				onUpdate(fmt.Sprintf("⚡ Phase 2: Executing with %s...", modelStatusName(a.executeModel)), false)
-			}
-			return a.runDirect(ctx, msg, update, startTime)
-		},
-		metrics:      a.LastCallMetrics,
-		cacheMetrics: a.LastCacheMetrics,
-	})
-	store := hermes.NewMemoryTaskStore()
-	engine := appengine.NewPlanExecuteEngine(appengine.PlanExecuteConfig{
-		PlannerModel:          a.planModel,
-		ProjectDir:            a.projectDir,
-		ChatID:                a.chatID,
-		ThreadID:              a.threadID,
-		MaxPlannerJSONRetries: 1,
-		Budget:                hermes.TokenBudget{},
-		OnRuntimeEvent:        recordRuntimeEvent,
-	}, planFn, direct, store, &hermes.NoopProgressReporter{})
-
-	var (
-		result appengine.Result
-		err    error
-	)
-	if directPlanViaGraph() {
-		log.Printf("[agent] plan/execute via RunViaGraphResult (ALICE_DIRECT_PLAN_VIA_GRAPH=on)")
-		result, err = engine.RunViaGraphResult(ctx, userMessage, a.chatContext, nil)
-	} else {
-		result, err = engine.Run(ctx, userMessage, a.chatContext, nil)
-	}
+	plan, err := a.planOnce(ctx, userMessage, onUpdate)
 	if err != nil {
-		log.Printf("[agent] plan/execute via PlanExecuteEngine failed: %v", err)
+		log.Printf("[agent] planning failed: %v", err)
 		recoveryReq := appengine.RecoveryRequest{
 			Mode:      "plan_execute",
 			ErrorText: err.Error(),
@@ -1313,14 +1227,47 @@ func (a *Agent) RunWithPlan(userMessage string, onUpdate func(string, bool)) (st
 		a.finishExecutionError(err, "agent_plan_run")
 		return "", err
 	}
+
+	if onUpdate != nil {
+		onUpdate(fmt.Sprintf("⚡ Phase 2: Executing with %s...", modelStatusName(a.executeModel)), false)
+	}
+	prompt := fmt.Sprintf("Follow this execution plan to complete the original request.\n\nPlan:\n%s\n\nOriginal user request:\n%s", plan, userMessage)
+	text, err := a.runDirect(ctx, prompt, onUpdate, startTime)
+	if err != nil {
+		a.finishExecutionError(err, "agent_plan_run")
+		return text, err
+	}
 	a.transitionExecution(appengine.ExecutionStateSucceeded, "agent_plan_run_succeeded")
-	return result.Text, nil
+	return text, nil
 }
 
-type directRunnerFunc func(string, func(string, bool)) (string, error)
-
-func (f directRunnerFunc) Run(userMessage string, onUpdate func(string, bool)) (string, error) {
-	return f(userMessage, onUpdate)
+// planOnce asks the planner model for the plan that /plan mode then executes.
+func (a *Agent) planOnce(ctx context.Context, userMessage string, onUpdate func(string, bool)) (string, error) {
+	ps := a.current()
+	projectDir, sessionID := a.projectDir, ""
+	if ps != nil && ps.ctx != nil {
+		sessionID = ps.ctx.Session(BackendKindForModel(a.planModel))
+	}
+	resp, err := a.client.CallPlan(ctx, opusPlanPrompt(userMessage), projectDir, sessionID, a.planModel, func(contentType, text string) {
+		if onUpdate != nil && contentType == "text" && text != "" {
+			preview := text
+			if len(preview) > 100 {
+				preview = preview[:100] + "..."
+			}
+			onUpdate(fmt.Sprintf("🧠 Planning: %s", preview), true)
+		}
+	})
+	if err != nil {
+		return "", err
+	}
+	plan := resp.Result
+	if plan == "" {
+		plan = resp.TextContent
+	}
+	if strings.TrimSpace(plan) == "" {
+		return "", fmt.Errorf("planner returned an empty plan")
+	}
+	return plan, nil
 }
 
 func processingStatusForModel(model string) string {
@@ -1338,34 +1285,6 @@ func modelStatusName(model string) string {
 		return "default model"
 	}
 	return model
-}
-
-// metricsForwardingRunner wraps a function-style runner together with a
-// metrics provider (typically *Agent). DirectEngine uses LastCallMetrics()
-// to attribute Executor tokens to the actual model — without this wrapper
-// the per-model breakdown would lose every Executor call.
-type metricsForwardingRunner struct {
-	run          func(string, func(string, bool)) (string, error)
-	metrics      func() (string, int, int, float64)
-	cacheMetrics func() (int, int)
-}
-
-func (r *metricsForwardingRunner) Run(msg string, onUpdate func(string, bool)) (string, error) {
-	return r.run(msg, onUpdate)
-}
-
-func (r *metricsForwardingRunner) LastCallMetrics() (string, int, int, float64) {
-	if r.metrics == nil {
-		return "", 0, 0, 0
-	}
-	return r.metrics()
-}
-
-func (r *metricsForwardingRunner) LastCacheMetrics() (int, int) {
-	if r.cacheMetrics == nil {
-		return 0, 0
-	}
-	return r.cacheMetrics()
 }
 
 // runDirect is the standard single-phase execution (fallback when plan phase fails)

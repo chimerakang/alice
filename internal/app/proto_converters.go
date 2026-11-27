@@ -11,6 +11,7 @@ import (
 
 	alicev1 "claude-tg-agent/gen/go/alice/v1"
 	"claude-tg-agent/internal/app/security"
+
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -25,17 +26,17 @@ func convertToProtoAgentInfo(info AgentInfo) *alicev1.AgentInfo {
 	}
 
 	return &alicev1.AgentInfo{
-		Id:           generateAgentID(info.ChatID, info.ThreadID),
-		ChatId:       info.ChatID,
-		ThreadId:     int32(info.ThreadID),
-		ProjectDir:   info.ProjectDir,
-		SessionId:    info.SessionID,
-		Status:       status,
-		CreatedAt:    timestamppb.New(info.CreatedAt),
-		LastActive:   timestamppb.New(info.LastActivity),
-		TokenStats:   convertToProtoTokenStats(info.Stats),
-		Model:        "", // 需要從配置獲取
-		GitState:     getGitStateForProject(info.ProjectDir),
+		Id:         generateAgentID(info.ChatID, info.ThreadID),
+		ChatId:     info.ChatID,
+		ThreadId:   int32(info.ThreadID),
+		ProjectDir: info.ProjectDir,
+		SessionId:  info.SessionID,
+		Status:     status,
+		CreatedAt:  timestamppb.New(info.CreatedAt),
+		LastActive: timestamppb.New(info.LastActivity),
+		TokenStats: convertToProtoTokenStats(info.Stats),
+		Model:      "", // 需要從配置獲取
+		GitState:   getGitStateForProject(info.ProjectDir),
 	}
 }
 
@@ -557,11 +558,11 @@ func convertDecisionToFrontendJSON(decision DecisionLog) map[string]interface{} 
 			"error_message": decision.Outcome.ErrorMessage,
 			"severity":      "SEVERITY_LOW",
 		},
-		"duration_ms":    decision.DurationMs,
-		"tokens_input":   decision.TokensUsed.TotalInputTokens,
-		"tokens_output":  decision.TokensUsed.TotalOutputTokens,
-		"cost_usd":       decision.TokensUsed.TotalCostUSD,
-		"source":         decision.Source,
+		"duration_ms":   decision.DurationMs,
+		"tokens_input":  decision.TokensUsed.TotalInputTokens,
+		"tokens_output": decision.TokensUsed.TotalOutputTokens,
+		"cost_usd":      decision.TokensUsed.TotalCostUSD,
+		"source":        decision.Source,
 	}
 
 	if gitState != nil {
@@ -771,7 +772,7 @@ func (wi *WebInterface) handleMultiAgentStatusProto(w http.ResponseWriter, r *ht
 			"coordinator_status": "active",
 			"active_tasks":       0,
 			"specialized_agents": []string{"code_generator", "file_manager", "analyzer"},
-			"timestamp":         time.Now(),
+			"timestamp":          time.Now(),
 		}
 		writeProtoResponse(w, response)
 	})(w, r)
@@ -782,10 +783,10 @@ func (wi *WebInterface) handleMultiAgentStatsProto(w http.ResponseWriter, r *htt
 		w.Header().Set("Content-Type", "application/json")
 		response := map[string]interface{}{
 			"total_coordinated_tasks": 0,
-			"success_rate":           100.0,
-			"avg_task_duration":      0,
-			"agent_utilization":      map[string]float64{},
-			"timestamp":              time.Now(),
+			"success_rate":            100.0,
+			"avg_task_duration":       0,
+			"agent_utilization":       map[string]float64{},
+			"timestamp":               time.Now(),
 		}
 		writeProtoResponse(w, response)
 	})(w, r)
@@ -854,17 +855,17 @@ func (wi *WebInterface) handlePerformanceAnalyticsProto(w http.ResponseWriter, r
 		}
 
 		response := map[string]interface{}{
-			"total_operations":    analytics.TotalRequests,
-			"avg_response_time":   analytics.AvgAPILatency.Milliseconds(),
-			"error_rate":          errorRate,
-			"throughput":          analytics.RequestsPerHour,
-			"total_cost":          totalCost, // 新增：用於 Cost Trend 圖表
-			"resource_usage":      map[string]interface{}{
+			"total_operations":  analytics.TotalRequests,
+			"avg_response_time": analytics.AvgAPILatency.Milliseconds(),
+			"error_rate":        errorRate,
+			"throughput":        analytics.RequestsPerHour,
+			"total_cost":        totalCost, // 新增：用於 Cost Trend 圖表
+			"resource_usage": map[string]interface{}{
 				"peak_memory_mb":    analytics.PeakMemoryUsage / 1024 / 1024,
 				"current_memory_mb": analytics.CurrentMemoryUsage / 1024 / 1024,
 				"uptime_seconds":    analytics.UptimeSeconds,
 			},
-			"timestamp":           time.Now(),
+			"timestamp": time.Now(),
 		}
 		writeProtoResponse(w, response)
 	})(w, r)
@@ -925,17 +926,17 @@ func (wi *WebInterface) handlePerformanceMetricsProto(w http.ResponseWriter, r *
 		convertedMetrics := make([]map[string]interface{}, 0, len(metrics))
 		for _, metric := range metrics {
 			convertedMetrics = append(convertedMetrics, map[string]interface{}{
-				"timestamp":         metric.Timestamp,
-				"api_latency_ms":    int64(metric.APICallLatency.Milliseconds()),
-				"api_success":       metric.APICallSuccess,
+				"timestamp":           metric.Timestamp,
+				"api_latency_ms":      int64(metric.APICallLatency.Milliseconds()),
+				"api_success":         metric.APICallSuccess,
 				"tool_execution_time": metric.ToolExecutionTime.Milliseconds(),
 				"tool_execution_type": metric.ToolExecutionType,
-				"tokens_used":       metric.TokensUsed,
-				"estimated_cost":    metric.EstimatedCost,
-				"memory_usage":      metric.MemoryUsage,
-				"error_type":        metric.ErrorType,
-				"chat_id":          metric.ChatID,
-				"agent_type":       metric.AgentType,
+				"tokens_used":         metric.TokensUsed,
+				"estimated_cost":      metric.EstimatedCost,
+				"memory_usage":        metric.MemoryUsage,
+				"error_type":          metric.ErrorType,
+				"chat_id":             metric.ChatID,
+				"agent_type":          metric.AgentType,
 			})
 		}
 
@@ -1010,9 +1011,9 @@ func (wi *WebInterface) handleToolDistributionProto(w http.ResponseWriter, r *ht
 			if stats, err := globalStorage.GetToolExecutionStatsByTimeRange(startTime, endTime); err == nil {
 				for toolType, data := range stats {
 					toolDistribution = append(toolDistribution, map[string]interface{}{
-						"tool_type":           toolType,
-						"avg_execution_time":  data["avg_execution_time"],
-						"count":               data["count"],
+						"tool_type":          toolType,
+						"avg_execution_time": data["avg_execution_time"],
+						"count":              data["count"],
 					})
 				}
 			}
@@ -1025,17 +1026,17 @@ func (wi *WebInterface) handleToolDistributionProto(w http.ResponseWriter, r *ht
 				// 從最近的metrics中計算平均執行時間
 				avgTime := wi.calculateAverageToolExecutionTime(toolType)
 				toolDistribution = append(toolDistribution, map[string]interface{}{
-					"tool_type":           toolType,
-					"avg_execution_time":  avgTime,
-					"count":               count,
+					"tool_type":          toolType,
+					"avg_execution_time": avgTime,
+					"count":              count,
 				})
 			}
 		}
 
 		response := map[string]interface{}{
 			"tool_distribution": toolDistribution,
-			"total":            len(toolDistribution),
-			"timestamp":        time.Now(),
+			"total":             len(toolDistribution),
+			"timestamp":         time.Now(),
 		}
 		writeProtoResponse(w, response)
 	})(w, r)
@@ -1363,8 +1364,8 @@ func (wi *WebInterface) handleGitOperations(w http.ResponseWriter, r *http.Reque
 		} else if r.Method == "POST" {
 			// 更新操作權限（僅限管理員）
 			var request struct {
-				Operation string `json:"operation"`
-				Allowed   bool   `json:"allowed"`
+				Operation  string `json:"operation"`
+				Allowed    bool   `json:"allowed"`
 				SafetyMode *bool  `json:"safety_mode,omitempty"`
 			}
 
@@ -1538,10 +1539,10 @@ func (wi *WebInterface) handleStorageHealth(w http.ResponseWriter, r *http.Reque
 
 		if globalStorage == nil {
 			response := map[string]interface{}{
-				"healthy":      false,
-				"persistence":  false,
-				"message":      "Storage system not initialized - using memory only",
-				"timestamp":    time.Now(),
+				"healthy":     false,
+				"persistence": false,
+				"message":     "Storage system not initialized - using memory only",
+				"timestamp":   time.Now(),
 			}
 			writeProtoResponse(w, response)
 			return
@@ -1550,9 +1551,9 @@ func (wi *WebInterface) handleStorageHealth(w http.ResponseWriter, r *http.Reque
 		// 檢查資料庫健康狀態
 		err := globalStorage.Health()
 		response := map[string]interface{}{
-			"healthy":      err == nil,
-			"persistence":  true,
-			"timestamp":    time.Now(),
+			"healthy":     err == nil,
+			"persistence": true,
+			"timestamp":   time.Now(),
 		}
 
 		if err != nil {

@@ -158,18 +158,13 @@ func TestFleetServiceForwardsEventsToRuntimeEvents(t *testing.T) {
 	}
 }
 
-func TestFleetConfigBackend(t *testing.T) {
-	cases := map[string]bool{"": true, "fleet": true, "Fleet": true, "hermes": false, " HERMES ": false}
-	for in, want := range cases {
-		if got := (FleetConfig{Backend: in}).Active(); got != want {
-			t.Errorf("Backend %q: Active = %v, want %v", in, got, want)
+// An old config may still name the removed backend; it is warned about, never
+// refused.
+func TestFleetConfigBackendWarning(t *testing.T) {
+	for in, warns := range map[string]bool{"": false, "fleet": false, "Fleet": false, "hermes": true, " HERMES ": true, "bogus": true} {
+		if got := (FleetConfig{Backend: in}).backendWarning(); (got != "") != warns {
+			t.Errorf("Backend %q: warning = %q, want warning %v", in, got, warns)
 		}
-	}
-	if err := (FleetConfig{Backend: "bogus"}).validateBackend(); err == nil {
-		t.Error("bogus backend accepted")
-	}
-	if err := (FleetConfig{}).validateBackend(); err != nil {
-		t.Error(err)
 	}
 }
 

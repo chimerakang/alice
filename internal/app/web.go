@@ -16,8 +16,9 @@ import (
 	"sync"
 	"time"
 
-	appengine "github.com/chimerakang/alice-core/engine"
 	"claude-tg-agent/internal/app/security"
+
+	appengine "github.com/chimerakang/alice-core/engine"
 )
 
 // AgentInfo represents agent information for the API
@@ -282,7 +283,6 @@ func (wi *WebInterface) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"telegram":  telegram,
 			"jobs":      globalJobTracker.Summary(),
 			"storage":   runtimeStorageHealth(),
-			"hermes":    runtimeHermesStatus(wi.bot),
 		}
 		if !lastSuccess.IsZero() {
 			status["telegram_last_success"] = lastSuccess
@@ -334,34 +334,6 @@ func (wi *WebInterface) handleHealthLive(w http.ResponseWriter, r *http.Request)
 	})(w, r)
 }
 
-// runtimeHermesStatus surfaces Hermes feature toggles + walking-agent state
-// so dashboards / external probes can confirm whether walking is active and
-// at what watermark. Returns minimal info when bot or config is nil; never
-// includes credentials. Issue #149.
-func runtimeHermesStatus(bot *TelegramBot) map[string]interface{} {
-	out := map[string]interface{}{
-		"enabled": false,
-	}
-	if bot == nil || bot.config == nil {
-		return out
-	}
-	out["enabled"] = bot.config.Hermes.Enabled
-	out["strict_mode_enabled"] = bot.config.Hermes.StrictModeEnabled
-	out["auto_route_complex"] = bot.config.Hermes.AutoRouteComplex
-	out["walking_agent_enabled"] = bot.config.Hermes.WalkingAgentEnabled
-	maxCtx := bot.config.Hermes.WalkingAgentMaxContextTokens
-	if maxCtx <= 0 {
-		maxCtx = 120000
-	}
-	out["walking_agent_max_context_tokens"] = maxCtx
-	if bot.config.Hermes.ReviewTimeoutSeconds > 0 {
-		out["review_timeout_seconds"] = bot.config.Hermes.ReviewTimeoutSeconds
-	} else {
-		out["review_timeout_seconds"] = 120
-	}
-	return out
-}
-
 func runtimeStorageHealth() map[string]interface{} {
 	status := map[string]interface{}{
 		"enabled": globalStorage != nil,
@@ -391,20 +363,6 @@ func runtimeStorageHealth() map[string]interface{} {
 		status["active_tasks"] = count
 	} else {
 		status["active_tasks_error"] = err.Error()
-	}
-	// After #169 slice 3d the legacy hermes_task_states.status column is no
-	// longer authoritative. Active-task count derives from the latest
-	// snapshot's denormalized state_status, falling back to the legacy
-	// column for tasks created before the first CommitRuntimeStep.
-	if count, err := countRows(db, `
-		SELECT COUNT(*) FROM hermes_task_states AS task
-		WHERE COALESCE((
-			SELECT s.state_status FROM hermes_snapshots s
-			WHERE s.task_id = task.id ORDER BY s.step DESC LIMIT 1
-		), task.status) IN ('planning','executing','validating')`); err == nil {
-		status["active_hermes_tasks"] = count
-	} else {
-		status["active_hermes_tasks_error"] = err.Error()
 	}
 	return status
 }
@@ -1154,10 +1112,6 @@ func (wi *WebInterface) handleMemoryPreview(w http.ResponseWriter, r *http.Reque
 			return
 		}
 
-		var taskSource hermesMemoryTaskSource
-		if wi != nil && wi.bot != nil && wi.bot.taskSvc != nil {
-			taskSource = wi.bot.taskSvc
-		}
 		if wi != nil && wi.bot != nil {
 			ctx := wi.bot.getChatContext(chatKey{chatID: req.ChatID, threadID: req.ThreadID}, req.ProjectDir)
 			req.RecentMessages = ctx.RecentMessagesSnapshot()
@@ -1166,7 +1120,7 @@ func (wi *WebInterface) handleMemoryPreview(w http.ResponseWriter, r *http.Reque
 			}
 		}
 
-		resolver := NewMemoryResolverWithAllSources(taskSource, globalGeneralMemorySource(), defaultStaticHintSourceForProject(req.ProjectDir))
+		resolver := NewMemoryResolverWithAllSources(globalGeneralMemorySource(), defaultStaticHintSourceForProject(req.ProjectDir))
 		bundle, err := resolver.Resolve(r.Context(), req)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -2333,7 +2287,6 @@ func generatePrometheusMetrics() string {
 			metrics.WriteString(fmt.Sprintf("alice_active_visitors %d\n", activeVisitors))
 		}
 	}
-
 
 	return metrics.String()
 }

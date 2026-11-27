@@ -72,20 +72,6 @@ type CLIClient struct {
 	MaxTurns int // max conversation turns per CLI invocation (default 50)
 }
 
-// forcePromptCaching5m, when true, makes cleanEnvForCLI inject
-// FORCE_PROMPT_CACHING_5M=1 into every claude-spawn env. Claude Code v2.1.108+
-// honours this and forces 5m cache TTL (1.25x rate) instead of its default 1h
-// (2x rate), which is the right default for short-lived Hermes workflows. See
-// issue #149 + docs/arch/hermes-walking-agent.md.
-var forcePromptCaching5m atomic.Bool
-
-// SetForcePromptCaching5m toggles process-wide injection of
-// FORCE_PROMPT_CACHING_5M=1 into the claude CLI env. Wired by the Hermes
-// walking-agent path; safe to call multiple times.
-func SetForcePromptCaching5m(v bool) {
-	forcePromptCaching5m.Store(v)
-}
-
 // defaultPlannerEffort is the CLI --effort level applied to the Planner phase
 // when config leaves it unset. "medium" deliberately undercuts Opus 4.8's
 // surface default of "high": the Planner only fills the emit_plan schema, and
@@ -94,8 +80,8 @@ func SetForcePromptCaching5m(v bool) {
 const defaultPlannerEffort = "medium"
 
 // plannerEffort holds the process-wide Planner --effort level. Stored as a
-// string; empty or "off"/"none" means "omit the flag". Mirrors the
-// forcePromptCaching5m pattern: set once at startup from config.
+// string; empty or "off"/"none" means "omit the flag". Set once at startup
+// from config.
 var plannerEffort atomic.Value
 
 // SetPlannerEffort sets the process-wide Planner --effort level used by
@@ -132,9 +118,6 @@ func cleanEnvForCLI() []string {
 		}
 	}
 	env = append(env, "ALICE_SKIP_HOOKS=1")
-	if forcePromptCaching5m.Load() {
-		env = append(env, "FORCE_PROMPT_CACHING_5M=1")
-	}
 	return env
 }
 

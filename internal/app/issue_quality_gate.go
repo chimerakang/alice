@@ -7,7 +7,7 @@ import (
 	"time"
 
 	appengine "github.com/chimerakang/alice-core/engine"
-	"github.com/chimerakang/alice-core/hermes"
+	"github.com/chimerakang/alice-core/ghissue"
 )
 
 type issueQualityGateAction string
@@ -22,7 +22,7 @@ type issueQualityGateDecision struct {
 	Action  issueQualityGateAction
 	Reason  string
 	Message string
-	Signal  *hermes.HermesCompletionSignal
+	Signal  *ghissue.HermesCompletionSignal
 }
 
 type issueQualityGatePayload struct {
@@ -40,7 +40,7 @@ type issueQualityGatePayload struct {
 	CompletionAuthor string                 `json:"completion_author,omitempty"`
 }
 
-func decideIssueQualityGate(issue *hermes.IssueContext, forceRestart bool) issueQualityGateDecision {
+func decideIssueQualityGate(issue *ghissue.IssueContext, forceRestart bool) issueQualityGateDecision {
 	if issue == nil {
 		return issueQualityGateDecision{Action: issueQualityGateAllow, Reason: "issue_unavailable"}
 	}
@@ -52,11 +52,11 @@ func decideIssueQualityGate(issue *hermes.IssueContext, forceRestart bool) issue
 			Message: fmt.Sprintf("ℹ️ Issue #%d 已經是 closed，已停止本輪以避免重複消耗 token。若要強制重跑，請使用 restart/fresh 流程。", issue.Number),
 		}
 	}
-	if signal, ok := hermes.RecentSuccessfulHermesCompletion(issue); ok && !forceRestart {
+	if signal, ok := ghissue.RecentSuccessfulHermesCompletion(issue); ok && !forceRestart {
 		return issueQualityGateDecision{
 			Action:  issueQualityGateSkip,
 			Reason:  "recent_hermes_completion",
-			Message: formatHermesRecentCompletionSkipMessage(issue, signal),
+			Message: formatRecentCompletionSkipMessage(issue, signal),
 			Signal:  &signal,
 		}
 	}
@@ -64,13 +64,13 @@ func decideIssueQualityGate(issue *hermes.IssueContext, forceRestart bool) issue
 		return issueQualityGateDecision{
 			Action:  issueQualityGateNeedsClarification,
 			Reason:  "missing_acceptance_context",
-			Message: fmt.Sprintf("⚠️ Issue #%d 缺少可判斷的描述、checklist 或近期 comments。先不要啟動 Hermes，以免 Planner 只能猜。請補 acceptance criteria，或使用 restart/fresh 流程強制執行。", issue.Number),
+			Message: fmt.Sprintf("⚠️ Issue #%d 缺少可判斷的描述、checklist 或近期 comments。先不要派工，以免 Agent 只能猜。請補 acceptance criteria，或使用 restart/fresh 流程強制執行。", issue.Number),
 		}
 	}
 	return issueQualityGateDecision{Action: issueQualityGateAllow, Reason: "gate_passed"}
 }
 
-func issueNeedsAcceptanceClarification(issue *hermes.IssueContext) bool {
+func issueNeedsAcceptanceClarification(issue *ghissue.IssueContext) bool {
 	if issue == nil {
 		return false
 	}
@@ -84,7 +84,7 @@ func issueNeedsAcceptanceClarification(issue *hermes.IssueContext) bool {
 	return len([]rune(body)) < 80
 }
 
-func recordIssueQualityGateDecision(ctx context.Context, key chatKey, issue *hermes.IssueContext, decision issueQualityGateDecision, forceRestart bool) {
+func recordIssueQualityGateDecision(ctx context.Context, key chatKey, issue *ghissue.IssueContext, decision issueQualityGateDecision, forceRestart bool) {
 	if issue == nil {
 		return
 	}
@@ -119,4 +119,21 @@ func recordIssueQualityGateDecision(ctx context.Context, key chatKey, issue *her
 		Issue:     issue.Number,
 		Payload:   payload,
 	})
+}
+
+func formatRecentCompletionSkipMessage(issue *ghissue.IssueContext, signal ghissue.HermesCompletionSignal) string {
+	when := ""
+	if !signal.CreatedAt.IsZero() {
+		when = " at " + signal.CreatedAt.Format(time.RFC3339)
+	}
+	state := strings.ToUpper(strings.TrimSpace(issue.State))
+	if state == "" {
+		state = "UNKNOWN"
+	}
+	msg := fmt.Sprintf("ℹ️ Issue #%d 的最新一次 Hermes 紀錄顯示已完成（%d/%d SubTasks%s），已停止本輪以避免重複消耗 token。", issue.Number, signal.Done, signal.Total, when)
+	if state != "CLOSED" {
+		msg += fmt.Sprintf("\n\n注意：GitHub Issue #%d 目前仍是 %s。若確認驗收已完成，請使用 `/close #%d` 關閉；若還有缺口請強制重跑。", issue.Number, state, issue.Number)
+		return msg
+	}
+	return msg + "\n\nIssue 已是 CLOSED；若要重做請另開 issue 或重新開啟。"
 }
