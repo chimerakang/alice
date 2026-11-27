@@ -313,7 +313,16 @@ func FormatIssueList(items []IssueListItem) string {
 // Transient gh failures are retried once so a network blip does not abort a
 // Hermes start.
 func FetchIssue(ctx context.Context, projectDir string, number int) (*IssueContext, error) {
-	out, err := ghOutputWithRetry(ctx, projectDir, ghTimeoutShort, "issue", "view",
+	return fetchIssue(ctx, projectDir, number, ghTimeoutShort)
+}
+
+// FetchIssueForDispatch gives Telegram Fleet issue reads more time per attempt.
+func FetchIssueForDispatch(ctx context.Context, projectDir string, number int) (*IssueContext, error) {
+	return fetchIssue(ctx, projectDir, number, 25*time.Second)
+}
+
+func fetchIssue(ctx context.Context, projectDir string, number int, timeout time.Duration) (*IssueContext, error) {
+	out, err := ghOutputWithRetry(ctx, projectDir, timeout, "issue", "view",
 		fmt.Sprintf("%d", number),
 		"--json", "title,body,state,labels,comments",
 	)
