@@ -17,7 +17,11 @@ if [ "$pid" != "$previous_pid" ]; then
     printf '%s\n' "$now" > "$ALICE_STATE_DIR/first_seen"
     printf '0\n' > "$ALICE_STATE_DIR/failures"
 fi
-if curl --silent --fail --max-time 5 http://127.0.0.1:8082/api/health >/dev/null; then
+# Probe liveness only. The full health report queries the database, which slows
+# down while Fleet agents load the machine; a slow answer here restarted a
+# healthy service and killed its running tasks.
+ALICE_HEALTH_TIMEOUT="${ALICE_WATCHDOG_HEALTH_TIMEOUT:-15}"
+if curl --silent --fail --max-time "$ALICE_HEALTH_TIMEOUT" http://127.0.0.1:8082/api/health/live >/dev/null; then
     printf '0\n' > "$ALICE_STATE_DIR/failures"
     exit 0
 fi
@@ -25,7 +29,10 @@ fi
 first_seen=$now
 if [ -r "$ALICE_STATE_DIR/first_seen" ]; then read -r first_seen < "$ALICE_STATE_DIR/first_seen" || true; fi
 case "$first_seen" in ''|*[!0-9]*) first_seen=$now ;; esac
-if [ $((now - first_seen)) -lt 120 ]; then exit 0; fi
+# Opening the database alone has taken over three minutes on a loaded machine;
+# a short grace here restarted the service mid-startup, in a loop.
+ALICE_STARTUP_GRACE="${ALICE_WATCHDOG_STARTUP_GRACE:-600}"
+if [ $((now - first_seen)) -lt "$ALICE_STARTUP_GRACE" ]; then exit 0; fi
 failures=0
 if [ -r "$ALICE_STATE_DIR/failures" ]; then read -r failures < "$ALICE_STATE_DIR/failures" || true; fi
 case "$failures" in ''|*[!0-9]*) failures=0 ;; esac

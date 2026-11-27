@@ -292,4 +292,3 @@ func (svc *taskService) ListSnapshotHistory(taskID string) ([]hermes.Snapshot, e
 	}
 	return store.ListSnapshotHistory(taskID)
 }
-

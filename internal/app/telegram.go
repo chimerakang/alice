@@ -23,11 +23,11 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"claude-tg-agent/internal/app/security"
 	appengine "github.com/chimerakang/alice-core/engine"
 	"github.com/chimerakang/alice-core/engine/errorclass"
 	"github.com/chimerakang/alice-core/hermes"
 	"github.com/chimerakang/alice-core/issueops"
-	"claude-tg-agent/internal/app/security"
 
 	"github.com/chimerakang/alice-core/fleet"
 )
@@ -126,12 +126,12 @@ type TelegramMessage struct {
 }
 
 type TelegramBot struct {
-	agents   map[chatKey]*Agent // 每個 chat/topic 一個 agent
-	agentsMu sync.RWMutex       // 保護 agents map 的讀寫鎖
-	client   Client
-	allowIDs map[int64]bool // 白名單
-	config   *Config
-	i18n     *I18nManager // 多國語系管理器
+	agents         map[chatKey]*Agent // 每個 chat/topic 一個 agent
+	agentsMu       sync.RWMutex       // 保護 agents map 的讀寫鎖
+	client         Client
+	allowIDs       map[int64]bool // 白名單
+	config         *Config
+	i18n           *I18nManager // 多國語系管理器
 	pollHTTPClient *http.Client
 	pollHealth     telegramPollingHealth
 
@@ -609,7 +609,7 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "retry", "description": "Retry reviewed low-score sub-task"},
 		{"command": "help", "description": "Show help message"},
 	}
-	if t.config.Fleet.Enabled {
+	if t.config.Fleet.Active() {
 		commands = append(commands,
 			map[string]string{"command": "ship", "description": "Dispatch a task to this topic's project"},
 			map[string]string{"command": "scout", "description": "Dispatch a read-only investigation"},

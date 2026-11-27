@@ -151,6 +151,8 @@ type fleetNotices struct {
 	Owner int64
 	// Topics finds the topic a project is bound to; nil when unavailable.
 	Topics topicBindingLister
+	// DashboardURL, when set, is the base of the task details link.
+	DashboardURL string
 
 	mu sync.Mutex
 	// discardPressed is when a prompt's discard button was first pressed,
@@ -339,6 +341,11 @@ func (n *fleetNotices) deliverPrompt(ctx context.Context, key chatKey, task flee
 			b.WriteString("\n\n💬 " + fleetClip(question, 1500))
 		}
 	}
+	if task.Shape == fleet.ShapeShip {
+		if d, err := n.Fleet.Delivery(ctx, task.ID); err == nil {
+			b.WriteString("\n\n" + renderFleetDelivery(loc, d, n.detailsURL(task.ID)))
+		}
+	}
 	b.WriteString("\n\n" + loc("fleet_prompt_hint_"+string(kind), nil))
 
 	messageID, err := n.Messenger.SendCard(key, b.String(), n.promptButtons(loc, task, kind))
@@ -400,7 +407,21 @@ func (n *fleetNotices) lastAgentText(ctx context.Context, taskID string) string 
 
 // deliverResult tells the owner what a task produced.
 func (n *fleetNotices) deliverResult(ctx context.Context, key chatKey, task fleet.Task) error {
+	var delivery fleetDelivery
+	var deliveryErr error
+	landed := false
+	if task.Shape == fleet.ShapeShip {
+		delivery, deliveryErr = n.Fleet.Delivery(ctx, task.ID)
+		for _, item := range delivery.Completed {
+			if item.Code == "landed_local" || item.Code == "landed_pr" {
+				landed = true
+			}
+		}
+	}
 	reason := fmt.Sprintf("result|%s|%d", task.Status, task.PRNumber)
+	if landed {
+		reason += "|landed"
+	}
 	if sent, err := n.Store.HasPrompt(0, task.ID, reason); err == nil && sent {
 		return nil
 	}
@@ -425,11 +446,15 @@ func (n *fleetNotices) deliverResult(ctx context.Context, key chatKey, task flee
 				}))
 			}
 		}
-		b.WriteString("\n" + n.verificationLine(ctx, loc, task.ID))
-		if task.PRURL != "" {
-			b.WriteString("\n🔗 " + task.PRURL)
+		if deliveryErr == nil {
+			b.WriteString("\n\n" + renderFleetDelivery(loc, delivery, n.detailsURL(task.ID)))
+		} else {
+			b.WriteString("\n" + n.verificationLine(ctx, loc, task.ID))
+			if task.PRURL != "" {
+				b.WriteString("\n🔗 " + task.PRURL)
+			}
 		}
-		if key := fleetResultNextKey(task); key != "" {
+		if key := fleetResultNextKey(task); key != "" && !landed {
 			b.WriteString("\n\n" + loc(key, map[string]string{"{branch}": task.Branch}))
 		}
 	}
@@ -437,7 +462,11 @@ func (n *fleetNotices) deliverResult(ctx context.Context, key chatKey, task flee
 		"{elapsed}": fleetElapsed(task, time.Now()), "{cost}": fmt.Sprintf("%.2f", task.CostUSD),
 	}))
 
-	messageID, err := n.Messenger.SendCard(key, b.String(), n.resultButtons(loc, task))
+	var buttons [][]fleetButton
+	if !landed {
+		buttons = n.resultButtons(loc, task)
+	}
+	messageID, err := n.Messenger.SendCard(key, b.String(), buttons)
 	if err != nil {
 		return err
 	}
@@ -452,6 +481,16 @@ func (n *fleetNotices) deliverResult(ctx context.Context, key chatKey, task flee
 		}
 	}
 	return nil
+}
+
+// notifyLanding reports an explicit owner action, for which the Fleet watcher does not raise a wake.
+func (n *fleetNotices) notifyLanding(ctx context.Context, task fleet.Task) {
+	if n == nil || n.Fleet == nil {
+		return
+	}
+	if err := n.deliverResult(ctx, n.destination(ctx, task.ID, task.ProjectID), task); err != nil {
+		log.Printf("[fleet] notify landing for task %s: %v", task.ID, err)
+	}
 }
 
 // fleetResultNextKey is the message that says what happens next with a
@@ -816,4 +855,12 @@ func (t *TelegramBot) fleetHandleReply(key chatKey, userID int64, replyToMessage
 	}
 	t.send(key, t.fleetMsg(key.chatID, "fleet_reply_sent", map[string]string{"{id}": taskID}))
 	return true
+}
+
+func (n *fleetNotices) detailsURL(taskID string) string {
+	base := strings.TrimRight(strings.TrimSpace(n.DashboardURL), "/")
+	if base == "" {
+		return ""
+	}
+	return base + "/fleet/tasks/" + taskID
 }

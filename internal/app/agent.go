@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
+	"claude-tg-agent/internal/app/security"
 	appengine "github.com/chimerakang/alice-core/engine"
 	"github.com/chimerakang/alice-core/hermes"
-	"claude-tg-agent/internal/app/security"
 )
 
 // directPlanViaGraph reports whether the direct-chat plan/execute path

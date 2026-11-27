@@ -30,7 +30,6 @@
   "enable_decision_logging": true,
   "decision_log_level": "detailed",
 
-  "enable_multi_agent": false,
 
   "model_routing": {
     "enable_dynamic_routing": false,
@@ -102,7 +101,9 @@
   },
 
   "fleet": {
-    "enabled": false,
+    "backend": "fleet",
+    "scout_backend": "claude",
+    "scout_codex_model": "",
     "worktree_root": "./data/worktrees",
     "report_root": "./data/fleet-reports",
     "max_concurrent": 2,

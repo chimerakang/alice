@@ -2,7 +2,7 @@
 // rendering anything.
 
 import { parseBatchGoals } from "@/lib/fleet";
-import type { FleetDispatchRequest, FleetProject, FleetProjectRequest, FleetShape, FleetTrustMode } from "@/types/fleet";
+import type { FleetDispatchRequest, FleetEpicRequest, FleetIssue, FleetProject, FleetProjectRequest, FleetShape, FleetTrustMode } from "@/types/fleet";
 
 export type DispatchMode = "single" | "batch" | "issues";
 
@@ -10,6 +10,15 @@ export type DispatchMode = "single" | "batch" | "issues";
 export const MAX_BATCH = 20;
 
 export type DispatchError = "" | "project" | "empty" | "budget" | "too_many";
+
+/** The "create GitHub issue" box starts checked. */
+export const DEFAULT_CREATE_ISSUE = true;
+
+export interface GitHubDispatchOptions {
+  createIssue: boolean;
+  milestone: string;
+  epicIssue: number | null;
+}
 
 /** What the dispatch form would send, one request per task. */
 export function buildDispatchRequests(input: {
@@ -21,6 +30,7 @@ export function buildDispatchRequests(input: {
   goal: string;
   batch: string;
   issues: number[];
+  github?: GitHubDispatchOptions;
 }): { requests: FleetDispatchRequest[]; error: DispatchError } {
   if (!input.project) return { requests: [], error: "project" };
   const base: FleetDispatchRequest = { project_id: input.project, shape: input.shape };
@@ -29,6 +39,12 @@ export function buildDispatchRequests(input: {
     const usd = Number(input.budget.trim().replace(/^\$/, ""));
     if (!Number.isFinite(usd) || usd <= 0) return { requests: [], error: "budget" };
     base.budget_usd = usd;
+  }
+  // GitHub issue creation is only supported for single-task mode.
+  if (input.github?.createIssue && input.mode === "single") {
+    base.create_issue = true;
+    if (input.github.milestone.trim()) base.milestone = input.github.milestone.trim();
+    if (input.github.epicIssue != null && input.github.epicIssue > 0) base.epic_issue = input.github.epicIssue;
   }
   let requests: FleetDispatchRequest[] = [];
   if (input.mode === "single") {
@@ -46,6 +62,8 @@ export function buildDispatchRequests(input: {
 /** The project form's fields, as typed. */
 export interface ProjectDraft {
   name: string;
+  default_branch: string;
+  branch_prefix: string;
   trust_mode: FleetTrustMode;
   verify: string;
   max_concurrent: string;
@@ -56,6 +74,8 @@ export interface ProjectDraft {
 export function projectDraft(p: FleetProject): ProjectDraft {
   return {
     name: p.name,
+    default_branch: p.default_branch ?? "",
+    branch_prefix: p.branch_prefix ?? "",
     trust_mode: p.trust_mode,
     verify: (p.verify_commands ?? []).join("\n"),
     max_concurrent: String(p.max_concurrent || 1),
@@ -75,6 +95,8 @@ export function projectRequest(d: ProjectDraft): { req: FleetProjectRequest | nu
   return {
     req: {
       name: d.name.trim(),
+      default_branch: d.default_branch.trim(),
+      branch_prefix: d.branch_prefix.trim(),
       trust_mode: d.trust_mode,
       verify_commands: d.verify.split("\n").map((l) => l.trim()).filter(Boolean),
       max_concurrent: concurrent,
@@ -82,4 +104,37 @@ export function projectRequest(d: ProjectDraft): { req: FleetProjectRequest | nu
     },
     error: "",
   };
+}
+
+/** What the GitHub section creates: an issue to dispatch, or an epic to plan under. */
+export type GitHubKind = "issue" | "epic";
+
+/** The default is an ordinary issue, so the dispatch behaves as it always did. */
+export const DEFAULT_GITHUB_KIND: GitHubKind = "issue";
+
+/** Shape, model and budget cap only mean something for a task, not an epic. */
+export function taskFieldsDisabled(kind: GitHubKind, mode: DispatchMode): boolean {
+  return mode === "single" && kind === "epic";
+}
+
+/** What the form would send to create an epic. */
+export function buildEpicRequest(input: {
+  project: string;
+  goal: string;
+  milestone: string;
+}): { request: FleetEpicRequest | null; error: "" | "project" | "empty" } {
+  if (!input.project) return { request: null, error: "project" };
+  if (!input.goal.trim()) return { request: null, error: "empty" };
+  const request: FleetEpicRequest = { project_id: input.project, description: input.goal.trim() };
+  if (input.milestone.trim()) request.milestone = input.milestone.trim();
+  return { request, error: "" };
+}
+
+/** The epic list with the just-created epic in it, whether or not the reload has seen it yet. */
+export function withCreatedEpic(epics: FleetIssue[], created: { number: number; title: string; url: string }): FleetIssue[] {
+  if (epics.some((e) => e.number === created.number)) return epics;
+  return [
+    ...epics,
+    { number: created.number, title: created.title, labels: [], milestone: "", url: created.url, task_id: "", is_epic: true },
+  ];
 }

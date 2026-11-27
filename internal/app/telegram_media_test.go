@@ -381,7 +381,13 @@ func TestHandleMessageAutoScansRecentMediaAfterAgentRun(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				return err
 			}
-			return os.WriteFile(path, []byte("generated"), 0o644)
+			if err := os.WriteFile(path, []byte("generated"), 0o644); err != nil {
+				return err
+			}
+			// Keep the fixture strictly newer than the scan start even if
+			// the filesystem rounds the initial write time down.
+			modified := time.Now().Add(time.Second)
+			return os.Chtimes(path, modified, modified)
 		},
 	}
 	bot.config.DefaultProjectDir = projectDir
@@ -413,7 +419,13 @@ func TestRunAgentWithStopButtonModeAutoScansRecentMediaAfterPlanRun(t *testing.T
 			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 				return err
 			}
-			return os.WriteFile(path, []byte("generated"), 0o644)
+			if err := os.WriteFile(path, []byte("generated"), 0o644); err != nil {
+				return err
+			}
+			// Keep the fixture strictly newer than the scan start even if
+			// the filesystem rounds the initial write time down.
+			modified := time.Now().Add(time.Second)
+			return os.Chtimes(path, modified, modified)
 		},
 	}
 	bot := newTelegramMediaTestBot(42, "zh-TW", 5)

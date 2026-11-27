@@ -187,8 +187,8 @@ func (wi *WebInterface) handleHermesSnapshots(w http.ResponseWriter, r *http.Req
 		// dashboard drill-in can show actual sub-task descriptions /
 		// statuses / result text without making a second round trip.
 		// Result text is truncated to keep the payload reasonable; the
-		// caller can request the full transcript from /api/hermes/active
-		// or via task store APIs if needed.
+		// full transcript is available from the snapshot history
+		// (/api/hermes/snapshots) if needed.
 		type subTaskView struct {
 			ID            string `json:"id"`
 			Description   string `json:"description"`

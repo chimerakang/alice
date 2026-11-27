@@ -52,7 +52,6 @@ func ParseParallelTasks(input string) []ParallelTask {
 	return tasks
 }
 
-
 // containsAny checks if a string contains any of the given substrings
 func containsAny(s string, substrings []string) bool {
 	for _, substring := range substrings {

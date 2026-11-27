@@ -8,11 +8,16 @@ import type {
   FleetDispatchRequest,
   FleetErrorBody,
   FleetEventList,
+  FleetEpicReply,
+  FleetEpicRequest,
+  FleetGitHubStatus,
   FleetIssue,
+  FleetMilestone,
   FleetProject,
   FleetProjectRequest,
   FleetTask,
   FleetTaskAction,
+  FleetDelivery,
   FleetVerification,
   FleetWorktree,
 } from "@/types/fleet";
@@ -119,6 +124,9 @@ export const fleetApi = {
     ).tasks ?? [],
   getTask: (id: string) => request<FleetTask>("GET", `/api/fleet/tasks/${enc(id)}`),
   dispatch: (req: FleetDispatchRequest) => request<FleetTask>("POST", "/api/fleet/tasks", req, true),
+  /** Creates an epic issue on GitHub. No task is dispatched. */
+  createEpic: (req: FleetEpicRequest) => request<FleetEpicReply>("POST", "/api/fleet/epics", req, true),
+  getProjectGitHub: (id: string) => request<FleetGitHubStatus>("GET", `/api/fleet/projects/${enc(id)}/github`),
   act: (id: string, action: FleetTaskAction, body?: { text?: string; ignore_budget?: boolean; reason?: string }) =>
     request<FleetTask>("POST", `/api/fleet/tasks/${enc(id)}/${action}`, body ?? {}, true),
 
@@ -136,12 +144,15 @@ export const fleetApi = {
       `/api/fleet/events${query({ after_id: params.afterId, limit: params.limit, types: params.types?.join(",") })}`,
     ),
   getTaskDiff: (id: string) => request<FleetDiff>("GET", `/api/fleet/tasks/${enc(id)}/diff`),
+  getTaskDelivery: (id: string) => request<FleetDelivery>("GET", `/api/fleet/tasks/${enc(id)}/delivery`),
   getTaskVerifications: async (id: string) =>
     (await request<{ verifications?: FleetVerification[] }>("GET", `/api/fleet/tasks/${enc(id)}/verifications`))
       .verifications ?? [],
 
   listProjectIssues: async (id: string) =>
     (await request<{ issues?: FleetIssue[] }>("GET", `/api/fleet/projects/${enc(id)}/issues`)).issues ?? [],
+  listProjectMilestones: async (id: string) =>
+    (await request<{ milestones?: FleetMilestone[] }>("GET", `/api/fleet/projects/${enc(id)}/milestones`)).milestones ?? [],
   listProjectWorktrees: async (id: string) =>
     (await request<{ worktrees?: FleetWorktree[] }>("GET", `/api/fleet/projects/${enc(id)}/worktrees`)).worktrees ?? [],
   /** Runs the project's saved verify commands once and returns each outcome. */

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"strconv"
@@ -50,15 +51,16 @@ type Config struct {
 	// Web Interface Settings
 	EnableWebInterface bool   `json:"enable_web_interface"`
 	WebPort            string `json:"web_port"`
-	WebStaticDir       string `json:"web_static_dir"`
-	WebAPIToken        string `json:"web_api_token"` // Bearer token for control endpoints
+	// WebBindAddress is the address the web interface listens on. The default
+	// is loopback: the dashboard reaches it through the host, and nothing else
+	// on the network should. Set it to "0.0.0.0" to listen on every interface.
+	WebBindAddress string `json:"web_bind_address"`
+	WebStaticDir   string `json:"web_static_dir"`
+	WebAPIToken    string `json:"web_api_token"` // Bearer token for control endpoints
 
 	// Transparency Settings
 	EnableDecisionLogging bool   `json:"enable_decision_logging"`
 	DecisionLogLevel      string `json:"decision_log_level"` // "off", "basic", "detailed"
-
-	// Multi-Agent Settings
-	EnableMultiAgent bool `json:"enable_multi_agent"`
 
 	// Performance Monitoring Settings
 	EnablePerformanceMonitoring bool `json:"enable_performance_monitoring"`
@@ -369,10 +371,10 @@ func LoadConfig() (*Config, error) {
 		Model:                       "sonnet",
 		DefaultProjectDir:           ".",
 		WebPort:                     "8080",
+		WebBindAddress:              "127.0.0.1",
 		WebStaticDir:                "./static",
 		EnableDecisionLogging:       true,
 		DecisionLogLevel:            "detailed",
-		EnableMultiAgent:            false,             // Disabled by default (experimental)
 		EnablePerformanceMonitoring: true,              // Enabled by default
 		PerformanceMetricsRetention: 24,                // 24 hours default
 		EnablePersistence:           true,              // Enable SQLite persistence by default
@@ -481,6 +483,9 @@ func LoadConfig() (*Config, error) {
 	if v := os.Getenv("WEB_PORT"); v != "" {
 		config.WebPort = v
 	}
+	if v := os.Getenv("WEB_BIND_ADDRESS"); v != "" {
+		config.WebBindAddress = v
+	}
 	if v := os.Getenv("WEB_STATIC_DIR"); v != "" {
 		config.WebStaticDir = v
 	}
@@ -494,11 +499,6 @@ func LoadConfig() (*Config, error) {
 	}
 	if v := os.Getenv("DECISION_LOG_LEVEL"); v != "" {
 		config.DecisionLogLevel = v
-	}
-
-	// Multi-Agent Environment Variables
-	if v := os.Getenv("ENABLE_MULTI_AGENT"); v == "true" {
-		config.EnableMultiAgent = true
 	}
 
 	// Performance Monitoring Environment Variables
@@ -640,7 +640,7 @@ func Main() {
 	log.Printf("   Allowed users: %v", config.AllowedUserIDs)
 
 	if config.EnableWebInterface {
-		log.Printf("   Web interface: enabled on port %s", config.WebPort)
+		log.Printf("   Web interface: enabled on %s", net.JoinHostPort(config.WebBindAddress, config.WebPort))
 		log.Printf("   Static directory: %s", config.WebStaticDir)
 	}
 
@@ -913,8 +913,12 @@ func Main() {
 		RemindPendingPauses(appCtx, hermesStore, tgBot)
 	}
 
-	// Start the fleet if enabled. Nothing is built or started otherwise.
-	if config.Fleet.Enabled {
+	// Start the fleet unless fleet.backend selects hermes. Nothing is built
+	// or started otherwise.
+	if err := config.Fleet.validateBackend(); err != nil {
+		log.Printf("⚠️ Warning: %v; using fleet", err)
+	}
+	if config.Fleet.Active() {
 		svc, err := NewFleetService(config.Fleet, fleetDatabase(), config.DatabasePath, config.Model)
 		if err == nil {
 			err = svc.Start(appCtx)
@@ -952,7 +956,7 @@ func Main() {
 	var webInterface *WebInterface
 	var webErrCh <-chan error
 	if config.EnableWebInterface {
-		webInterface = NewWebInterface(tgBot, config.WebPort, config.WebStaticDir, config.WebAPIToken)
+		webInterface = NewWebInterface(tgBot, config.WebBindAddress, config.WebPort, config.WebStaticDir, config.WebAPIToken)
 		errCh := make(chan error, 1)
 		webErrCh = errCh
 		go func() {

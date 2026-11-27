@@ -275,7 +275,7 @@ func TestFleetResultMessage(t *testing.T) {
 	if len(sent) != 1 {
 		t.Fatalf("sent %d message(s), want the result", len(sent))
 	}
-	for _, want := range []string{"fleet_status_review_ready", task.ID, "add the feature", "fleet_result_verify_none", "fleet_result_next_local", "fleet_card_meter"} {
+	for _, want := range []string{"fleet_status_review_ready", task.ID, "add the feature", "fleet_dv_verify_not_configured", "fleet_result_next_local", "fleet_card_meter"} {
 		if !strings.Contains(sent[0].Text, want) {
 			t.Errorf("result misses %q:\n%s", want, sent[0].Text)
 		}

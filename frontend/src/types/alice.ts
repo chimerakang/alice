@@ -275,9 +275,9 @@ export interface HermesInterrupt {
   expires_at?: string;
 }
 
-// HermesActiveTask is the view returned by /api/hermes/active for the
-// dashboard's Hermes Tasks panel. Includes interrupt context so the
-// resolve buttons can be rendered correctly.
+// HermesActiveTask is the task view returned by /api/hermes/tasks for the
+// read-only Hermes Tasks history page. Includes interrupt context from
+// the stored snapshot.
 export interface HermesActiveTask {
   task_id: string;
   github_url?: string;

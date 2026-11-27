@@ -7,6 +7,7 @@ import DiffViewer from "@/components/DiffViewer";
 import StatusBadge from "@/components/StatusBadge";
 import TimelineEntry from "@/components/TimelineEntry";
 import ToolCallGantt from "@/components/ToolCallGantt";
+import FleetDeliverySummary from "@/components/fleet/FleetDeliverySummary";
 import FleetActions from "@/components/fleet/FleetActions";
 import FleetUnavailable from "@/components/fleet/FleetUnavailable";
 import LivenessDot from "@/components/fleet/LivenessDot";
@@ -24,7 +25,7 @@ import {
 } from "@/lib/fleet";
 import { useFleet } from "@/hooks/useFleet";
 import { useNow } from "@/hooks/useNow";
-import type { FleetDiff, FleetEvent, FleetVerification } from "@/types/fleet";
+import type { FleetDelivery, FleetDiff, FleetEvent, FleetVerification } from "@/types/fleet";
 
 /** How often a live task's events are polled, beneath the WebSocket. */
 const POLL_MS = 4000;
@@ -39,13 +40,14 @@ function when(ts: string | null): string {
 export default function FleetTaskPage() {
   const { t } = useTranslation();
   const { id = "" } = useParams();
-  const { loaded, unavailable, error, tasks, refreshTask } = useFleet();
+  const { loaded, unavailable, error, tasks, projects, refreshTask } = useFleet();
   const task = tasks[id];
   const now = useNow(5_000);
 
   const [events, setEvents] = useState<FleetEvent[]>([]);
   const [diff, setDiff] = useState<FleetDiff | null>(null);
   const [checks, setChecks] = useState<FleetVerification[]>([]);
+  const [delivery, setDelivery] = useState<FleetDelivery | null>(null);
   const [missing, setMissing] = useState(false);
   const cursor = useRef(0);
   const loading = useRef(false);
@@ -72,13 +74,18 @@ export default function FleetTaskPage() {
   const pullDetail = useCallback(async () => {
     if (!id) return;
     try {
-      const [d, v] = await Promise.all([fleetApi.getTaskDiff(id), fleetApi.getTaskVerifications(id)]);
+      const [d, v, summary] = await Promise.all([
+        fleetApi.getTaskDiff(id).catch(() => null),
+        fleetApi.getTaskVerifications(id).catch(() => null),
+        task?.shape === "ship" ? fleetApi.getTaskDelivery(id).catch(() => null) : Promise.resolve(null),
+      ]);
       setDiff(d);
-      setChecks(v);
+      if (v) setChecks(v);
+      setDelivery(summary);
     } catch {
       // Not fatal: the timeline still tells the story.
     }
-  }, [id]);
+  }, [id, task?.shape]);
 
   // A task opened by link may not be in the store yet.
   useEffect(() => {
@@ -96,6 +103,7 @@ export default function FleetTaskPage() {
     setEvents([]);
     setDiff(null);
     setChecks([]);
+    setDelivery(null);
     setMissing(false);
   }, [id]);
 
@@ -120,6 +128,10 @@ export default function FleetTaskPage() {
   const files = useMemo(() => parsePatch(diff?.patch ?? ""), [diff]);
   const lifecycle = useMemo(() => events.filter((e) => !QUIET.has(e.type)), [events]);
   const latestAttempt = checks.reduce((max, c) => Math.max(max, c.attempt), 0);
+  // A ship task is checked only with its project's commands: with none set,
+  // "not run yet" would promise a result that is never coming.
+  const project = task ? projects.find((p) => p.id === task.project_id) : undefined;
+  const noCommands = task?.shape === "ship" && !!project && (project.verify_commands ?? []).length === 0;
 
   if (!loaded) return <p className="text-sm text-gray-500">{t("common.loading")}</p>;
   if (unavailable) return <FleetUnavailable reason={unavailable} error={error} />;
@@ -193,6 +205,12 @@ export default function FleetTaskPage() {
             </a>
           )}
         </dl>
+        {delivery && (
+          <FleetDeliverySummary
+            delivery={delivery}
+            onShowDiff={() => document.getElementById("fleet-task-diff")?.scrollIntoView({ behavior: "smooth" })}
+          />
+        )}
         <FleetActions task={task} />
       </header>
 
@@ -218,6 +236,7 @@ export default function FleetTaskPage() {
       </CollapsiblePanel>
 
       {task.shape === "ship" && (
+        <div id="fleet-task-diff">
         <CollapsiblePanel title={t("fleet.task.diff")} badge={files.length} defaultOpen={files.length > 0}>
           <div className="p-4 space-y-2">
             {diff?.truncated && <p className="text-xs text-warning">{t("fleet.task.diff_truncated")}</p>}
@@ -238,11 +257,20 @@ export default function FleetTaskPage() {
             )}
           </div>
         </CollapsiblePanel>
+        </div>
       )}
 
       <CollapsiblePanel title={t("fleet.task.checks")} badge={checks.filter((c) => c.attempt === latestAttempt).length} defaultOpen={checks.length > 0}>
         <div className="p-4 space-y-3">
-          {checks.length === 0 && <p className="text-sm text-gray-500">{t("fleet.task.no_checks")}</p>}
+          {checks.length === 0 && !noCommands && <p className="text-sm text-gray-500">{t("fleet.task.no_checks")}</p>}
+          {checks.length === 0 && noCommands && (
+            <p className="text-sm text-warning">
+              {t("fleet.task.no_verify_commands")}{" "}
+              <Link to="/fleet/projects" className="underline hover:text-gray-200">
+                {t("fleet.task.open_project_settings")}
+              </Link>
+            </p>
+          )}
           {checks.map((check) => (
             <div key={check.id} className="rounded-md border border-gray-800">
               <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">

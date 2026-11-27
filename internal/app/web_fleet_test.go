@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -562,5 +564,93 @@ func TestFleetEventHasOneShape(t *testing.T) {
 		if ws[key] != rest[key] {
 			t.Errorf("%s: websocket %v, rest %v", key, ws[key], rest[key])
 		}
+	}
+}
+
+func TestFleetAPIProjectTargetBranch(t *testing.T) {
+	e := newWebFleetEnv(t)
+	repo := newFleetTestRepo(t)
+	for _, args := range [][]string{{"branch", "develop"}} {
+		if out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	status, created := e.call(http.MethodPost, "/api/fleet/projects", `{"repo_path":"`+repo+`"}`, true)
+	if status != http.StatusOK {
+		t.Fatalf("register: %d %v", status, created)
+	}
+	id := created["id"].(string)
+	before, _ := created["default_branch"].(string)
+	if before == "" || before == "develop" {
+		t.Fatalf("detected branch = %q", before)
+	}
+	put := func(body string) (int, map[string]any) {
+		return e.call(http.MethodPut, "/api/fleet/projects/"+id, body, true)
+	}
+
+	// An empty or absent branch changes nothing.
+	for _, body := range []string{`{"trust_mode":"local-only","max_concurrent":1}`, `{"trust_mode":"local-only","max_concurrent":1,"default_branch":"  "}`} {
+		if status, got := put(body); status != http.StatusOK || got["default_branch"] != before {
+			t.Fatalf("update %s: %d %v", body, status, got)
+		}
+	}
+
+	// A branch that does not exist is refused and nothing changes.
+	if status, got := put(`{"trust_mode":"local-only","max_concurrent":1,"default_branch":"nope"}`); status != http.StatusBadRequest || !strings.Contains(fmt.Sprint(got["error"]), "nope") {
+		t.Fatalf("missing branch: %d %v", status, got)
+	}
+	if after := e.get("/api/fleet/projects/" + id); after["default_branch"] != before {
+		t.Fatalf("branch after a refused update = %v", after["default_branch"])
+	}
+
+	// An existing one is applied, and the audit log says which.
+	if status, got := put(`{"trust_mode":"local-only","max_concurrent":1,"default_branch":"develop"}`); status != http.StatusOK || got["default_branch"] != "develop" {
+		t.Fatalf("set branch: %d %v", status, got)
+	}
+	if after := e.get("/api/fleet/projects/" + id); after["default_branch"] != "develop" {
+		t.Fatalf("branch after update = %v", after["default_branch"])
+	}
+	found := false
+	for _, entry := range list(t, e.get("/api/fleet/audit"), "entries") {
+		if strings.Contains(fmt.Sprint(entry["detail"]), "develop") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("audit log does not mention develop: %v", e.get("/api/fleet/audit"))
+	}
+}
+
+func TestFleetAPIProjectTaskBranchPrefix(t *testing.T) {
+	e := newWebFleetEnv(t)
+	repo := newFleetTestRepo(t)
+	status, created := e.call(http.MethodPost, "/api/fleet/projects", fmt.Sprintf(`{"repo_path":%q}`, repo), true)
+	if status != http.StatusOK || created["branch_prefix"] != "alice/" {
+		t.Fatalf("register: %d %v", status, created)
+	}
+	id := created["id"].(string)
+	endpoint := "/api/fleet/projects/" + id
+	for _, tc := range []struct {
+		body string
+		want int
+	}{
+		{`{"trust_mode":"local-only","max_concurrent":1,"branch_prefix":" feat/ "}`, http.StatusOK},
+		{`{"trust_mode":"local-only","max_concurrent":1}`, http.StatusOK},
+		{`{"trust_mode":"local-only","max_concurrent":1,"branch_prefix":"bad prefix/"}`, http.StatusBadRequest},
+	} {
+		status, got := e.call(http.MethodPut, endpoint, tc.body, true)
+		if status != tc.want {
+			t.Fatalf("update: %d %v, want %d", status, got, tc.want)
+		}
+		if current := e.get(endpoint); current["branch_prefix"] != "feat/" {
+			t.Fatalf("saved prefix = %v, want feat/", current["branch_prefix"])
+		}
+	}
+	project, err := e.svc.Store.GetProject(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if branch := project.BranchName("abc123"); branch != "feat/abc123" {
+		t.Fatalf("new branch = %q, want feat/abc123", branch)
 	}
 }

@@ -31,9 +31,21 @@ func fleetPathWithin(path, root string) bool {
 }
 
 // FleetConfig controls the fleet: one agent run per task, each in its own
-// git worktree, across every registered project. It is off unless enabled.
+// git worktree, across every registered project. It is the default task
+// backend; set backend to "hermes" to run the old Hermes system instead.
 type FleetConfig struct {
+	// Backend selects the task system: "fleet" (default when empty) or
+	// "hermes".
+	Backend string `json:"backend"`
+	// Enabled is the older on/off switch. It no longer has any effect:
+	// Backend decides, and an empty Backend means fleet.
+	//
+	// Deprecated: use Backend.
 	Enabled bool `json:"enabled"`
+	// ScoutBackend selects the agent for read-only tasks. Empty uses Claude.
+	ScoutBackend string `json:"scout_backend"`
+	// ScoutCodexModel overrides the Codex CLI's default model.
+	ScoutCodexModel string `json:"scout_codex_model"`
 	// WorktreeRoot is where task checkouts are created. Defaults to
 	// "worktrees" beside the database.
 	WorktreeRoot string `json:"worktree_root"`
@@ -58,6 +70,35 @@ type FleetConfig struct {
 	// DashboardURL is the dashboard's address as the owner reaches it, e.g.
 	// "http://localhost:3939". When set, task cards link to it.
 	DashboardURL string `json:"dashboard_url"`
+	// EpicLabels are the GitHub label names that mark an issue as an epic.
+	// Defaults to ["epic"] when empty.
+	EpicLabels []string `json:"epic_labels"`
+	// EpicTitlePattern is a regexp that matches epic issue titles, e.g.
+	// `^\[M\d+\] Epic:`. Empty means no title-based detection.
+	EpicTitlePattern string `json:"epic_title_pattern"`
+	// EpicChildrenHeading titles the sub-issue section appended to epics the
+	// dashboard creates. Defaults to "Sub-issues" when empty.
+	EpicChildrenHeading string `json:"epic_children_heading"`
+}
+
+const (
+	fleetBackendFleet  = "fleet"
+	fleetBackendHermes = "hermes"
+)
+
+// Active reports whether the fleet is the task backend. Anything but an
+// explicit "hermes" selects it.
+func (c FleetConfig) Active() bool {
+	return !strings.EqualFold(strings.TrimSpace(c.Backend), fleetBackendHermes)
+}
+
+// validateBackend rejects a backend value that is neither system.
+func (c FleetConfig) validateBackend() error {
+	switch strings.ToLower(strings.TrimSpace(c.Backend)) {
+	case "", fleetBackendFleet, fleetBackendHermes:
+		return nil
+	}
+	return fmt.Errorf("fleet.backend %q: must be %q or %q", c.Backend, fleetBackendFleet, fleetBackendHermes)
 }
 
 // trustMode returns the configured default trust mode.
@@ -79,6 +120,7 @@ type FleetService struct {
 	Watcher   *fleet.Watcher
 	Commander *fleet.Commander
 	Bus       *fleet.Bus
+	IssueSync *FleetIssueSync
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -141,8 +183,18 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 		DefaultModel: defaultModel,
 		Budget:       budget,
 	}
+	switch cfg.ScoutBackend {
+	case "", "claude":
+	case "codex":
+		runner.CodexScoutBinary = "codex"
+		runner.CodexScoutModel = cfg.ScoutCodexModel
+	default:
+		return nil, fmt.Errorf("fleet.scout_backend: expected claude or codex, got %q", cfg.ScoutBackend)
+	}
 	deliverer := &fleet.Deliverer{Store: store}
-	issues := &fleet.IssueTracker{Store: store}
+	// The tracker still ticks checklist items; what the issue is told, and
+	// when it is closed, is FleetIssueSync's.
+	issues := &fleet.IssueTracker{Store: store, NoComments: true}
 	sched := &fleet.Scheduler{
 		Store:         store,
 		Runner:        runner,
@@ -160,6 +212,7 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 		Watcher:   &fleet.Watcher{Store: store, Runner: runner},
 		Commander: &fleet.Commander{Store: store, Scheduler: sched, Deliverer: deliverer, Issues: issues},
 		Bus:       &fleet.Bus{Store: store},
+		IssueSync: &FleetIssueSync{Store: store, Host: ghFleetIssueHost{}},
 	}, nil
 }
 
@@ -183,6 +236,7 @@ func (f *FleetService) Start(ctx context.Context) error {
 	})
 	f.run("fleet.scheduler", func() error { return f.Scheduler.Run(ctx) })
 	f.run("fleet.watcher", func() error { return f.Watcher.Run(ctx) })
+	f.run("fleet.issue_sync", func() error { return f.IssueSync.Run(ctx, f.Bus) })
 	return nil
 }
 

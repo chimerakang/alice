@@ -40,6 +40,7 @@ export interface FleetProject {
   topics: FleetTopic[];
   created_at: string | null;
   updated_at: string | null;
+  github_available: boolean;
 }
 
 export interface FleetTask {
@@ -70,6 +71,10 @@ export interface FleetTask {
   started_at: string | null;
   finished_at: string | null;
   last_activity_at: string | null;
+  /** Set in dispatch response when a GitHub issue was just created. */
+  issue_url?: string;
+  /** Non-fatal warning from dispatch, e.g. epic update failed. */
+  warning?: string;
 }
 
 export interface FleetEvent {
@@ -102,6 +107,56 @@ export interface FleetVerification {
   timed_out: boolean;
   error: string;
   created_at: string | null;
+}
+
+export interface FleetDeliveryItem {
+  code: string;
+  detail: string;
+}
+
+export interface FleetDeliveryCheck {
+  name: string;
+  command: string;
+  passed: boolean;
+  exit_code: number;
+  duration_ms: number;
+  timed_out: boolean;
+}
+
+export interface FleetDeliveryRun {
+  number: number;
+  started_at: string | null;
+  outcome: "running" | "passed" | "failed" | "not_verified";
+  attempt: number;
+  stop_reason: string;
+}
+
+/** What a reviewer needs before approving a ship task. */
+export interface FleetDelivery {
+  task_id: string;
+  shape: string;
+  status: string;
+  approvable: boolean;
+  verification: "not_configured" | "not_run" | "failed" | "passed";
+  checks_run: number;
+  checks_attempt: number;
+  checks_previous: boolean;
+  checks: FleetDeliveryCheck[];
+  diff_known: boolean;
+  files: number;
+  insertions: number;
+  deletions: number;
+  untracked: number;
+  note: string;
+  note_missing: boolean;
+  stop_reason: string;
+  runs: FleetDeliveryRun[];
+  completed: FleetDeliveryItem[];
+  pending: FleetDeliveryItem[];
+  limits: FleetDeliveryItem[];
+  next: "approve" | "decide" | "rerun" | "wait" | "none";
+  pr_url: string;
+  pr_number: number;
 }
 
 export interface FleetDiff {
@@ -165,6 +220,37 @@ export interface FleetDispatchRequest {
   model?: string;
   budget_usd?: number;
   priority?: number;
+  create_issue?: boolean;
+  milestone?: string;
+  epic_issue?: number;
+}
+
+/** Body of POST /api/fleet/epics. */
+export interface FleetEpicRequest {
+  project_id: string;
+  description: string;
+  milestone?: string;
+}
+
+export interface FleetEpicReply {
+  number: number;
+  title: string;
+  url: string;
+  label: string;
+  label_created: boolean;
+  title_pattern_mismatch: boolean;
+  title_pattern: string;
+}
+
+/** Whether GitHub can be written for a project right now. */
+export interface FleetGitHubStatus {
+  available: boolean;
+  reason: "" | "no_remote" | "auth_required";
+}
+
+export interface FleetMilestone {
+  number: number;
+  title: string;
 }
 
 export interface FleetProjectRequest {
@@ -174,6 +260,9 @@ export interface FleetProjectRequest {
   verify_commands?: string[];
   max_concurrent?: number;
   budget?: FleetProjectBudget;
+  /** Empty or absent leaves the target branch unchanged. */
+  default_branch?: string;
+  branch_prefix?: string;
 }
 
 export interface FleetIssue {
@@ -184,6 +273,8 @@ export interface FleetIssue {
   url: string;
   /** The unfinished task already working on this issue, if any. */
   task_id: string;
+  /** True when the issue is an epic (by label or title pattern). */
+  is_epic: boolean;
 }
 
 export interface FleetWorktree {

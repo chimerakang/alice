@@ -89,6 +89,7 @@ sudo systemctl status alice
 | `CLAUDE_MODEL` | Claude model name | `sonnet` | ❌ |
 | `ENABLE_WEB_INTERFACE` | Enable web dashboard | `true` | ❌ |
 | `WEB_PORT` | Web interface port | `8080` | ❌ |
+| `WEB_BIND_ADDRESS` | Address the web interface listens on (`web_bind_address` in `config.json`); `0.0.0.0` for every interface | `127.0.0.1` | ❌ |
 | `ENABLE_RATE_LIMITING` | Enable rate limiting | `true` | ❌ |
 | `RATE_LIMIT_RPM` | Requests per minute limit | `60` | ❌ |
 | `ENABLE_PII_DETECTION` | Enable PII detection | `true` | ❌ |
@@ -460,3 +461,22 @@ kubectl scale deployment alice-bot --replicas=2
 - **Alerts**: Configure Alertmanager for proactive monitoring
 
 For additional support, please open an issue in the GitHub repository.
+
+## Fleet Epic acceptance and production rollout
+
+1. Configure the Fleet project with task branch prefix `feat/`, target branch
+   `develop`, and delivery mode `direct-pr`. Each Ship opens a PR targeting
+   `develop`. Review the changes and require **Fleet develop verification**
+   before merging. Keep production credentials out of PR checks.
+2. Once the Epic's required PRs are merged, record the exact `develop` commit
+   SHA, its successful CI run, and the Epic issue. Use that SHA and its
+   `alice-dashboard-<SHA>` artifact for acceptance. Test each issue's acceptance
+   criteria and the cross-issue user flows against that version. Record outcomes
+   and evidence on the Epic. If a fix changes the SHA, run the affected
+   acceptance scenarios on the new candidate.
+3. After the owner approves the recorded results, manually deploy the accepted
+   SHA using the deployment procedure for the production host. Use the dashboard
+   artifact from that SHA and build the backend from the same commit. Check the
+   service health and keep the previous accepted version available for rollback.
+   Alice CI runs the same build and test checks for `develop` and `main`.
+   The workflow does not deploy.

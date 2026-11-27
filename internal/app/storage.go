@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/chimerakang/alice-core/hermes"
 	"claude-tg-agent/internal/app/security"
+	"github.com/chimerakang/alice-core/hermes"
 
 	_ "modernc.org/sqlite" // Pure Go SQLite driver (no CGO required)
 )

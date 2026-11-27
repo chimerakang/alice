@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -65,12 +66,14 @@ func (wi *WebInterface) registerFleetRoutes(mux *http.ServeMux) {
 	query("/api/fleet/tasks/{id}/events", wi.fleetTaskEvents)
 	query("/api/fleet/tasks/{id}/diff", wi.fleetTaskDiff)
 	query("/api/fleet/tasks/{id}/verifications", wi.fleetTaskVerifications)
+	query("/api/fleet/tasks/{id}/delivery", wi.fleetTaskDelivery)
 	query("/api/fleet/events", wi.fleetEvents)
 	query("/api/fleet/audit", wi.fleetAudit)
 
 	command("POST /api/fleet/projects", wi.fleetRegisterProject)
 	command("PUT /api/fleet/projects/{id}", wi.fleetUpdateProject)
 	command("POST /api/fleet/tasks", wi.fleetDispatchTask)
+	command("POST /api/fleet/epics", wi.fleetCreateEpic)
 	command("POST /api/fleet/tasks/{id}/{action}", wi.fleetTaskAction)
 
 	wi.registerFleetProjectRoutes(mux)
@@ -161,7 +164,8 @@ func fleetErrorStatus(err error) (int, string) {
 	switch {
 	case errors.Is(err, errFleetBadRequest),
 		errors.Is(err, fleet.ErrInvalidTask), errors.Is(err, fleet.ErrInvalidProject),
-		errors.Is(err, fleet.ErrNotGitRepo), errors.Is(err, fleet.ErrInvalidNotifyMode):
+		errors.Is(err, fleet.ErrNotGitRepo), errors.Is(err, fleet.ErrInvalidNotifyMode),
+		errors.Is(err, fleet.ErrBranchNotFound):
 		return http.StatusBadRequest, "invalid"
 	case errors.Is(err, fleet.ErrTaskNotFound), errors.Is(err, fleet.ErrProjectNotFound):
 		return http.StatusNotFound, "not_found"
@@ -258,15 +262,16 @@ func fleetTimePtr(t *time.Time) *timestamppb.Timestamp {
 
 func fleetProjectProto(p fleet.Project, topics []topicBinding) *alicev1.FleetProject {
 	out := &alicev1.FleetProject{
-		Id:             p.ID,
-		Name:           p.Name,
-		RepoPath:       p.RepoPath,
-		Remote:         p.Remote,
-		DefaultBranch:  p.DefaultBranch,
-		TrustMode:      string(p.TrustMode),
-		VerifyCommands: append([]string{}, p.VerifyCommands...),
-		MaxConcurrent:  int32(p.MaxConcurrent),
-		BranchPrefix:   p.BranchPrefix,
+		Id:              p.ID,
+		Name:            p.Name,
+		RepoPath:        p.RepoPath,
+		Remote:          p.Remote,
+		DefaultBranch:   p.DefaultBranch,
+		TrustMode:       string(p.TrustMode),
+		VerifyCommands:  append([]string{}, p.VerifyCommands...),
+		MaxConcurrent:   int32(p.MaxConcurrent),
+		BranchPrefix:    p.BranchPrefix,
+		GithubAvailable: p.Remote != "",
 		Budget: &alicev1.FleetProjectBudget{
 			TaskCostUsd:  p.Budget.Task.CostUSD,
 			DailyCostUsd: p.Budget.Daily.CostUSD,
@@ -608,6 +613,7 @@ func (wi *WebInterface) fleetRegisterProject(ctx context.Context, svc *FleetServ
 	}
 	p := fleet.Project{
 		RepoPath:       strings.TrimSpace(req.RepoPath),
+		BranchPrefix:   strings.TrimSpace(req.BranchPrefix),
 		Name:           strings.TrimSpace(req.Name),
 		TrustMode:      mode,
 		VerifyCommands: fleetCleanCommands(req.VerifyCommands),
@@ -638,8 +644,24 @@ func (wi *WebInterface) fleetUpdateProject(ctx context.Context, svc *FleetServic
 	if req.Budget != nil && (req.Budget.TaskCostUsd < 0 || req.Budget.DailyCostUsd < 0) {
 		return nil, fleetBadRequest("a budget cannot be negative")
 	}
-	out, err := svc.Commander.UpdateProject(ctx, wi.fleetWebActor(), r.PathValue("id"), "settings edited on the dashboard",
+	// An empty default_branch leaves the target branch alone.
+	branch := strings.TrimSpace(req.DefaultBranch)
+	prefix := strings.TrimSpace(req.BranchPrefix)
+	note := "settings edited on the dashboard"
+	if branch != "" {
+		note += "; target branch set to " + branch
+	}
+	if prefix != "" {
+		note += "; task branch prefix set to " + prefix
+	}
+	out, err := svc.Commander.UpdateProject(ctx, wi.fleetWebActor(), r.PathValue("id"), note,
 		func(p *fleet.Project) error {
+			if branch != "" {
+				p.DefaultBranch = branch
+			}
+			if prefix != "" {
+				p.BranchPrefix = prefix
+			}
 			if name := strings.TrimSpace(req.Name); name != "" {
 				p.Name = name
 			}
@@ -686,9 +708,17 @@ func (wi *WebInterface) fleetDispatchTask(ctx context.Context, svc *FleetService
 		return nil, fleetBadRequest("issue and budget_usd cannot be negative")
 	case req.Issue == 0 && strings.TrimSpace(req.Goal) == "":
 		return nil, fleetBadRequest("a goal or an issue is required")
+	case req.CreateIssue && req.Issue != 0:
+		return nil, fleetBadRequest("create_issue cannot be used together with an existing issue number")
 	}
-	task, err := svc.Commander.Dispatch(ctx, wi.fleetWebActor(), fleet.DispatchRequest{
-		ProjectID: strings.TrimSpace(req.ProjectId),
+
+	actor, projectID := wi.fleetWebActor(), strings.TrimSpace(req.ProjectId)
+	if req.CreateIssue {
+		return wi.fleetDispatchWithNewIssue(ctx, svc, actor, &req, shape)
+	}
+
+	task, err := svc.Commander.Dispatch(ctx, actor, fleet.DispatchRequest{
+		ProjectID: projectID,
 		Goal:      strings.TrimSpace(req.Goal),
 		Issue:     int(req.Issue),
 		Shape:     shape,
@@ -700,6 +730,62 @@ func (wi *WebInterface) fleetDispatchTask(ctx context.Context, svc *FleetService
 		return nil, err
 	}
 	return wi.fleetTaskReply(ctx, svc, task), nil
+}
+
+// fleetDispatchWithNewIssue creates a GitHub issue from the goal (with its
+// milestone), dispatches from that issue, then appends it to the epic. A
+// failure before the issue exists dispatches nothing; once it exists, an epic
+// failure only becomes a warning on the reply.
+func (wi *WebInterface) fleetDispatchWithNewIssue(ctx context.Context, svc *FleetService, actor fleet.Actor, req *alicev1.FleetDispatchRequest, shape fleet.Shape) (proto.Message, error) {
+	project, err := svc.Commander.GetProject(ctx, strings.TrimSpace(req.ProjectId))
+	if err != nil {
+		return nil, err
+	}
+	goal := strings.TrimSpace(req.Goal)
+	title := firstNonEmptyLine(goal)
+
+	var milestoneNumber int
+	if ms := strings.TrimSpace(req.Milestone); ms != "" {
+		if milestoneNumber, err = fleetGitHubMilestoneGetOrCreate(ctx, project.RepoPath, ms); err != nil {
+			return nil, err
+		}
+	}
+	created, err := fleetGitHubIssueCreateFunc(ctx, project.RepoPath, title, goal, milestoneNumber)
+	if err != nil {
+		return nil, err
+	}
+
+	task, err := fleetDispatchFromIssueFunc(ctx, svc, actor, project.ID, created.Number, fleet.DispatchRequest{
+		ProjectID: project.ID,
+		Issue:     created.Number,
+		Shape:     shape,
+		Model:     strings.TrimSpace(req.Model),
+		Priority:  int(req.Priority),
+		Budget:    fleet.Limit{CostUSD: req.BudgetUsd},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("issue #%d was created (%s) but dispatch failed: %w", created.Number, created.HTMLURL, err)
+	}
+
+	out := wi.fleetTaskReply(ctx, svc, task)
+	out.IssueUrl = created.HTMLURL
+	if epic := int(req.EpicIssue); epic > 0 {
+		if err := fleetGitHubEpicUpdateFunc(ctx, project.RepoPath, epic, created.Number, title); err != nil {
+			out.Warning = fmt.Sprintf("issue #%d created but epic #%d could not be updated: %s", created.Number, epic, err)
+		}
+	}
+	return out, nil
+}
+
+// firstNonEmptyLine returns the first non-blank line of s, trimmed of
+// whitespace. If s has no non-blank lines it returns s itself trimmed.
+func firstNonEmptyLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			return t
+		}
+	}
+	return strings.TrimSpace(s)
 }
 
 // fleetTaskAction handles POST /api/fleet/tasks/{id}/{action}.
@@ -733,11 +819,20 @@ func (wi *WebInterface) fleetTaskAction(ctx context.Context, svc *FleetService, 
 		task, err = cmd.Pass(ctx, actor, id)
 	case "discard":
 		task, err = cmd.Discard(ctx, actor, id)
+	case "sync-issue":
+		// Retries the issue update; ?close=true is the operator's go-ahead
+		// to close the issue if every other condition holds.
+		if _, err = svc.IssueSync.Sync(ctx, id, IssueSyncOptions{AuthorizeClose: r.URL.Query().Get("close") == "true"}); err == nil {
+			task, err = cmd.GetTask(ctx, id)
+		}
 	default:
 		return nil, fleetBadRequest("unknown action " + strconv.Quote(action))
 	}
 	if err != nil {
 		return nil, err
+	}
+	if (action == "approve" || action == "merge") && wi.bot != nil {
+		wi.bot.fleetNotices.notifyLanding(ctx, task)
 	}
 	// Reply returns the task as it was when the run was accepted; read it
 	// again so the caller sees where it stands now.
@@ -797,4 +892,47 @@ func replayFleetEvents(ctx context.Context, svc *FleetService, afterID int64, se
 			sent++
 		}
 	}
+}
+
+func fleetDeliveryItemsProto(items []fleetDeliveryItem) []*alicev1.FleetDeliveryItem {
+	out := []*alicev1.FleetDeliveryItem{}
+	for _, it := range items {
+		out = append(out, &alicev1.FleetDeliveryItem{Code: it.Code, Detail: it.Detail})
+	}
+	return out
+}
+
+func fleetDeliveryProto(d fleetDelivery) *alicev1.FleetDelivery {
+	out := &alicev1.FleetDelivery{
+		TaskId: d.TaskID, Shape: d.Shape, Status: d.Status, Approvable: d.Approvable,
+		Verification: d.Verification, ChecksRun: int32(d.ChecksRun), ChecksAttempt: int32(d.ChecksAttempt),
+		ChecksPrevious: d.ChecksPrevious, DiffKnown: d.DiffKnown, Files: int32(d.Files),
+		Insertions: int32(d.Insertions), Deletions: int32(d.Deletions), Untracked: int32(d.Untracked),
+		Note: d.Note, NoteMissing: d.NoteMissing, StopReason: d.StopReason, Next: d.Next,
+		PrUrl: d.PRURL, PrNumber: int32(d.PRNumber),
+		Completed: fleetDeliveryItemsProto(d.Completed), Pending: fleetDeliveryItemsProto(d.Pending),
+		Limits: fleetDeliveryItemsProto(d.Limits),
+		Checks: []*alicev1.FleetDeliveryCheck{}, Runs: []*alicev1.FleetDeliveryRun{},
+	}
+	for _, c := range d.Checks {
+		out.Checks = append(out.Checks, &alicev1.FleetDeliveryCheck{
+			Name: c.Name, Command: c.Command, Passed: c.Passed, ExitCode: int32(c.ExitCode),
+			DurationMs: float64(c.DurationMS), TimedOut: c.TimedOut,
+		})
+	}
+	for _, r := range d.Runs {
+		out.Runs = append(out.Runs, &alicev1.FleetDeliveryRun{
+			Number: int32(r.Number), StartedAt: fleetTime(r.StartedAt), Outcome: r.Outcome,
+			Attempt: int32(r.Attempt), StopReason: r.StopReason,
+		})
+	}
+	return out
+}
+
+func (wi *WebInterface) fleetTaskDelivery(ctx context.Context, svc *FleetService, r *http.Request) (proto.Message, error) {
+	d, err := svc.Delivery(ctx, r.PathValue("id"))
+	if err != nil {
+		return nil, err
+	}
+	return fleetDeliveryProto(d), nil
 }

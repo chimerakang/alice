@@ -42,6 +42,8 @@ message FleetProject {
   repeated FleetTopic topics = 11;
   google.protobuf.Timestamp created_at = 12;
   google.protobuf.Timestamp updated_at = 13;
+  // True when the project has a git remote (GitHub issue creation may be available).
+  bool github_available = 14;
 }
 
 message FleetProjectList {
@@ -83,6 +85,13 @@ message FleetTask {
   google.protobuf.Timestamp started_at = 25;
   google.protobuf.Timestamp finished_at = 26;
   google.protobuf.Timestamp last_activity_at = 27;
+  // The URL of the GitHub issue this task was dispatched from, when it was
+  // just created by the dispatch request. Not persisted; only set in the
+  // dispatch response.
+  string issue_url = 28;
+  // A non-fatal warning from the dispatch, e.g. the epic could not be updated.
+  // Not persisted; only set in the dispatch response.
+  string warning = 29;
 }
 
 message FleetTaskList {
@@ -138,6 +147,66 @@ message FleetDiff {
   string patch = 3;
   repeated string untracked = 4;
   bool truncated = 5;
+}
+
+message FleetDeliveryItem {
+  // Names the kind of line so each surface words it in its own language.
+  string code = 1;
+  string detail = 2;
+}
+
+message FleetDeliveryCheck {
+  string name = 1;
+  string command = 2;
+  bool passed = 3;
+  int32 exit_code = 4;
+  double duration_ms = 5;
+  bool timed_out = 6;
+}
+
+// One launch of a task's agent and what became of it.
+message FleetDeliveryRun {
+  int32 number = 1;
+  google.protobuf.Timestamp started_at = 2;
+  // running | passed | failed | not_verified
+  string outcome = 3;
+  // The verification round of this run; 0 when it was not verified.
+  int32 attempt = 4;
+  string stop_reason = 5;
+}
+
+// What a reviewer needs before approving a ship task, derived from the
+// fleet's records on every read.
+message FleetDelivery {
+  string task_id = 1;
+  string shape = 2;
+  string status = 3;
+  bool approvable = 4;
+  // State of the latest run's acceptance:
+  // not_configured | not_run | failed | passed
+  string verification = 5;
+  // The run and round the checks below belong to; checks_previous is set
+  // when that is an earlier run than the latest.
+  int32 checks_run = 6;
+  int32 checks_attempt = 7;
+  bool checks_previous = 8;
+  repeated FleetDeliveryCheck checks = 9;
+  bool diff_known = 10;
+  int32 files = 11;
+  int32 insertions = 12;
+  int32 deletions = 13;
+  int32 untracked = 14;
+  string note = 15;
+  bool note_missing = 16;
+  string stop_reason = 17;
+  repeated FleetDeliveryRun runs = 18;
+  repeated FleetDeliveryItem completed = 19;
+  repeated FleetDeliveryItem pending = 20;
+  repeated FleetDeliveryItem limits = 21;
+  // approve | decide | rerun | wait | none
+  string next = 22;
+  string pr_url = 23;
+  int32 pr_number = 24;
 }
 
 message FleetCounts {
@@ -206,6 +275,47 @@ message FleetDispatchRequest {
   // Caps this task's total cost, or zero for the default.
   double budget_usd = 6;
   int32 priority = 7;
+  // When true, a GitHub issue is created from goal before dispatch.
+  bool create_issue = 8;
+  // Optional milestone name. Created if it does not exist. Only used when
+  // create_issue is true.
+  string milestone = 9;
+  // An existing epic issue number to append the new issue to. Only used when
+  // create_issue is true.
+  int32 epic_issue = 10;
+}
+
+// Body of POST /api/fleet/epics: creates an epic issue on GitHub. No task is
+// dispatched.
+message FleetEpicRequest {
+  string project_id = 1;
+  // The epic's description: its first non-blank line is the title.
+  string description = 2;
+  // Optional milestone name. Created if it does not exist.
+  string milestone = 3;
+}
+
+// Reply of POST /api/fleet/epics.
+message FleetEpicReply {
+  int32 number = 1;
+  string title = 2;
+  string url = 3;
+  // The label that marks the issue as an epic.
+  string label = 4;
+  // True when the label did not exist in the repo and was created.
+  bool label_created = 5;
+  // Set when fleet.epic_title_pattern is configured and the title does not
+  // match it. The title is never rewritten.
+  bool title_pattern_mismatch = 6;
+  string title_pattern = 7;
+}
+
+// Reply of GET /api/fleet/projects/{id}/github: whether GitHub issues can be
+// written for the project right now.
+message FleetGitHubStatus {
+  bool available = 1;
+  // When not available: "no_remote" or "auth_required".
+  string reason = 2;
 }
 
 // Body of POST /api/fleet/tasks/{id}/reply.
@@ -220,7 +330,8 @@ message FleetCancelRequest {
 }
 
 // Body of POST /api/fleet/projects and PUT /api/fleet/projects/{id}. On an
-// update, repo_path is ignored.
+// update, repo_path is ignored, and an empty default_branch leaves the target
+// branch as it is.
 message FleetProjectRequest {
   string repo_path = 1;
   string name = 2;
@@ -228,6 +339,9 @@ message FleetProjectRequest {
   repeated string verify_commands = 4;
   int32 max_concurrent = 5;
   FleetProjectBudget budget = 6;
+  string default_branch = 7;
+  // Empty on update keeps the existing prefix.
+  string branch_prefix = 8;
 }
 
 // An open GitHub issue of a project, as offered for dispatch.
@@ -239,10 +353,22 @@ message FleetIssue {
   string url = 5;
   // The unfinished task already working on this issue, if any.
   string task_id = 6;
+  // True when the issue is an epic (by label or title pattern from config).
+  bool is_epic = 7;
 }
 
 message FleetIssueList {
   repeated FleetIssue issues = 1;
+}
+
+// An open milestone of a project.
+message FleetMilestone {
+  int32 number = 1;
+  string title = 2;
+}
+
+message FleetMilestoneList {
+  repeated FleetMilestone milestones = 1;
 }
 
 // A task checkout of a project.

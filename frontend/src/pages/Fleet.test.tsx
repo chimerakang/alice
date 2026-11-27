@@ -218,10 +218,10 @@ describe("Fleet projects", () => {
   });
 
   it("validates the form before sending it", () => {
-    const base = { name: " App ", trust_mode: "direct-pr" as const, verify: "go build ./...\n\n  go test ./...  ", max_concurrent: "2", task_budget: "", daily_budget: "$7.5" };
+    const base = { name: " App ", default_branch: " develop ", branch_prefix: " feat/ ", trust_mode: "direct-pr" as const, verify: "go build ./...\n\n  go test ./...  ", max_concurrent: "2", task_budget: "", daily_budget: "$7.5" };
     expect(projectRequest(base)).toEqual({
       req: {
-        name: "App", trust_mode: "direct-pr", verify_commands: ["go build ./...", "go test ./..."],
+        name: "App", default_branch: "develop", branch_prefix: "feat/", trust_mode: "direct-pr", verify_commands: ["go build ./...", "go test ./..."],
         max_concurrent: 2, budget: { task_cost_usd: 0, daily_cost_usd: 7.5 },
       },
       error: "",
