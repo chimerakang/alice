@@ -14,8 +14,10 @@ The accompanying alice-core changes record backend and model when available, pre
 
 Set `fleet.scout_quota.window_minutes`, `fleet.scout_quota.claude_tokens`, and `fleet.scout_quota.codex_tokens` to positive values to enable local estimates. In Scout auto mode, tasks already eligible for Codex can prefer Claude when it has a higher estimated remaining share. This setting uses a rolling window and only updates backend preference.
 
+Set `fleet.scout_quota.max_transfers` to a positive value to enable automatic transfers in Scout auto mode when the linked Fleet runner supports them. A rejected Scout can requeue with a fresh session on an eligible alternate backend. Only runs started from the queue with the stored goal are eligible. The transfer count persists for the lifetime of the task.
+
 ## Remaining integration
 - Publish normalized quota snapshots from supported CLI events and the Codex App Server. Store exhaustion and reset state across restarts. Allow configurable patterns, estimated allowances and periods.
 - Give the scheduler an eligibility decision before allocating a run slot, with a wait outcome and optional next wake time. Record one owner notification per exhaustion episode. Ship and USD-limited Scout remain Claude-only.
-- Let the runner report structured quota exhaustion with backend and reset, and requeue atomically with a persisted transfer count. Use a configured transfer cap and a new provider session on transfer. Keep quota retry separate from #206 model escalation.
+- Check the alternate backend for recorded exhaustion before transferring and schedule a wake when capacity returns.
 - Expose quota state to Alice's Fleet API and dashboard. Provider exhaustion and reset times are still unavailable at runtime.

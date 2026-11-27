@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/chimerakang/alice-core/fleet"
 )
 
 // fleetQuotaSnapshot summarizes one backend's current limiting window.
@@ -91,6 +93,7 @@ func matchFleetQuotaError(message string, patterns []*regexp.Regexp, layout stri
 
 // These allowances are Fleet-local estimates over a rolling window.
 type fleetScoutQuotaConfig struct {
+	MaxTransfers  int   `json:"max_transfers"`
 	WindowMinutes int64 `json:"window_minutes"`
 	ClaudeTokens  int64 `json:"claude_tokens"`
 	CodexTokens   int64 `json:"codex_tokens"`
@@ -133,4 +136,20 @@ func (s *FleetService) preferScoutByEstimatedQuota(ctx context.Context, choice f
 		return fleetScoutBackendChoice{Backend: fleetBackendClaude, Reason: "estimated_quota"}
 	}
 	return choice
+}
+
+func (s *FleetService) scoutQuotaFallback(_ context.Context, task fleet.Task, backend string) (string, bool) {
+	switch backend {
+	case fleetBackendClaude:
+		return task.Model, true
+	case fleetBackendCodex:
+		for _, tier := range fleetTierLadder {
+			if task.Model == "" || s.Routing.fleetTierModel(tier) != task.Model {
+				continue
+			}
+			choice := s.chooseScoutBackend(string(tier), false)
+			return s.Routing.fleetCodexTierModel(tier), choice.Backend == fleetBackendCodex
+		}
+	}
+	return "", false
 }
