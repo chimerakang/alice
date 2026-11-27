@@ -71,11 +71,11 @@ func TestFleetCreateEpic(t *testing.T) {
 
 	t.Run("a child appended later lands in the section", func(t *testing.T) {
 		in := buildEpicBody("Big plan", "Children")
-		out := appendEpicChild(in, "- [ ] #61 First")
+		out := appendEpicChild(in, "- [ ] #61 First", "Children")
 		if out != "Big plan\n\n## Children\n\n- [ ] #61 First" {
 			t.Errorf("got %q", out)
 		}
-		out = appendEpicChild(out, "- [ ] #62 Second")
+		out = appendEpicChild(out, "- [ ] #62 Second", "Children")
 		if !strings.HasSuffix(out, "- [ ] #61 First\n- [ ] #62 Second") {
 			t.Errorf("got %q", out)
 		}
@@ -192,8 +192,16 @@ func TestAppendEpicChildAfterLastChild(t *testing.T) {
 		},
 		"no children yet": {"intro", "intro\n- [ ] #9 New"},
 	} {
-		if got := appendEpicChild(tc.body, item); got != tc.want {
+		if got := appendEpicChild(tc.body, item, ""); got != tc.want {
 			t.Errorf("%s: got %q, want %q", name, got, tc.want)
 		}
+	}
+}
+
+func TestAppendEpicChildUsesConfiguredSection(t *testing.T) {
+	const body = "## 驗收\n- [ ] #12 Evidence\n\n## 子議題\n- [ ] #1 First\n\n## 備註\n- [ ] #13 Follow up"
+	const want = "## 驗收\n- [ ] #12 Evidence\n\n## 子議題\n- [ ] #1 First\n- [ ] #9 New\n\n## 備註\n- [ ] #13 Follow up"
+	if got := appendEpicChild(body, "- [ ] #9 New", "子議題"); got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }

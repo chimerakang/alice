@@ -61,7 +61,7 @@ func TestFleetDispatchCreateIssue(t *testing.T) {
 			createCalled.milestone = milestone
 			return fleetCreatedIssue{Number: 42, HTMLURL: "https://github.com/test/repo/issues/42"}, nil
 		}
-		fleetGitHubEpicUpdateFunc = func(context.Context, string, int, int, string) error { return nil }
+		fleetGitHubEpicUpdateFunc = func(context.Context, string, int, int, string, string) error { return nil }
 		fleetGitHubMilestoneGetOrCreate = func(context.Context, string, string) (int, bool, error) { return 0, false, nil }
 
 		status, body := e.call(http.MethodPost, "/api/fleet/tasks",
@@ -100,7 +100,7 @@ func TestFleetDispatchCreateIssue(t *testing.T) {
 			issueMilestone = milestone
 			return fleetCreatedIssue{Number: 43, HTMLURL: "https://github.com/test/repo/issues/43"}, nil
 		}
-		fleetGitHubEpicUpdateFunc = func(context.Context, string, int, int, string) error { return nil }
+		fleetGitHubEpicUpdateFunc = func(context.Context, string, int, int, string, string) error { return nil }
 
 		status, body := e.call(http.MethodPost, "/api/fleet/tasks",
 			`{"project_id":"`+e.project.ID+`","goal":"Add dark mode","create_issue":true,"milestone":"v2.0"}`,
@@ -124,7 +124,7 @@ func TestFleetDispatchCreateIssue(t *testing.T) {
 		fleetGitHubIssueCreateFunc = func(context.Context, string, string, string, int) (fleetCreatedIssue, error) {
 			return fleetCreatedIssue{Number: 44, HTMLURL: "https://github.com/test/repo/issues/44"}, nil
 		}
-		fleetGitHubEpicUpdateFunc = func(_ context.Context, _ string, epicNum, issueNum int, title string) error {
+		fleetGitHubEpicUpdateFunc = func(_ context.Context, _ string, epicNum, issueNum int, title, _ string) error {
 			epicCalled.epicNum, epicCalled.issueNum, epicCalled.issueTitle = epicNum, issueNum, title
 			return nil
 		}
@@ -148,7 +148,7 @@ func TestFleetDispatchCreateIssue(t *testing.T) {
 		fleetGitHubIssueCreateFunc = func(context.Context, string, string, string, int) (fleetCreatedIssue, error) {
 			return fleetCreatedIssue{Number: 45, HTMLURL: "https://github.com/test/repo/issues/45"}, nil
 		}
-		fleetGitHubEpicUpdateFunc = func(context.Context, string, int, int, string) error {
+		fleetGitHubEpicUpdateFunc = func(context.Context, string, int, int, string, string) error {
 			return errors.New("not found")
 		}
 		fleetGitHubMilestoneGetOrCreate = func(context.Context, string, string) (int, bool, error) { return 0, false, nil }
@@ -346,7 +346,7 @@ func TestFleetDispatchAuditsGitHubWrites(t *testing.T) {
 	fleetGitHubIssueCreateFunc = func(context.Context, string, string, string, int) (fleetCreatedIssue, error) {
 		return fleetCreatedIssue{Number: 50}, nil
 	}
-	fleetGitHubEpicUpdateFunc = func(context.Context, string, int, int, string) error { return errors.New("epic locked") }
+	fleetGitHubEpicUpdateFunc = func(context.Context, string, int, int, string, string) error { return errors.New("epic locked") }
 
 	status, body := e.call(http.MethodPost, "/api/fleet/tasks",
 		`{"project_id":"`+e.project.ID+`","goal":"Audit me","create_issue":true,"milestone":"v3","epic_issue":10}`, true)

@@ -116,7 +116,7 @@ type fleetIssueBodyJSON struct {
 	Body string `json:"body"`
 }
 
-func appendToFleetGitHubEpic(ctx context.Context, repoPath string, epicNumber, issueNumber int, issueTitle string) error {
+func appendToFleetGitHubEpic(ctx context.Context, repoPath string, epicNumber, issueNumber int, issueTitle, heading string) error {
 	out, err := runProcessCombinedOutput(ctx, ProcessOptions{Dir: repoPath, Timeout: 30 * time.Second}, "gh",
 		"api", fmt.Sprintf("repos/:owner/:repo/issues/%d", epicNumber),
 	)
@@ -127,7 +127,7 @@ func appendToFleetGitHubEpic(ctx context.Context, repoPath string, epicNumber, i
 	if err := json.Unmarshal(out, &epic); err != nil {
 		return fmt.Errorf("parse epic body: %w", err)
 	}
-	body := appendEpicChild(epic.Body, fmt.Sprintf("- [ ] #%d %s", issueNumber, issueTitle))
+	body := appendEpicChild(epic.Body, fmt.Sprintf("- [ ] #%d %s", issueNumber, issueTitle), heading)
 	patchOut, err := runProcessCombinedOutput(ctx, ProcessOptions{Dir: repoPath, Timeout: 30 * time.Second}, "gh",
 		"api", fmt.Sprintf("repos/:owner/:repo/issues/%d", epicNumber),
 		"-X", "PATCH",
@@ -147,21 +147,51 @@ var epicChildItem = regexp.MustCompile(`^\s*[-*+] \[[ xX]\] .*#\d+`)
 // When the body ends with the (empty) sub-issue heading that createEpicBody
 // leaves, the item goes under it, separated by a blank line. Otherwise it
 // follows the last child already listed, and failing that the last line.
-func appendEpicChild(body, item string) string {
+func appendEpicChild(body, item, heading string) string {
 	body = strings.TrimRight(body, "\r\n \t")
 	if body == "" {
 		return item
 	}
 	lines := strings.Split(body, "\n")
-	if strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "#") {
-		return body + "\n\n" + item
+	if strings.TrimSpace(heading) == "" {
+		heading = defaultEpicChildrenHeading
 	}
-	last, fenced := -1, false
+	last, section, sectionStart, fenced := -1, -1, -1, false
 	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
 			fenced = !fenced
-		} else if !fenced && epicChildItem.MatchString(line) {
+			continue
+		}
+		if fenced {
+			continue
+		}
+		if name, ok := strings.CutPrefix(strings.TrimLeft(trimmed, "#"), " "); ok && strings.HasPrefix(trimmed, "#") {
+			if sectionStart >= 0 {
+				break
+			}
+			if strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(heading)) {
+				sectionStart = i
+			}
+		} else if epicChildItem.MatchString(line) {
 			last = i
+			if sectionStart >= 0 {
+				section = i
+			}
+		}
+	}
+	if sectionStart >= 0 {
+		last = section
+		if last < 0 {
+			blank := ""
+			if strings.HasSuffix(lines[sectionStart], "\r") {
+				blank, item = "\r", item+"\r"
+			}
+			insert := []string{blank, item}
+			if sectionStart+1 < len(lines) && strings.TrimSpace(lines[sectionStart+1]) != "" {
+				insert = append(insert, blank)
+			}
+			return strings.Join(slices.Insert(lines, sectionStart+1, insert...), "\n")
 		}
 	}
 	if last < 0 {

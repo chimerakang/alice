@@ -806,7 +806,7 @@ func (wi *WebInterface) fleetDispatchWithNewIssue(ctx context.Context, svc *Flee
 	out := wi.fleetTaskReply(ctx, svc, task)
 	out.IssueUrl = created.HTMLURL
 	if epic := int(req.EpicIssue); epic > 0 {
-		err := fleetGitHubEpicUpdateFunc(ctx, project.RepoPath, epic, created.Number, title)
+		err := fleetGitHubEpicUpdateFunc(ctx, project.RepoPath, epic, created.Number, title, svc.Config.EpicChildrenHeading)
 		svc.auditGitHubWrite(ctx, actor, fleetAuditUpdateEpic, project.ID, task.ID,
 			fmt.Sprintf("epic #%d + #%d", epic, created.Number), err)
 		if err != nil {
