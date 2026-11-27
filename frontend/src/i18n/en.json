@@ -991,6 +991,7 @@
       "title": "What needs your decision",
       "interrupted": "The runner was interrupted. Fleet stopped the task before it could finish.",
       "reason_unavailable": "No stop reason was recorded.",
+      "checks_loading": "Loading delivery details…",
       "checks_unavailable": "Verification details are not available.",
       "changed_files_one": "{{count}} changed file",
       "changed_files_other": "{{count}} changed files",

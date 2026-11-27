@@ -49,7 +49,7 @@ export default function FleetTaskPage() {
   const [events, setEvents] = useState<FleetEvent[]>([]);
   const [diff, setDiff] = useState<FleetDiff | null>(null);
   const [checks, setChecks] = useState<FleetVerification[]>([]);
-  const [delivery, setDelivery] = useState<FleetDelivery | null>(null);
+  const [deliveryRead, setDeliveryRead] = useState<{ key: string; result: FleetDelivery | null } | null>(null);
   const [missing, setMissing] = useState(false);
   const cursor = useRef(0);
   const loading = useRef(false);
@@ -89,7 +89,7 @@ export default function FleetTaskPage() {
     setEvents([]);
     setDiff(null);
     setChecks([]);
-    setDelivery(null);
+    setDeliveryRead(null);
     setMissing(false);
   }, [id]);
 
@@ -102,6 +102,7 @@ export default function FleetTaskPage() {
   }, [stamp, task, pullEvents]);
 
   const shape = task?.shape;
+  const deliveryKey = JSON.stringify([id, stamp]);
   useEffect(() => {
     if (!id || !shape) return;
     let active = true;
@@ -113,13 +114,13 @@ export default function FleetTaskPage() {
     }).catch(() => {});
     if (shape === "ship") {
       void fleetApi.getTaskDelivery(id).then((result) => {
-        if (active) setDelivery(result);
+        if (active) setDeliveryRead({ key: deliveryKey, result });
       }).catch(() => {
-        if (active) setDelivery(null);
+        if (active) setDeliveryRead({ key: deliveryKey, result: null });
       });
     }
     return () => { active = false; };
-  }, [id, shape, stamp]);
+  }, [id, shape, stamp, deliveryKey]);
 
   const live = task ? isActive(task.status) : false;
   useEffect(() => {
@@ -158,6 +159,8 @@ export default function FleetTaskPage() {
     ? goalTitle.slice(issuePrefix.length).trimStart()
     : goalTitle;
   const needsDecision = task.status === "needs_decision";
+  const delivery = deliveryRead?.key === deliveryKey ? deliveryRead.result : null;
+  const deliveryLoading = shape === "ship" && deliveryRead?.key !== deliveryKey;
   const currentDelivery = delivery?.task_id === id && delivery.status === task.status ? delivery : null;
 
   return (
@@ -218,7 +221,7 @@ export default function FleetTaskPage() {
             </a>
           )}
         </dl>
-        {needsDecision && <FleetDecisionContext task={task} delivery={currentDelivery} />}
+        {needsDecision && <FleetDecisionContext task={task} delivery={currentDelivery} deliveryLoading={deliveryLoading} />}
         {!needsDecision && currentDelivery && (
           <FleetDeliverySummary
             delivery={currentDelivery}
