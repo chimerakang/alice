@@ -7,6 +7,7 @@ import DiffViewer from "@/components/DiffViewer";
 import StatusBadge from "@/components/StatusBadge";
 import TimelineEntry from "@/components/TimelineEntry";
 import ToolCallGantt from "@/components/ToolCallGantt";
+import FleetDecisionContext from "@/components/fleet/FleetDecisionContext";
 import FleetDeliverySummary from "@/components/fleet/FleetDeliverySummary";
 import FleetActions from "@/components/fleet/FleetActions";
 import FleetUnavailable from "@/components/fleet/FleetUnavailable";
@@ -14,6 +15,7 @@ import LivenessDot from "@/components/fleet/LivenessDot";
 import { fleetApi } from "@/lib/fleetApi";
 import {
   describeEvent,
+  firstLine,
   formatCost,
   formatDuration,
   isActive,
@@ -47,7 +49,7 @@ export default function FleetTaskPage() {
   const [events, setEvents] = useState<FleetEvent[]>([]);
   const [diff, setDiff] = useState<FleetDiff | null>(null);
   const [checks, setChecks] = useState<FleetVerification[]>([]);
-  const [delivery, setDelivery] = useState<FleetDelivery | null>(null);
+  const [deliveryRead, setDeliveryRead] = useState<{ key: string; result: FleetDelivery | null } | null>(null);
   const [missing, setMissing] = useState(false);
   const cursor = useRef(0);
   const loading = useRef(false);
@@ -71,22 +73,6 @@ export default function FleetTaskPage() {
     }
   }, [id]);
 
-  const pullDetail = useCallback(async () => {
-    if (!id) return;
-    try {
-      const [d, v, summary] = await Promise.all([
-        fleetApi.getTaskDiff(id).catch(() => null),
-        fleetApi.getTaskVerifications(id).catch(() => null),
-        task?.shape === "ship" ? fleetApi.getTaskDelivery(id).catch(() => null) : Promise.resolve(null),
-      ]);
-      setDiff(d);
-      if (v) setChecks(v);
-      setDelivery(summary);
-    } catch {
-      // Not fatal: the timeline still tells the story.
-    }
-  }, [id, task?.shape]);
-
   // A task opened by link may not be in the store yet.
   useEffect(() => {
     if (!id || !loaded || unavailable) return;
@@ -103,7 +89,7 @@ export default function FleetTaskPage() {
     setEvents([]);
     setDiff(null);
     setChecks([]);
-    setDelivery(null);
+    setDeliveryRead(null);
     setMissing(false);
   }, [id]);
 
@@ -113,8 +99,28 @@ export default function FleetTaskPage() {
   useEffect(() => {
     if (!task) return;
     void pullEvents();
-    void pullDetail();
-  }, [stamp, task, pullEvents, pullDetail]);
+  }, [stamp, task, pullEvents]);
+
+  const shape = task?.shape;
+  const deliveryKey = JSON.stringify([id, stamp]);
+  useEffect(() => {
+    if (!id || !shape) return;
+    let active = true;
+    void fleetApi.getTaskDiff(id).then((result) => {
+      if (active) setDiff(result);
+    }).catch(() => {});
+    void fleetApi.getTaskVerifications(id).then((result) => {
+      if (active) setChecks(result);
+    }).catch(() => {});
+    if (shape === "ship") {
+      void fleetApi.getTaskDelivery(id).then((result) => {
+        if (active) setDeliveryRead({ key: deliveryKey, result });
+      }).catch(() => {
+        if (active) setDeliveryRead({ key: deliveryKey, result: null });
+      });
+    }
+    return () => { active = false; };
+  }, [id, shape, stamp, deliveryKey]);
 
   const live = task ? isActive(task.status) : false;
   useEffect(() => {
@@ -147,6 +153,16 @@ export default function FleetTaskPage() {
     );
   }
 
+  const goalTitle = firstLine(task.goal);
+  const issuePrefix = `Work on GitHub issue #${task.issue_number}:`;
+  const title = task.issue_number > 0 && goalTitle.startsWith(issuePrefix)
+    ? goalTitle.slice(issuePrefix.length).trimStart()
+    : goalTitle;
+  const needsDecision = task.status === "needs_decision";
+  const delivery = deliveryRead?.key === deliveryKey ? deliveryRead.result : null;
+  const deliveryLoading = shape === "ship" && deliveryRead?.key !== deliveryKey;
+  const currentDelivery = delivery?.task_id === id && delivery.status === task.status ? delivery : null;
+
   return (
     <div className="space-y-5" data-testid="fleet-task">
       <Link to="/fleet" className="inline-flex items-center gap-1 text-sm text-gray-400 hover:text-gray-200">
@@ -163,11 +179,11 @@ export default function FleetTaskPage() {
           </span>
           <code className="text-xs text-gray-600">{task.id}</code>
         </div>
-        <h1 className="text-xl font-semibold text-white whitespace-pre-wrap break-words">
+        <h1 className="text-xl font-semibold text-white break-words">
           {task.issue_number > 0 && <span className="text-primary mr-2">#{task.issue_number}</span>}
-          {task.goal}
+          {title}
         </h1>
-        {task.status_reason && <p className="text-sm text-gray-400 break-words">{task.status_reason}</p>}
+        {task.status_reason && !needsDecision && <p className="text-sm text-gray-400 break-words">{task.status_reason}</p>}
         <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-gray-500">
           <div>
             <dt className="inline">{t("fleet.task.elapsed")}: </dt>
@@ -205,13 +221,27 @@ export default function FleetTaskPage() {
             </a>
           )}
         </dl>
-        {delivery && (
+        {needsDecision && <FleetDecisionContext task={task} delivery={currentDelivery} deliveryLoading={deliveryLoading} />}
+        {!needsDecision && currentDelivery && (
           <FleetDeliverySummary
-            delivery={delivery}
+            delivery={currentDelivery}
             onShowDiff={() => document.getElementById("fleet-task-diff")?.scrollIntoView({ behavior: "smooth" })}
           />
         )}
         <FleetActions task={task} />
+        {task.goal.trim() !== goalTitle && (
+          <CollapsiblePanel title={t("fleet.task.original_brief")}>
+            <p className="whitespace-pre-wrap break-words p-4 text-sm text-gray-300">{task.goal}</p>
+          </CollapsiblePanel>
+        )}
+        {needsDecision && currentDelivery && (
+          <CollapsiblePanel title={t("fleet.delivery.title")}>
+            <FleetDeliverySummary
+              delivery={currentDelivery}
+              onShowDiff={() => document.getElementById("fleet-task-diff")?.scrollIntoView({ behavior: "smooth" })}
+            />
+          </CollapsiblePanel>
+        )}
       </header>
 
       <CollapsiblePanel title={t("fleet.task.timeline")} badge={runs.length} defaultOpen>
