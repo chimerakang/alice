@@ -929,7 +929,8 @@
       "reply_placeholder_review": "要再調整什麼？送出後會在原 session 繼續。",
       "reply_placeholder_blocked": "回答 agent 的問題，或補充指示。留空表示「照原樣繼續」。",
       "send_reply": "送出",
-      "carry_on": "照原樣繼續"
+      "carry_on": "照原樣繼續",
+      "retry_vs_reply_hint": "重試會開新的 session，從原始目標重做，先前給過的指示會遺失；送出指示則在原 session 接續。"
     },
     "confirm": {
       "cancel_title": "取消這個任務？",

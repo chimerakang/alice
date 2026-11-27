@@ -402,6 +402,10 @@ func (m *fleetCardManager) render(ctx context.Context, chatID int64, task fleet.
 		b.WriteString("\n🔗 ")
 		b.WriteString(task.PRURL)
 	}
+	if task.Status == fleet.StatusNeedsDecision && task.SessionID != "" {
+		b.WriteString("\n\n")
+		b.WriteString(loc("fleet_card_retry_vs_reply", nil))
+	}
 	if confirm == fleetActDiscard {
 		b.WriteString("\n\n")
 		b.WriteString(loc("fleet_card_confirm_discard", nil))
