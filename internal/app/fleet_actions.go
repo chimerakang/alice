@@ -97,7 +97,7 @@ type fleetActionInput struct {
 	Accept acceptState
 	// EvidenceOnly: the task changed no file and is closed on its evidence.
 	EvidenceOnly bool
-	// Landed: the task's pull request has been merged by the fleet.
+	// Landed: the task's pull request is already merged.
 	Landed bool
 }
 
@@ -122,6 +122,12 @@ func fleetTaskActions(in fleetActionInput) fleetActionSet {
 	case fleet.StatusQueued, fleet.StatusRunning, fleet.StatusVerifying:
 		allow(fleetOpCancel)
 	case fleet.StatusReviewReady:
+		if in.Landed {
+			block(fleetOpApprove, fleetWhyAlreadyLanded, nil)
+			block(fleetOpMerge, fleetWhyAlreadyLanded, nil)
+			allow(fleetOpReply, fleetOpDiscard)
+			return s
+		}
 		if in.EvidenceOnly && in.Accept.Structured && task.PRNumber == 0 && task.TrustMode.NeedsRemote() {
 			block(fleetOpApprove, fleetWhyNoPullRequest, nil)
 			gate := evaluateAcceptGate(in.Accept, true)
@@ -209,6 +215,16 @@ func fleetApproveBlock(in fleetActionInput) (fleetActionBlock, bool) {
 // TaskActions works out what a task allows right now.
 func (f *FleetService) TaskActions(ctx context.Context, task fleet.Task) fleetActionSet {
 	in := fleetActionInput{Task: task}
+	if (task.Status == fleet.StatusReviewReady || task.Status == fleet.StatusDone) && task.PRNumber > 0 && f.Store != nil {
+		landed, err := issueSyncPRLanded(ctx, f.Store, task)
+		if err != nil {
+			return fleetActionSet{Blocked: []fleetActionBlock{
+				{Action: fleetOpApprove, Reason: fleetWhyDeliveryPending},
+				{Action: fleetOpMerge, Reason: fleetWhyDeliveryPending},
+			}}
+		}
+		in.Landed = landed
+	}
 	switch task.Status {
 	case fleet.StatusReviewReady, fleet.StatusNeedsDecision, fleet.StatusFailed:
 		st, err := f.Acceptance(ctx, task.ID)
@@ -227,7 +243,7 @@ func (f *FleetService) TaskActions(ctx context.Context, task fleet.Task) fleetAc
 			}
 			in.Accept = st
 			ev, ok, err := f.Store.LastEvent(ctx, task.ID, fleet.EventDeliveryApproved)
-			in.Landed = err == nil && ok && ev.ID > 0
+			in.Landed = in.Landed || (err == nil && ok && ev.ID > 0)
 		}
 	}
 	return fleetTaskActions(in)
