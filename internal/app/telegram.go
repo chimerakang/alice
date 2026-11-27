@@ -389,7 +389,7 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "lang", "description": "Switch bot language"},
 		{"command": "wake", "description": "Request Mac display wake"},
 		{"command": "preview", "description": "Preview webpage screenshot"},
-		{"command": "send-file", "description": "Send a file from the project directory"},
+		{"command": "send_file", "description": "Send a file from the project directory"},
 		{"command": "help", "description": "Show help message"},
 	}
 	commands = append(commands,
@@ -1623,7 +1623,7 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		}
 		t.handleSavingsCommand(key, projectPath)
 
-	case "/send-file":
+	case "/send_file", "/send-file":
 		// 提取檔案路徑：/send-file <path>
 		filePath := ""
 		if len(parts) > 1 {
