@@ -271,7 +271,7 @@ func TestScoutDispatchRecordsBackend(t *testing.T) {
 		}
 		return c
 	}
-	if c := scout(0); c.Backend != fleetBackendCodex {
+	if c := scout(0); c.Backend != fleetBackendCodex || c.EffectiveBackend != fleetBackendClaude {
 		t.Errorf("no budget: %+v", c)
 	}
 	if c := scout(3); c.Backend != fleetBackendClaude || c.Reason != fleetReasonUSDBudget {
@@ -306,4 +306,20 @@ func fleetTaskProtoAnnotated(ctx context.Context, svc *FleetService, task fleet.
 	out := fleetTaskProto(task, "p")
 	fleetAnnotateModel(ctx, svc, out, task)
 	return out
+}
+
+func TestFleetCustomNoEscalateReasonsPreserveDefaults(t *testing.T) {
+	svc := FleetService{Config: FleetConfig{NoEscalateReasons: []string{"maintenance"}}}
+	for _, want := range []string{"maintenance", "quota", "runner stopped", "over the task budget", "verification interrupted"} {
+		found := false
+		for _, reason := range svc.noEscalateReasons() {
+			if reason == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing exclusion %q", want)
+		}
+	}
 }

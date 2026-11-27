@@ -209,16 +209,14 @@ var defaultNoEscalateReasons = []string{
 	"over the fleet's daily budget",
 	"agent process is gone",
 	"runner stopped",
+	"verification interrupted",
 	"usage limit",
 	"rate limit",
 	"quota",
 }
 
 func (s *FleetService) noEscalateReasons() []string {
-	if len(s.Config.NoEscalateReasons) > 0 {
-		return s.Config.NoEscalateReasons
-	}
-	return defaultNoEscalateReasons
+	return append(append([]string(nil), defaultNoEscalateReasons...), s.Config.NoEscalateReasons...)
 }
 
 // escalation decides the model for retrying task. current is the last
@@ -284,8 +282,9 @@ const (
 
 // fleetScoutBackendChoice is the payload of a fleetEventScoutBackend event.
 type fleetScoutBackendChoice struct {
-	Backend string `json:"backend"`
-	Reason  string `json:"reason"`
+	Backend          string `json:"backend"`
+	Reason           string `json:"reason"`
+	EffectiveBackend string `json:"effective_backend,omitempty"`
 }
 
 // chooseScoutBackend decides between Claude and Codex for a Scout task.
@@ -350,7 +349,7 @@ func fleetIssueText(ctx context.Context, svc *FleetService, projectID string, nu
 func fleetCommanderDispatch(ctx context.Context, svc *FleetService, actor fleet.Actor, req fleet.DispatchRequest) (fleet.Task, error) {
 	req.Model = strings.TrimSpace(req.Model)
 	var choice *fleetModelChoice
-	if req.Model == "" {
+	if req.Model == "" && svc.Config.autoModelEnabled() {
 		in := fleetRouteInput{Shape: req.Shape, Goal: req.Goal}
 		if req.Issue > 0 {
 			text, labels := fleetIssueText(ctx, svc, req.ProjectID, req.Issue)
@@ -372,7 +371,10 @@ func fleetCommanderDispatch(ctx context.Context, svc *FleetService, actor fleet.
 		if choice != nil {
 			tier = choice.Tier
 		}
-		svc.recordEvent(ctx, task.ID, fleetEventScoutBackend, svc.chooseScoutBackend(tier, svc.usdLimited(ctx, task.ProjectID, req.Budget.CostUSD)))
+		backend := svc.chooseScoutBackend(tier, svc.usdLimited(ctx, task.ProjectID, req.Budget.CostUSD))
+		// The pinned runner still uses Claude for every Scout.
+		backend.EffectiveBackend = fleetBackendClaude
+		svc.recordEvent(ctx, task.ID, fleetEventScoutBackend, backend)
 	}
 	return task, nil
 }

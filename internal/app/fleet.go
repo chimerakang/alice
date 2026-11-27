@@ -82,7 +82,7 @@ type FleetConfig struct {
 	ScoutCodexTiers []string `json:"scout_codex_tiers"`
 	// NoEscalateReasons are lower-case fragments of a task's status reason
 	// that mean it stopped for a reason unrelated to model ability (quota,
-	// budget, lost process). Empty uses a built-in list.
+	// budget, lost process). Custom entries extend the built-in list.
 	NoEscalateReasons []string `json:"no_escalate_reasons"`
 }
 

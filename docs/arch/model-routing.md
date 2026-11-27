@@ -129,7 +129,7 @@ commander uses Codex only when the task's tier is listed in
 `fleet.scout_codex_tiers` and that tier has a `codex_*_model`; otherwise
 Claude. A task under any USD limit (its own budget, the project's, or the
 fleet's `task_budget_usd` / `daily_budget_usd`) always gets Claude, because
-Codex Scout does not report USD usage. The choice is a `scout.backend` event.
+Codex Scout does not report USD usage. The `scout.backend` event records the recommendation in `backend` and the runner in use in `effective_backend`. The pinned runner uses Claude for all Scout tasks.
 
 ### Escalation on retry
 
@@ -137,8 +137,7 @@ Retrying a `failed` or `needs_decision` task whose model the commander chose
 moves it up one configured tier (fast → smart → deep → flagship) and records a
 `model.selected` event with reason `escalated`. It does not escalate when the
 model was set by hand, the task is already on the top tier, or the status
-reason contains one of `fleet.no_escalate_reasons` (default: budget limits,
-lost agent process, quota / rate / usage limit).
+reason matches a built-in exclusion (budget, quota, lost process, interrupted verification) or an additional entry in `fleet.no_escalate_reasons`.
 
 Needs from alice-core: `Store.SetModel(ctx, taskID, model)` (the pinned
 version cannot change a task's model after creation; escalation is decided and
