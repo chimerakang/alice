@@ -107,6 +107,12 @@ type fleetDelivery struct {
 
 	PRURL    string
 	PRNumber int
+
+	// Per-item acceptance, separate from the automatic verification above.
+	Accept              acceptState
+	Gate                acceptGate
+	EvidenceOnly        bool
+	VerificationSkipped bool
 }
 
 // fleetDeliveryInput is everything a summary is built from.
@@ -493,5 +499,32 @@ func (f *FleetService) Delivery(ctx context.Context, taskID string) (fleetDelive
 			in.Diff = &diff
 		}
 	}
-	return buildFleetDelivery(in), nil
+	d := buildFleetDelivery(in)
+	d.VerificationSkipped = deliverySkippedVerification(in.Events)
+	if d.Accept, err = f.Acceptance(ctx, taskID); err != nil {
+		return fleetDelivery{}, err
+	}
+	if d.Accept.Structured {
+		d.Gate, d.EvidenceOnly, err = f.CheckClose(ctx, taskID)
+		if err != nil {
+			return fleetDelivery{}, err
+		}
+	}
+	return d, nil
+}
+
+// deliverySkippedVerification reports whether the task reached review by the
+// owner waving it through, not by passing its checks.
+func deliverySkippedVerification(events []fleet.Event) bool {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Type != fleet.EventStatus {
+			continue
+		}
+		var ch fleet.StatusChange
+		if json.Unmarshal(events[i].Payload, &ch) != nil || ch.To != fleet.StatusReviewReady {
+			continue
+		}
+		return strings.HasPrefix(ch.Reason, "waved through")
+	}
+	return false
 }

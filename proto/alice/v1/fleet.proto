@@ -103,6 +103,25 @@ message FleetTask {
   string model_reason_detail = 33;
   bool startup_recovered = 34;
   bool startup_resume_capped = 35;
+  // The commands the fleet accepts for this task right now, in display
+  // order: "cancel", "retry", "reply", "approve", "merge", "pass" or
+  // "discard". Clients show these and no others; the fleet checks again when
+  // a command arrives.
+  repeated string actions = 36;
+  // Commands the task's status would usually offer but that are not
+  // possible now, each with the reason.
+  repeated FleetBlockedAction blocked_actions = 37;
+}
+
+// FleetBlockedAction is a command that cannot be carried out right now.
+message FleetBlockedAction {
+  string action = 1;
+  // "status", "not_ship", "no_pull_request", "no_approval_step",
+  // "items_not_approved", "delivery_incomplete", "awaiting_external" or
+  // "already_landed".
+  string reason = 2;
+  // The acceptance item IDs still open, for "items_not_approved".
+  repeated string items = 3;
 }
 
 message FleetTaskList {
@@ -218,6 +237,123 @@ message FleetDelivery {
   string next = 22;
   string pr_url = 23;
   int32 pr_number = 24;
+  // Per-item acceptance (issue #224). Empty for a task with no criteria on
+  // record; acceptance.structured says which.
+  repeated FleetAcceptanceItem acceptance_items = 25;
+  FleetAcceptanceSummary acceptance = 26;
+}
+
+message FleetAcceptanceCriterion {
+  string id = 1;
+  string text = 2;
+}
+
+message FleetAcceptanceEvidence {
+  // commit | pr | report | test | file
+  string type = 1;
+  string ref = 2;
+  repeated string paths = 3;
+  string note = 4;
+}
+
+message FleetAcceptanceBlocker {
+  string missing = 1;
+  string owner = 2;
+}
+
+message FleetAcceptanceHistory {
+  google.protobuf.Timestamp at = 1;
+  string actor = 2;
+  // report | decision | reopened
+  string kind = 3;
+  string status = 4;
+  string note = 5;
+  int32 run = 6;
+  int32 round = 7;
+}
+
+message FleetAcceptanceItem {
+  string id = 1;
+  string text = 2;
+  int32 version = 3;
+  // evidence_submitted | needs_evidence | awaiting_external | not_reported
+  string report = 4;
+  repeated FleetAcceptanceEvidence evidence = 5;
+  FleetAcceptanceBlocker blocker = 6;
+  int32 round = 7;
+  // pending | approved | needs_evidence | awaiting_external
+  string decision = 8;
+  string note = 9;
+  string decided_by = 10;
+  // criteria_changed | evidence_changed when an approval was withdrawn.
+  string reopened = 11;
+  repeated FleetAcceptanceHistory history = 12;
+}
+
+message FleetCriteriaChange {
+  string id = 1;
+  string old = 2;
+  string text = 3;
+}
+
+// An issue edit waiting for the reviewer.
+message FleetCriteriaProposal {
+  int32 version = 1;
+  repeated FleetAcceptanceCriterion added = 2;
+  repeated FleetAcceptanceCriterion removed = 3;
+  repeated FleetCriteriaChange changed = 4;
+}
+
+message FleetRejectedReport {
+  int32 run = 1;
+  repeated string errors = 2;
+}
+
+message FleetAcceptanceSummary {
+  bool structured = 1;
+  int32 version = 2;
+  int32 approved = 3;
+  int32 total = 4;
+  int32 rounds = 5;
+  // An item waits on someone outside; automatic reruns are paused.
+  bool external_wait = 6;
+  // Whether closing is allowed now, and if not why:
+  // items_not_approved | delivery_incomplete
+  bool gate_ok = 7;
+  string gate_code = 8;
+  repeated string gate_open = 9;
+  bool evidence_only = 10;
+  FleetCriteriaProposal proposal = 11;
+  repeated FleetRejectedReport rejected_reports = 12;
+  // The automatic verification was skipped to send the task to review.
+  bool verification_skipped = 13;
+}
+
+message FleetAcceptanceDecisionRequest {
+  string item_id = 1;
+  // pending | approved | needs_evidence | awaiting_external
+  string decision = 2;
+  string note = 3;
+}
+
+message FleetAcceptanceEntryItem {
+  string id = 1;
+  string status = 2;
+  repeated FleetAcceptanceEvidence evidence = 3;
+  FleetAcceptanceBlocker blocker = 4;
+  string note = 5;
+}
+
+// A reviewer filling in what the agent did not report. Criteria are needed
+// only for a task with none on record.
+message FleetAcceptanceEntryRequest {
+  repeated FleetAcceptanceCriterion criteria = 1;
+  repeated FleetAcceptanceEntryItem items = 2;
+}
+
+message FleetAcceptanceCriteriaRequest {
+  // refresh | apply | dismiss
+  string action = 1;
 }
 
 message FleetCounts {
@@ -433,4 +569,6 @@ message FleetError {
   string error = 1;
   // A stable word for the kind of failure, e.g. "not_found", "conflict".
   string code = 2;
+  // Set when code is "action_unavailable": why the command was refused.
+  FleetBlockedAction blocked = 3;
 }

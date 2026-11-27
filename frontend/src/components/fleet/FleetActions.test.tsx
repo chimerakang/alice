@@ -8,7 +8,7 @@ beforeAll(async () => {
   await i18n.changeLanguage("zh-TW");
 });
 
-const task = (over: Partial<FleetTask>) => ({ id: "t1", status: "needs_decision", session_id: "", ...over }) as FleetTask;
+const task = (over: Partial<FleetTask>) => ({ id: "t1", status: "needs_decision", session_id: "", actions: ["retry", "reply"], ...over }) as FleetTask;
 
 describe("FleetActions retry vs reply hint", () => {
   it("explains the difference only for a blocked task with a session", () => {

@@ -405,6 +405,14 @@ func (m *fleetCardManager) render(ctx context.Context, chatID int64, task fleet.
 		b.WriteString("\n▸ ")
 		b.WriteString(line)
 	}
+	set := m.Fleet.TaskActions(ctx, task)
+	for _, blocked := range set.Blocked {
+		if blocked.Reason == fleetWhyAlreadyLanded {
+			continue // nothing left to do, not something in the way
+		}
+		b.WriteString("\n⚠️ ")
+		b.WriteString(loc("fleet_card_blocked", fleetBlockVars(loc, blocked, task.Status)))
+	}
 	if task.PRURL != "" {
 		b.WriteString("\n🔗 ")
 		b.WriteString(task.PRURL)
@@ -433,7 +441,7 @@ func (m *fleetCardManager) render(ctx context.Context, chatID int64, task fleet.
 		b.WriteString("\n\n")
 		b.WriteString(loc("fleet_card_confirm_discard", nil))
 	}
-	return b.String(), m.buttons(loc, task, card, confirm)
+	return b.String(), m.buttons(loc, task, card, confirm, set)
 }
 
 // actionLine is the card's one-line account of what is happening.
@@ -455,8 +463,8 @@ func (m *fleetCardManager) actionLine(loc func(string, map[string]string) string
 	return fleetClip(firstLineOf(task.StatusReason), 160)
 }
 
-// buttons returns the actions a task's status allows.
-func (m *fleetCardManager) buttons(loc func(string, map[string]string) string, task fleet.Task, card fleetCard, confirm string) [][]fleetButton {
+// buttons returns the card's actions that the task allows now.
+func (m *fleetCardManager) buttons(loc func(string, map[string]string) string, task fleet.Task, card fleetCard, confirm string, set fleetActionSet) [][]fleetButton {
 	act := func(action string) fleetButton {
 		return fleetButton{Text: loc("fleet_btn_"+strings.TrimSuffix(action, "!"), nil), Data: fleetCallbackData(action, task.ID)}
 	}
@@ -472,11 +480,13 @@ func (m *fleetCardManager) buttons(loc func(string, map[string]string) string, t
 	case fleet.StatusQueued, fleet.StatusRunning, fleet.StatusVerifying:
 		row = append(row, act(fleetActCancel))
 	case fleet.StatusReviewReady:
-		row = append(row, act(fleetActApprove), act(fleetActDiscard))
+		row = append(row, act(fleetActApprove), act(fleetActMerge), act(fleetOpFinishEvidence), act(fleetActDiscard))
 	case fleet.StatusNeedsDecision:
 		row = append(row, act(fleetActRetry), act(fleetActDiscard))
 	case fleet.StatusFailed:
 		row = append(row, act(fleetActRetry), act(fleetActDiscard))
+	case fleet.StatusCancelled:
+		row = append(row, act(fleetActDiscard))
 	case fleet.StatusDone:
 		// A direct-pr task is done once its pull request is open; merging
 		// it is still the owner's call.
@@ -484,10 +494,7 @@ func (m *fleetCardManager) buttons(loc func(string, map[string]string) string, t
 			row = append(row, act(fleetActMerge))
 		}
 	}
-	var rows [][]fleetButton
-	if len(row) > 0 {
-		rows = append(rows, row)
-	}
+	rows := fleetFilterButtons([][]fleetButton{row}, set)
 	if url := m.detailsURL(task.ID); url != "" {
 		rows = append(rows, []fleetButton{{Text: loc("fleet_btn_details", nil), URL: url}})
 	}

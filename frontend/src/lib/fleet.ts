@@ -93,30 +93,9 @@ export function livenessStyle(liveness: FleetLiveness): { dot: string; ring: str
   }
 }
 
-/**
- * The actions a task's status allows. Mirrors what the fleet itself accepts,
- * so a button that is shown is a button that works.
- */
-export function taskActions(task: Pick<FleetTask, "status" | "trust_mode" | "pr_number">): FleetTaskAction[] {
-  switch (task.status) {
-    case "queued":
-      return ["cancel"];
-    case "running":
-    case "verifying":
-      return ["cancel"];
-    case "review_ready":
-      return ["approve", "reply", "discard"];
-    case "needs_decision":
-      return ["reply", "retry", "pass", "discard"];
-    case "failed":
-      return ["retry", "reply", "discard"];
-    case "done":
-      // A direct-pr task is done once its pull request is open; merging it
-      // is still the owner's call.
-      return task.trust_mode === "direct-pr" && task.pr_number > 0 ? ["merge"] : [];
-    default:
-      return [];
-  }
+/** Backend actions are authoritative; missing data must not invent commands. */
+export function taskActions(task: Pick<FleetTask, "actions">): FleetTaskAction[] {
+ return task.actions ?? [];
 }
 
 /** Actions that destroy something and so ask first. */

@@ -362,7 +362,7 @@ func fleetCommanderDispatch(ctx context.Context, svc *FleetService, actor fleet.
 			choice, req.Model = &c, c.Model
 		}
 	}
-	task, err := svc.Commander.Dispatch(ctx, actor, req)
+	task, err := svc.DispatchIssue(ctx, actor, req)
 	if err != nil {
 		return task, err
 	}
@@ -386,6 +386,9 @@ func (s *FleetService) recordEvent(ctx context.Context, taskID, eventType string
 // when the commander chose it and it stopped for a reason a stronger model
 // could fix. The escalation is recorded only when it was applied.
 func fleetCommanderRetry(ctx context.Context, svc *FleetService, actor fleet.Actor, taskID string) (fleet.Task, error) {
+	if svc.AutoRerunPaused(ctx, taskID) {
+		return fleet.Task{}, ErrAwaitingExternal
+	}
 	if task, err := svc.Commander.GetTask(ctx, taskID); err == nil {
 		if next, ok := svc.escalation(task, fleetLastModelChoice(ctx, svc.Store, taskID)); ok {
 			payload, err := json.Marshal(next)
