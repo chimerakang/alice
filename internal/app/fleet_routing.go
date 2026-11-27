@@ -307,6 +307,12 @@ func (s *FleetService) chooseScoutBackend(tier string, usdLimited bool) fleetSco
 // routeScout records the backend selected for actual execution, using the
 // current project and fleet budget as supplied by the runner.
 func (s *FleetService) routeScout(ctx context.Context, task fleet.Task, usdLimited bool) (bool, string) {
+	backend, model, reason := s.planScoutRoute(ctx, task, usdLimited)
+	s.recordEvent(context.WithoutCancel(ctx), task.ID, fleetEventScoutBackend, fleetScoutBackendChoice{Backend: backend, Reason: reason})
+	return backend == fleetBackendCodex, model
+}
+
+func (s *FleetService) planScoutRoute(ctx context.Context, task fleet.Task, usdLimited bool) (string, string, string) {
 	var tier fleetTier
 	for _, configured := range fleetTierLadder {
 		if task.Model != "" && s.Routing.fleetTierModel(configured) == task.Model {
@@ -314,13 +320,12 @@ func (s *FleetService) routeScout(ctx context.Context, task fleet.Task, usdLimit
 			break
 		}
 	}
-	choice := s.chooseScoutBackend(string(tier), usdLimited)
-	s.recordEvent(context.WithoutCancel(ctx), task.ID, fleetEventScoutBackend, choice)
+	choice := s.preferScoutByQuota(ctx, s.chooseScoutBackend(string(tier), usdLimited))
 	model := task.Model
 	if codexModel := s.Routing.fleetCodexTierModel(tier); codexModel != "" {
 		model = codexModel
 	}
-	return choice.Backend == fleetBackendCodex, model
+	return choice.Backend, model, choice.Reason
 }
 
 // fleetIssueLabels reads the labels and text of a source issue, for routing.

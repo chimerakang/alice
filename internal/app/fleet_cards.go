@@ -232,6 +232,7 @@ func (m *fleetCardManager) Run(ctx context.Context) error {
 var cardEvents = map[string]bool{
 	fleet.EventStatus:              true,
 	fleet.EventStartupResumed:      true,
+	fleet.EventQuotaTransferred:    true,
 	fleet.EventStartupResumeCapped: true,
 	fleet.EventVerification:        true,
 	fleet.EventAgentToolUse:        true,
@@ -415,6 +416,15 @@ func (m *fleetCardManager) render(ctx context.Context, chatID int64, task fleet.
 		}
 		b.WriteString("\n" + loc(key, nil))
 	}
+	if ev, found, err := m.Fleet.Store.LastEvent(ctx, task.ID, fleet.EventQuotaTransferred); err == nil && found {
+		var transfer struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+		}
+		if json.Unmarshal(ev.Payload, &transfer) == nil && transfer.From != "" && transfer.To != "" {
+			b.WriteString("\n" + loc("fleet_card_quota_transfer", map[string]string{"{from}": transfer.From, "{to}": transfer.To}))
+		}
+	}
 	if task.Status == fleet.StatusNeedsDecision && task.SessionID != "" {
 		b.WriteString("\n\n")
 		b.WriteString(loc("fleet_card_retry_vs_reply", nil))
@@ -430,6 +440,9 @@ func (m *fleetCardManager) render(ctx context.Context, chatID int64, task fleet.
 func (m *fleetCardManager) actionLine(loc func(string, map[string]string) string, task fleet.Task, action string) string {
 	switch task.Status {
 	case fleet.StatusQueued:
+		if task.StatusReason != "" {
+			return fleetClip(firstLineOf(task.StatusReason), 160)
+		}
 		return loc("fleet_card_action_queued", nil)
 	case fleet.StatusRunning:
 		if action != "" {

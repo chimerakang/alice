@@ -104,6 +104,22 @@ function query(params: Record<string, string | number | undefined>): string {
 
 const enc = encodeURIComponent;
 
+export interface FleetBackendUsage {
+  backend: string;
+  input_tokens: string;
+  output_tokens: string;
+  cost_usd: number;
+  tasks: string;
+}
+
+export interface FleetBackendQuota {
+  backend: string;
+  blocked: boolean;
+  estimated_remaining?: number;
+  provider_remaining?: number;
+  resets_at?: string;
+}
+
 export const fleetApi = {
   getDigest: () => request<FleetDigest>("GET", "/api/fleet/digest"),
 
@@ -159,6 +175,8 @@ export const fleetApi = {
   tryVerify: async (id: string) =>
     (await request<{ verifications?: FleetVerification[] }>("POST", `/api/fleet/projects/${enc(id)}/verify`, {}, true))
       .verifications ?? [],
+  getBackendUsage: (since: string, until: string) =>
+    request<{ backends: FleetBackendUsage[]; quota?: FleetBackendQuota[] }>("GET", `/api/fleet/usage/backends${query({ since, until })}`),
   getCosts: (days = 7) => request<FleetCosts>("GET", `/api/costs/fleet${query({ days })}`),
 
   getAudit: async (params: { project?: string; task?: string; actor?: string; limit?: number; beforeId?: number } = {}) =>

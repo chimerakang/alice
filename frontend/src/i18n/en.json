@@ -1130,6 +1130,23 @@
       "error_budget": "A budget must be 0 or more; leave it empty to use the default."
     },
     "costs": {
+      "quota_blocked": "Provider quota exhausted",
+      "quota_no_block": "No recorded quota block",
+      "quota_unknown": "Remaining quota unknown",
+      "quota_provider": "Provider quota remaining: {{percent}}%",
+      "quota_estimate": "Estimated Fleet quota remaining: {{percent}}%",
+      "quota_reset": "Resets at {{time}}",
+      "quota_reset_unknown": "Reset time unknown",
+      "by_backend": "Backend usage · Last {{days}} days",
+      "no_backend_usage": "No backend usage in this period.",
+      "unattributed": "Unattributed",
+      "backend_columns": {
+        "backend": "Backend",
+        "input_tokens": "Input tokens",
+        "output_tokens": "Output tokens",
+        "cost_usd": "Reported cost",
+        "tasks": "Tasks"
+      },
       "title": "Fleet cost and budgets",
       "today": "Today",
       "period": "Last {{days}} days",

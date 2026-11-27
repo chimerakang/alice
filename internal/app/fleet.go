@@ -47,6 +47,8 @@ type FleetConfig struct {
 	ScoutBackend string `json:"scout_backend"`
 	// ScoutCodexModel overrides the Codex CLI's default model.
 	ScoutCodexModel string `json:"scout_codex_model"`
+	// ScoutQuota optionally prefers the eligible backend with more estimated capacity.
+	ScoutQuota fleetScoutQuotaConfig `json:"scout_quota"`
 	// WorktreeRoot is where task checkouts are created. Defaults to
 	// "worktrees" beside the database.
 	WorktreeRoot string `json:"worktree_root"`
@@ -261,6 +263,12 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 		Bus:       &fleet.Bus{Store: store},
 		IssueSync: &FleetIssueSync{Store: store, Host: ghFleetIssueHost{}},
 	}
+	matcher, err := cfg.ScoutQuota.errorMatcher()
+	if err != nil {
+		return nil, err
+	}
+	runner.MatchQuotaError = matcher
+	runner.QuotaUnknownResetAfter = time.Duration(cfg.ScoutQuota.WindowMinutes) * time.Minute
 	switch strings.ToLower(strings.TrimSpace(cfg.ScoutBackend)) {
 	case "", fleetBackendClaude:
 	case fleetBackendAuto, fleetBackendCodex:
@@ -271,6 +279,8 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 		runner.CodexScoutModel = cfg.ScoutCodexModel
 		if strings.EqualFold(strings.TrimSpace(cfg.ScoutBackend), fleetBackendAuto) {
 			runner.ScoutRoute = svc.routeScout
+			runner.ConfigureScoutQuotaAdmission(svc.planScoutRoute)
+			runner.ConfigureScoutQuotaFallback(cfg.ScoutQuota.MaxTransfers, svc.scoutQuotaFallback)
 		}
 	default:
 		return nil, fmt.Errorf("fleet.scout_backend %q: must be claude, codex or auto", cfg.ScoutBackend)
