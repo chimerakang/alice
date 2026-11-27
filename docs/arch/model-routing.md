@@ -92,3 +92,55 @@ Use this telemetry to validate cost, latency, and routing quality before changin
 ## Detailed Reference
 
 The older full implementation note is preserved at [docs/DYNAMIC_MODEL_ROUTING.md](../DYNAMIC_MODEL_ROUTING.md). Prefer this file for current context loading; use the older note only when historical detail is needed.
+
+## Fleet: tiered models, Scout backend and escalation
+
+Fleet tasks are one-shot, so none of the chat machinery above (sticky sessions,
+follow-up detection, `/fast` `/deep`) applies. Fleet reuses only the tier
+models in `model_routing` and the local `ClassifyComplexity` heuristic; the
+command layer never calls a model to decide.
+
+Tiers, lowest to highest: `fast_model`, `smart_model`, `deep_model`,
+`flagship_model`. `flagship_model` is Fleet-only and optional: when empty the
+tier does not exist and both selection and escalation stop at `deep`.
+
+### Choosing a model at dispatch (`internal/app/fleet_routing.go`)
+
+1. A task with a model (`--model`, the dispatch form, the API) is used as is.
+2. Otherwise, if `fleet.auto_model` is not `false` and `smart_model` is set,
+   the commander picks a tier:
+   - the highest tier any source-issue label maps to in `fleet.tier_labels`
+     (label to tier name, case-insensitive; no label names live in code);
+   - else `ClassifyComplexity` on the goal (and issue title/body): a trivial
+     match goes to `fast`, a complex match to `deep`;
+   - else `smart`. When unsure it never guesses lower.
+3. The choice is recorded as a `model.selected` task event
+   (`source`, `tier`, `model`, `reason`, `detail`) and shown on the task card,
+   the Telegram card and the task page as "chosen by the commander: deep, …"
+   or "chosen by you".
+
+Setting `fleet.auto_model` to `false` restores the old behaviour (task model,
+else the default model).
+
+### Scout backend
+
+`fleet.scout_backend`: `claude` (default), `codex`, or `auto`. In `auto` the
+commander uses Codex only when the task's tier is listed in
+`fleet.scout_codex_tiers` and that tier has a `codex_*_model`; otherwise
+Claude. A task under any USD limit (its own budget, the project's, or the
+fleet's `task_budget_usd` / `daily_budget_usd`) always gets Claude, because
+Codex Scout does not report USD usage. The choice is a `scout.backend` event.
+
+### Escalation on retry
+
+Retrying a `failed` or `needs_decision` task whose model the commander chose
+moves it up one configured tier (fast → smart → deep → flagship) and records a
+`model.selected` event with reason `escalated`. It does not escalate when the
+model was set by hand, the task is already on the top tier, or the status
+reason contains one of `fleet.no_escalate_reasons` (default: budget limits,
+lost agent process, quota / rate / usage limit).
+
+The retry and the new model decision are written in one transaction before
+the scheduler can start the next run. The runner consults Scout routing at
+execution time to account for budget changes since dispatch. Set
+`fleet.scout_codex_binary` to override the Codex CLI executable.

@@ -55,6 +55,11 @@ export interface FleetTask {
   issue_number: number;
   trust_mode: FleetTrustMode;
   model: string;
+  /** Who chose the model; empty when the default is used. */
+  model_source?: "manual" | "commander" | "";
+  model_tier?: string;
+  model_reason?: string;
+  model_reason_detail?: string;
   priority: number;
   status: FleetStatus;
   status_reason: string;

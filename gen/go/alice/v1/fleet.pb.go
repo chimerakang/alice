@@ -365,7 +365,16 @@ type FleetTask struct {
 	IssueUrl string `protobuf:"bytes,28,opt,name=issue_url,json=issueUrl,proto3" json:"issue_url,omitempty"`
 	// A non-fatal warning from the dispatch, e.g. the epic could not be updated.
 	// Not persisted; only set in the dispatch response.
-	Warning             string `protobuf:"bytes,29,opt,name=warning,proto3" json:"warning,omitempty"`
+	Warning string `protobuf:"bytes,29,opt,name=warning,proto3" json:"warning,omitempty"`
+	// Who chose the model: "manual" or "commander". Empty when the task runs on
+	// the default model.
+	ModelSource string `protobuf:"bytes,30,opt,name=model_source,json=modelSource,proto3" json:"model_source,omitempty"`
+	// The commander's tier ("fast", "smart", "deep", "flagship"), if it chose.
+	ModelTier string `protobuf:"bytes,31,opt,name=model_tier,json=modelTier,proto3" json:"model_tier,omitempty"`
+	// Why: a reason code ("label", "complexity", "default", "escalated") and
+	// its detail (the label, matched rule, or "deep→flagship").
+	ModelReason         string `protobuf:"bytes,32,opt,name=model_reason,json=modelReason,proto3" json:"model_reason,omitempty"`
+	ModelReasonDetail   string `protobuf:"bytes,33,opt,name=model_reason_detail,json=modelReasonDetail,proto3" json:"model_reason_detail,omitempty"`
 	StartupRecovered    bool   `protobuf:"varint,34,opt,name=startup_recovered,json=startupRecovered,proto3" json:"startup_recovered,omitempty"`
 	StartupResumeCapped bool   `protobuf:"varint,35,opt,name=startup_resume_capped,json=startupResumeCapped,proto3" json:"startup_resume_capped,omitempty"`
 	unknownFields       protoimpl.UnknownFields
@@ -601,6 +610,34 @@ func (x *FleetTask) GetIssueUrl() string {
 func (x *FleetTask) GetWarning() string {
 	if x != nil {
 		return x.Warning
+	}
+	return ""
+}
+
+func (x *FleetTask) GetModelSource() string {
+	if x != nil {
+		return x.ModelSource
+	}
+	return ""
+}
+
+func (x *FleetTask) GetModelTier() string {
+	if x != nil {
+		return x.ModelTier
+	}
+	return ""
+}
+
+func (x *FleetTask) GetModelReason() string {
+	if x != nil {
+		return x.ModelReason
+	}
+	return ""
+}
+
+func (x *FleetTask) GetModelReasonDetail() string {
+	if x != nil {
+		return x.ModelReasonDetail
 	}
 	return ""
 }
@@ -3192,7 +3229,7 @@ const file_alice_v1_fleet_proto_rawDesc = "" +
 	"updated_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12)\n" +
 	"\x10github_available\x18\x0e \x01(\bR\x0fgithubAvailable\"F\n" +
 	"\x10FleetProjectList\x122\n" +
-	"\bprojects\x18\x01 \x03(\v2\x16.alice.v1.FleetProjectR\bprojects\"\xdc\b\n" +
+	"\bprojects\x18\x01 \x03(\v2\x16.alice.v1.FleetProjectR\bprojects\"\xf1\t\n" +
 	"\tFleetTask\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -3231,7 +3268,12 @@ const file_alice_v1_fleet_proto_rawDesc = "" +
 	"finishedAt\x12D\n" +
 	"\x10last_activity_at\x18\x1b \x01(\v2\x1a.google.protobuf.TimestampR\x0elastActivityAt\x12\x1b\n" +
 	"\tissue_url\x18\x1c \x01(\tR\bissueUrl\x12\x18\n" +
-	"\awarning\x18\x1d \x01(\tR\awarning\x12+\n" +
+	"\awarning\x18\x1d \x01(\tR\awarning\x12!\n" +
+	"\fmodel_source\x18\x1e \x01(\tR\vmodelSource\x12\x1d\n" +
+	"\n" +
+	"model_tier\x18\x1f \x01(\tR\tmodelTier\x12!\n" +
+	"\fmodel_reason\x18  \x01(\tR\vmodelReason\x12.\n" +
+	"\x13model_reason_detail\x18! \x01(\tR\x11modelReasonDetail\x12+\n" +
 	"\x11startup_recovered\x18\" \x01(\bR\x10startupRecovered\x122\n" +
 	"\x15startup_resume_capped\x18# \x01(\bR\x13startupResumeCapped\":\n" +
 	"\rFleetTaskList\x12)\n" +

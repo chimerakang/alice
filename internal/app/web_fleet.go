@@ -430,6 +430,7 @@ func (wi *WebInterface) fleetListTasks(ctx context.Context, svc *FleetService, r
 	for _, t := range tasks {
 		entry := fleetTaskProto(t, names[t.ProjectID])
 		entry.StartupRecovered, entry.StartupResumeCapped = fleetStartupResumeState(ctx, svc.Store, t)
+		fleetAnnotateModel(ctx, svc, entry, t)
 		out.Tasks = append(out.Tasks, entry)
 	}
 	return out, nil
@@ -442,6 +443,7 @@ func (wi *WebInterface) fleetTaskReply(ctx context.Context, svc *FleetService, t
 	}
 	out := fleetTaskProto(task, name)
 	out.StartupRecovered, out.StartupResumeCapped = fleetStartupResumeState(ctx, svc.Store, task)
+	fleetAnnotateModel(ctx, svc, out, task)
 	return out
 }
 
@@ -721,7 +723,7 @@ func (wi *WebInterface) fleetDispatchTask(ctx context.Context, svc *FleetService
 		return wi.fleetDispatchWithNewIssue(ctx, svc, actor, &req, shape)
 	}
 
-	task, err := svc.Commander.Dispatch(ctx, actor, fleet.DispatchRequest{
+	task, err := fleetCommanderDispatch(ctx, svc, actor, fleet.DispatchRequest{
 		ProjectID: projectID,
 		Goal:      strings.TrimSpace(req.Goal),
 		Issue:     int(req.Issue),
@@ -808,7 +810,7 @@ func (wi *WebInterface) fleetTaskAction(ctx context.Context, svc *FleetService, 
 		}
 		task, err = cmd.Cancel(ctx, actor, id, strings.TrimSpace(req.Reason))
 	case "retry":
-		task, err = cmd.Retry(ctx, actor, id)
+		task, err = fleetCommanderRetry(ctx, svc, actor, id)
 	case "reply":
 		var req alicev1.FleetReplyRequest
 		if err := readFleetBody(r, &req); err != nil {
