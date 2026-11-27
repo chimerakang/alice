@@ -918,9 +918,10 @@
       "show_all": "顯示全部 {{count}} 個"
     },
     "actions": {
+      "finish_evidence": "完成證據審查",
       "approve": "核准",
       "merge": "合併",
-      "pass": "放行",
+      "pass": "略過自動驗證，送審",
       "retry": "重試",
       "reply": "追加指示",
       "cancel": "取消任務",
@@ -1177,6 +1178,67 @@
       "refused": "被拒絕",
       "filter_project": "依專案篩選",
       "filter_task": "任務 ID"
+    },
+    "acceptance": {
+      "title": "逐項驗收",
+      "progress": "已核准 {{approved}} / {{total}}",
+      "version": "條件第 {{n}} 版",
+      "none": "尚無逐項紀錄",
+      "none_hint": "此任務沒有結構化的驗收紀錄，可由審核者手動補登條件與交付內容。",
+      "auto": "自動驗證",
+      "manual": "人工驗收",
+      "skipped": "已略過自動驗證送審；這不會核准任何項目。",
+      "evidence_only": "沒有檔案變更：結案僅依據證據。",
+      "external_wait": "有項目等待外部確認，補登回覆前暫停自動重跑。",
+      "gate_items_not_approved": "尚不能結案：未核准 — {{items}}",
+      "gate_delivery_incomplete": "尚不能結案：專案要求的交付流程（PR）尚未完成。",
+      "report": {
+        "evidence_submitted": "已提交證據",
+        "needs_evidence": "待補件",
+        "awaiting_external": "等待外部確認",
+        "not_reported": "尚未回報"
+      },
+      "decision": {
+        "pending": "待審",
+        "approved": "已核准",
+        "needs_evidence": "已要求補件",
+        "awaiting_external": "等待外部"
+      },
+      "reopened": {
+        "criteria_changed": "已退回待審：條件已變更",
+        "evidence_changed": "已退回待審：證據已變更"
+      },
+      "blocker": "缺少：{{missing}} — 需由 {{owner}} 處理",
+      "round": "第 {{n}} 輪",
+      "approve": "核准",
+      "ask": "要求補件",
+      "wait": "標記等待外部確認",
+      "reset": "退回待審",
+      "note_placeholder": "備註（要求補件或標記等待時必填）",
+      "send_back": "將需補件的項目交回 Agent",
+      "history": "紀錄",
+      "rejected": "第 {{run}} 次執行：回報被拒絕（{{errors}}），其項目仍為尚未回報。",
+      "fill": "補登",
+      "fill_ref": "證據引用（commit、PR 網址、報告路徑或測試）",
+      "fill_type": "類型",
+      "fill_save": "儲存補登",
+      "criteria_text": "驗收項目，每行一項",
+      "criteria_save": "建立紀錄",
+      "update_title": "Issue 的驗收條件已更新（第 {{n}} 版）",
+      "update_added": "新增",
+      "update_removed": "移除",
+      "update_changed": "修改",
+      "update_apply": "套用",
+      "update_dismiss": "維持目前條件",
+      "refresh": "檢查 issue 是否更新",
+      "working": "處理中…",
+      "evidence": {
+        "commit": "Commit",
+        "pr": "PR",
+        "report": "報告",
+        "test": "測試",
+        "file": "檔案"
+      }
     }
   }
 }

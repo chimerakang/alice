@@ -169,6 +169,8 @@ type FleetService struct {
 	Commander *fleet.Commander
 	Bus       *fleet.Bus
 	IssueSync *FleetIssueSync
+	// Accept is the per-item acceptance log.
+	Accept *acceptStore
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -252,7 +254,12 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 		OnRecovery:         logFleetRecovery,
 		StartupResumeLimit: cfg.StartupResumeLimit,
 	}
+	accept, err := newAcceptStore(db)
+	if err != nil {
+		return nil, err
+	}
 	svc := &FleetService{
+		Accept:    accept,
 		Config:    cfg,
 		TrustMode: mode,
 		Store:     store,
@@ -269,6 +276,13 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 	}
 	runner.MatchQuotaError = matcher
 	runner.QuotaUnknownResetAfter = time.Duration(cfg.ScoutQuota.WindowMinutes) * time.Minute
+	sched.PauseAutomaticResume = svc.AutoRerunPaused
+	deliverer.RequireDirectPRReview = func(ctx context.Context, taskID string) bool {
+		state, err := svc.Acceptance(ctx, taskID)
+		return err != nil || state.Structured
+	}
+	deliverer.BeforeLanding = svc.checkAcceptanceBeforeLanding
+	svc.IssueSync.Acceptance = svc.Acceptance
 	switch strings.ToLower(strings.TrimSpace(cfg.ScoutBackend)) {
 	case "", fleetBackendClaude:
 	case fleetBackendAuto, fleetBackendCodex:

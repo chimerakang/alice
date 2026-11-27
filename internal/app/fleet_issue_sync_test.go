@@ -237,6 +237,38 @@ func TestIssueSyncClosesWhenAuthorizedAndComplete(t *testing.T) {
 	}
 }
 
+func TestIssueSyncKeepsMergedIssueOpenWithoutHumanApproval(t *testing.T) {
+	e := newIssueSyncEnv(t)
+	task := e.task(213, fleet.TrustDirectPR, &yes, append(toReview, fleet.StatusDone)...)
+	e.setPR(task, 9, "MERGED")
+	e.tick("first", "second")
+	e.sync.Acceptance = func(context.Context, string) (acceptState, error) {
+		return acceptStateOf(acceptDecisionPending), nil
+	}
+	result := e.run(task, IssueSyncOptions{AuthorizeClose: true})
+	if result.Closed || len(e.host.closed) != 0 || !strings.Contains(result.KeptOpen, "item-1") {
+		t.Fatalf("issue closed or did not identify open item: %+v", result)
+	}
+}
+
+func TestIssueSyncClosesApprovedEvidenceWithoutPR(t *testing.T) {
+	e := newIssueSyncEnv(t)
+	task := e.task(213, fleet.TrustDirectPR, nil, toReview...)
+	ctx := context.Background()
+	if _, err := e.svc.Store.Transition(ctx, task.ID, fleet.StatusDone, fleetEvidenceFinishedPrefix+"owner: no file changes"); err != nil {
+		t.Fatal(err)
+	}
+	e.sync.Acceptance = func(context.Context, string) (acceptState, error) {
+		state := acceptStateOf(acceptDecisionApproved, acceptDecisionApproved)
+		state.Items[0].Text, state.Items[1].Text = "first", "second"
+		return state, nil
+	}
+	result := e.run(task, IssueSyncOptions{AuthorizeClose: true})
+	if !result.Closed || result.Stage != issueStageEvidenceComplete || len(e.host.closed) != 1 {
+		t.Fatalf("approved evidence-only issue did not close: %+v", result)
+	}
+}
+
 func TestIssueSyncOperatorAuthorizationCloses(t *testing.T) {
 	e := newIssueSyncEnv(t)
 	task := e.task(213, fleet.TrustDirectPR, &yes, append(toReview, fleet.StatusDone)...)

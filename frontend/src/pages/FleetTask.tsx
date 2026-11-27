@@ -10,6 +10,7 @@ import TimelineEntry from "@/components/TimelineEntry";
 import ToolCallGantt from "@/components/ToolCallGantt";
 import FleetDecisionContext from "@/components/fleet/FleetDecisionContext";
 import FleetDeliverySummary from "@/components/fleet/FleetDeliverySummary";
+import FleetAcceptancePanel from "@/components/fleet/FleetAcceptancePanel";
 import FleetActions from "@/components/fleet/FleetActions";
 import FleetUnavailable from "@/components/fleet/FleetUnavailable";
 import LivenessDot from "@/components/fleet/LivenessDot";
@@ -241,6 +242,7 @@ export default function FleetTaskPage() {
             onShowDiff={() => document.getElementById("fleet-task-diff")?.scrollIntoView({ behavior: "smooth" })}
           />
         )}
+        {currentDelivery && <FleetAcceptancePanel delivery={currentDelivery} onChange={(result) => { setDeliveryRead({ key: deliveryKey, result }); void refreshTask(id); }} />}
         <FleetActions task={task} />
         {task.goal.trim() !== goalTitle && (
           <CollapsiblePanel title={t("fleet.task.original_brief")}>
