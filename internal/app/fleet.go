@@ -121,6 +121,8 @@ type FleetService struct {
 	Commander *fleet.Commander
 	Bus       *fleet.Bus
 	IssueSync *FleetIssueSync
+	// Accept is the per-item acceptance log.
+	Accept *acceptStore
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -203,7 +205,12 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 		MaxConcurrent: cfg.MaxConcurrent,
 		OnRecovery:    logFleetRecovery,
 	}
+	accept, err := newAcceptStore(db)
+	if err != nil {
+		return nil, err
+	}
 	return &FleetService{
+		Accept:    accept,
 		Config:    cfg,
 		TrustMode: mode,
 		Store:     store,

@@ -145,6 +145,20 @@ export const fleetApi = {
     ),
   getTaskDiff: (id: string) => request<FleetDiff>("GET", `/api/fleet/tasks/${enc(id)}/diff`),
   getTaskDelivery: (id: string) => request<FleetDelivery>("GET", `/api/fleet/tasks/${enc(id)}/delivery`),
+  /** Per-item acceptance commands; each returns the refreshed delivery summary. */
+  decideAcceptance: (id: string, item_id: string, decision: string, note: string) =>
+    request<FleetDelivery>("POST", `/api/fleet/tasks/${enc(id)}/acceptance/decide`, { item_id, decision, note }, true),
+  enterAcceptance: (
+    id: string,
+    body: {
+      criteria?: { id: string; text: string }[];
+      items: { id: string; status: string; evidence?: { type: string; ref: string; note?: string }[]; blocker?: { missing: string; owner: string }; note?: string }[];
+    },
+  ) => request<FleetDelivery>("POST", `/api/fleet/tasks/${enc(id)}/acceptance/entry`, body, true),
+  acceptanceCriteria: (id: string, action: "refresh" | "apply" | "dismiss") =>
+    request<FleetDelivery>("POST", `/api/fleet/tasks/${enc(id)}/acceptance/criteria`, { action }, true),
+  requestEvidence: (id: string) =>
+    request<FleetDelivery>("POST", `/api/fleet/tasks/${enc(id)}/acceptance/request-evidence`, {}, true),
   getTaskVerifications: async (id: string) =>
     (await request<{ verifications?: FleetVerification[] }>("GET", `/api/fleet/tasks/${enc(id)}/verifications`))
       .verifications ?? [],

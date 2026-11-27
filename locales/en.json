@@ -564,7 +564,7 @@
     "fleet_prompt_hint_failed": "Retry it, or reply to this message with instructions to continue in the same session.",
     "fleet_prompt_hint_stuck": "The agent is still running but has been silent for a while. Keep waiting, or cancel.",
     "fleet_prompt_hint_over_budget": "The task stopped at its budget limit; its session is kept. Continue past the budget, or discard it.",
-    "fleet_btn_pass": "➡️ Wave through",
+    "fleet_btn_pass": "➡️ Skip checks, send to review",
     "fleet_btn_hint": "💡 Retry with a hint",
     "fleet_btn_goon": "▶️ Continue past budget",
     "fleet_btn_approve_merge": "✅ Approve and merge",

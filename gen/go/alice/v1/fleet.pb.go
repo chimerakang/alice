@@ -1305,11 +1305,15 @@ type FleetDelivery struct {
 	Pending        []*FleetDeliveryItem  `protobuf:"bytes,20,rep,name=pending,proto3" json:"pending,omitempty"`
 	Limits         []*FleetDeliveryItem  `protobuf:"bytes,21,rep,name=limits,proto3" json:"limits,omitempty"`
 	// approve | decide | rerun | wait | none
-	Next          string `protobuf:"bytes,22,opt,name=next,proto3" json:"next,omitempty"`
-	PrUrl         string `protobuf:"bytes,23,opt,name=pr_url,json=prUrl,proto3" json:"pr_url,omitempty"`
-	PrNumber      int32  `protobuf:"varint,24,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Next     string `protobuf:"bytes,22,opt,name=next,proto3" json:"next,omitempty"`
+	PrUrl    string `protobuf:"bytes,23,opt,name=pr_url,json=prUrl,proto3" json:"pr_url,omitempty"`
+	PrNumber int32  `protobuf:"varint,24,opt,name=pr_number,json=prNumber,proto3" json:"pr_number,omitempty"`
+	// Per-item acceptance (issue #224). Empty for a task with no criteria on
+	// record; acceptance.structured says which.
+	AcceptanceItems []*FleetAcceptanceItem  `protobuf:"bytes,25,rep,name=acceptance_items,json=acceptanceItems,proto3" json:"acceptance_items,omitempty"`
+	Acceptance      *FleetAcceptanceSummary `protobuf:"bytes,26,opt,name=acceptance,proto3" json:"acceptance,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *FleetDelivery) Reset() {
@@ -1510,6 +1514,982 @@ func (x *FleetDelivery) GetPrNumber() int32 {
 	return 0
 }
 
+func (x *FleetDelivery) GetAcceptanceItems() []*FleetAcceptanceItem {
+	if x != nil {
+		return x.AcceptanceItems
+	}
+	return nil
+}
+
+func (x *FleetDelivery) GetAcceptance() *FleetAcceptanceSummary {
+	if x != nil {
+		return x.Acceptance
+	}
+	return nil
+}
+
+type FleetAcceptanceCriterion struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Text          string                 `protobuf:"bytes,2,opt,name=text,proto3" json:"text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetAcceptanceCriterion) Reset() {
+	*x = FleetAcceptanceCriterion{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetAcceptanceCriterion) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetAcceptanceCriterion) ProtoMessage() {}
+
+func (x *FleetAcceptanceCriterion) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetAcceptanceCriterion.ProtoReflect.Descriptor instead.
+func (*FleetAcceptanceCriterion) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *FleetAcceptanceCriterion) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceCriterion) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+type FleetAcceptanceEvidence struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// commit | pr | report | test | file
+	Type          string   `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
+	Ref           string   `protobuf:"bytes,2,opt,name=ref,proto3" json:"ref,omitempty"`
+	Paths         []string `protobuf:"bytes,3,rep,name=paths,proto3" json:"paths,omitempty"`
+	Note          string   `protobuf:"bytes,4,opt,name=note,proto3" json:"note,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetAcceptanceEvidence) Reset() {
+	*x = FleetAcceptanceEvidence{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetAcceptanceEvidence) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetAcceptanceEvidence) ProtoMessage() {}
+
+func (x *FleetAcceptanceEvidence) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetAcceptanceEvidence.ProtoReflect.Descriptor instead.
+func (*FleetAcceptanceEvidence) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *FleetAcceptanceEvidence) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceEvidence) GetRef() string {
+	if x != nil {
+		return x.Ref
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceEvidence) GetPaths() []string {
+	if x != nil {
+		return x.Paths
+	}
+	return nil
+}
+
+func (x *FleetAcceptanceEvidence) GetNote() string {
+	if x != nil {
+		return x.Note
+	}
+	return ""
+}
+
+type FleetAcceptanceBlocker struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Missing       string                 `protobuf:"bytes,1,opt,name=missing,proto3" json:"missing,omitempty"`
+	Owner         string                 `protobuf:"bytes,2,opt,name=owner,proto3" json:"owner,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetAcceptanceBlocker) Reset() {
+	*x = FleetAcceptanceBlocker{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetAcceptanceBlocker) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetAcceptanceBlocker) ProtoMessage() {}
+
+func (x *FleetAcceptanceBlocker) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetAcceptanceBlocker.ProtoReflect.Descriptor instead.
+func (*FleetAcceptanceBlocker) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *FleetAcceptanceBlocker) GetMissing() string {
+	if x != nil {
+		return x.Missing
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceBlocker) GetOwner() string {
+	if x != nil {
+		return x.Owner
+	}
+	return ""
+}
+
+type FleetAcceptanceHistory struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	At    *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=at,proto3" json:"at,omitempty"`
+	Actor string                 `protobuf:"bytes,2,opt,name=actor,proto3" json:"actor,omitempty"`
+	// report | decision | reopened
+	Kind          string `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
+	Status        string `protobuf:"bytes,4,opt,name=status,proto3" json:"status,omitempty"`
+	Note          string `protobuf:"bytes,5,opt,name=note,proto3" json:"note,omitempty"`
+	Run           int32  `protobuf:"varint,6,opt,name=run,proto3" json:"run,omitempty"`
+	Round         int32  `protobuf:"varint,7,opt,name=round,proto3" json:"round,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetAcceptanceHistory) Reset() {
+	*x = FleetAcceptanceHistory{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetAcceptanceHistory) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetAcceptanceHistory) ProtoMessage() {}
+
+func (x *FleetAcceptanceHistory) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetAcceptanceHistory.ProtoReflect.Descriptor instead.
+func (*FleetAcceptanceHistory) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *FleetAcceptanceHistory) GetAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.At
+	}
+	return nil
+}
+
+func (x *FleetAcceptanceHistory) GetActor() string {
+	if x != nil {
+		return x.Actor
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceHistory) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceHistory) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceHistory) GetNote() string {
+	if x != nil {
+		return x.Note
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceHistory) GetRun() int32 {
+	if x != nil {
+		return x.Run
+	}
+	return 0
+}
+
+func (x *FleetAcceptanceHistory) GetRound() int32 {
+	if x != nil {
+		return x.Round
+	}
+	return 0
+}
+
+type FleetAcceptanceItem struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Id      string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Text    string                 `protobuf:"bytes,2,opt,name=text,proto3" json:"text,omitempty"`
+	Version int32                  `protobuf:"varint,3,opt,name=version,proto3" json:"version,omitempty"`
+	// evidence_submitted | needs_evidence | awaiting_external | not_reported
+	Report   string                     `protobuf:"bytes,4,opt,name=report,proto3" json:"report,omitempty"`
+	Evidence []*FleetAcceptanceEvidence `protobuf:"bytes,5,rep,name=evidence,proto3" json:"evidence,omitempty"`
+	Blocker  *FleetAcceptanceBlocker    `protobuf:"bytes,6,opt,name=blocker,proto3" json:"blocker,omitempty"`
+	Round    int32                      `protobuf:"varint,7,opt,name=round,proto3" json:"round,omitempty"`
+	// pending | approved | needs_evidence | awaiting_external
+	Decision  string `protobuf:"bytes,8,opt,name=decision,proto3" json:"decision,omitempty"`
+	Note      string `protobuf:"bytes,9,opt,name=note,proto3" json:"note,omitempty"`
+	DecidedBy string `protobuf:"bytes,10,opt,name=decided_by,json=decidedBy,proto3" json:"decided_by,omitempty"`
+	// criteria_changed | evidence_changed when an approval was withdrawn.
+	Reopened      string                    `protobuf:"bytes,11,opt,name=reopened,proto3" json:"reopened,omitempty"`
+	History       []*FleetAcceptanceHistory `protobuf:"bytes,12,rep,name=history,proto3" json:"history,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetAcceptanceItem) Reset() {
+	*x = FleetAcceptanceItem{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetAcceptanceItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetAcceptanceItem) ProtoMessage() {}
+
+func (x *FleetAcceptanceItem) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetAcceptanceItem.ProtoReflect.Descriptor instead.
+func (*FleetAcceptanceItem) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *FleetAcceptanceItem) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceItem) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceItem) GetVersion() int32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *FleetAcceptanceItem) GetReport() string {
+	if x != nil {
+		return x.Report
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceItem) GetEvidence() []*FleetAcceptanceEvidence {
+	if x != nil {
+		return x.Evidence
+	}
+	return nil
+}
+
+func (x *FleetAcceptanceItem) GetBlocker() *FleetAcceptanceBlocker {
+	if x != nil {
+		return x.Blocker
+	}
+	return nil
+}
+
+func (x *FleetAcceptanceItem) GetRound() int32 {
+	if x != nil {
+		return x.Round
+	}
+	return 0
+}
+
+func (x *FleetAcceptanceItem) GetDecision() string {
+	if x != nil {
+		return x.Decision
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceItem) GetNote() string {
+	if x != nil {
+		return x.Note
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceItem) GetDecidedBy() string {
+	if x != nil {
+		return x.DecidedBy
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceItem) GetReopened() string {
+	if x != nil {
+		return x.Reopened
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceItem) GetHistory() []*FleetAcceptanceHistory {
+	if x != nil {
+		return x.History
+	}
+	return nil
+}
+
+type FleetCriteriaChange struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Old           string                 `protobuf:"bytes,2,opt,name=old,proto3" json:"old,omitempty"`
+	Text          string                 `protobuf:"bytes,3,opt,name=text,proto3" json:"text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetCriteriaChange) Reset() {
+	*x = FleetCriteriaChange{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetCriteriaChange) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetCriteriaChange) ProtoMessage() {}
+
+func (x *FleetCriteriaChange) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetCriteriaChange.ProtoReflect.Descriptor instead.
+func (*FleetCriteriaChange) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *FleetCriteriaChange) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *FleetCriteriaChange) GetOld() string {
+	if x != nil {
+		return x.Old
+	}
+	return ""
+}
+
+func (x *FleetCriteriaChange) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+// An issue edit waiting for the reviewer.
+type FleetCriteriaProposal struct {
+	state         protoimpl.MessageState      `protogen:"open.v1"`
+	Version       int32                       `protobuf:"varint,1,opt,name=version,proto3" json:"version,omitempty"`
+	Added         []*FleetAcceptanceCriterion `protobuf:"bytes,2,rep,name=added,proto3" json:"added,omitempty"`
+	Removed       []*FleetAcceptanceCriterion `protobuf:"bytes,3,rep,name=removed,proto3" json:"removed,omitempty"`
+	Changed       []*FleetCriteriaChange      `protobuf:"bytes,4,rep,name=changed,proto3" json:"changed,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetCriteriaProposal) Reset() {
+	*x = FleetCriteriaProposal{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetCriteriaProposal) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetCriteriaProposal) ProtoMessage() {}
+
+func (x *FleetCriteriaProposal) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetCriteriaProposal.ProtoReflect.Descriptor instead.
+func (*FleetCriteriaProposal) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *FleetCriteriaProposal) GetVersion() int32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *FleetCriteriaProposal) GetAdded() []*FleetAcceptanceCriterion {
+	if x != nil {
+		return x.Added
+	}
+	return nil
+}
+
+func (x *FleetCriteriaProposal) GetRemoved() []*FleetAcceptanceCriterion {
+	if x != nil {
+		return x.Removed
+	}
+	return nil
+}
+
+func (x *FleetCriteriaProposal) GetChanged() []*FleetCriteriaChange {
+	if x != nil {
+		return x.Changed
+	}
+	return nil
+}
+
+type FleetRejectedReport struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Run           int32                  `protobuf:"varint,1,opt,name=run,proto3" json:"run,omitempty"`
+	Errors        []string               `protobuf:"bytes,2,rep,name=errors,proto3" json:"errors,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetRejectedReport) Reset() {
+	*x = FleetRejectedReport{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetRejectedReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetRejectedReport) ProtoMessage() {}
+
+func (x *FleetRejectedReport) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetRejectedReport.ProtoReflect.Descriptor instead.
+func (*FleetRejectedReport) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *FleetRejectedReport) GetRun() int32 {
+	if x != nil {
+		return x.Run
+	}
+	return 0
+}
+
+func (x *FleetRejectedReport) GetErrors() []string {
+	if x != nil {
+		return x.Errors
+	}
+	return nil
+}
+
+type FleetAcceptanceSummary struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Structured bool                   `protobuf:"varint,1,opt,name=structured,proto3" json:"structured,omitempty"`
+	Version    int32                  `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	Approved   int32                  `protobuf:"varint,3,opt,name=approved,proto3" json:"approved,omitempty"`
+	Total      int32                  `protobuf:"varint,4,opt,name=total,proto3" json:"total,omitempty"`
+	Rounds     int32                  `protobuf:"varint,5,opt,name=rounds,proto3" json:"rounds,omitempty"`
+	// An item waits on someone outside; automatic reruns are paused.
+	ExternalWait bool `protobuf:"varint,6,opt,name=external_wait,json=externalWait,proto3" json:"external_wait,omitempty"`
+	// Whether closing is allowed now, and if not why:
+	// items_not_approved | delivery_incomplete
+	GateOk          bool                   `protobuf:"varint,7,opt,name=gate_ok,json=gateOk,proto3" json:"gate_ok,omitempty"`
+	GateCode        string                 `protobuf:"bytes,8,opt,name=gate_code,json=gateCode,proto3" json:"gate_code,omitempty"`
+	GateOpen        []string               `protobuf:"bytes,9,rep,name=gate_open,json=gateOpen,proto3" json:"gate_open,omitempty"`
+	EvidenceOnly    bool                   `protobuf:"varint,10,opt,name=evidence_only,json=evidenceOnly,proto3" json:"evidence_only,omitempty"`
+	Proposal        *FleetCriteriaProposal `protobuf:"bytes,11,opt,name=proposal,proto3" json:"proposal,omitempty"`
+	RejectedReports []*FleetRejectedReport `protobuf:"bytes,12,rep,name=rejected_reports,json=rejectedReports,proto3" json:"rejected_reports,omitempty"`
+	// The automatic verification was skipped to send the task to review.
+	VerificationSkipped bool `protobuf:"varint,13,opt,name=verification_skipped,json=verificationSkipped,proto3" json:"verification_skipped,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *FleetAcceptanceSummary) Reset() {
+	*x = FleetAcceptanceSummary{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetAcceptanceSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetAcceptanceSummary) ProtoMessage() {}
+
+func (x *FleetAcceptanceSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetAcceptanceSummary.ProtoReflect.Descriptor instead.
+func (*FleetAcceptanceSummary) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *FleetAcceptanceSummary) GetStructured() bool {
+	if x != nil {
+		return x.Structured
+	}
+	return false
+}
+
+func (x *FleetAcceptanceSummary) GetVersion() int32 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *FleetAcceptanceSummary) GetApproved() int32 {
+	if x != nil {
+		return x.Approved
+	}
+	return 0
+}
+
+func (x *FleetAcceptanceSummary) GetTotal() int32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *FleetAcceptanceSummary) GetRounds() int32 {
+	if x != nil {
+		return x.Rounds
+	}
+	return 0
+}
+
+func (x *FleetAcceptanceSummary) GetExternalWait() bool {
+	if x != nil {
+		return x.ExternalWait
+	}
+	return false
+}
+
+func (x *FleetAcceptanceSummary) GetGateOk() bool {
+	if x != nil {
+		return x.GateOk
+	}
+	return false
+}
+
+func (x *FleetAcceptanceSummary) GetGateCode() string {
+	if x != nil {
+		return x.GateCode
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceSummary) GetGateOpen() []string {
+	if x != nil {
+		return x.GateOpen
+	}
+	return nil
+}
+
+func (x *FleetAcceptanceSummary) GetEvidenceOnly() bool {
+	if x != nil {
+		return x.EvidenceOnly
+	}
+	return false
+}
+
+func (x *FleetAcceptanceSummary) GetProposal() *FleetCriteriaProposal {
+	if x != nil {
+		return x.Proposal
+	}
+	return nil
+}
+
+func (x *FleetAcceptanceSummary) GetRejectedReports() []*FleetRejectedReport {
+	if x != nil {
+		return x.RejectedReports
+	}
+	return nil
+}
+
+func (x *FleetAcceptanceSummary) GetVerificationSkipped() bool {
+	if x != nil {
+		return x.VerificationSkipped
+	}
+	return false
+}
+
+type FleetAcceptanceDecisionRequest struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	ItemId string                 `protobuf:"bytes,1,opt,name=item_id,json=itemId,proto3" json:"item_id,omitempty"`
+	// pending | approved | needs_evidence | awaiting_external
+	Decision      string `protobuf:"bytes,2,opt,name=decision,proto3" json:"decision,omitempty"`
+	Note          string `protobuf:"bytes,3,opt,name=note,proto3" json:"note,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetAcceptanceDecisionRequest) Reset() {
+	*x = FleetAcceptanceDecisionRequest{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetAcceptanceDecisionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetAcceptanceDecisionRequest) ProtoMessage() {}
+
+func (x *FleetAcceptanceDecisionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetAcceptanceDecisionRequest.ProtoReflect.Descriptor instead.
+func (*FleetAcceptanceDecisionRequest) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *FleetAcceptanceDecisionRequest) GetItemId() string {
+	if x != nil {
+		return x.ItemId
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceDecisionRequest) GetDecision() string {
+	if x != nil {
+		return x.Decision
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceDecisionRequest) GetNote() string {
+	if x != nil {
+		return x.Note
+	}
+	return ""
+}
+
+type FleetAcceptanceEntryItem struct {
+	state         protoimpl.MessageState     `protogen:"open.v1"`
+	Id            string                     `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Status        string                     `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	Evidence      []*FleetAcceptanceEvidence `protobuf:"bytes,3,rep,name=evidence,proto3" json:"evidence,omitempty"`
+	Blocker       *FleetAcceptanceBlocker    `protobuf:"bytes,4,opt,name=blocker,proto3" json:"blocker,omitempty"`
+	Note          string                     `protobuf:"bytes,5,opt,name=note,proto3" json:"note,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetAcceptanceEntryItem) Reset() {
+	*x = FleetAcceptanceEntryItem{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetAcceptanceEntryItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetAcceptanceEntryItem) ProtoMessage() {}
+
+func (x *FleetAcceptanceEntryItem) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetAcceptanceEntryItem.ProtoReflect.Descriptor instead.
+func (*FleetAcceptanceEntryItem) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *FleetAcceptanceEntryItem) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceEntryItem) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *FleetAcceptanceEntryItem) GetEvidence() []*FleetAcceptanceEvidence {
+	if x != nil {
+		return x.Evidence
+	}
+	return nil
+}
+
+func (x *FleetAcceptanceEntryItem) GetBlocker() *FleetAcceptanceBlocker {
+	if x != nil {
+		return x.Blocker
+	}
+	return nil
+}
+
+func (x *FleetAcceptanceEntryItem) GetNote() string {
+	if x != nil {
+		return x.Note
+	}
+	return ""
+}
+
+// A reviewer filling in what the agent did not report. Criteria are needed
+// only for a task with none on record.
+type FleetAcceptanceEntryRequest struct {
+	state         protoimpl.MessageState      `protogen:"open.v1"`
+	Criteria      []*FleetAcceptanceCriterion `protobuf:"bytes,1,rep,name=criteria,proto3" json:"criteria,omitempty"`
+	Items         []*FleetAcceptanceEntryItem `protobuf:"bytes,2,rep,name=items,proto3" json:"items,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetAcceptanceEntryRequest) Reset() {
+	*x = FleetAcceptanceEntryRequest{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetAcceptanceEntryRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetAcceptanceEntryRequest) ProtoMessage() {}
+
+func (x *FleetAcceptanceEntryRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetAcceptanceEntryRequest.ProtoReflect.Descriptor instead.
+func (*FleetAcceptanceEntryRequest) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *FleetAcceptanceEntryRequest) GetCriteria() []*FleetAcceptanceCriterion {
+	if x != nil {
+		return x.Criteria
+	}
+	return nil
+}
+
+func (x *FleetAcceptanceEntryRequest) GetItems() []*FleetAcceptanceEntryItem {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+type FleetAcceptanceCriteriaRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// refresh | apply | dismiss
+	Action        string `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FleetAcceptanceCriteriaRequest) Reset() {
+	*x = FleetAcceptanceCriteriaRequest{}
+	mi := &file_alice_v1_fleet_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FleetAcceptanceCriteriaRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FleetAcceptanceCriteriaRequest) ProtoMessage() {}
+
+func (x *FleetAcceptanceCriteriaRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_alice_v1_fleet_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FleetAcceptanceCriteriaRequest.ProtoReflect.Descriptor instead.
+func (*FleetAcceptanceCriteriaRequest) Descriptor() ([]byte, []int) {
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *FleetAcceptanceCriteriaRequest) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
 type FleetCounts struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Queued        int32                  `protobuf:"varint,1,opt,name=queued,proto3" json:"queued,omitempty"`
@@ -1524,7 +2504,7 @@ type FleetCounts struct {
 
 func (x *FleetCounts) Reset() {
 	*x = FleetCounts{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[15]
+	mi := &file_alice_v1_fleet_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1536,7 +2516,7 @@ func (x *FleetCounts) String() string {
 func (*FleetCounts) ProtoMessage() {}
 
 func (x *FleetCounts) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[15]
+	mi := &file_alice_v1_fleet_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1549,7 +2529,7 @@ func (x *FleetCounts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetCounts.ProtoReflect.Descriptor instead.
 func (*FleetCounts) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{15}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *FleetCounts) GetQueued() int32 {
@@ -1605,7 +2585,7 @@ type FleetUsage struct {
 
 func (x *FleetUsage) Reset() {
 	*x = FleetUsage{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[16]
+	mi := &file_alice_v1_fleet_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1617,7 +2597,7 @@ func (x *FleetUsage) String() string {
 func (*FleetUsage) ProtoMessage() {}
 
 func (x *FleetUsage) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[16]
+	mi := &file_alice_v1_fleet_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1630,7 +2610,7 @@ func (x *FleetUsage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetUsage.ProtoReflect.Descriptor instead.
 func (*FleetUsage) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{16}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *FleetUsage) GetInputTokens() float64 {
@@ -1666,7 +2646,7 @@ type FleetProjectDigest struct {
 
 func (x *FleetProjectDigest) Reset() {
 	*x = FleetProjectDigest{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[17]
+	mi := &file_alice_v1_fleet_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1678,7 +2658,7 @@ func (x *FleetProjectDigest) String() string {
 func (*FleetProjectDigest) ProtoMessage() {}
 
 func (x *FleetProjectDigest) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[17]
+	mi := &file_alice_v1_fleet_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1691,7 +2671,7 @@ func (x *FleetProjectDigest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetProjectDigest.ProtoReflect.Descriptor instead.
 func (*FleetProjectDigest) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{17}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *FleetProjectDigest) GetProjectId() string {
@@ -1739,7 +2719,7 @@ type FleetDigest struct {
 
 func (x *FleetDigest) Reset() {
 	*x = FleetDigest{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[18]
+	mi := &file_alice_v1_fleet_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1751,7 +2731,7 @@ func (x *FleetDigest) String() string {
 func (*FleetDigest) ProtoMessage() {}
 
 func (x *FleetDigest) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[18]
+	mi := &file_alice_v1_fleet_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1764,7 +2744,7 @@ func (x *FleetDigest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetDigest.ProtoReflect.Descriptor instead.
 func (*FleetDigest) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{18}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *FleetDigest) GetGeneratedAt() *timestamppb.Timestamp {
@@ -1836,7 +2816,7 @@ type FleetAuditEntry struct {
 
 func (x *FleetAuditEntry) Reset() {
 	*x = FleetAuditEntry{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[19]
+	mi := &file_alice_v1_fleet_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1848,7 +2828,7 @@ func (x *FleetAuditEntry) String() string {
 func (*FleetAuditEntry) ProtoMessage() {}
 
 func (x *FleetAuditEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[19]
+	mi := &file_alice_v1_fleet_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1861,7 +2841,7 @@ func (x *FleetAuditEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetAuditEntry.ProtoReflect.Descriptor instead.
 func (*FleetAuditEntry) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{19}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *FleetAuditEntry) GetId() float64 {
@@ -1943,7 +2923,7 @@ type FleetAuditList struct {
 
 func (x *FleetAuditList) Reset() {
 	*x = FleetAuditList{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[20]
+	mi := &file_alice_v1_fleet_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1955,7 +2935,7 @@ func (x *FleetAuditList) String() string {
 func (*FleetAuditList) ProtoMessage() {}
 
 func (x *FleetAuditList) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[20]
+	mi := &file_alice_v1_fleet_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1968,7 +2948,7 @@ func (x *FleetAuditList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetAuditList.ProtoReflect.Descriptor instead.
 func (*FleetAuditList) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{20}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *FleetAuditList) GetEntries() []*FleetAuditEntry {
@@ -2006,7 +2986,7 @@ type FleetDispatchRequest struct {
 
 func (x *FleetDispatchRequest) Reset() {
 	*x = FleetDispatchRequest{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[21]
+	mi := &file_alice_v1_fleet_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2018,7 +2998,7 @@ func (x *FleetDispatchRequest) String() string {
 func (*FleetDispatchRequest) ProtoMessage() {}
 
 func (x *FleetDispatchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[21]
+	mi := &file_alice_v1_fleet_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2031,7 +3011,7 @@ func (x *FleetDispatchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetDispatchRequest.ProtoReflect.Descriptor instead.
 func (*FleetDispatchRequest) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{21}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *FleetDispatchRequest) GetProjectId() string {
@@ -2119,7 +3099,7 @@ type FleetEpicRequest struct {
 
 func (x *FleetEpicRequest) Reset() {
 	*x = FleetEpicRequest{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[22]
+	mi := &file_alice_v1_fleet_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2131,7 +3111,7 @@ func (x *FleetEpicRequest) String() string {
 func (*FleetEpicRequest) ProtoMessage() {}
 
 func (x *FleetEpicRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[22]
+	mi := &file_alice_v1_fleet_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2144,7 +3124,7 @@ func (x *FleetEpicRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetEpicRequest.ProtoReflect.Descriptor instead.
 func (*FleetEpicRequest) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{22}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *FleetEpicRequest) GetProjectId() string {
@@ -2188,7 +3168,7 @@ type FleetEpicReply struct {
 
 func (x *FleetEpicReply) Reset() {
 	*x = FleetEpicReply{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[23]
+	mi := &file_alice_v1_fleet_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2200,7 +3180,7 @@ func (x *FleetEpicReply) String() string {
 func (*FleetEpicReply) ProtoMessage() {}
 
 func (x *FleetEpicReply) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[23]
+	mi := &file_alice_v1_fleet_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2213,7 +3193,7 @@ func (x *FleetEpicReply) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetEpicReply.ProtoReflect.Descriptor instead.
 func (*FleetEpicReply) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{23}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *FleetEpicReply) GetNumber() int32 {
@@ -2278,7 +3258,7 @@ type FleetGitHubStatus struct {
 
 func (x *FleetGitHubStatus) Reset() {
 	*x = FleetGitHubStatus{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[24]
+	mi := &file_alice_v1_fleet_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2290,7 +3270,7 @@ func (x *FleetGitHubStatus) String() string {
 func (*FleetGitHubStatus) ProtoMessage() {}
 
 func (x *FleetGitHubStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[24]
+	mi := &file_alice_v1_fleet_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2303,7 +3283,7 @@ func (x *FleetGitHubStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetGitHubStatus.ProtoReflect.Descriptor instead.
 func (*FleetGitHubStatus) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{24}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *FleetGitHubStatus) GetAvailable() bool {
@@ -2331,7 +3311,7 @@ type FleetReplyRequest struct {
 
 func (x *FleetReplyRequest) Reset() {
 	*x = FleetReplyRequest{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[25]
+	mi := &file_alice_v1_fleet_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2343,7 +3323,7 @@ func (x *FleetReplyRequest) String() string {
 func (*FleetReplyRequest) ProtoMessage() {}
 
 func (x *FleetReplyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[25]
+	mi := &file_alice_v1_fleet_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2356,7 +3336,7 @@ func (x *FleetReplyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetReplyRequest.ProtoReflect.Descriptor instead.
 func (*FleetReplyRequest) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{25}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *FleetReplyRequest) GetText() string {
@@ -2383,7 +3363,7 @@ type FleetCancelRequest struct {
 
 func (x *FleetCancelRequest) Reset() {
 	*x = FleetCancelRequest{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[26]
+	mi := &file_alice_v1_fleet_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2395,7 +3375,7 @@ func (x *FleetCancelRequest) String() string {
 func (*FleetCancelRequest) ProtoMessage() {}
 
 func (x *FleetCancelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[26]
+	mi := &file_alice_v1_fleet_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2408,7 +3388,7 @@ func (x *FleetCancelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetCancelRequest.ProtoReflect.Descriptor instead.
 func (*FleetCancelRequest) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{26}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *FleetCancelRequest) GetReason() string {
@@ -2438,7 +3418,7 @@ type FleetProjectRequest struct {
 
 func (x *FleetProjectRequest) Reset() {
 	*x = FleetProjectRequest{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[27]
+	mi := &file_alice_v1_fleet_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2450,7 +3430,7 @@ func (x *FleetProjectRequest) String() string {
 func (*FleetProjectRequest) ProtoMessage() {}
 
 func (x *FleetProjectRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[27]
+	mi := &file_alice_v1_fleet_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2463,7 +3443,7 @@ func (x *FleetProjectRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetProjectRequest.ProtoReflect.Descriptor instead.
 func (*FleetProjectRequest) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{27}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *FleetProjectRequest) GetRepoPath() string {
@@ -2540,7 +3520,7 @@ type FleetIssue struct {
 
 func (x *FleetIssue) Reset() {
 	*x = FleetIssue{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[28]
+	mi := &file_alice_v1_fleet_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2552,7 +3532,7 @@ func (x *FleetIssue) String() string {
 func (*FleetIssue) ProtoMessage() {}
 
 func (x *FleetIssue) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[28]
+	mi := &file_alice_v1_fleet_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2565,7 +3545,7 @@ func (x *FleetIssue) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetIssue.ProtoReflect.Descriptor instead.
 func (*FleetIssue) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{28}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *FleetIssue) GetNumber() int32 {
@@ -2626,7 +3606,7 @@ type FleetIssueList struct {
 
 func (x *FleetIssueList) Reset() {
 	*x = FleetIssueList{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[29]
+	mi := &file_alice_v1_fleet_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2638,7 +3618,7 @@ func (x *FleetIssueList) String() string {
 func (*FleetIssueList) ProtoMessage() {}
 
 func (x *FleetIssueList) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[29]
+	mi := &file_alice_v1_fleet_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2651,7 +3631,7 @@ func (x *FleetIssueList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetIssueList.ProtoReflect.Descriptor instead.
 func (*FleetIssueList) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{29}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *FleetIssueList) GetIssues() []*FleetIssue {
@@ -2672,7 +3652,7 @@ type FleetMilestone struct {
 
 func (x *FleetMilestone) Reset() {
 	*x = FleetMilestone{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[30]
+	mi := &file_alice_v1_fleet_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2684,7 +3664,7 @@ func (x *FleetMilestone) String() string {
 func (*FleetMilestone) ProtoMessage() {}
 
 func (x *FleetMilestone) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[30]
+	mi := &file_alice_v1_fleet_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2697,7 +3677,7 @@ func (x *FleetMilestone) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetMilestone.ProtoReflect.Descriptor instead.
 func (*FleetMilestone) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{30}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *FleetMilestone) GetNumber() int32 {
@@ -2723,7 +3703,7 @@ type FleetMilestoneList struct {
 
 func (x *FleetMilestoneList) Reset() {
 	*x = FleetMilestoneList{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[31]
+	mi := &file_alice_v1_fleet_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2735,7 +3715,7 @@ func (x *FleetMilestoneList) String() string {
 func (*FleetMilestoneList) ProtoMessage() {}
 
 func (x *FleetMilestoneList) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[31]
+	mi := &file_alice_v1_fleet_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2748,7 +3728,7 @@ func (x *FleetMilestoneList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetMilestoneList.ProtoReflect.Descriptor instead.
 func (*FleetMilestoneList) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{31}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *FleetMilestoneList) GetMilestones() []*FleetMilestone {
@@ -2778,7 +3758,7 @@ type FleetWorktree struct {
 
 func (x *FleetWorktree) Reset() {
 	*x = FleetWorktree{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[32]
+	mi := &file_alice_v1_fleet_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2790,7 +3770,7 @@ func (x *FleetWorktree) String() string {
 func (*FleetWorktree) ProtoMessage() {}
 
 func (x *FleetWorktree) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[32]
+	mi := &file_alice_v1_fleet_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2803,7 +3783,7 @@ func (x *FleetWorktree) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetWorktree.ProtoReflect.Descriptor instead.
 func (*FleetWorktree) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{32}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *FleetWorktree) GetPath() string {
@@ -2864,7 +3844,7 @@ type FleetWorktreeList struct {
 
 func (x *FleetWorktreeList) Reset() {
 	*x = FleetWorktreeList{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[33]
+	mi := &file_alice_v1_fleet_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2876,7 +3856,7 @@ func (x *FleetWorktreeList) String() string {
 func (*FleetWorktreeList) ProtoMessage() {}
 
 func (x *FleetWorktreeList) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[33]
+	mi := &file_alice_v1_fleet_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2889,7 +3869,7 @@ func (x *FleetWorktreeList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetWorktreeList.ProtoReflect.Descriptor instead.
 func (*FleetWorktreeList) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{33}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *FleetWorktreeList) GetWorktrees() []*FleetWorktree {
@@ -2916,7 +3896,7 @@ type FleetProjectCost struct {
 
 func (x *FleetProjectCost) Reset() {
 	*x = FleetProjectCost{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[34]
+	mi := &file_alice_v1_fleet_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2928,7 +3908,7 @@ func (x *FleetProjectCost) String() string {
 func (*FleetProjectCost) ProtoMessage() {}
 
 func (x *FleetProjectCost) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[34]
+	mi := &file_alice_v1_fleet_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2941,7 +3921,7 @@ func (x *FleetProjectCost) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetProjectCost.ProtoReflect.Descriptor instead.
 func (*FleetProjectCost) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{34}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *FleetProjectCost) GetProjectId() string {
@@ -3006,7 +3986,7 @@ type FleetCosts struct {
 
 func (x *FleetCosts) Reset() {
 	*x = FleetCosts{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[35]
+	mi := &file_alice_v1_fleet_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3018,7 +3998,7 @@ func (x *FleetCosts) String() string {
 func (*FleetCosts) ProtoMessage() {}
 
 func (x *FleetCosts) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[35]
+	mi := &file_alice_v1_fleet_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3031,7 +4011,7 @@ func (x *FleetCosts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetCosts.ProtoReflect.Descriptor instead.
 func (*FleetCosts) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{35}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *FleetCosts) GetDayStart() *timestamppb.Timestamp {
@@ -3102,7 +4082,7 @@ type FleetError struct {
 
 func (x *FleetError) Reset() {
 	*x = FleetError{}
-	mi := &file_alice_v1_fleet_proto_msgTypes[36]
+	mi := &file_alice_v1_fleet_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3114,7 +4094,7 @@ func (x *FleetError) String() string {
 func (*FleetError) ProtoMessage() {}
 
 func (x *FleetError) ProtoReflect() protoreflect.Message {
-	mi := &file_alice_v1_fleet_proto_msgTypes[36]
+	mi := &file_alice_v1_fleet_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3127,7 +4107,7 @@ func (x *FleetError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FleetError.ProtoReflect.Descriptor instead.
 func (*FleetError) Descriptor() ([]byte, []int) {
-	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{36}
+	return file_alice_v1_fleet_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *FleetError) GetError() string {
@@ -3277,7 +4257,7 @@ const file_alice_v1_fleet_proto_rawDesc = "" +
 	"\aoutcome\x18\x03 \x01(\tR\aoutcome\x12\x18\n" +
 	"\aattempt\x18\x04 \x01(\x05R\aattempt\x12\x1f\n" +
 	"\vstop_reason\x18\x05 \x01(\tR\n" +
-	"stopReason\"\xc7\x06\n" +
+	"stopReason\"\xd3\a\n" +
 	"\rFleetDelivery\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x14\n" +
 	"\x05shape\x18\x02 \x01(\tR\x05shape\x12\x16\n" +
@@ -3310,7 +4290,89 @@ const file_alice_v1_fleet_proto_rawDesc = "" +
 	"\x06limits\x18\x15 \x03(\v2\x1b.alice.v1.FleetDeliveryItemR\x06limits\x12\x12\n" +
 	"\x04next\x18\x16 \x01(\tR\x04next\x12\x15\n" +
 	"\x06pr_url\x18\x17 \x01(\tR\x05prUrl\x12\x1b\n" +
-	"\tpr_number\x18\x18 \x01(\x05R\bprNumber\"\xcb\x01\n" +
+	"\tpr_number\x18\x18 \x01(\x05R\bprNumber\x12H\n" +
+	"\x10acceptance_items\x18\x19 \x03(\v2\x1d.alice.v1.FleetAcceptanceItemR\x0facceptanceItems\x12@\n" +
+	"\n" +
+	"acceptance\x18\x1a \x01(\v2 .alice.v1.FleetAcceptanceSummaryR\n" +
+	"acceptance\">\n" +
+	"\x18FleetAcceptanceCriterion\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04text\x18\x02 \x01(\tR\x04text\"i\n" +
+	"\x17FleetAcceptanceEvidence\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\tR\x04type\x12\x10\n" +
+	"\x03ref\x18\x02 \x01(\tR\x03ref\x12\x14\n" +
+	"\x05paths\x18\x03 \x03(\tR\x05paths\x12\x12\n" +
+	"\x04note\x18\x04 \x01(\tR\x04note\"H\n" +
+	"\x16FleetAcceptanceBlocker\x12\x18\n" +
+	"\amissing\x18\x01 \x01(\tR\amissing\x12\x14\n" +
+	"\x05owner\x18\x02 \x01(\tR\x05owner\"\xc2\x01\n" +
+	"\x16FleetAcceptanceHistory\x12*\n" +
+	"\x02at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x14\n" +
+	"\x05actor\x18\x02 \x01(\tR\x05actor\x12\x12\n" +
+	"\x04kind\x18\x03 \x01(\tR\x04kind\x12\x16\n" +
+	"\x06status\x18\x04 \x01(\tR\x06status\x12\x12\n" +
+	"\x04note\x18\x05 \x01(\tR\x04note\x12\x10\n" +
+	"\x03run\x18\x06 \x01(\x05R\x03run\x12\x14\n" +
+	"\x05round\x18\a \x01(\x05R\x05round\"\xa3\x03\n" +
+	"\x13FleetAcceptanceItem\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
+	"\x04text\x18\x02 \x01(\tR\x04text\x12\x18\n" +
+	"\aversion\x18\x03 \x01(\x05R\aversion\x12\x16\n" +
+	"\x06report\x18\x04 \x01(\tR\x06report\x12=\n" +
+	"\bevidence\x18\x05 \x03(\v2!.alice.v1.FleetAcceptanceEvidenceR\bevidence\x12:\n" +
+	"\ablocker\x18\x06 \x01(\v2 .alice.v1.FleetAcceptanceBlockerR\ablocker\x12\x14\n" +
+	"\x05round\x18\a \x01(\x05R\x05round\x12\x1a\n" +
+	"\bdecision\x18\b \x01(\tR\bdecision\x12\x12\n" +
+	"\x04note\x18\t \x01(\tR\x04note\x12\x1d\n" +
+	"\n" +
+	"decided_by\x18\n" +
+	" \x01(\tR\tdecidedBy\x12\x1a\n" +
+	"\breopened\x18\v \x01(\tR\breopened\x12:\n" +
+	"\ahistory\x18\f \x03(\v2 .alice.v1.FleetAcceptanceHistoryR\ahistory\"K\n" +
+	"\x13FleetCriteriaChange\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x10\n" +
+	"\x03old\x18\x02 \x01(\tR\x03old\x12\x12\n" +
+	"\x04text\x18\x03 \x01(\tR\x04text\"\xe2\x01\n" +
+	"\x15FleetCriteriaProposal\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\x05R\aversion\x128\n" +
+	"\x05added\x18\x02 \x03(\v2\".alice.v1.FleetAcceptanceCriterionR\x05added\x12<\n" +
+	"\aremoved\x18\x03 \x03(\v2\".alice.v1.FleetAcceptanceCriterionR\aremoved\x127\n" +
+	"\achanged\x18\x04 \x03(\v2\x1d.alice.v1.FleetCriteriaChangeR\achanged\"?\n" +
+	"\x13FleetRejectedReport\x12\x10\n" +
+	"\x03run\x18\x01 \x01(\x05R\x03run\x12\x16\n" +
+	"\x06errors\x18\x02 \x03(\tR\x06errors\"\xf3\x03\n" +
+	"\x16FleetAcceptanceSummary\x12\x1e\n" +
+	"\n" +
+	"structured\x18\x01 \x01(\bR\n" +
+	"structured\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\x05R\aversion\x12\x1a\n" +
+	"\bapproved\x18\x03 \x01(\x05R\bapproved\x12\x14\n" +
+	"\x05total\x18\x04 \x01(\x05R\x05total\x12\x16\n" +
+	"\x06rounds\x18\x05 \x01(\x05R\x06rounds\x12#\n" +
+	"\rexternal_wait\x18\x06 \x01(\bR\fexternalWait\x12\x17\n" +
+	"\agate_ok\x18\a \x01(\bR\x06gateOk\x12\x1b\n" +
+	"\tgate_code\x18\b \x01(\tR\bgateCode\x12\x1b\n" +
+	"\tgate_open\x18\t \x03(\tR\bgateOpen\x12#\n" +
+	"\revidence_only\x18\n" +
+	" \x01(\bR\fevidenceOnly\x12;\n" +
+	"\bproposal\x18\v \x01(\v2\x1f.alice.v1.FleetCriteriaProposalR\bproposal\x12H\n" +
+	"\x10rejected_reports\x18\f \x03(\v2\x1d.alice.v1.FleetRejectedReportR\x0frejectedReports\x121\n" +
+	"\x14verification_skipped\x18\r \x01(\bR\x13verificationSkipped\"i\n" +
+	"\x1eFleetAcceptanceDecisionRequest\x12\x17\n" +
+	"\aitem_id\x18\x01 \x01(\tR\x06itemId\x12\x1a\n" +
+	"\bdecision\x18\x02 \x01(\tR\bdecision\x12\x12\n" +
+	"\x04note\x18\x03 \x01(\tR\x04note\"\xd1\x01\n" +
+	"\x18FleetAcceptanceEntryItem\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
+	"\x06status\x18\x02 \x01(\tR\x06status\x12=\n" +
+	"\bevidence\x18\x03 \x03(\v2!.alice.v1.FleetAcceptanceEvidenceR\bevidence\x12:\n" +
+	"\ablocker\x18\x04 \x01(\v2 .alice.v1.FleetAcceptanceBlockerR\ablocker\x12\x12\n" +
+	"\x04note\x18\x05 \x01(\tR\x04note\"\x97\x01\n" +
+	"\x1bFleetAcceptanceEntryRequest\x12>\n" +
+	"\bcriteria\x18\x01 \x03(\v2\".alice.v1.FleetAcceptanceCriterionR\bcriteria\x128\n" +
+	"\x05items\x18\x02 \x03(\v2\".alice.v1.FleetAcceptanceEntryItemR\x05items\"8\n" +
+	"\x1eFleetAcceptanceCriteriaRequest\x12\x16\n" +
+	"\x06action\x18\x01 \x01(\tR\x06action\"\xcb\x01\n" +
 	"\vFleetCounts\x12\x16\n" +
 	"\x06queued\x18\x01 \x01(\x05R\x06queued\x12\x18\n" +
 	"\arunning\x18\x02 \x01(\x05R\arunning\x12!\n" +
@@ -3465,96 +4527,124 @@ func file_alice_v1_fleet_proto_rawDescGZIP() []byte {
 	return file_alice_v1_fleet_proto_rawDescData
 }
 
-var file_alice_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
+var file_alice_v1_fleet_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
 var file_alice_v1_fleet_proto_goTypes = []any{
-	(*FleetTopic)(nil),            // 0: alice.v1.FleetTopic
-	(*FleetProjectBudget)(nil),    // 1: alice.v1.FleetProjectBudget
-	(*FleetProject)(nil),          // 2: alice.v1.FleetProject
-	(*FleetProjectList)(nil),      // 3: alice.v1.FleetProjectList
-	(*FleetTask)(nil),             // 4: alice.v1.FleetTask
-	(*FleetTaskList)(nil),         // 5: alice.v1.FleetTaskList
-	(*FleetEvent)(nil),            // 6: alice.v1.FleetEvent
-	(*FleetEventList)(nil),        // 7: alice.v1.FleetEventList
-	(*FleetVerification)(nil),     // 8: alice.v1.FleetVerification
-	(*FleetVerificationList)(nil), // 9: alice.v1.FleetVerificationList
-	(*FleetDiff)(nil),             // 10: alice.v1.FleetDiff
-	(*FleetDeliveryItem)(nil),     // 11: alice.v1.FleetDeliveryItem
-	(*FleetDeliveryCheck)(nil),    // 12: alice.v1.FleetDeliveryCheck
-	(*FleetDeliveryRun)(nil),      // 13: alice.v1.FleetDeliveryRun
-	(*FleetDelivery)(nil),         // 14: alice.v1.FleetDelivery
-	(*FleetCounts)(nil),           // 15: alice.v1.FleetCounts
-	(*FleetUsage)(nil),            // 16: alice.v1.FleetUsage
-	(*FleetProjectDigest)(nil),    // 17: alice.v1.FleetProjectDigest
-	(*FleetDigest)(nil),           // 18: alice.v1.FleetDigest
-	(*FleetAuditEntry)(nil),       // 19: alice.v1.FleetAuditEntry
-	(*FleetAuditList)(nil),        // 20: alice.v1.FleetAuditList
-	(*FleetDispatchRequest)(nil),  // 21: alice.v1.FleetDispatchRequest
-	(*FleetEpicRequest)(nil),      // 22: alice.v1.FleetEpicRequest
-	(*FleetEpicReply)(nil),        // 23: alice.v1.FleetEpicReply
-	(*FleetGitHubStatus)(nil),     // 24: alice.v1.FleetGitHubStatus
-	(*FleetReplyRequest)(nil),     // 25: alice.v1.FleetReplyRequest
-	(*FleetCancelRequest)(nil),    // 26: alice.v1.FleetCancelRequest
-	(*FleetProjectRequest)(nil),   // 27: alice.v1.FleetProjectRequest
-	(*FleetIssue)(nil),            // 28: alice.v1.FleetIssue
-	(*FleetIssueList)(nil),        // 29: alice.v1.FleetIssueList
-	(*FleetMilestone)(nil),        // 30: alice.v1.FleetMilestone
-	(*FleetMilestoneList)(nil),    // 31: alice.v1.FleetMilestoneList
-	(*FleetWorktree)(nil),         // 32: alice.v1.FleetWorktree
-	(*FleetWorktreeList)(nil),     // 33: alice.v1.FleetWorktreeList
-	(*FleetProjectCost)(nil),      // 34: alice.v1.FleetProjectCost
-	(*FleetCosts)(nil),            // 35: alice.v1.FleetCosts
-	(*FleetError)(nil),            // 36: alice.v1.FleetError
-	(*timestamppb.Timestamp)(nil), // 37: google.protobuf.Timestamp
+	(*FleetTopic)(nil),                     // 0: alice.v1.FleetTopic
+	(*FleetProjectBudget)(nil),             // 1: alice.v1.FleetProjectBudget
+	(*FleetProject)(nil),                   // 2: alice.v1.FleetProject
+	(*FleetProjectList)(nil),               // 3: alice.v1.FleetProjectList
+	(*FleetTask)(nil),                      // 4: alice.v1.FleetTask
+	(*FleetTaskList)(nil),                  // 5: alice.v1.FleetTaskList
+	(*FleetEvent)(nil),                     // 6: alice.v1.FleetEvent
+	(*FleetEventList)(nil),                 // 7: alice.v1.FleetEventList
+	(*FleetVerification)(nil),              // 8: alice.v1.FleetVerification
+	(*FleetVerificationList)(nil),          // 9: alice.v1.FleetVerificationList
+	(*FleetDiff)(nil),                      // 10: alice.v1.FleetDiff
+	(*FleetDeliveryItem)(nil),              // 11: alice.v1.FleetDeliveryItem
+	(*FleetDeliveryCheck)(nil),             // 12: alice.v1.FleetDeliveryCheck
+	(*FleetDeliveryRun)(nil),               // 13: alice.v1.FleetDeliveryRun
+	(*FleetDelivery)(nil),                  // 14: alice.v1.FleetDelivery
+	(*FleetAcceptanceCriterion)(nil),       // 15: alice.v1.FleetAcceptanceCriterion
+	(*FleetAcceptanceEvidence)(nil),        // 16: alice.v1.FleetAcceptanceEvidence
+	(*FleetAcceptanceBlocker)(nil),         // 17: alice.v1.FleetAcceptanceBlocker
+	(*FleetAcceptanceHistory)(nil),         // 18: alice.v1.FleetAcceptanceHistory
+	(*FleetAcceptanceItem)(nil),            // 19: alice.v1.FleetAcceptanceItem
+	(*FleetCriteriaChange)(nil),            // 20: alice.v1.FleetCriteriaChange
+	(*FleetCriteriaProposal)(nil),          // 21: alice.v1.FleetCriteriaProposal
+	(*FleetRejectedReport)(nil),            // 22: alice.v1.FleetRejectedReport
+	(*FleetAcceptanceSummary)(nil),         // 23: alice.v1.FleetAcceptanceSummary
+	(*FleetAcceptanceDecisionRequest)(nil), // 24: alice.v1.FleetAcceptanceDecisionRequest
+	(*FleetAcceptanceEntryItem)(nil),       // 25: alice.v1.FleetAcceptanceEntryItem
+	(*FleetAcceptanceEntryRequest)(nil),    // 26: alice.v1.FleetAcceptanceEntryRequest
+	(*FleetAcceptanceCriteriaRequest)(nil), // 27: alice.v1.FleetAcceptanceCriteriaRequest
+	(*FleetCounts)(nil),                    // 28: alice.v1.FleetCounts
+	(*FleetUsage)(nil),                     // 29: alice.v1.FleetUsage
+	(*FleetProjectDigest)(nil),             // 30: alice.v1.FleetProjectDigest
+	(*FleetDigest)(nil),                    // 31: alice.v1.FleetDigest
+	(*FleetAuditEntry)(nil),                // 32: alice.v1.FleetAuditEntry
+	(*FleetAuditList)(nil),                 // 33: alice.v1.FleetAuditList
+	(*FleetDispatchRequest)(nil),           // 34: alice.v1.FleetDispatchRequest
+	(*FleetEpicRequest)(nil),               // 35: alice.v1.FleetEpicRequest
+	(*FleetEpicReply)(nil),                 // 36: alice.v1.FleetEpicReply
+	(*FleetGitHubStatus)(nil),              // 37: alice.v1.FleetGitHubStatus
+	(*FleetReplyRequest)(nil),              // 38: alice.v1.FleetReplyRequest
+	(*FleetCancelRequest)(nil),             // 39: alice.v1.FleetCancelRequest
+	(*FleetProjectRequest)(nil),            // 40: alice.v1.FleetProjectRequest
+	(*FleetIssue)(nil),                     // 41: alice.v1.FleetIssue
+	(*FleetIssueList)(nil),                 // 42: alice.v1.FleetIssueList
+	(*FleetMilestone)(nil),                 // 43: alice.v1.FleetMilestone
+	(*FleetMilestoneList)(nil),             // 44: alice.v1.FleetMilestoneList
+	(*FleetWorktree)(nil),                  // 45: alice.v1.FleetWorktree
+	(*FleetWorktreeList)(nil),              // 46: alice.v1.FleetWorktreeList
+	(*FleetProjectCost)(nil),               // 47: alice.v1.FleetProjectCost
+	(*FleetCosts)(nil),                     // 48: alice.v1.FleetCosts
+	(*FleetError)(nil),                     // 49: alice.v1.FleetError
+	(*timestamppb.Timestamp)(nil),          // 50: google.protobuf.Timestamp
 }
 var file_alice_v1_fleet_proto_depIdxs = []int32{
 	1,  // 0: alice.v1.FleetProject.budget:type_name -> alice.v1.FleetProjectBudget
 	0,  // 1: alice.v1.FleetProject.topics:type_name -> alice.v1.FleetTopic
-	37, // 2: alice.v1.FleetProject.created_at:type_name -> google.protobuf.Timestamp
-	37, // 3: alice.v1.FleetProject.updated_at:type_name -> google.protobuf.Timestamp
+	50, // 2: alice.v1.FleetProject.created_at:type_name -> google.protobuf.Timestamp
+	50, // 3: alice.v1.FleetProject.updated_at:type_name -> google.protobuf.Timestamp
 	2,  // 4: alice.v1.FleetProjectList.projects:type_name -> alice.v1.FleetProject
-	37, // 5: alice.v1.FleetTask.created_at:type_name -> google.protobuf.Timestamp
-	37, // 6: alice.v1.FleetTask.updated_at:type_name -> google.protobuf.Timestamp
-	37, // 7: alice.v1.FleetTask.started_at:type_name -> google.protobuf.Timestamp
-	37, // 8: alice.v1.FleetTask.finished_at:type_name -> google.protobuf.Timestamp
-	37, // 9: alice.v1.FleetTask.last_activity_at:type_name -> google.protobuf.Timestamp
+	50, // 5: alice.v1.FleetTask.created_at:type_name -> google.protobuf.Timestamp
+	50, // 6: alice.v1.FleetTask.updated_at:type_name -> google.protobuf.Timestamp
+	50, // 7: alice.v1.FleetTask.started_at:type_name -> google.protobuf.Timestamp
+	50, // 8: alice.v1.FleetTask.finished_at:type_name -> google.protobuf.Timestamp
+	50, // 9: alice.v1.FleetTask.last_activity_at:type_name -> google.protobuf.Timestamp
 	4,  // 10: alice.v1.FleetTaskList.tasks:type_name -> alice.v1.FleetTask
-	37, // 11: alice.v1.FleetEvent.created_at:type_name -> google.protobuf.Timestamp
+	50, // 11: alice.v1.FleetEvent.created_at:type_name -> google.protobuf.Timestamp
 	6,  // 12: alice.v1.FleetEventList.events:type_name -> alice.v1.FleetEvent
-	37, // 13: alice.v1.FleetVerification.created_at:type_name -> google.protobuf.Timestamp
+	50, // 13: alice.v1.FleetVerification.created_at:type_name -> google.protobuf.Timestamp
 	8,  // 14: alice.v1.FleetVerificationList.verifications:type_name -> alice.v1.FleetVerification
-	37, // 15: alice.v1.FleetDeliveryRun.started_at:type_name -> google.protobuf.Timestamp
+	50, // 15: alice.v1.FleetDeliveryRun.started_at:type_name -> google.protobuf.Timestamp
 	12, // 16: alice.v1.FleetDelivery.checks:type_name -> alice.v1.FleetDeliveryCheck
 	13, // 17: alice.v1.FleetDelivery.runs:type_name -> alice.v1.FleetDeliveryRun
 	11, // 18: alice.v1.FleetDelivery.completed:type_name -> alice.v1.FleetDeliveryItem
 	11, // 19: alice.v1.FleetDelivery.pending:type_name -> alice.v1.FleetDeliveryItem
 	11, // 20: alice.v1.FleetDelivery.limits:type_name -> alice.v1.FleetDeliveryItem
-	15, // 21: alice.v1.FleetProjectDigest.counts:type_name -> alice.v1.FleetCounts
-	16, // 22: alice.v1.FleetProjectDigest.today:type_name -> alice.v1.FleetUsage
-	37, // 23: alice.v1.FleetDigest.generated_at:type_name -> google.protobuf.Timestamp
-	37, // 24: alice.v1.FleetDigest.day_start:type_name -> google.protobuf.Timestamp
-	17, // 25: alice.v1.FleetDigest.projects:type_name -> alice.v1.FleetProjectDigest
-	15, // 26: alice.v1.FleetDigest.totals:type_name -> alice.v1.FleetCounts
-	16, // 27: alice.v1.FleetDigest.today:type_name -> alice.v1.FleetUsage
-	37, // 28: alice.v1.FleetAuditEntry.created_at:type_name -> google.protobuf.Timestamp
-	19, // 29: alice.v1.FleetAuditList.entries:type_name -> alice.v1.FleetAuditEntry
-	1,  // 30: alice.v1.FleetProjectRequest.budget:type_name -> alice.v1.FleetProjectBudget
-	28, // 31: alice.v1.FleetIssueList.issues:type_name -> alice.v1.FleetIssue
-	30, // 32: alice.v1.FleetMilestoneList.milestones:type_name -> alice.v1.FleetMilestone
-	32, // 33: alice.v1.FleetWorktreeList.worktrees:type_name -> alice.v1.FleetWorktree
-	16, // 34: alice.v1.FleetProjectCost.today:type_name -> alice.v1.FleetUsage
-	16, // 35: alice.v1.FleetProjectCost.period:type_name -> alice.v1.FleetUsage
-	37, // 36: alice.v1.FleetCosts.day_start:type_name -> google.protobuf.Timestamp
-	37, // 37: alice.v1.FleetCosts.period_start:type_name -> google.protobuf.Timestamp
-	16, // 38: alice.v1.FleetCosts.today:type_name -> alice.v1.FleetUsage
-	16, // 39: alice.v1.FleetCosts.period:type_name -> alice.v1.FleetUsage
-	34, // 40: alice.v1.FleetCosts.projects:type_name -> alice.v1.FleetProjectCost
-	4,  // 41: alice.v1.FleetCosts.tasks:type_name -> alice.v1.FleetTask
-	4,  // 42: alice.v1.FleetCosts.overruns:type_name -> alice.v1.FleetTask
-	43, // [43:43] is the sub-list for method output_type
-	43, // [43:43] is the sub-list for method input_type
-	43, // [43:43] is the sub-list for extension type_name
-	43, // [43:43] is the sub-list for extension extendee
-	0,  // [0:43] is the sub-list for field type_name
+	19, // 21: alice.v1.FleetDelivery.acceptance_items:type_name -> alice.v1.FleetAcceptanceItem
+	23, // 22: alice.v1.FleetDelivery.acceptance:type_name -> alice.v1.FleetAcceptanceSummary
+	50, // 23: alice.v1.FleetAcceptanceHistory.at:type_name -> google.protobuf.Timestamp
+	16, // 24: alice.v1.FleetAcceptanceItem.evidence:type_name -> alice.v1.FleetAcceptanceEvidence
+	17, // 25: alice.v1.FleetAcceptanceItem.blocker:type_name -> alice.v1.FleetAcceptanceBlocker
+	18, // 26: alice.v1.FleetAcceptanceItem.history:type_name -> alice.v1.FleetAcceptanceHistory
+	15, // 27: alice.v1.FleetCriteriaProposal.added:type_name -> alice.v1.FleetAcceptanceCriterion
+	15, // 28: alice.v1.FleetCriteriaProposal.removed:type_name -> alice.v1.FleetAcceptanceCriterion
+	20, // 29: alice.v1.FleetCriteriaProposal.changed:type_name -> alice.v1.FleetCriteriaChange
+	21, // 30: alice.v1.FleetAcceptanceSummary.proposal:type_name -> alice.v1.FleetCriteriaProposal
+	22, // 31: alice.v1.FleetAcceptanceSummary.rejected_reports:type_name -> alice.v1.FleetRejectedReport
+	16, // 32: alice.v1.FleetAcceptanceEntryItem.evidence:type_name -> alice.v1.FleetAcceptanceEvidence
+	17, // 33: alice.v1.FleetAcceptanceEntryItem.blocker:type_name -> alice.v1.FleetAcceptanceBlocker
+	15, // 34: alice.v1.FleetAcceptanceEntryRequest.criteria:type_name -> alice.v1.FleetAcceptanceCriterion
+	25, // 35: alice.v1.FleetAcceptanceEntryRequest.items:type_name -> alice.v1.FleetAcceptanceEntryItem
+	28, // 36: alice.v1.FleetProjectDigest.counts:type_name -> alice.v1.FleetCounts
+	29, // 37: alice.v1.FleetProjectDigest.today:type_name -> alice.v1.FleetUsage
+	50, // 38: alice.v1.FleetDigest.generated_at:type_name -> google.protobuf.Timestamp
+	50, // 39: alice.v1.FleetDigest.day_start:type_name -> google.protobuf.Timestamp
+	30, // 40: alice.v1.FleetDigest.projects:type_name -> alice.v1.FleetProjectDigest
+	28, // 41: alice.v1.FleetDigest.totals:type_name -> alice.v1.FleetCounts
+	29, // 42: alice.v1.FleetDigest.today:type_name -> alice.v1.FleetUsage
+	50, // 43: alice.v1.FleetAuditEntry.created_at:type_name -> google.protobuf.Timestamp
+	32, // 44: alice.v1.FleetAuditList.entries:type_name -> alice.v1.FleetAuditEntry
+	1,  // 45: alice.v1.FleetProjectRequest.budget:type_name -> alice.v1.FleetProjectBudget
+	41, // 46: alice.v1.FleetIssueList.issues:type_name -> alice.v1.FleetIssue
+	43, // 47: alice.v1.FleetMilestoneList.milestones:type_name -> alice.v1.FleetMilestone
+	45, // 48: alice.v1.FleetWorktreeList.worktrees:type_name -> alice.v1.FleetWorktree
+	29, // 49: alice.v1.FleetProjectCost.today:type_name -> alice.v1.FleetUsage
+	29, // 50: alice.v1.FleetProjectCost.period:type_name -> alice.v1.FleetUsage
+	50, // 51: alice.v1.FleetCosts.day_start:type_name -> google.protobuf.Timestamp
+	50, // 52: alice.v1.FleetCosts.period_start:type_name -> google.protobuf.Timestamp
+	29, // 53: alice.v1.FleetCosts.today:type_name -> alice.v1.FleetUsage
+	29, // 54: alice.v1.FleetCosts.period:type_name -> alice.v1.FleetUsage
+	47, // 55: alice.v1.FleetCosts.projects:type_name -> alice.v1.FleetProjectCost
+	4,  // 56: alice.v1.FleetCosts.tasks:type_name -> alice.v1.FleetTask
+	4,  // 57: alice.v1.FleetCosts.overruns:type_name -> alice.v1.FleetTask
+	58, // [58:58] is the sub-list for method output_type
+	58, // [58:58] is the sub-list for method input_type
+	58, // [58:58] is the sub-list for extension type_name
+	58, // [58:58] is the sub-list for extension extendee
+	0,  // [0:58] is the sub-list for field type_name
 }
 
 func init() { file_alice_v1_fleet_proto_init() }
@@ -3568,7 +4658,7 @@ func file_alice_v1_fleet_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_alice_v1_fleet_proto_rawDesc), len(file_alice_v1_fleet_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   37,
+			NumMessages:   50,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -564,7 +564,7 @@
     "fleet_prompt_hint_failed": "可重試，或回覆這則訊息補充指示後在原 session 繼續。",
     "fleet_prompt_hint_stuck": "Agent 仍在執行但已一段時間沒有輸出。可以繼續等，或取消。",
     "fleet_prompt_hint_over_budget": "任務已停在預算上限，session 保留。可選擇忽略預算繼續，或捨棄。",
-    "fleet_btn_pass": "➡️ 放行",
+    "fleet_btn_pass": "➡️ 略過自動驗證，送審",
     "fleet_btn_hint": "💡 帶提示重試",
     "fleet_btn_goon": "▶️ 忽略預算繼續",
     "fleet_btn_approve_merge": "✅ 核准並合併",

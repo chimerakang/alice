@@ -75,6 +75,7 @@ func (wi *WebInterface) registerFleetRoutes(mux *http.ServeMux) {
 	command("POST /api/fleet/tasks", wi.fleetDispatchTask)
 	command("POST /api/fleet/epics", wi.fleetCreateEpic)
 	command("POST /api/fleet/tasks/{id}/{action}", wi.fleetTaskAction)
+	command("POST /api/fleet/tasks/{id}/acceptance/{op}", wi.fleetAcceptanceOp)
 
 	wi.registerFleetProjectRoutes(mux)
 }
@@ -162,7 +163,9 @@ func (e *fleetRequestError) Is(target error) bool { return target == errFleetBad
 // fleetErrorStatus maps a fleet error onto an HTTP status and a stable code.
 func fleetErrorStatus(err error) (int, string) {
 	switch {
-	case errors.Is(err, errFleetBadRequest),
+	case errors.Is(err, errAcceptConflict):
+		return http.StatusConflict, "acceptance"
+	case errors.Is(err, errAcceptInvalid), errors.Is(err, errFleetBadRequest),
 		errors.Is(err, fleet.ErrInvalidTask), errors.Is(err, fleet.ErrInvalidProject),
 		errors.Is(err, fleet.ErrNotGitRepo), errors.Is(err, fleet.ErrInvalidNotifyMode),
 		errors.Is(err, fleet.ErrBranchNotFound):
@@ -717,7 +720,7 @@ func (wi *WebInterface) fleetDispatchTask(ctx context.Context, svc *FleetService
 		return wi.fleetDispatchWithNewIssue(ctx, svc, actor, &req, shape)
 	}
 
-	task, err := svc.Commander.Dispatch(ctx, actor, fleet.DispatchRequest{
+	task, err := svc.DispatchIssue(ctx, actor, fleet.DispatchRequest{
 		ProjectID: projectID,
 		Goal:      strings.TrimSpace(req.Goal),
 		Issue:     int(req.Issue),
@@ -804,7 +807,7 @@ func (wi *WebInterface) fleetTaskAction(ctx context.Context, svc *FleetService, 
 		}
 		task, err = cmd.Cancel(ctx, actor, id, strings.TrimSpace(req.Reason))
 	case "retry":
-		task, err = cmd.Retry(ctx, actor, id)
+		task, err = svc.Retry(ctx, actor, id)
 	case "reply":
 		var req alicev1.FleetReplyRequest
 		if err := readFleetBody(r, &req); err != nil {
@@ -812,11 +815,11 @@ func (wi *WebInterface) fleetTaskAction(ctx context.Context, svc *FleetService, 
 		}
 		task, err = cmd.Reply(ctx, actor, fleet.ReplyRequest{TaskID: id, Text: strings.TrimSpace(req.Text), IgnoreBudget: req.IgnoreBudget})
 	case "approve":
-		task, err = cmd.Approve(ctx, actor, id)
+		task, err = svc.Approve(ctx, actor, id, false)
 	case "merge":
-		task, err = cmd.Merge(ctx, actor, id)
+		task, err = svc.Approve(ctx, actor, id, true)
 	case "pass":
-		task, err = cmd.Pass(ctx, actor, id)
+		task, err = svc.Pass(ctx, actor, id)
 	case "discard":
 		task, err = cmd.Discard(ctx, actor, id)
 	case "sync-issue":
@@ -926,6 +929,7 @@ func fleetDeliveryProto(d fleetDelivery) *alicev1.FleetDelivery {
 			Attempt: int32(r.Attempt), StopReason: r.StopReason,
 		})
 	}
+	fleetAcceptanceProto(out, d)
 	return out
 }
 

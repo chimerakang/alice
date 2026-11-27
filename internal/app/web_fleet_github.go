@@ -246,7 +246,7 @@ func resolvedEpicLabels(labels []string) []string {
 // Commander.Dispatch with the issue number, which triggers the alice-core
 // IssueTracker to fetch the issue from GitHub.
 func defaultFleetDispatchFromIssue(ctx context.Context, svc *FleetService, actor fleet.Actor, projectID string, issueNum int, opts fleet.DispatchRequest) (fleet.Task, error) {
-	return svc.Commander.Dispatch(ctx, actor, opts)
+	return svc.DispatchIssue(ctx, actor, opts)
 }
 
 // defaultEpicChildrenHeading is used when fleet.epic_children_heading is unset.

@@ -488,11 +488,11 @@ func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, da
 	case fleetActCancel:
 		_, err = cmd.Cancel(ctx, actor, taskID, "")
 	case fleetActRetry:
-		_, err = cmd.Retry(ctx, actor, taskID)
+		_, err = t.fleet.Retry(ctx, actor, taskID)
 	case fleetActApprove:
-		task, err = cmd.Approve(ctx, actor, taskID)
+		task, err = t.fleet.Approve(ctx, actor, taskID, false)
 	case fleetActMerge:
-		task, err = cmd.Merge(ctx, actor, taskID)
+		task, err = t.fleet.Approve(ctx, actor, taskID, true)
 	case fleetActDiscard:
 		// Discarding removes the checkout, uncommitted work included, so
 		// it takes a second press.
@@ -513,7 +513,7 @@ func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, da
 			t.fleetCards.SetConfirm(ctx, taskID, "")
 		}
 	case fleetActPass:
-		_, err = cmd.Pass(ctx, actor, taskID)
+		_, err = t.fleet.Pass(ctx, actor, taskID)
 	case fleetActGoOn:
 		_, err = cmd.Reply(ctx, actor, fleet.ReplyRequest{TaskID: taskID, IgnoreBudget: true})
 	case fleetActHint:

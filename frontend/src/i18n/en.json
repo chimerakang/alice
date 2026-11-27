@@ -920,7 +920,7 @@
     "actions": {
       "approve": "Approve",
       "merge": "Merge",
-      "pass": "Wave through",
+      "pass": "Skip checks, send to review",
       "retry": "Retry",
       "reply": "Send instructions",
       "cancel": "Cancel task",
@@ -1132,6 +1132,67 @@
       "refused": "Refused",
       "filter_project": "Filter by project",
       "filter_task": "Task ID"
+    },
+    "acceptance": {
+      "title": "Item-by-item acceptance",
+      "progress": "{{approved}} of {{total}} approved",
+      "version": "Criteria v{{n}}",
+      "none": "No item-by-item record yet",
+      "none_hint": "This task has no structured acceptance record. Add the items and what was delivered by hand.",
+      "auto": "Automatic checks",
+      "manual": "Manual acceptance",
+      "skipped": "Automatic checks were skipped to send this to review; no item was approved by that.",
+      "evidence_only": "No file changes: closing relies on the evidence alone.",
+      "external_wait": "An item awaits external confirmation. Automatic reruns are paused until the reply is recorded.",
+      "gate_items_not_approved": "Cannot close yet: not approved — {{items}}",
+      "gate_delivery_incomplete": "Cannot close yet: the project's delivery flow (pull request) is not complete.",
+      "report": {
+        "evidence_submitted": "Evidence submitted",
+        "needs_evidence": "Needs evidence",
+        "awaiting_external": "Awaiting external confirmation",
+        "not_reported": "Not reported yet"
+      },
+      "decision": {
+        "pending": "To review",
+        "approved": "Approved",
+        "needs_evidence": "Evidence requested",
+        "awaiting_external": "Waiting on outside"
+      },
+      "reopened": {
+        "criteria_changed": "Sent back to review: the criterion changed",
+        "evidence_changed": "Sent back to review: the evidence changed"
+      },
+      "blocker": "Missing: {{missing}} — to be handled by {{owner}}",
+      "round": "round {{n}}",
+      "approve": "Approve",
+      "ask": "Request evidence",
+      "wait": "Mark waiting on outside",
+      "reset": "Back to review",
+      "note_placeholder": "Note (required to request evidence or mark waiting)",
+      "send_back": "Send requested items back to the agent",
+      "history": "History",
+      "rejected": "Run {{run}}: report rejected ({{errors}}); its items stay not reported.",
+      "fill": "Fill in",
+      "fill_ref": "Evidence reference (commit, PR URL, report path or test)",
+      "fill_type": "Type",
+      "fill_save": "Save entry",
+      "criteria_text": "Items, one per line",
+      "criteria_save": "Create record",
+      "update_title": "The issue's criteria changed (v{{n}})",
+      "update_added": "Added",
+      "update_removed": "Removed",
+      "update_changed": "Changed",
+      "update_apply": "Apply",
+      "update_dismiss": "Keep current",
+      "refresh": "Check issue for changes",
+      "working": "Working…",
+      "evidence": {
+        "commit": "Commit",
+        "pr": "PR",
+        "report": "Report",
+        "test": "Test",
+        "file": "File"
+      }
     }
   }
 }

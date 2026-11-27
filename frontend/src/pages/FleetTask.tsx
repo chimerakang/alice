@@ -8,6 +8,7 @@ import StatusBadge from "@/components/StatusBadge";
 import TimelineEntry from "@/components/TimelineEntry";
 import ToolCallGantt from "@/components/ToolCallGantt";
 import FleetDeliverySummary from "@/components/fleet/FleetDeliverySummary";
+import FleetAcceptancePanel from "@/components/fleet/FleetAcceptancePanel";
 import FleetActions from "@/components/fleet/FleetActions";
 import FleetUnavailable from "@/components/fleet/FleetUnavailable";
 import LivenessDot from "@/components/fleet/LivenessDot";
@@ -211,7 +212,8 @@ export default function FleetTaskPage() {
             onShowDiff={() => document.getElementById("fleet-task-diff")?.scrollIntoView({ behavior: "smooth" })}
           />
         )}
-        <FleetActions task={task} />
+        {delivery && <FleetAcceptancePanel delivery={delivery} onChange={(d) => { setDelivery(d); void refreshTask(id); }} />}
+        <FleetActions task={task} onDone={() => void pullDetail()} />
       </header>
 
       <CollapsiblePanel title={t("fleet.task.timeline")} badge={runs.length} defaultOpen>

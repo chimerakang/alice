@@ -157,6 +157,67 @@ export interface FleetDelivery {
   next: "approve" | "decide" | "rerun" | "wait" | "none";
   pr_url: string;
   pr_number: number;
+  /** Per-item acceptance; empty when the task has no criteria on record. */
+  acceptance_items: FleetAcceptanceItem[];
+  acceptance: FleetAcceptanceSummary;
+}
+
+export type FleetAcceptanceReport = "evidence_submitted" | "needs_evidence" | "awaiting_external" | "not_reported";
+export type FleetAcceptanceDecision = "pending" | "approved" | "needs_evidence" | "awaiting_external";
+
+export interface FleetAcceptanceEvidence {
+  type: "commit" | "pr" | "report" | "test" | "file";
+  ref: string;
+  paths: string[];
+  note: string;
+}
+
+export interface FleetAcceptanceHistory {
+  at: string | null;
+  actor: string;
+  kind: "report" | "decision" | "reopened";
+  status: string;
+  note: string;
+  run: number;
+  round: number;
+}
+
+export interface FleetAcceptanceItem {
+  id: string;
+  text: string;
+  version: number;
+  report: FleetAcceptanceReport;
+  evidence: FleetAcceptanceEvidence[];
+  blocker: { missing: string; owner: string } | null;
+  round: number;
+  decision: FleetAcceptanceDecision;
+  note: string;
+  decided_by: string;
+  reopened: "" | "criteria_changed" | "evidence_changed";
+  history: FleetAcceptanceHistory[];
+}
+
+export interface FleetCriteriaProposal {
+  version: number;
+  added: { id: string; text: string }[];
+  removed: { id: string; text: string }[];
+  changed: { id: string; old: string; text: string }[];
+}
+
+export interface FleetAcceptanceSummary {
+  structured: boolean;
+  version: number;
+  approved: number;
+  total: number;
+  rounds: number;
+  external_wait: boolean;
+  gate_ok: boolean;
+  gate_code: "" | "items_not_approved" | "delivery_incomplete";
+  gate_open: string[];
+  evidence_only: boolean;
+  proposal: FleetCriteriaProposal | null;
+  rejected_reports: { run: number; errors: string[] }[];
+  verification_skipped: boolean;
 }
 
 export interface FleetDiff {
