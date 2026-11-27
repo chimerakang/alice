@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"claude-tg-agent/internal/app/process"
+	"github.com/chimerakang/alice-core/process"
 )
 
 const (

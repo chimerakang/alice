@@ -19,7 +19,7 @@
 ## 規則檔案位置
 
 ```
-internal/app/hermes/prompts/
+internal/app/prompts/
   planner_rules.md   — Planner 角色的 Hermes 核心規則
   executor_rules.md  — Executor 角色的 Hermes 核心規則
 ```
@@ -34,12 +34,12 @@ internal/app/hermes/prompts/
 {
   "hermes": {
     "enabled": true,
-    "prompts_dir": "internal/app/hermes/prompts"
+    "prompts_dir": "internal/app/prompts"
   }
 }
 ```
 
-預設值：`"internal/app/hermes/prompts"`
+預設值：`"internal/app/prompts"`
 
 ## PromptBuilder API
 

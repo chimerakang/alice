@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"claude-tg-agent/internal/app/hermes"
+	"github.com/chimerakang/alice-core/hermes"
 )
 
 func TestHandleHermesSnapshotsIncludesTaskUsageDetails(t *testing.T) {

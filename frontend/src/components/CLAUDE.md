@@ -17,34 +17,5 @@
 - 遵循統一的設計語言和配色方案
 
 <claude-mem-context>
-# Recent Activity
 
-### Feb 14, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #2045 | 4:56 PM | 🔴 | Dashboard data display issues root causes identified: Git integration not initialized, token chart hardcoded 7-day filter, tool executions from WebSocket only | ~759 |
-| #2028 | 4:52 PM | 🔵 | ToolCallGantt component visualizes tool execution timeline | ~354 |
-
-### Feb 15, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #2911 | 6:02 PM | 🔵 | TimelineEntry Component Structure and Data Display Logic | ~490 |
-| #2909 | " | 🔵 | ToolCallGantt Component Implementation and Non-Interactive Design | ~455 |
-
-### Apr 27, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #10912 | 4:25 PM | 🟣 | StrictReviewMode BLOCK metrics monitoring and weekly reporting | ~403 |
-
-### May 8, 2026
-
-| ID | Time | T | Title | Read |
-|----|------|---|-------|------|
-| #15976 | 5:07 PM | 🔵 | Telegram Markdown renderer targets frontend parity not external "leaf" project | ~268 |
-| #15973 | 5:00 PM | 🔵 | Clarified "leaf" reference in Alice codebase | ~277 |
-| #15974 | " | 🔵 | Identified markdown rendering capability gaps in Telegram backend | ~355 |
-| #15972 | " | 🔵 | Frontend "leaf" markdown implementation identified as react-markdown with GFM | ~576 |
 </claude-mem-context>

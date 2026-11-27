@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	appengine "claude-tg-agent/internal/app/engine"
+	appengine "github.com/chimerakang/alice-core/engine"
 )
 
 func TestResolveHermesRoleModelsKeepsCodexPlannerAndExecutorSeparateConfig(t *testing.T) {

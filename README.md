@@ -204,7 +204,7 @@ Alice Monitor is licensed under [AGPL-3.0](LICENSE).
 ### 📊 **Advanced Monitoring & Analytics**
 - 🎯 **AI 決策透明度** - 完整的決策過程記錄
 - ⚡ **性能監控** - 實時性能指標收集和分析
-- 🤝 **多代理協調** - 智能任務分配和協作
+- 🤝 **任務協調** - 由 alice-core 提供（Hermes、plan-execute engine、issueops）
 - 🔒 **安全增強** - PII 檢測、審計日誌、速率限制
 - 🚀 **DevOps 整合** - Docker、Kubernetes、CI/CD 支援
 

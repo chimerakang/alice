@@ -120,7 +120,7 @@ Use `ai_backend: "multi"` when you want a single Alice instance to serve both th
   },
   "hermes": {
     "enabled": true,
-    "prompts_dir": "internal/app/hermes/prompts"
+    "prompts_dir": "internal/app/prompts"
   }
 }
 ```

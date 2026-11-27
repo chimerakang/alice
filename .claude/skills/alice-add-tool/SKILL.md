@@ -23,7 +23,7 @@ Alice 目前不是自行註冊一組 `BuildTools()` 給模型呼叫；主要工�
 1. `internal/app/api.go` 的 `CLIClient.CallStream()` 解析 Claude Code CLI streaming events。
 2. `internal/app/codex_client.go` 將 Codex shell execution 映射成 synthetic `command_execution` tool event。
 3. `internal/app/agent.go` 在 `onToolUse` callback 記錄 tool start/completion、checkpoint 與 decision log。
-4. `internal/app/hermes/hooks.go` 提供 Hermes tool pre/post hooks，用來保護敏感路徑與做結果驗證。
+4. `alice-core `hermes/hooks.go`` 提供 Hermes tool pre/post hooks，用來保護敏感路徑與做結果驗證。
 5. `internal/app/web.go`、`internal/app/websocket.go`、`internal/app/proto_converters.go` 將 tool telemetry 暴露給 Dashboard/API。
 
 如果看到舊指引提到 `internal/app/tools.go`、`BuildTools()`、`ToolExecutor.Execute()`，先用 `rg` 確認是否仍存在；目前這些不是有效擴充點。
@@ -47,8 +47,8 @@ Alice 目前不是自行註冊一組 `BuildTools()` 給模型呼叫；主要工�
 
 - `internal/app/hermes/planner.go`
 - `internal/app/hermes/prompt_builder.go`
-- `internal/app/hermes/prompts/planner_rules*.md`
-- `internal/app/hermes/prompts/executor_rules*.md`
+- `internal/app/prompts/planner_rules*.md`
+- `internal/app/prompts/executor_rules*.md`
 
 保持 `tool_hints` 是建議，不是硬性限制。Executor 仍可依實際狀態選擇更合適工具。
 
@@ -56,8 +56,8 @@ Alice 目前不是自行註冊一組 `BuildTools()` 給模型呼叫；主要工�
 
 相關檔案：
 
-- `internal/app/hermes/hooks.go`
-- `internal/app/hermes/hooks_test.go`
+- `alice-core `hermes/hooks.go``
+- `alice-core `hermes/hooks_test.go``
 - `internal/app/checkpoint.go`
 
 敏感路徑規則必須保留：
@@ -83,7 +83,7 @@ Alice 目前不是自行註冊一組 `BuildTools()` 給模型呼叫；主要工�
 
 - [ ] 先用 `rg` 找現有 owner 與資料流，不假設 `BuildTools()` 存在。
 - [ ] 明確界定 executor path、logging path、UI/API path。
-- [ ] 若改 Hermes hooks，補或更新 `internal/app/hermes/hooks_test.go`。
+- [ ] 若改 Hermes hooks，補或更新 `alice-core `hermes/hooks_test.go``。
 - [ ] 若改 storage/API，補 migration/schema 與相關 handler 測試。
 - [ ] 若新增 user-facing 文字，同步觸發 `alice-i18n` skill。
 - [ ] 跑最小相關測試，例如 `go test ./internal/app/...` 或更窄 package。

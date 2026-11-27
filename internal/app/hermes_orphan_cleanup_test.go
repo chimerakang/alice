@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"claude-tg-agent/internal/app/hermes"
+	"github.com/chimerakang/alice-core/hermes"
 )
 
 type fakePendingStore struct {

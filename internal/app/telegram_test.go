@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	appengine "claude-tg-agent/internal/app/engine"
-	"claude-tg-agent/internal/app/hermes"
-	"claude-tg-agent/internal/app/issueops"
-	tasksvc "claude-tg-agent/internal/app/task"
+	appengine "github.com/chimerakang/alice-core/engine"
+	"github.com/chimerakang/alice-core/ghissue"
+	"github.com/chimerakang/alice-core/hermes"
+	"github.com/chimerakang/alice-core/issueops"
 )
 
 func writeTestExecutable(t *testing.T, dir, name, body string) string {
@@ -245,7 +245,7 @@ func TestLoadHermesContextTasksPrioritizesMatchingIssue(t *testing.T) {
 			t.Fatalf("CreateTask(%s): %v", task.ID, err)
 		}
 	}
-	bot := &TelegramBot{taskSvc: tasksvc.New(store)}
+	bot := &TelegramBot{taskSvc: newTaskService(store)}
 
 	tasks := bot.loadHermesContextTasks(42, "好，那我們 #94 算是結束了嗎")
 	if len(tasks) == 0 {
@@ -286,7 +286,7 @@ func TestMemoryResolverSkipsRecentMessagesForExplicitIssue(t *testing.T) {
 		}
 	}
 
-	resolver := NewMemoryResolver(tasksvc.New(store))
+	resolver := NewMemoryResolver(newTaskService(store))
 	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
 		ChatID:      42,
 		UserMessage: "接下來我們來處理 #143 memory的架構重構工作",
@@ -318,7 +318,7 @@ func TestMemoryResolverSkipsRecentMessagesForExplicitIssue(t *testing.T) {
 }
 
 func TestMemoryResolverIncludesRecentMessagesWithoutExplicitIssue(t *testing.T) {
-	resolver := NewMemoryResolver(tasksvc.New(hermes.NewMemoryTaskStore()))
+	resolver := NewMemoryResolver(newTaskService(hermes.NewMemoryTaskStore()))
 	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
 		ChatID:      42,
 		ThreadID:    7,
@@ -359,7 +359,7 @@ func TestMemoryResolverSkipsHermesTaskMemoryForHermesWithoutExplicitIssue(t *tes
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	resolver := NewMemoryResolver(tasksvc.New(store))
+	resolver := NewMemoryResolver(newTaskService(store))
 	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
 		ChatID:      42,
 		ThreadID:    7,
@@ -399,7 +399,7 @@ func TestMemoryResolverSkipsHermesTaskMemoryForNonHermesWithoutExplicitIssue(t *
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	resolver := NewMemoryResolver(tasksvc.New(store))
+	resolver := NewMemoryResolver(newTaskService(store))
 	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
 		ChatID:      42,
 		ThreadID:    7,
@@ -432,7 +432,7 @@ func TestMemoryResolverKeepsIssueScopedHermesTaskMemoryForDocumentMode(t *testin
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	resolver := NewMemoryResolver(tasksvc.New(store))
+	resolver := NewMemoryResolver(newTaskService(store))
 	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
 		ChatID:      42,
 		ThreadID:    7,
@@ -464,7 +464,7 @@ func TestMemoryResolverClampsLowPrioritySections(t *testing.T) {
 		t.Fatalf("CreateTask: %v", err)
 	}
 
-	resolver := NewMemoryResolver(tasksvc.New(store))
+	resolver := NewMemoryResolver(newTaskService(store))
 	bundle, err := resolver.Resolve(context.Background(), MemoryRequest{
 		ChatID:      42,
 		UserMessage: "繼續 #143",
@@ -1225,11 +1225,11 @@ func (f *fakeIssueOps) LoadIssue(ctx context.Context, projectDir string, issueNu
 	return nil, nil
 }
 
-func (f *fakeIssueOps) LoadIssueChecklistMapping(ctx context.Context, projectDir string, issueNumber int, subtasks []hermes.SubTask) (issueops.ChecklistMappingResult, error) {
+func (f *fakeIssueOps) LoadIssueChecklistMapping(ctx context.Context, projectDir string, issueNumber int, subtasks []issueops.WorkItem) (issueops.ChecklistMappingResult, error) {
 	return issueops.ChecklistMappingResult{}, nil
 }
 
-func (f *fakeIssueOps) CommentDone(ctx context.Context, projectDir string, issueNumber int, finalState hermes.TaskState, notes string) error {
+func (f *fakeIssueOps) CommentDone(ctx context.Context, projectDir string, issueNumber int, summary ghissue.CompletionSummary, notes string) error {
 	return nil
 }
 
@@ -3067,7 +3067,7 @@ func TestHandleMessageBareContinuationUsesNormalAgent(t *testing.T) {
 	const projectDir = "/tmp/alice-project"
 
 	store := hermes.NewMemoryTaskStore()
-	taskService := tasksvc.New(store)
+	taskService := newTaskService(store)
 	if _, err := taskService.CreateTask(hermes.TaskState{
 		ID:          "continuable-task",
 		ChatID:      key.chatID,
@@ -3426,7 +3426,7 @@ func TestRunAgentForStopButtonUsesMemoryResolverForDocumentAnalysis(t *testing.T
 		chatContexts: map[chatKey]*ChatContext{
 			key: NewChatContext(key.chatID, key.threadID, "/repo"),
 		},
-		taskSvc: tasksvc.New(store),
+		taskSvc: newTaskService(store),
 	}
 	agent := NewAgent(client, "/repo", key.chatID, key.threadID)
 	agent.current().ctx.RecentMsgs = []contextMessage{

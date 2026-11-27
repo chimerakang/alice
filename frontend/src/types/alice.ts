@@ -692,9 +692,3 @@ export interface HealthResponse {
   timestamp: string;
 }
 
-export interface MultiAgentStatus {
-  coordinator_status: string;
-  active_tasks: number;
-  specialized_agents: string[];
-  timestamp: string;
-}

@@ -1,6 +1,10 @@
-package hermes
+package app
 
 import (
+	"bytes"
+	"os/exec"
+
+	"github.com/chimerakang/alice-core/hermes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -129,7 +133,7 @@ func FetchMilestones(ctx context.Context, projectDir string) ([]MilestoneItem, e
 
 // FetchIssueWithMilestone fetches a single issue including its milestone field.
 // Returns ErrIssueNotFound if gh reports the issue does not exist.
-func FetchIssueWithMilestone(ctx context.Context, projectDir string, issueNum int) (*IssueContext, *MilestoneItem, error) {
+func FetchIssueWithMilestone(ctx context.Context, projectDir string, issueNum int) (*hermes.IssueContext, *MilestoneItem, error) {
 	out, err := ghOutputWithRetry(ctx, projectDir, ghTimeoutShort,
 		"issue", "view", fmt.Sprintf("%d", issueNum),
 		"--json", "number,title,body,state,labels,comments,milestone",
@@ -152,21 +156,21 @@ func FetchIssueWithMilestone(ctx context.Context, projectDir string, issueNum in
 	for i, l := range raw.Labels {
 		labels[i] = l.Name
 	}
-	comments := make([]IssueComment, 0, len(raw.Comments))
+	comments := make([]hermes.IssueComment, 0, len(raw.Comments))
 	for _, c := range raw.Comments {
-		comments = append(comments, IssueComment{
+		comments = append(comments, hermes.IssueComment{
 			Author:    c.Author.Login,
 			Body:      c.Body,
 			CreatedAt: c.CreatedAt,
 		})
 	}
-	issue := &IssueContext{
+	issue := &hermes.IssueContext{
 		Number:    raw.Number,
 		Title:     raw.Title,
 		Body:      raw.Body,
 		State:     raw.State,
 		Labels:    labels,
-		Checklist: ExtractChecklist(raw.Body),
+		Checklist: hermes.ExtractChecklist(raw.Body),
 		Comments:  comments,
 	}
 
@@ -182,7 +186,7 @@ func FetchIssueWithMilestone(ctx context.Context, projectDir string, issueNum in
 
 // FetchMilestoneIssues returns all issues (open + closed) belonging to the
 // given milestone number with full bodies and recent comments.
-func FetchMilestoneIssues(ctx context.Context, projectDir string, milestoneNumber int) ([]*IssueContext, error) {
+func FetchMilestoneIssues(ctx context.Context, projectDir string, milestoneNumber int) ([]*hermes.IssueContext, error) {
 	// Step 1: list issue numbers in milestone
 	out, err := ghOutput(ctx, projectDir, ghTimeoutLong,
 		"issue", "list",
@@ -203,7 +207,7 @@ func FetchMilestoneIssues(ctx context.Context, projectDir string, milestoneNumbe
 
 	// Step 2: fetch each issue with full body (parallel would be nicer but
 	// sequential is simpler and safe for typical milestone sizes).
-	issues := make([]*IssueContext, 0, len(nums))
+	issues := make([]*hermes.IssueContext, 0, len(nums))
 	for _, n := range nums {
 		issue, _, err := FetchIssueWithMilestone(ctx, projectDir, n.Number)
 		if err != nil {
@@ -389,7 +393,7 @@ func fetchMilestoneByNumber(ctx context.Context, projectDir string, number int) 
 // MilestoneReviewContext holds all GitHub data collected for a milestone review.
 type MilestoneReviewContext struct {
 	Milestone MilestoneItem
-	Issues    []*IssueContext
+	Issues    []*hermes.IssueContext
 }
 
 // MilestoneReviewResult is the structured output from the LLM reviewer.
@@ -590,7 +594,7 @@ func parseMilestoneReviewResult(raw string) *MilestoneReviewResult {
 
 // RunMilestoneReview invokes the configured LLM via callFn and returns a
 // structured review result. Read-only: never mutates GitHub state.
-func RunMilestoneReview(ctx context.Context, callFn CallPlanFunc, projectDir string, mrc *MilestoneReviewContext) (*MilestoneReviewResult, error) {
+func RunMilestoneReview(ctx context.Context, callFn hermes.CallPlanFunc, projectDir string, mrc *MilestoneReviewContext) (*MilestoneReviewResult, error) {
 	prompt := buildMilestoneReviewPrompt(mrc)
 	res, err := callFn(ctx, prompt, projectDir, "")
 	if err != nil {
@@ -720,4 +724,61 @@ func FormatMilestoneReview(projectDir string, ms *MilestoneItem, r *MilestoneRev
 	}
 
 	return sb.String(), nil
+}
+
+// gh timeouts cap every `gh` invocation so a hung CLI cannot block the caller.
+const (
+	ghTimeoutShort = 10 * time.Second // single-issue reads
+	ghTimeoutLong  = 90 * time.Second // list/search across issues
+)
+
+// ghRetryBackoff is the pause before the single retry in ghOutputWithRetry.
+// Variable so tests can shorten it.
+var ghRetryBackoff = 2 * time.Second
+
+// ghOutput runs a gh subcommand rooted at projectDir and embeds a trimmed
+// stderr snippet in the returned error.
+func ghOutput(ctx context.Context, projectDir string, timeout time.Duration, args ...string) ([]byte, error) {
+	if timeout <= 0 {
+		timeout = ghTimeoutShort
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd.Dir = projectDir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			if len(msg) > 300 {
+				msg = msg[:300] + "…"
+			}
+			return out, fmt.Errorf("%w: %s", err, msg)
+		}
+		return out, err
+	}
+	return out, nil
+}
+
+// isGHNotFoundErr reports whether a gh error indicates a missing issue or repository.
+func isGHNotFoundErr(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "no such") ||
+		strings.Contains(msg, "could not resolve")
+}
+
+// ghOutputWithRetry retries once on transient failures. Read-only commands only.
+func ghOutputWithRetry(ctx context.Context, projectDir string, timeout time.Duration, args ...string) ([]byte, error) {
+	out, err := ghOutput(ctx, projectDir, timeout, args...)
+	if err == nil || isGHNotFoundErr(err) || ctx.Err() != nil {
+		return out, err
+	}
+	select {
+	case <-ctx.Done():
+		return out, err
+	case <-time.After(ghRetryBackoff):
+	}
+	return ghOutput(ctx, projectDir, timeout, args...)
 }

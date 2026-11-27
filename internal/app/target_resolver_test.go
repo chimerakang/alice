@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"claude-tg-agent/internal/app/hermes"
+	"github.com/chimerakang/alice-core/hermes"
 )
 
 func TestResolveTargetCandidatesPrefersSameTopicInterruptedHermesTask(t *testing.T) {

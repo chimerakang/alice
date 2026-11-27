@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"log"
 
-	"claude-tg-agent/internal/app/hermes"
+	"github.com/chimerakang/alice-core/hermes"
 )
 
 // buildHermesTaskStore creates a TaskStateStore backed by the app's SQLite database.

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	appengine "claude-tg-agent/internal/app/engine"
+	appengine "github.com/chimerakang/alice-core/engine"
 )
 
 func TestInsertDecisionLogWritesUnifiedTaskGraph(t *testing.T) {

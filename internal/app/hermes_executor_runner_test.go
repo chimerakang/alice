@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"claude-tg-agent/internal/app/hermes"
+	"github.com/chimerakang/alice-core/hermes"
 )
 
 type sessionTrackingClient struct {

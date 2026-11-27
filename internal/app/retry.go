@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	appengine "claude-tg-agent/internal/app/engine"
-	"claude-tg-agent/internal/app/hermes"
+	appengine "github.com/chimerakang/alice-core/engine"
+	"github.com/chimerakang/alice-core/hermes"
 )
 
 const (

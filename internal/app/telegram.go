@@ -23,12 +23,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	appengine "claude-tg-agent/internal/app/engine"
-	"claude-tg-agent/internal/app/engine/errorclass"
-	"claude-tg-agent/internal/app/hermes"
-	"claude-tg-agent/internal/app/issueops"
+	appengine "github.com/chimerakang/alice-core/engine"
+	"github.com/chimerakang/alice-core/engine/errorclass"
+	"github.com/chimerakang/alice-core/hermes"
+	"github.com/chimerakang/alice-core/issueops"
 	"claude-tg-agent/internal/app/security"
-	"claude-tg-agent/internal/app/task"
 
 	"github.com/chimerakang/alice-core/fleet"
 )
@@ -194,7 +193,7 @@ type TelegramBot struct {
 
 	// Unified task graph — single TaskService instance shared across /retry,
 	// Hermes coordinator, and dashboard read paths for a consistent view.
-	taskSvc *task.Service
+	taskSvc *taskService
 }
 
 func (t *TelegramBot) issueOpsService() issueops.IssueOps {
@@ -468,7 +467,7 @@ func NewTelegramBot(config *Config, client Client) (*TelegramBot, error) {
 		retryInflight: make(map[string]*retryInflightEntry),
 
 		// Unified task graph — initialized here so all read paths share one store.
-		taskSvc: task.New(buildHermesTaskStore()),
+		taskSvc: newTaskService(buildHermesTaskStore()),
 	}
 
 	// Start message queue worker
@@ -599,8 +598,6 @@ func (t *TelegramBot) registerCommands() {
 		{"command": "abort", "description": "Abort running task"},
 		{"command": "dashboard", "description": "View system monitoring dashboard"},
 		{"command": "checkpoints", "description": "View checkpoint status"},
-		{"command": "multiagent", "description": "Multi-agent coordination management"},
-		{"command": "agents", "description": "View specialized agent list"},
 		{"command": "tasks", "description": "View to-do list"},
 		{"command": "close", "description": "Close a GitHub issue"},
 		{"command": "mr", "description": "Hermes milestone review"},
@@ -1349,31 +1346,7 @@ func (t *TelegramBot) handleMessage(key chatKey, userID int64, text string, capt
 		}
 	}
 
-	// Check if multi-agent coordination should be used
-	if globalAgentCoordinator.IsEnabled() && globalAgentCoordinator.ShouldUseMultiAgent(userMessage) {
-		// Use coordinated multi-agent execution
-		response, err = globalAgentCoordinator.ExecuteCoordinatedTask(userMessage, agent, createUpdateCallback())
-	} else if globalAgentCoordinator.IsEnabled() {
-		// Use single specialized agent based on task routing
-		agentType := globalAgentCoordinator.RouteTask(userMessage)
-		if agentType != GeneralAgent {
-			specializedAgent := globalAgentCoordinator.GetOrCreateAgent(agentType, agent)
-			msg := t.getLocalizedMessage(key.chatID, "using_agent", nil)
-			msg = strings.ReplaceAll(msg, "{agent}", agentType.String())
-			t.send(key, msg)
-
-			response, err = specializedAgent.ExecuteSubTask(SubTask{
-				ID:          fmt.Sprintf("single_%d", time.Now().Unix()),
-				Description: userMessage,
-				AgentType:   agentType,
-				Status:      TaskStatusInProgress,
-			}, createUpdateCallback())
-		} else {
-			// Fall back to regular agent
-			result, runErr := appengine.NewDirectEngine(agent).Run(context.Background(), userMessage, agent.chatContext, newTelegramProgressSink(createUpdateCallback()))
-			response, err = result.Text, runErr
-		}
-	} else if agent.IsPlanMode() {
+	if agent.IsPlanMode() {
 		// Plan/Execute two-phase execution
 		response, err = agent.RunWithPlan(userMessage, createUpdateCallback())
 	} else {
@@ -1517,8 +1490,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		help += t.getLocalizedMessage(key.chatID, "help_dashboard_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_checkpoints_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_abort_desc", nil) + "\n"
-		help += t.getLocalizedMessage(key.chatID, "help_multiagent_desc", nil) + "\n"
-		help += t.getLocalizedMessage(key.chatID, "help_agents_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_tasks_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_lang_desc", nil) + "\n"
 		help += t.getLocalizedMessage(key.chatID, "help_send_file_desc", nil) + "\n"
@@ -1797,28 +1768,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 			}
 		}
 
-	case "/multiagent":
-		if len(parts) < 2 {
-			// Show current status
-			t.handleMultiAgentStatus(key)
-		} else {
-			action := parts[1]
-			switch action {
-			case "enable":
-				globalAgentCoordinator.SetEnabled(true)
-				t.send(key, t.getLocalizedMessage(key.chatID, "multiagent_enabled", nil))
-			case "disable":
-				globalAgentCoordinator.SetEnabled(false)
-				t.send(key, t.getLocalizedMessage(key.chatID, "multiagent_disabled", nil))
-			case "status":
-				t.handleMultiAgentStatus(key)
-			case "stats":
-				t.handleMultiAgentStats(key)
-			default:
-				t.send(key, t.getLocalizedMessage(key.chatID, "multiagent_usage", nil))
-			}
-		}
-
 	case "/abort":
 		switch t.abortActiveTask(key, 0) {
 		case abortTaskAborted:
@@ -1828,9 +1777,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 		default:
 			t.send(key, t.getLocalizedMessage(key.chatID, "no_running_task", nil))
 		}
-
-	case "/agents":
-		t.handleAgentsList(key)
 
 	case "/tasks":
 		t.handleTasks(key)
@@ -2043,14 +1989,6 @@ func (t *TelegramBot) handleCommand(key chatKey, text string) {
 	case "/backend":
 		t.handleBackendCommand(key, parts)
 
-	case "/parallel":
-		if len(parts) < 2 {
-			t.send(key, t.getLocalizedMessage(key.chatID, "parallel_usage", nil))
-			return
-		}
-		taskText := strings.TrimSpace(text[len("/parallel"):])
-		t.handleParallelCommand(key, taskText)
-
 	case "/skills":
 		t.handleSkillsCommand(key)
 
@@ -2120,7 +2058,7 @@ func (t *TelegramBot) handleMilestoneReviewCommand(key chatKey, text string) {
 	resolveCtx, resolveCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer resolveCancel()
 
-	ms, err := hermes.ResolveGitHubMilestone(resolveCtx, projectDir, selector)
+	ms, err := ResolveGitHubMilestone(resolveCtx, projectDir, selector)
 	if err != nil {
 		t.send(key, formatMilestoneResolveError(err))
 		return
@@ -2131,7 +2069,7 @@ func (t *TelegramBot) handleMilestoneReviewCommand(key chatKey, text string) {
 	loadCtx, loadCancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer loadCancel()
 
-	mrc, err := hermes.LoadMilestoneReviewContext(loadCtx, projectDir, ms)
+	mrc, err := LoadMilestoneReviewContext(loadCtx, projectDir, ms)
 	if err != nil {
 		t.send(key, fmt.Sprintf("❌ 無法載入 milestone issues：%s", err.Error()))
 		return
@@ -2154,14 +2092,14 @@ func (t *TelegramBot) handleMilestoneReviewCommand(key chatKey, text string) {
 	reviewCtx, reviewCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer reviewCancel()
 
-	result, err := hermes.RunMilestoneReview(reviewCtx, callFn, projectDir, mrc)
+	result, err := RunMilestoneReview(reviewCtx, callFn, projectDir, mrc)
 	if err != nil {
 		t.send(key, fmt.Sprintf("❌ Milestone review 失敗：%s", err.Error()))
 		return
 	}
 
 	// Step 4: format and send.
-	msg, err := hermes.FormatMilestoneReview(projectDir, ms, result)
+	msg, err := FormatMilestoneReview(projectDir, ms, result)
 	if err != nil {
 		t.send(key, fmt.Sprintf("❌ 格式化 review 失敗：%s", err.Error()))
 		return
@@ -2173,15 +2111,15 @@ func (t *TelegramBot) handleMilestoneReviewCommand(key chatKey, text string) {
 // formatMilestoneResolveError converts typed resolver errors into user-friendly
 // Telegram messages.
 func formatMilestoneResolveError(err error) string {
-	var noMS *hermes.ErrNoMilestoneOnIssue
+	var noMS *ErrNoMilestoneOnIssue
 	if errors.As(err, &noMS) {
 		return fmt.Sprintf("⚠️ Issue #%d 沒有關聯的 milestone。\n\n請確認此 issue 已設定 milestone 後再試。", noMS.IssueNumber)
 	}
-	var notFound *hermes.ErrIssueNotFound
+	var notFound *ErrIssueNotFound
 	if errors.As(err, &notFound) {
 		return fmt.Sprintf("❌ 找不到 Issue #%d。", notFound.IssueNumber)
 	}
-	var noMatch *hermes.ErrNoMilestoneMatch
+	var noMatch *ErrNoMilestoneMatch
 	if errors.As(err, &noMatch) {
 		msg := fmt.Sprintf("❌ 找不到符合 `%s` 的 milestone。", noMatch.Query)
 		if len(noMatch.Available) > 0 {
@@ -2192,7 +2130,7 @@ func formatMilestoneResolveError(err error) string {
 		}
 		return msg
 	}
-	var ambiguous *hermes.ErrAmbiguousMilestone
+	var ambiguous *ErrAmbiguousMilestone
 	if errors.As(err, &ambiguous) {
 		msg := fmt.Sprintf("⚠️ 查詢 `%s` 匹配到多個 milestones，請使用更精確的名稱重試：", ambiguous.Query)
 		for _, m := range ambiguous.Candidates {
@@ -4504,7 +4442,7 @@ func (t *TelegramBot) startHermesTaskWithIssueTierFromState(key chatKey, goal, p
 	// Falls back to embedded defaults if the directory is missing.
 	promptsDir := cfg.PromptsDir
 	if promptsDir == "" {
-		promptsDir = "internal/app/hermes/prompts"
+		promptsDir = "internal/app/prompts"
 	}
 	pb := hermes.LoadPromptBuilderForTier(promptsDir, tier)
 
@@ -5673,110 +5611,6 @@ func splitMessage(text string, maxLen int) []string {
 	return chunks
 }
 
-// handleMultiAgentStatus shows the current multi-agent system status
-func (t *TelegramBot) handleMultiAgentStatus(key chatKey) {
-	stats := globalAgentCoordinator.GetAgentStats()
-
-	statusMsg := t.getLocalizedMessage(key.chatID, "multiagent_status_title", nil)
-	status := statusMsg
-
-	if globalAgentCoordinator.IsEnabled() {
-		status += t.getLocalizedMessage(key.chatID, "multiagent_status_enabled", nil) + "\n\n"
-	} else {
-		status += t.getLocalizedMessage(key.chatID, "multiagent_status_disabled", nil) + "\n\n"
-	}
-
-	totalAgents := stats["total_agents"].(int)
-	statsMsg := t.getLocalizedMessage(key.chatID, "multiagent_status_stats", nil)
-	statsMsg = strings.ReplaceAll(statsMsg, "{count}", fmt.Sprintf("%d", totalAgents))
-	status += statsMsg
-
-	if activeTask, hasTask := stats["active_task"]; hasTask && activeTask != nil {
-		taskInfo := activeTask.(map[string]interface{})
-		runningMsg := t.getLocalizedMessage(key.chatID, "multiagent_status_running", nil)
-		runningMsg = strings.ReplaceAll(runningMsg, "{id}", taskInfo["id"].(string))
-		runningMsg = strings.ReplaceAll(runningMsg, "{status}", taskInfo["status"].(string))
-		status += runningMsg
-	}
-
-	status += t.getLocalizedMessage(key.chatID, "multiagent_available_types", nil) + "\n"
-	status += "• General - " + t.getLocalizedMessage(key.chatID, "agent_general", nil) + "\n"
-	status += "• CodeReview - " + t.getLocalizedMessage(key.chatID, "agent_code_review", nil) + "\n"
-	status += "• Testing - " + t.getLocalizedMessage(key.chatID, "agent_testing", nil) + "\n"
-	status += "• Documentation - " + t.getLocalizedMessage(key.chatID, "agent_documentation", nil) + "\n"
-	status += "• Deployment - " + t.getLocalizedMessage(key.chatID, "agent_deployment", nil) + "\n"
-	status += "• Debug - " + t.getLocalizedMessage(key.chatID, "agent_debug", nil) + "\n"
-
-	t.sendMarkdown(key, status)
-}
-
-// handleMultiAgentStats shows detailed statistics about agent usage
-func (t *TelegramBot) handleMultiAgentStats(key chatKey) {
-	stats := globalAgentCoordinator.GetAgentStats()
-
-	titleMsg := t.getLocalizedMessage(key.chatID, "multiagent_usage_stats_title", nil)
-	response := titleMsg
-
-	if agents, hasAgents := stats["agents"]; hasAgents {
-		agentStats := agents.(map[string]interface{})
-
-		if len(agentStats) == 0 {
-			response += t.getLocalizedMessage(key.chatID, "multiagent_no_active", nil) + "\n"
-		} else {
-			for agentType, agentInfo := range agentStats {
-				info := agentInfo.(map[string]interface{})
-				taskCount := info["task_count"].(int)
-				lastUsed := info["last_used"].(time.Time)
-
-				headerMsg := t.getLocalizedMessage(key.chatID, "multiagent_agent_header", nil)
-				headerMsg = strings.ReplaceAll(headerMsg, "{agent_type}", agentType)
-				response += headerMsg
-
-				taskCountMsg := t.getLocalizedMessage(key.chatID, "multiagent_agent_task_count", nil)
-				taskCountMsg = strings.ReplaceAll(taskCountMsg, "{count}", fmt.Sprintf("%d", taskCount))
-				response += taskCountMsg
-
-				lastUsedMsg := t.getLocalizedMessage(key.chatID, "multiagent_agent_last_used", nil)
-				lastUsedMsg = strings.ReplaceAll(lastUsedMsg, "{time}", lastUsed.Format("2006-01-02 15:04:05"))
-				response += lastUsedMsg
-			}
-		}
-	}
-
-	t.sendMarkdown(key, response)
-}
-
-// handleAgentsList shows available agent types and their capabilities
-func (t *TelegramBot) handleAgentsList(key chatKey) {
-	response := t.getLocalizedMessage(key.chatID, "multiagent_list_response", nil) + "\n\n"
-
-	agents := []struct {
-		name    string
-		key     string
-		descKey string
-	}{
-		{"General", "agent_general", "agent_general_desc"},
-		{"CodeReview", "agent_code_review", "agent_code_review_desc"},
-		{"Testing", "agent_testing", "agent_testing_desc"},
-		{"Documentation", "agent_documentation", "agent_documentation_desc"},
-		{"Deployment", "agent_deployment", "agent_deployment_desc"},
-		{"Debug", "agent_debug", "agent_debug_desc"},
-	}
-
-	for _, agent := range agents {
-		response += fmt.Sprintf("**%s**\n", agent.name)
-		desc := t.getLocalizedMessage(key.chatID, agent.descKey, nil)
-		response += fmt.Sprintf("Description: %s\n\n", desc)
-	}
-
-	response += t.getLocalizedMessage(key.chatID, "agent_usage_title", nil) + "\n"
-	response += t.getLocalizedMessage(key.chatID, "agent_usage_auto", nil) + "\n"
-	response += t.getLocalizedMessage(key.chatID, "agent_usage_enable", nil) + "\n"
-	response += t.getLocalizedMessage(key.chatID, "agent_usage_complex", nil) + "\n"
-
-	t.sendMarkdown(key, response)
-}
-
 // handleDashboard shows system dashboard information
 func (t *TelegramBot) handleDashboard(key chatKey) {
 	log.Printf("[telegram] handleDashboard called for chat %d", key.chatID)
@@ -5800,14 +5634,6 @@ func (t *TelegramBot) handleDashboard(key chatKey) {
 	} else {
 		checkpointDisabledMsg := t.getLocalizedMessage(key.chatID, "dashboard_checkpoint_disabled", nil)
 		dashboard += checkpointDisabledMsg + "\n"
-	}
-
-	if globalAgentCoordinator != nil && globalAgentCoordinator.IsEnabled() {
-		multiagentEnabledMsg := t.getLocalizedMessage(key.chatID, "dashboard_multiagent_enabled", nil)
-		dashboard += multiagentEnabledMsg + "\n"
-	} else {
-		multiagentDisabledMsg := t.getLocalizedMessage(key.chatID, "dashboard_multiagent_disabled", nil)
-		dashboard += multiagentDisabledMsg + "\n"
 	}
 
 	// Web Interface
@@ -5844,7 +5670,6 @@ func (t *TelegramBot) handleDashboard(key chatKey) {
 	dashboard += quickActionsTitle + "\n"
 	dashboard += t.getLocalizedMessage(key.chatID, "dashboard_quick_checkpoints", nil) + "\n"
 	dashboard += t.getLocalizedMessage(key.chatID, "dashboard_quick_status", nil) + "\n"
-	dashboard += t.getLocalizedMessage(key.chatID, "dashboard_quick_multiagent", nil) + "\n"
 	dashboard += t.getLocalizedMessage(key.chatID, "dashboard_quick_button", nil) + "\n"
 
 	// Send dashboard with Web App button
@@ -6568,7 +6393,7 @@ func (t *TelegramBot) handleIssueOpsCallback(key chatKey, queryID, data string) 
 		result, err := ops.SyncChecklist(ctx, issueops.SyncChecklistRequest{
 			ProjectDir:  projectDir,
 			IssueNumber: issueNumber,
-			SubTasks:    task.Plan,
+			SubTasks:    issueOpsWorkItems(task.Plan),
 		})
 		if err != nil || (result.Recovery != nil && result.Recovery.State == hermes.IssueStateBlocked) {
 			t.answerCallbackQuery(queryID, "⛔ 同步 checklist 失敗，已轉入 blocked")
@@ -10923,57 +10748,6 @@ func (t *TelegramBot) handleSkillDeleteCommand(key chatKey, skillID string) {
 		"{id}": skillID,
 	})
 	t.send(key, msg)
-}
-
-// handleParallelCommand handles /parallel command for concurrent task execution
-func (t *TelegramBot) handleParallelCommand(key chatKey, taskText string) {
-	if globalOrchestrator == nil {
-		t.send(key, t.getLocalizedMessage(key.chatID, "parallel_disabled", nil))
-		return
-	}
-
-	tasks := ParseParallelTasks(taskText)
-	if len(tasks) < 2 {
-		t.send(key, t.getLocalizedMessage(key.chatID, "parallel_min_tasks", nil))
-		return
-	}
-
-	if len(tasks) > 5 {
-		t.send(key, t.getLocalizedMessage(key.chatID, "parallel_max_tasks", nil))
-		return
-	}
-
-	// Send initial status
-	startMsg := t.getLocalizedMessage(key.chatID, "parallel_started", map[string]string{
-		"{count}": fmt.Sprintf("%d", len(tasks)),
-	})
-	t.send(key, startMsg)
-
-	// Execute in background
-	go func() {
-		done := globalJobTracker.Start("parallel.command")
-		defer done(nil)
-		execution := globalOrchestrator.ExecuteParallel(
-			tasks,
-			t.client,
-			t.getAgent(key).ProjectDir(),
-			key.chatID,
-			key.threadID,
-			func(taskID, status, result string) {
-				// Send progress update
-				progressMsg := t.getLocalizedMessage(key.chatID, "parallel_progress", map[string]string{
-					"{task_id}": taskID,
-					"{status}":  status,
-				})
-				t.send(key, progressMsg)
-			},
-			0, // use default timeout
-		)
-
-		// Send final results
-		resultMsg := FormatParallelResults(execution)
-		t.sendMarkdown(key, resultMsg)
-	}()
 }
 
 // handleCronCommand handles all /cron subcommands

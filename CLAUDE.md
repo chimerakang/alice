@@ -46,6 +46,14 @@ Alice 的 bot layer 會解析以下 marker，並在回應中自動觸發對應�
 
 Build / restart 操作（`go build`、`pkill alice`、process restart）只有在使用者明確要求時才執行。
 
+## Coordination architecture
+
+任務協調（Hermes planner/executor、plan-execute engine、issueops、process runner）已移到
+[`alice-core`](https://github.com/chimerakang/alice-core)，本 repo 以 `github.com/chimerakang/alice-core/{hermes,engine,issueops,process}` 引用，
+不再內含 `internal/app/{hermes,engine,task,issueops,process}`，也已移除 `AgentCoordinator` / `SubAgentOrchestrator`（`/multiagent`、`/agents`、`/api/multiagent/*`）。
+Hermes prompt 規則檔留在 `internal/app/prompts/`。Dashboard 的 `/hermes-tasks`、`/reviews`、`/quality` 改為唯讀歷史檢視
+（保留 `/api/hermes/{tasks,snapshots,stats}`、`/api/quality/*` GET；移除 `/api/hermes/active`、`/api/hermes/resolve`）。
+
 ## Roadmap
 
 - user-facing 文字、翻譯、模板變數：載入 [`alice-i18n`](.claude/skills/alice-i18n/SKILL.md) 與 [`docs/i18n_guide.md`](docs/i18n_guide.md)
@@ -54,5 +62,5 @@ Build / restart 操作（`go build`、`pkill alice`、process restart）只有�
 - Deployment Architecture、Startup Sequence、Project Structure：讀 [`docs/arch/deployment.md`](docs/arch/deployment.md) 與 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
 - Task & Issue Management、`MASTER_TASKS.md` 生成：讀 [`docs/playbooks/tasks.md`](docs/playbooks/tasks.md)
 - Subtask 拆分框架與驗收標準：讀 [`docs/SUBTASK_FRAMEWORK.md`](docs/SUBTASK_FRAMEWORK.md) 與 [`docs/SUBTASK_DECISION_CARD.md`](docs/SUBTASK_DECISION_CARD.md)
-- Hermes prompt 規則與工具限制：讀 [`internal/app/hermes/prompts/planner_rules_codex.md`](internal/app/hermes/prompts/planner_rules_codex.md) 與 [`internal/app/hermes/prompts/executor_rules_codex.md`](internal/app/hermes/prompts/executor_rules_codex.md)
+- Hermes prompt 規則與工具限制：讀 [`internal/app/prompts/planner_rules_codex.md`](internal/app/prompts/planner_rules_codex.md) 與 [`internal/app/prompts/executor_rules_codex.md`](internal/app/prompts/executor_rules_codex.md)
 - Dashboard、WebSocket、Storage、Git integration：讀 [`docs/DASHBOARD.md`](docs/DASHBOARD.md)、[`docs/WEBSOCKET_REALTIME.md`](docs/WEBSOCKET_REALTIME.md)、[`docs/STORAGE_PERSISTENCE.md`](docs/STORAGE_PERSISTENCE.md)、[`docs/GIT_INTEGRATION.md`](docs/GIT_INTEGRATION.md)

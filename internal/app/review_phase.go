@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	appengine "claude-tg-agent/internal/app/engine"
+	appengine "github.com/chimerakang/alice-core/engine"
 )
 
 // CLIReviewPhase runs the advisory reviewer through the configured client.

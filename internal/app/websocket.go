@@ -12,7 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	appengine "claude-tg-agent/internal/app/engine"
+	appengine "github.com/chimerakang/alice-core/engine"
 	"claude-tg-agent/internal/app/security"
 )
 

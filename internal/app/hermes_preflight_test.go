@@ -2,7 +2,7 @@ package app
 
 import (
 	"context"
-	"claude-tg-agent/internal/app/hermes"
+	"github.com/chimerakang/alice-core/hermes"
 	"strings"
 	"testing"
 	"time"

@@ -202,7 +202,7 @@ type HermesConfig struct {
 	TaskRetry HermesTaskRetryConfig `json:"task_retry"`
 
 	// PromptsDir is the directory containing planner_rules.md and executor_rules.md.
-	// Defaults to "internal/app/hermes/prompts" relative to the working directory.
+	// Defaults to "internal/app/prompts" relative to the working directory.
 	PromptsDir string `json:"prompts_dir"`
 
 	// Summary controls task completion summary reporting.
@@ -698,15 +698,6 @@ func Main() {
 		log.Printf("   Decision logging: enabled (level: %s)", config.DecisionLogLevel)
 	}
 
-	// Apply multi-agent settings
-	if config.EnableMultiAgent {
-		globalAgentCoordinator.SetEnabled(true)
-		log.Printf("   Multi-agent coordination: enabled")
-	} else {
-		globalAgentCoordinator.SetEnabled(false)
-		log.Printf("   Multi-agent coordination: disabled")
-	}
-
 	// Initialize performance monitoring
 	if config.EnablePerformanceMonitoring {
 		InitPerformanceMonitor()
@@ -727,10 +718,6 @@ func Main() {
 		// Initialize Auto-Skill system
 		InitSkillManager()
 		log.Printf("   Auto-Skill system: enabled")
-
-		// Initialize SubAgent Orchestrator for parallel execution
-		InitOrchestrator(3) // max 3 concurrent CLI sessions
-		log.Printf("   SubAgent Orchestrator: enabled (max_concurrent=3)")
 	}
 
 	// Initialize WebSocket system

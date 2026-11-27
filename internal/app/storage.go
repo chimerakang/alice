@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"claude-tg-agent/internal/app/hermes"
+	"github.com/chimerakang/alice-core/hermes"
 	"claude-tg-agent/internal/app/security"
 
 	_ "modernc.org/sqlite" // Pure Go SQLite driver (no CGO required)
@@ -1950,29 +1950,6 @@ func scanScheduledTasks(rows *sql.Rows) ([]ScheduledTask, error) {
 		tasks = append(tasks, task)
 	}
 	return tasks, rows.Err()
-}
-
-// ==================== Parallel Executions ====================
-
-// InsertParallelExecution 插入並行執行記錄
-func (s *SQLiteStorage) InsertParallelExecution(exec *ParallelExecution) error {
-	resultsJSON, _ := json.Marshal(exec.Results)
-	var completedAt interface{}
-	if exec.CompletedAt != nil {
-		completedAt = *exec.CompletedAt
-	}
-
-	return s.execWithRetry(func() error {
-		_, err := s.db.Exec(`
-			INSERT INTO parallel_executions (id, chat_id, thread_id, task_count, status,
-				results_json, total_time_ms, created_at, completed_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			exec.ID, exec.ChatID, exec.ThreadID, len(exec.Tasks),
-			string(exec.Status), string(resultsJSON),
-			exec.TotalTime.Milliseconds(), exec.CreatedAt, completedAt,
-		)
-		return err
-	})
 }
 
 // ==================== Auto Skills ====================

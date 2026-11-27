@@ -18,7 +18,7 @@
 **結論**：<一句話。世界改變了什麼？例如「在 telegram.go:2174 加了 oneShot 清 session 邏輯」或「驗證 ReasoningRepo 仍是 stub，但所有 caller 都被 service 層攔成 codes.Unimplemented」>
 
 **證據**：
-- <檔名:行號 或 跑了哪個指令 或 哪個 test 通過。例如「`go test ./internal/app/engine -run TestStrictRetry` PASS」、「`internal/data/repos.go:18-26` 確認 `ReasoningRepo.Get` 仍 return errNotImplemented」>
+- <檔名:行號 或 跑了哪個指令 或 哪個 test 通過。例如「`go test github.com/chimerakang/alice-core/engine -run TestStrictRetry` PASS」、「`internal/data/repos.go:18-26` 確認 `ReasoningRepo.Get` 仍 return errNotImplemented」>
 - <第二項證據，若有>
 
 **未驗證**：<明確指出沒查到的盲點，例如「沒有列舉所有 ReasoningRepo caller，只看了 ReasoningService.Reason 一條路徑」。若全部驗證了，寫「無」>

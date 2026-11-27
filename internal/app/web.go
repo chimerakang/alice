@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	appengine "claude-tg-agent/internal/app/engine"
+	appengine "github.com/chimerakang/alice-core/engine"
 	"claude-tg-agent/internal/app/security"
 )
 
@@ -109,8 +109,6 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/decisions/sources/stats", wi.handleSourceStats)
 	mux.HandleFunc("/api/decisions/sources/performance", wi.handleSourcePerformance)
 	mux.HandleFunc("/api/tasks", wi.handleUnifiedTasks)
-	mux.HandleFunc("/api/hermes/active", wi.handleHermesActive)
-	mux.HandleFunc("/api/hermes/resolve", wi.handleHermesResolve)
 	mux.HandleFunc("/api/hermes/tasks", wi.handleHermesTasks)
 	mux.HandleFunc("/api/hermes/snapshots", wi.handleHermesSnapshots)
 	mux.HandleFunc("/api/hermes/stats", wi.handleHermesStats)
@@ -119,9 +117,6 @@ func (wi *WebInterface) CreateRouter() http.Handler {
 	mux.HandleFunc("/api/quality/decomposition", wi.handleQualityDecomposition)
 	mux.HandleFunc("/api/quality/scores", wi.handleQualityScores)
 	mux.HandleFunc("/api/quality/insights", wi.handleQualityInsights)
-	mux.HandleFunc("/api/multiagent/status", wi.handleMultiAgentStatus)
-	mux.HandleFunc("/api/multiagent/stats", wi.handleMultiAgentStats)
-	mux.HandleFunc("/api/multiagent/agents", wi.handleMultiAgentAgents)
 
 	// Performance Monitoring APIs
 	mux.HandleFunc("/api/performance/analytics", wi.handlePerformanceAnalytics)
@@ -1539,113 +1534,6 @@ func (wi *WebInterface) handleWithRecovery(handler http.HandlerFunc) http.Handle
 	}
 }
 
-// handleMultiAgentStatus returns multi-agent system status
-func (wi *WebInterface) handleMultiAgentStatus(w http.ResponseWriter, r *http.Request) {
-	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		stats := globalAgentCoordinator.GetAgentStats()
-		stats["enabled"] = globalAgentCoordinator.IsEnabled()
-
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"multi_agent_status": stats,
-			"timestamp":          time.Now(),
-		})
-	})(w, r)
-}
-
-// handleMultiAgentStats returns detailed multi-agent statistics
-func (wi *WebInterface) handleMultiAgentStats(w http.ResponseWriter, r *http.Request) {
-	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		stats := globalAgentCoordinator.GetAgentStats()
-
-		// Calculate additional statistics
-		agents := stats["agents"].(map[string]interface{})
-		totalTasks := 0
-		activeAgents := 0
-
-		for _, agentInfo := range agents {
-			info := agentInfo.(map[string]interface{})
-			if taskCount, ok := info["task_count"].(int); ok {
-				totalTasks += taskCount
-			}
-			if lastUsed, ok := info["last_used"].(time.Time); ok {
-				if time.Since(lastUsed) < time.Hour {
-					activeAgents++
-				}
-			}
-		}
-
-		response := map[string]interface{}{
-			"enabled":       globalAgentCoordinator.IsEnabled(),
-			"total_agents":  len(agents),
-			"active_agents": activeAgents,
-			"total_tasks":   totalTasks,
-			"agent_details": agents,
-			"available_types": []string{
-				"General", "CodeReview", "Testing", "Documentation", "Deployment", "Debug",
-			},
-			"timestamp": time.Now(),
-		}
-
-		json.NewEncoder(w).Encode(response)
-	})(w, r)
-}
-
-// handleMultiAgentAgents returns available agent types and their capabilities
-func (wi *WebInterface) handleMultiAgentAgents(w http.ResponseWriter, r *http.Request) {
-	wi.handleWithRecovery(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-
-		agentTypes := []map[string]interface{}{
-			{
-				"type":         "General",
-				"description":  "通用代理，處理一般任務",
-				"skills":       []string{"一般協助", "程式碼生成", "檔案操作"},
-				"capabilities": []string{"can_read_files", "can_write_files", "can_execute_commands"},
-			},
-			{
-				"type":         "CodeReview",
-				"description":  "程式碼審查專家",
-				"skills":       []string{"程式碼分析", "安全審查", "效能審查", "最佳實務"},
-				"capabilities": []string{"can_analyze_code_quality", "can_identify_security_issues", "can_suggest_improvements"},
-			},
-			{
-				"type":         "Testing",
-				"description":  "測試專家",
-				"skills":       []string{"單元測試", "整合測試", "測試自動化", "覆蓋率分析"},
-				"capabilities": []string{"can_write_tests", "can_run_tests", "can_analyze_coverage"},
-			},
-			{
-				"type":         "Documentation",
-				"description":  "文件撰寫專家",
-				"skills":       []string{"API 文件", "README 撰寫", "程式碼註解", "使用指南"},
-				"capabilities": []string{"can_generate_docs", "can_update_readme", "can_write_comments"},
-			},
-			{
-				"type":         "Deployment",
-				"description":  "部署和 DevOps 專家",
-				"skills":       []string{"CI/CD", "Docker", "Kubernetes", "雲端部署", "監控"},
-				"capabilities": []string{"can_build_images", "can_deploy_apps", "can_manage_infrastructure"},
-			},
-			{
-				"type":         "Debug",
-				"description":  "除錯專家",
-				"skills":       []string{"錯誤分析", "日誌分析", "效能除錯", "問題排解"},
-				"capabilities": []string{"can_analyze_errors", "can_debug_issues", "can_trace_problems"},
-			},
-		}
-
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"agent_types": agentTypes,
-			"enabled":     globalAgentCoordinator.IsEnabled(),
-			"timestamp":   time.Now(),
-		})
-	})(w, r)
-}
-
 // === Performance Monitoring API Handlers ===
 
 // handlePerformanceAnalytics returns comprehensive performance analytics
@@ -2412,22 +2300,6 @@ func generatePrometheusMetrics() string {
 		}
 	}
 
-	// Multi-agent metrics
-	if globalAgentCoordinator != nil && globalAgentCoordinator.IsEnabled() {
-		stats := globalAgentCoordinator.GetAgentStats()
-
-		if totalTasks, ok := stats["total_tasks"].(int64); ok {
-			metrics.WriteString("# HELP alice_multiagent_tasks_total Total multi-agent tasks\n")
-			metrics.WriteString("# TYPE alice_multiagent_tasks_total counter\n")
-			metrics.WriteString(fmt.Sprintf("alice_multiagent_tasks_total %d\n", totalTasks))
-		}
-
-		if activeTasks, ok := stats["active_tasks"].(int); ok {
-			metrics.WriteString("# HELP alice_multiagent_active_tasks Current active tasks\n")
-			metrics.WriteString("# TYPE alice_multiagent_active_tasks gauge\n")
-			metrics.WriteString(fmt.Sprintf("alice_multiagent_active_tasks %d\n", activeTasks))
-		}
-	}
 
 	return metrics.String()
 }

@@ -3,8 +3,8 @@ package app
 import (
 	"log"
 
-	appengine "claude-tg-agent/internal/app/engine"
-	"claude-tg-agent/internal/app/hermes"
+	appengine "github.com/chimerakang/alice-core/engine"
+	"github.com/chimerakang/alice-core/hermes"
 )
 
 // hermesExecutorRunner is the DirectRunner used for Hermes sub-task execution.

@@ -1,4 +1,4 @@
-package hermes
+package app
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/chimerakang/alice-core/hermes"
 )
 
 // ── parseIssueSelector ────────────────────────────────────────────────────────
@@ -208,13 +210,13 @@ func TestParseMilestoneReviewResult_EmptyFallback(t *testing.T) {
 
 func TestRunMilestoneReview_ParsesLLMResponse(t *testing.T) {
 	stubResponse := "VERDICT: READY\nSCORE: 88\n\nBLOCKERS:\n- None\n\nGAPS:\n- None\n\nINCONSISTENCIES:\n- None\n\nCLOSEOUT CHECKLIST:\n- Tag release\n\nRECOMMENDED NEXT ACTIONS:\n- Deploy to prod\n"
-	callFn := func(_ context.Context, _, _, _ string) (CallPlanResult, error) {
-		return CallPlanResult{Text: stubResponse}, nil
+	callFn := func(_ context.Context, _, _, _ string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{Text: stubResponse}, nil
 	}
 
 	mrc := &MilestoneReviewContext{
 		Milestone: MilestoneItem{Number: 10, Title: "P10", State: "open"},
-		Issues: []*IssueContext{
+		Issues: []*hermes.IssueContext{
 			{Number: 1, Title: "Test Issue", State: "CLOSED", Body: "Done."},
 		},
 	}
@@ -235,8 +237,8 @@ func TestRunMilestoneReview_ParsesLLMResponse(t *testing.T) {
 }
 
 func TestRunMilestoneReview_EmptyResponseError(t *testing.T) {
-	callFn := func(_ context.Context, _, _, _ string) (CallPlanResult, error) {
-		return CallPlanResult{Text: "   "}, nil
+	callFn := func(_ context.Context, _, _, _ string) (hermes.CallPlanResult, error) {
+		return hermes.CallPlanResult{Text: "   "}, nil
 	}
 	mrc := &MilestoneReviewContext{Milestone: MilestoneItem{Number: 1, Title: "X"}}
 	_, err := RunMilestoneReview(context.Background(), callFn, "/tmp", mrc)
@@ -934,4 +936,13 @@ esac
 	if len(iss201.Comments) != 0 {
 		t.Errorf("Issues[1].Comments = %d; want 0", len(iss201.Comments))
 	}
+}
+
+func writeExecutableScript(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
+		t.Fatalf("write script %s: %v", name, err)
+	}
+	return path
 }

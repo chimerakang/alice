@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	appengine "claude-tg-agent/internal/app/engine"
+	appengine "github.com/chimerakang/alice-core/engine"
 )
 
 // UnifiedTaskStore is the transitional task-centric persistence API for #114.

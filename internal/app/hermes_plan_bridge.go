@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"claude-tg-agent/internal/app/hermes"
+	"github.com/chimerakang/alice-core/hermes"
 )
 
 // makePlanFn adapts the app Client planner call to Hermes' planner interface.

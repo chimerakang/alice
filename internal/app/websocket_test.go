@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	appengine "claude-tg-agent/internal/app/engine"
+	appengine "github.com/chimerakang/alice-core/engine"
 )
 
 func TestBroadcastReviewEventEmitsCompactPayload(t *testing.T) {
