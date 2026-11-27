@@ -19,6 +19,6 @@ Set `fleet.scout_quota.max_transfers` to a positive value to enable automatic tr
 The scheduler checks recorded provider rejection before allocating queue slots. Auto Scouts can use another eligible backend when available. Queued tasks waiting for a known reset are reconsidered by the normal scheduler poll.
 
 ## Remaining integration
-- Publish normalized quota snapshots from supported CLI events and the Codex App Server. Store exhaustion and reset state across restarts. Allow configurable patterns, estimated allowances and periods.
+- Expose provider snapshots and configurable diagnostic matching in Alice.
 - Give the scheduler an eligibility decision before allocating a run slot, with a wait outcome and optional next wake time. Record one owner notification per exhaustion episode. Ship and USD-limited Scout remain Claude-only.
-- Expose quota state to Alice's Fleet API and dashboard. Live provider snapshots still need to refresh recorded state, especially rejections with an unknown reset.
+- Expose quota state to Alice's Fleet API and dashboard. Fleet checks Codex account allowance at startup and every five minutes while Codex Scout is configured. A positive account allowance clears older recorded rejections. Claude recovery is observed during a run through structured rate-limit events. An unknown Claude reset can still require an owner-started run to obtain a fresh provider signal.
