@@ -15,7 +15,11 @@ import (
 // ghFleetIssueHost is the FleetIssueHost backed by the gh and git CLIs.
 type ghFleetIssueHost struct{}
 
-const ghFleetIssueTimeout = 60 * time.Second
+const (
+	ghFleetIssueTimeout = 60 * time.Second
+	// ghFleetTruncated is what process appends to output it cut short.
+	ghFleetTruncated = "[process output truncated]"
+)
 
 func ghFleetRun(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
 	out, err := process.RunCombinedOutput(ctx, process.Options{
@@ -45,9 +49,14 @@ type ghIssueComment struct {
 func (ghFleetIssueHost) UpsertComment(ctx context.Context, dir string, number int, marker, body string) error {
 	out, err := ghFleetRun(ctx, dir, "gh", "api", "--paginate",
 		fmt.Sprintf("repos/{owner}/{repo}/issues/%d/comments", number),
-		"--jq", ".[] | {id: .id, body: .body}")
+		// Only this task's comment: a long thread would overrun the output
+		// limit, and a comment missed that way would be posted again.
+		"--jq", ".[] | select(.body | contains("+strconv.Quote(marker)+")) | {id: .id, body: .body}")
 	if err != nil {
 		return err
+	}
+	if strings.Contains(string(out), ghFleetTruncated) {
+		return fmt.Errorf("list issue #%d comments: output truncated", number)
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
