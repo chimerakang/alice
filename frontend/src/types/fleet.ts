@@ -43,7 +43,16 @@ export interface FleetProject {
   github_available: boolean;
 }
 
+export interface FleetBlockedAction {
+ action: FleetTaskAction;
+ reason: string;
+ items: string[];
+}
+
 export interface FleetTask {
+ /** Commands permitted by the backend for the current acceptance state. */
+ actions?: FleetTaskAction[];
+ blocked_actions?: FleetBlockedAction[];
   id: string;
   project_id: string;
   project_name: string;

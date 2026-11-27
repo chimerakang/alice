@@ -359,8 +359,8 @@ func TestFleetCardIsEditedInPlaceOnStatusChange(t *testing.T) {
 	if !strings.Contains(edit.Text, "fleet_status_cancelled") {
 		t.Fatalf("card after cancel:\n%s", edit.Text)
 	}
-	if len(edit.Buttons) != 0 {
-		t.Fatalf("a cancelled task offers %v", buttonData(edit.Buttons))
+	if got := strings.Join(buttonData(edit.Buttons), " "); got != fleetCallbackData(fleetActDiscard, task.ID) {
+		t.Fatalf("cancelled task cleanup buttons = %s", got)
 	}
 	if sent, _ := e.msgr.counts(); sent != 1 {
 		t.Fatalf("status change sent %d messages, want the one card", sent)
@@ -515,10 +515,16 @@ func TestFleetCallbackRefusals(t *testing.T) {
 		t.Fatalf("refused presses changed the task to %s", got.Status)
 	}
 
-	// An action the task's status does not allow is reported, not hidden.
-	if got := e.press(fleetActApprove, task.ID); !strings.Contains(got, "fleet_error") {
-		t.Fatalf("approve on a queued task: answer = %q", got)
+	// An action the task's status does not allow says why in the user's language.
+	var err error
+	e.bot.i18n, err = NewI18nManager("../../locales", "en")
+	if err != nil {
+		t.Fatal(err)
 	}
+	if got := e.press(fleetActApprove, task.ID); !strings.Contains(got, e.bot.fleetMsg(e.key.chatID, "fleet_why_status", map[string]string{"{status}": e.bot.fleetMsg(e.key.chatID, "fleet_status_queued", nil)})) {
+		t.Fatalf("approve on a queued task: answer=%q", got)
+	}
+	e.bot.i18n = nil
 
 	// With the fleet off, buttons from an earlier run say so.
 	e.bot.fleet, e.bot.fleetCards = nil, nil
@@ -543,10 +549,10 @@ func TestFleetCardButtonsByStatus(t *testing.T) {
 		{"queued", fleet.Task{Status: fleet.StatusQueued}, fleetCard{}, []string{"fleet:cancel:" + id, details}},
 		{"running", fleet.Task{Status: fleet.StatusRunning}, fleetCard{}, []string{"fleet:cancel:" + id, details}},
 		{"verifying", fleet.Task{Status: fleet.StatusVerifying}, fleetCard{}, []string{"fleet:cancel:" + id, details}},
-		{"review ready", fleet.Task{Status: fleet.StatusReviewReady}, fleetCard{}, []string{"fleet:approve:" + id, "fleet:discard:" + id, details}},
+		{"review ready", fleet.Task{Status: fleet.StatusReviewReady, Shape: fleet.ShapeShip, TrustMode: fleet.TrustLocalOnly}, fleetCard{}, []string{"fleet:approve:" + id, "fleet:discard:" + id, details}},
 		{"needs decision", fleet.Task{Status: fleet.StatusNeedsDecision}, fleetCard{}, []string{"fleet:retry:" + id, "fleet:discard:" + id, details}},
 		{"failed", fleet.Task{Status: fleet.StatusFailed}, fleetCard{}, []string{"fleet:retry:" + id, "fleet:discard:" + id, details}},
-		{"cancelled", fleet.Task{Status: fleet.StatusCancelled}, fleetCard{}, []string{details}},
+		{"cancelled", fleet.Task{Status: fleet.StatusCancelled}, fleetCard{}, []string{"fleet:discard:" + id, details}},
 		{"done local", fleet.Task{Status: fleet.StatusDone, TrustMode: fleet.TrustLocalOnly}, fleetCard{}, []string{details}},
 		{"done direct-pr with an open PR", fleet.Task{Status: fleet.StatusDone, TrustMode: fleet.TrustDirectPR, PRNumber: 5}, fleetCard{}, []string{"fleet:merge:" + id, details}},
 		{"done direct-pr already merged", fleet.Task{Status: fleet.StatusDone, TrustMode: fleet.TrustDirectPR, PRNumber: 5}, fleetCard{Landed: true}, []string{details}},
@@ -554,7 +560,7 @@ func TestFleetCardButtonsByStatus(t *testing.T) {
 	}
 	for _, c := range cases {
 		c.task.ID = id
-		got := buttonData(e.cards.buttons(loc, c.task, c.card, ""))
+		got := buttonData(e.cards.buttons(loc, c.task, c.card, "", fleetTaskActions(fleetActionInput{Task: c.task})))
 		if strings.Join(got, " ") != strings.Join(c.want, " ") {
 			t.Errorf("%s: buttons = %v, want %v", c.name, got, c.want)
 		}
@@ -562,7 +568,7 @@ func TestFleetCardButtonsByStatus(t *testing.T) {
 
 	// Without a dashboard address there is no details link.
 	e.cards.DashboardURL = ""
-	if got := buttonData(e.cards.buttons(loc, fleet.Task{ID: id, Status: fleet.StatusCancelled}, fleetCard{}, "")); len(got) != 0 {
+	if got := buttonData(e.cards.buttons(loc, fleet.Task{ID: id, Status: fleet.StatusCancelled}, fleetCard{}, "", fleetActionSet{})); len(got) != 0 {
 		t.Errorf("no dashboard: buttons = %v", got)
 	}
 }

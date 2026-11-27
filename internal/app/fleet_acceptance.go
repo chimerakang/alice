@@ -314,7 +314,7 @@ func foldAcceptance(entries []acceptLogEntry) acceptState {
 					continue
 				}
 				key := evidenceKey(ri.Evidence)
-				if ri.Status == acceptReportEvidence && key != it.EvidenceKeys {
+				if key != it.EvidenceKeys || ri.Status != it.Report {
 					reopen(it, e.CreatedAt, e.Actor, acceptReopenEvidence)
 				}
 				it.Report, it.Evidence, it.Blocker, it.Round = ri.Status, ri.Evidence, ri.Blocker, st.Rounds

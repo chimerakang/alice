@@ -92,6 +92,25 @@ message FleetTask {
   // A non-fatal warning from the dispatch, e.g. the epic could not be updated.
   // Not persisted; only set in the dispatch response.
   string warning = 29;
+  // The commands the fleet accepts for this task right now, in display
+  // order: "cancel", "retry", "reply", "approve", "merge", "pass" or
+  // "discard". Clients show these and no others; the fleet checks again when
+  // a command arrives.
+  repeated string actions = 30;
+  // Commands the task's status would usually offer but that are not
+  // possible now, each with the reason.
+  repeated FleetBlockedAction blocked_actions = 31;
+}
+
+// FleetBlockedAction is a command that cannot be carried out right now.
+message FleetBlockedAction {
+  string action = 1;
+  // "status", "not_ship", "no_pull_request", "no_approval_step",
+  // "items_not_approved", "delivery_incomplete", "awaiting_external" or
+  // "already_landed".
+  string reason = 2;
+  // The acceptance item IDs still open, for "items_not_approved".
+  repeated string items = 3;
 }
 
 message FleetTaskList {
@@ -539,4 +558,6 @@ message FleetError {
   string error = 1;
   // A stable word for the kind of failure, e.g. "not_found", "conflict".
   string code = 2;
+  // Set when code is "action_unavailable": why the command was refused.
+  FleetBlockedAction blocked = 3;
 }

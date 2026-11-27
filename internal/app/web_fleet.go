@@ -107,7 +107,12 @@ func (wi *WebInterface) fleetHandlerWithin(isCommand bool, timeout time.Duration
 		msg, err := h(ctx, svc, r)
 		if err != nil {
 			status, code := fleetErrorStatus(err)
-			writeFleetError(w, status, code, err.Error())
+			body := &alicev1.FleetError{Error: err.Error(), Code: code}
+			var refused *fleetActionError
+			if errors.As(err, &refused) {
+				body.Blocked = fleetBlockProto(refused.Block)
+			}
+			writeFleetJSON(w, status, body)
 			return
 		}
 		writeFleetJSON(w, http.StatusOK, msg)
@@ -163,6 +168,8 @@ func (e *fleetRequestError) Is(target error) bool { return target == errFleetBad
 // fleetErrorStatus maps a fleet error onto an HTTP status and a stable code.
 func fleetErrorStatus(err error) (int, string) {
 	switch {
+	case errors.Is(err, errFleetActionUnavailable):
+		return http.StatusConflict, "action_unavailable"
 	case errors.Is(err, errAcceptConflict):
 		return http.StatusConflict, "acceptance"
 	case errors.Is(err, errAcceptInvalid), errors.Is(err, errFleetBadRequest),
@@ -322,6 +329,19 @@ func fleetTaskProto(t fleet.Task, projectName string) *alicev1.FleetTask {
 	}
 }
 
+// fleetActionsProto adds what the task allows now.
+func fleetActionsProto(out *alicev1.FleetTask, set fleetActionSet) {
+	out.Actions = append([]string{}, set.Allowed...)
+	out.BlockedActions = []*alicev1.FleetBlockedAction{}
+	for _, b := range set.Blocked {
+		out.BlockedActions = append(out.BlockedActions, fleetBlockProto(b))
+	}
+}
+
+func fleetBlockProto(b fleetActionBlock) *alicev1.FleetBlockedAction {
+	return &alicev1.FleetBlockedAction{Action: b.Action, Reason: b.Reason, Items: append([]string{}, b.Items...)}
+}
+
 func fleetEventProto(ev fleet.Event, projectID string) *alicev1.FleetEvent {
 	return &alicev1.FleetEvent{
 		Id:          float64(ev.ID),
@@ -431,7 +451,9 @@ func (wi *WebInterface) fleetListTasks(ctx context.Context, svc *FleetService, r
 	names := fleetProjectNames(ctx, svc)
 	out := &alicev1.FleetTaskList{}
 	for _, t := range tasks {
-		out.Tasks = append(out.Tasks, fleetTaskProto(t, names[t.ProjectID]))
+		pt := fleetTaskProto(t, names[t.ProjectID])
+		fleetActionsProto(pt, svc.TaskActions(ctx, t))
+		out.Tasks = append(out.Tasks, pt)
 	}
 	return out, nil
 }
@@ -441,7 +463,9 @@ func (wi *WebInterface) fleetTaskReply(ctx context.Context, svc *FleetService, t
 	if p, err := svc.Store.GetProject(ctx, task.ProjectID); err == nil {
 		name = p.Name
 	}
-	return fleetTaskProto(task, name)
+	out := fleetTaskProto(task, name)
+	fleetActionsProto(out, svc.TaskActions(ctx, task))
+	return out
 }
 
 func (wi *WebInterface) fleetGetTask(ctx context.Context, svc *FleetService, r *http.Request) (proto.Message, error) {
@@ -799,6 +823,13 @@ func (wi *WebInterface) fleetTaskAction(ctx context.Context, svc *FleetService, 
 		task fleet.Task
 		err  error
 	)
+	// The page may be showing a button the task no longer allows.
+	switch action {
+	case fleetOpCancel, fleetOpRetry, fleetOpReply, fleetOpApprove, fleetOpMerge, fleetOpPass, fleetOpDiscard:
+		if _, _, err := svc.CheckActorAction(ctx, actor, id, action); err != nil {
+			return nil, err
+		}
+	}
 	switch action {
 	case "cancel":
 		var req alicev1.FleetCancelRequest

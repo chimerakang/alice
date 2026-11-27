@@ -348,7 +348,7 @@ func (n *fleetNotices) deliverPrompt(ctx context.Context, key chatKey, task flee
 	}
 	b.WriteString("\n\n" + loc("fleet_prompt_hint_"+string(kind), nil))
 
-	messageID, err := n.Messenger.SendCard(key, b.String(), n.promptButtons(loc, task, kind))
+	messageID, err := n.Messenger.SendCard(key, b.String(), n.promptButtons(loc, task, kind, n.Fleet.TaskActions(ctx, task)))
 	if err != nil {
 		return err
 	}
@@ -368,8 +368,13 @@ var fleetWakeEmoji = map[fleet.WakeKind]string{
 	fleet.WakeCompleted:     "✅",
 }
 
-// promptButtons offers the usual ways out of each kind of trouble.
-func (n *fleetNotices) promptButtons(loc func(string, map[string]string) string, task fleet.Task, kind fleet.WakeKind) [][]fleetButton {
+// promptButtons offers the usual ways out of each kind of trouble, those
+// the task allows now.
+func (n *fleetNotices) promptButtons(loc func(string, map[string]string) string, task fleet.Task, kind fleet.WakeKind, set fleetActionSet) [][]fleetButton {
+	return fleetFilterButtons(n.promptButtonRows(loc, task, kind), set)
+}
+
+func (n *fleetNotices) promptButtonRows(loc func(string, map[string]string) string, task fleet.Task, kind fleet.WakeKind) [][]fleetButton {
 	btn := func(action string) fleetButton {
 		return fleetButton{Text: loc("fleet_btn_"+action, nil), Data: fleetCallbackData(action, task.ID)}
 	}
@@ -464,7 +469,7 @@ func (n *fleetNotices) deliverResult(ctx context.Context, key chatKey, task flee
 
 	var buttons [][]fleetButton
 	if !landed {
-		buttons = n.resultButtons(loc, task)
+		buttons = n.resultButtons(loc, task, n.Fleet.TaskActions(ctx, task))
 	}
 	messageID, err := n.Messenger.SendCard(key, b.String(), buttons)
 	if err != nil {
@@ -507,8 +512,13 @@ func fleetResultNextKey(task fleet.Task) string {
 	return ""
 }
 
-// resultButtons offers what is left for the owner to do with finished work.
-func (n *fleetNotices) resultButtons(loc func(string, map[string]string) string, task fleet.Task) [][]fleetButton {
+// resultButtons offers what is left for the owner to do with finished work,
+// as far as the task allows it now.
+func (n *fleetNotices) resultButtons(loc func(string, map[string]string) string, task fleet.Task, set fleetActionSet) [][]fleetButton {
+	return fleetFilterButtons(n.resultButtonRows(loc, task), set)
+}
+
+func (n *fleetNotices) resultButtonRows(loc func(string, map[string]string) string, task fleet.Task) [][]fleetButton {
 	discard := fleetButton{Text: loc("fleet_btn_discard", nil), Data: fleetCallbackData(fleetActPromptDiscard, task.ID)}
 	switch {
 	case task.Status == fleet.StatusReviewReady && task.TrustMode == fleet.TrustNoMistakes:

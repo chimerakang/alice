@@ -480,6 +480,26 @@ func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, da
 		}
 	}
 
+	// An old card or prompt may show a button the task no longer allows:
+	// say why, and redraw the card with what it allows now.
+	if op := fleetCallbackOp(action); op != "" {
+		task, _, err := t.fleet.CheckActorAction(ctx, fleetActor(userID), taskID, op)
+		var refused *fleetActionError
+		if errors.As(err, &refused) {
+			loc := func(k string, v map[string]string) string { return t.fleetMsg(key.chatID, k, v) }
+			answer("fleet_cb_unavailable", fleetBlockVars(loc, refused.Block, task.Status))
+			if t.fleetCards != nil {
+				// Leaving any confirmation redraws the card right away.
+				t.fleetCards.SetConfirm(ctx, taskID, "")
+			}
+			return
+		}
+		if err != nil {
+			answer("fleet_error", map[string]string{"{error}": err.Error()})
+			return
+		}
+	}
+
 	actor := fleetActor(userID)
 	cmd := t.fleet.Commander
 	var task fleet.Task

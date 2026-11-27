@@ -495,7 +495,7 @@ func (f *FleetService) CheckClose(ctx context.Context, taskID string) (acceptGat
 		return acceptGate{}, false, err
 	}
 	evidenceOnly := st.Structured && f.noChanges(ctx, task)
-	done := evidenceOnly || !task.TrustMode.NeedsRemote() || task.PRURL != ""
+	done := !task.TrustMode.NeedsRemote() || (task.PRNumber > 0 && task.PRURL != "")
 	return evaluateAcceptGate(st, done), evidenceOnly, nil
 }
 
@@ -514,7 +514,7 @@ func (f *FleetService) Approve(ctx context.Context, actor fleet.Actor, taskID st
 	if err != nil {
 		return task, err
 	}
-	if evidenceOnly && task.Status == fleet.StatusReviewReady {
+	if evidenceOnly && task.Status == fleet.StatusReviewReady && !task.TrustMode.NeedsRemote() {
 		_, _ = f.Store.AppendEvent(ctx, taskID, fleet.EventDeliveryApproved, map[string]any{"approver": actor.ID, "landed": "evidence only"})
 		return f.Store.Transition(ctx, taskID, fleet.StatusDone, "approved by "+actor.ID+": evidence only, no file changes")
 	}

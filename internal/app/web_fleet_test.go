@@ -355,7 +355,7 @@ func TestFleetAPITaskActions(t *testing.T) {
 		t.Fatalf("cancel: %d %v", status, got)
 	}
 	// A finished task cannot be cancelled again.
-	if status, got := post(task.ID, "cancel", ""); status != http.StatusConflict || got["code"] != "conflict" {
+	if status, got := post(task.ID, "cancel", ""); status != http.StatusConflict || got["code"] != "action_unavailable" {
 		t.Fatalf("cancel twice: %d %v", status, got)
 	}
 
@@ -399,7 +399,7 @@ func TestFleetAPITaskActions(t *testing.T) {
 	if status, got := post("nosuchtask00", "cancel", ""); status != http.StatusNotFound {
 		t.Fatalf("cancel an unknown task: %d %v", status, got)
 	}
-	if status, got := post(failed.ID, "reply", `{"txt":"typo"}`); status != http.StatusBadRequest {
+	if status, got := post(blocked.ID, "reply", `{"txt":"typo"}`); status != http.StatusBadRequest {
 		t.Fatalf("reply with an unknown field: %d %v", status, got)
 	}
 }
