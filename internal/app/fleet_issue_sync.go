@@ -459,7 +459,7 @@ func renderIssueComment(in issueSyncInput, d closeDecision) string {
 		if in.PR != nil && in.PR.BaseBranch != "" {
 			fmt.Fprintf(&sb, "- 目標分支: `%s`\n", in.PR.BaseBranch)
 		} else {
-			fmt.Fprintf(&sb, "- 目標分支: `%s`\n", in.Project.DefaultBranch)
+			fmt.Fprintf(&sb, "- 目標分支: `%s`\n", issueTargetBranch(task, in.Project))
 		}
 		if task.PRURL != "" {
 			fmt.Fprintf(&sb, "- PR: %s\n", task.PRURL)
@@ -472,7 +472,7 @@ func renderIssueComment(in issueSyncInput, d closeDecision) string {
 		writeIssueAcceptance(&sb, in, true)
 	case issueStageLocalMerged:
 		fmt.Fprintf(&sb, "📦 **僅合併至本機**（任務 `%s`）\n\n", task.ID)
-		fmt.Fprintf(&sb, "- 結果: 變更只合併到本機的 `%s`，**沒有推送到遠端**，遠端看不到這些變更\n", in.Project.DefaultBranch)
+		fmt.Fprintf(&sb, "- 結果: 變更只合併到本機的 `%s`，**沒有推送到遠端**，遠端看不到這些變更\n", issueTargetBranch(task, in.Project))
 		if in.LocalSHA != "" {
 			fmt.Fprintf(&sb, "- Commit: `%s` %s\n", shortSHA(in.LocalSHA), in.LocalSubject)
 		}

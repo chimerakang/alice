@@ -284,10 +284,13 @@ func TestIssueSyncOperatorAuthorizationCloses(t *testing.T) {
 func TestIssueSyncLocalOnlyNeverCloses(t *testing.T) {
 	e := newIssueSyncEnv(t)
 	task := e.task(213, fleet.TrustLocalOnly, &yes, append(toReview, fleet.StatusDone)...)
-	_, _ = e.svc.Store.AppendEvent(context.Background(), task.ID, fleet.EventDeliveryApproved, map[string]any{"landed": "fast-forwarded main"})
+	if _, err := e.storage.db.Exec("UPDATE fleet_tasks SET target_branch = 'develop' WHERE id = ?", task.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = e.svc.Store.AppendEvent(context.Background(), task.ID, fleet.EventDeliveryApproved, map[string]any{"landed": "fast-forwarded develop"})
 	e.tick("first", "second")
 	res := e.run(task, IssueSyncOptions{AuthorizeClose: true})
-	contains(t, e.host.commentFor(task.ID), "僅合併至本機", "沒有推送到遠端", "abcdef12", "只合併到本機")
+	contains(t, e.host.commentFor(task.ID), "僅合併至本機", "沒有推送到遠端", "abcdef12", "只合併到本機的 `develop`")
 	if res.Closed {
 		t.Fatal("local-only merge closed the issue")
 	}
@@ -588,6 +591,7 @@ func TestIssueSyncKeepsIssueOpenWhenPRMergedToWrongBranch(t *testing.T) {
 	if result := e.run(task, IssueSyncOptions{AuthorizeClose: true}); result.Closed {
 		t.Fatal("PR merged into main closed a task pinned to develop")
 	}
+	contains(t, e.host.commentFor(task.ID), "PR 已合併到 main", "任務目標分支為 develop")
 }
 
 func TestIssueSyncReconcilesExternallyMergedReviewTask(t *testing.T) {
