@@ -1,3 +1,5 @@
+> **已移除（歷史文件）**：Hermes 任務系統已從 Alice 移除，任務改由 Fleet 執行。以下內容不再描述現行行為。
+
 # Hermes GitHub Issue 整合
 
 本文件說明 Hermes 與 GitHub Issue 工作流的整合機制。
