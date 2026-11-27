@@ -105,9 +105,9 @@ sudo systemctl status alice
 - `/preview` 的實際截圖 timeout 是 20 秒；若 Playwright CLI 在這段時間內沒有產出圖片，Bot 會回覆 `截圖逾時`。
 - 目前 repo 內沒有打包 Alice bot runtime 的 `Dockerfile`；`docker-compose.prod.yml` 只引用外部提供的 `alice:latest` image，所以若你採用容器部署，必須自行把 `Node.js`、`npx` 與 Playwright Chromium 一起包進該 image。
 
-### Multi-Backend Hermes Configuration
+### Multi-Backend Configuration
 
-Use `ai_backend: "multi"` when you want a single Alice instance to serve both the default Claude tier and the GPT/Codex tier used by `/ghermes`.
+Use `ai_backend: "multi"` when one Alice instance should serve both Claude and the GPT/Codex models (`/gfast`, `/gsmart`, `/gdeep`).
 
 ```json
 {
@@ -118,10 +118,6 @@ Use `ai_backend: "multi"` when you want a single Alice instance to serve both th
   },
   "multimedia": {
     "openai_api_key": "sk-..."
-  },
-  "hermes": {
-    "enabled": true,
-    "prompts_dir": "internal/app/hermes/prompts"
   }
 }
 ```
@@ -131,31 +127,11 @@ OpenAI key resolution for the Codex backend follows this order:
 1. `OPENAI_API_KEY` environment variable
 2. `multimedia.openai_api_key` in `config.json`
 
-If both are present, `OPENAI_API_KEY` wins. If neither is present, Alice still starts in `ai_backend: "multi"` mode, but the Codex/GPT tier is disabled and `/ghermes`-family commands will be rejected at runtime.
+If both are present, `OPENAI_API_KEY` wins. If neither is present, Alice still starts in `ai_backend: "multi"` mode, but the Codex/GPT tier is disabled.
 
-### `/hermes` vs `/ghermes`
+### Task execution
 
-Use `/hermes` for the default Claude tier and `/ghermes` for the GPT/Codex tier. Both commands enter the same Hermes planner-executor workflow and can target GitHub Issues, but they route to different model backends.
-
-| Command | Backend | When to use |
-|---------|---------|-------------|
-| `/hermes` | Claude tier | Default choice when your deployment only has Anthropic configured, or when you want the standard Claude-backed Hermes path. |
-| `/ghermes` | GPT/Codex tier | Use when `ai_backend` is `multi` and an OpenAI key is available, especially for validating or running the Codex-specific Hermes path. |
-
-Operational notes:
-
-- `/ghermes` requires `ai_backend: "multi"`; it is intentionally unavailable on `claude`, `api`, or other single-backend modes.
-- `/hermes` remains the safer default for general deployments because it does not depend on the Codex backend being enabled.
-- For issue-driven runs such as `/hermes #107` or `/ghermes #107`, GitHub checklist sync and Hermes lifecycle behavior are the same; the difference is only the model tier selected underneath.
-
-### Codex Tier Known Limitations
-
-When routing Hermes through `/ghermes`, keep these Codex backend constraints in mind:
-
-- The executor toolset is limited to shell-style command execution; do not assume file edit, web fetch, or other MCP tools are available.
-- Session resume is not guaranteed across machines, so resumed runs should not depend on prior local shell state.
-- There is no direct `--max-turns` equivalent flag for Codex runs; rely on prompt-side guardrails and bounded task descriptions.
-- Planner tool isolation is prompt-enforced only; `codexPlanGuard` reduces misuse risk but does not provide a hard runtime sandbox.
+Tasks run through Fleet (`/ship`, `/scout`, `/fleet`). The Hermes planner-executor commands were removed; a leftover `hermes` block in `config.json` is accepted and only `hermes.planner_effort` (used by `/plan`) is read.
 
 ### Codex Session Observation
 

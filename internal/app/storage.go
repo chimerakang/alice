@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"claude-tg-agent/internal/app/hermes"
 	"claude-tg-agent/internal/app/security"
 
 	_ "modernc.org/sqlite" // Pure Go SQLite driver (no CGO required)
@@ -1952,29 +1951,6 @@ func scanScheduledTasks(rows *sql.Rows) ([]ScheduledTask, error) {
 	return tasks, rows.Err()
 }
 
-// ==================== Parallel Executions ====================
-
-// InsertParallelExecution 插入並行執行記錄
-func (s *SQLiteStorage) InsertParallelExecution(exec *ParallelExecution) error {
-	resultsJSON, _ := json.Marshal(exec.Results)
-	var completedAt interface{}
-	if exec.CompletedAt != nil {
-		completedAt = *exec.CompletedAt
-	}
-
-	return s.execWithRetry(func() error {
-		_, err := s.db.Exec(`
-			INSERT INTO parallel_executions (id, chat_id, thread_id, task_count, status,
-				results_json, total_time_ms, created_at, completed_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			exec.ID, exec.ChatID, exec.ThreadID, len(exec.Tasks),
-			string(exec.Status), string(resultsJSON),
-			exec.TotalTime.Milliseconds(), exec.CreatedAt, completedAt,
-		)
-		return err
-	})
-}
-
 // ==================== Auto Skills ====================
 
 // InsertAutoSkill 插入新的自動技能
@@ -2090,36 +2066,18 @@ func InitStorage(dbPath string) error {
 	globalStorage = storage
 	log.Printf("Storage system initialized successfully")
 
-	// Zombie recovery: any task left in `executing` or `planning` from a prior
-	// process is dead because its goroutine died with that process. Without this
-	// sweep the dashboard and /retry routing keep treating those rows as
-	// active forever, and new identical-id retries collide with the stale
-	// state. Sweep both the legacy `tasks` table (unified #114 mirror) and
-	// `hermes_task_states` (engine source-of-truth).
+	// Zombie recovery: a row of the unified `tasks` table still marked as
+	// running belongs to a process that is gone. The `hermes_*` tables are
+	// history now and are left exactly as they were.
 	if db, ok := storage.GetDB().(*sql.DB); ok {
-		now := time.Now().Format(time.RFC3339Nano)
 		if res, err := db.Exec(
 			`UPDATE tasks SET status='failed', ended_at=COALESCE(ended_at, ?) WHERE status IN ('executing','planning','validating')`,
-			now,
+			time.Now().Format(time.RFC3339Nano),
 		); err != nil {
 			log.Printf("[storage] zombie sweep tasks: %v", err)
 		} else if n, _ := res.RowsAffected(); n > 0 {
 			log.Printf("[storage] marked %d dangling tasks as failed (process restart recovery)", n)
 		}
-		// After #169 slice 3d the legacy hermes_task_states.status column
-		// is no longer authoritative — read paths derive status from the
-		// latest snapshot's denormalized state_status. Zombie sweep moves
-		// to a snapshot-aware path that writes both the legacy UPDATE
-		// (kept for any read still going through it) and a fresh failure
-		// snapshot via SweepZombieTasks.
-		if hermesStore, err := hermes.NewSQLiteTaskStore(db); err != nil {
-			log.Printf("[storage] zombie sweep init hermes store: %v", err)
-		} else if n, err := hermesStore.SweepZombieTasks("startup_zombie_sweep"); err != nil {
-			log.Printf("[storage] zombie sweep hermes_task_states: %v", err)
-		} else if n > 0 {
-			log.Printf("[storage] marked %d dangling hermes_task_states as failed (snapshot-aware)", n)
-		}
-		_ = now // legacy `tasks` table still uses the timestamp above
 	}
 
 	return nil

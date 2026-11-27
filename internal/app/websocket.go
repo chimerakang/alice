@@ -6,13 +6,11 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 
-	appengine "claude-tg-agent/internal/app/engine"
 	"claude-tg-agent/internal/app/security"
 )
 
@@ -391,39 +389,6 @@ func BroadcastAgentStatusEvent(chatID int64, status string, details map[string]i
 	}
 
 	globalWebSocketHub.BroadcastEvent("agent_status", data)
-}
-
-// BroadcastReviewEvent broadcasts a compact review summary to connected clients.
-func BroadcastReviewEvent(notification appengine.ReviewNotification) {
-	broadcastReviewEvent(notification, "initial")
-}
-
-func BroadcastReviewEventWithSource(notification appengine.ReviewNotification, source string) {
-	broadcastReviewEvent(notification, source)
-}
-
-func broadcastReviewEvent(notification appengine.ReviewNotification, source string) {
-	if globalWebSocketHub == nil {
-		return
-	}
-	if strings.TrimSpace(source) == "" {
-		source = "initial"
-	}
-
-	data := map[string]interface{}{
-		"task_id":          notification.TaskID,
-		"reviewer_model":   notification.ReviewerModel,
-		"verdict":          notification.Verdict,
-		"overall_score":    notification.OverallScore,
-		"issue_tags":       notification.IssueTags,
-		"advisory_retry":   notification.AdvisoryRetry,
-		"failing_subtasks": notification.FailingSubTasks,
-		"retry_note":       notification.RetryNote,
-		"source":           source,
-		"timestamp":        time.Now(),
-	}
-
-	globalWebSocketHub.BroadcastEvent("review_complete", data)
 }
 
 // generateClientID 生成客戶端 ID

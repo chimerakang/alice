@@ -1,3 +1,5 @@
+> **已移除（歷史文件）**：Hermes 任務系統已從 Alice 移除，任務改由 Fleet 執行。以下內容不再描述現行行為。
+
 # Hermes v2 設計藍圖（Phase 2）
 
 > Status update, 2026-05-05: this document remains useful for Hermes-specific

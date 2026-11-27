@@ -9,7 +9,6 @@ import type {
   SecurityStats,
   StatsResponse,
   HealthResponse,
-  MultiAgentStatus,
   GitState,
   GitDiffResponse,
   Checkpoint,
@@ -228,13 +227,6 @@ export const api = {
   },
 
   // ========== Hermes Tasks (#171 Class C UI) ==========
-  getHermesActiveTasks: () =>
-    fetchJson<{ tasks?: HermesActiveTask[]; total?: number }>("/api/hermes/active"),
-  resolveHermesTask: (taskId: string, decision: "retry" | "skip" | "abort") =>
-    postJson<{ ok: boolean; task_id: string; decision: string; relaunched: boolean }>(
-      "/api/hermes/resolve",
-      { task_id: taskId, decision }
-    ),
   getHermesTasks: (params: { status?: string; limit?: number; offset?: number } = {}) => {
     const qs = buildQuery({
       status: params.status,
@@ -268,8 +260,6 @@ export const api = {
     ),
 
   // ========== Multi-Agent ==========
-  getMultiAgentStatus: () =>
-    fetchJson<MultiAgentStatus>("/api/multiagent/status"),
 
   // ========== Performance ==========
   getPerformanceAnalytics: (params: TimeRangeQuery = {}) => {

@@ -7,8 +7,7 @@ import (
 	"strings"
 	"time"
 
-	appengine "claude-tg-agent/internal/app/engine"
-	"claude-tg-agent/internal/app/hermes"
+	appengine "github.com/chimerakang/alice-core/engine"
 )
 
 type RuntimeEventRecord struct {
@@ -63,51 +62,4 @@ func recordRecoveryDecision(ctx context.Context, req appengine.RecoveryRequest, 
 	event.TaskID = strings.TrimSpace(taskID)
 	event.Issue = issue
 	recordRuntimeEvent(ctx, event)
-}
-
-type hermesInteractionGatePayload struct {
-	Action     string `json:"action"`
-	Reason     string `json:"reason,omitempty"`
-	SubTaskIdx int    `json:"subtask_idx,omitempty"`
-	SubTaskNum int    `json:"subtask_num,omitempty"`
-	Total      int    `json:"total,omitempty"`
-	SubTask    string `json:"subtask,omitempty"`
-}
-
-func recordHermesInteractionGate(ctx context.Context, key chatKey, action, reason, taskID string, idx, total int, subTask string) {
-	action = strings.TrimSpace(action)
-	if action == "" {
-		return
-	}
-	recordRuntimeEvent(ctx, appengine.Event{
-		Type:      "HermesInteractionGate",
-		Timestamp: time.Now(),
-		ChatID:    key.chatID,
-		ThreadID:  key.threadID,
-		TaskID:    strings.TrimSpace(taskID),
-		Payload: hermesInteractionGatePayload{
-			Action:     action,
-			Reason:     strings.TrimSpace(reason),
-			SubTaskIdx: idx,
-			SubTaskNum: idx + 1,
-			Total:      total,
-			SubTask:    strings.TrimSpace(subTask),
-		},
-	})
-}
-
-func recordIssueFSMTransition(ctx context.Context, key chatKey, issue int, payload appengine.IssueFSMTransitionPayload) {
-	event := appengine.IssueFSMTransitionEvent(issue, time.Now(), payload)
-	event.ChatID = key.chatID
-	event.ThreadID = key.threadID
-	recordRuntimeEvent(ctx, event)
-}
-
-func issueFSMTransitionPayload(from hermes.IssueState, event hermes.IssueEvent, to hermes.IssueState, source string) appengine.IssueFSMTransitionPayload {
-	return appengine.IssueFSMTransitionPayload{
-		From:   from,
-		Event:  event,
-		To:     to,
-		Source: strings.TrimSpace(source),
-	}
 }

@@ -1,6 +1,6 @@
 package app
 
-import appengine "claude-tg-agent/internal/app/engine"
+import appengine "github.com/chimerakang/alice-core/engine"
 
 type BackendKind = appengine.BackendKind
 

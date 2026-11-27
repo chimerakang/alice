@@ -3,10 +3,12 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -475,8 +477,24 @@ func TestRegisterCommandsIncludesSendFile(t *testing.T) {
 	if transport.path != "/botbot-token/setMyCommands" {
 		t.Fatalf("request path = %q, want /botbot-token/setMyCommands", transport.path)
 	}
-	if !strings.Contains(string(transport.body), "send-file") {
-		t.Fatalf("command payload missing send-file:\n%s", string(transport.body))
+	var payload struct {
+		Commands []struct {
+			Command string `json:"command"`
+		} `json:"commands"`
+	}
+	if err := json.Unmarshal(transport.body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	validName := regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
+	required := map[string]bool{"ship": true, "scout": true, "fleet": true, "send_file": true}
+	for _, cmd := range payload.Commands {
+		if !validName.MatchString(cmd.Command) {
+			t.Errorf("invalid Telegram command name %q", cmd.Command)
+		}
+		delete(required, cmd.Command)
+	}
+	if len(required) != 0 {
+		t.Errorf("missing Telegram commands: %v", required)
 	}
 }
 
