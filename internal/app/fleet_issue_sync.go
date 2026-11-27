@@ -38,6 +38,7 @@ const (
 	// Event types recorded on the task by the sync.
 	fleetEventIssueSyncResult = "issue_sync.result"
 	fleetEventIssueSyncError  = "issue_sync.error"
+	fleetEventPRLanded        = "issue_sync.pr_landed"
 	fleetEventIssueClosed     = "issue_sync.closed"
 	// An operator's go-ahead to close, kept until a sync gets an answer.
 	fleetEventIssueCloseAuthorized = "issue_sync.close_authorized"
@@ -114,6 +115,7 @@ type IssueSyncResult struct {
 
 	// inconclusive: the forge could not be read, so nothing was decided.
 	inconclusive bool
+	status       fleet.Status
 }
 
 // Stages of a task as its issue is told about them.
@@ -277,7 +279,7 @@ func (s *FleetIssueSync) Sync(ctx context.Context, taskID string, opts IssueSync
 		// Recording a result would use up the go-ahead.
 		return res, nil
 	}
-	payload := issueSyncRecord{Stage: res.Stage, Hash: res.CommentHash, Settled: res.Settled, Status: string(task.Status)}
+	payload := issueSyncRecord{Stage: res.Stage, Hash: res.CommentHash, Settled: res.Settled, Status: string(res.status)}
 	// Record a result only when something changed: a quiet re-check must
 	// not grow the task's history.
 	if last, ok, _ := s.Store.LastEvent(ctx, task.ID, fleetEventIssueSyncResult); !ok || pending || !sameSyncRecord(last.Payload, payload) || s.errorAfter(ctx, task.ID, last.ID) {
@@ -661,6 +663,26 @@ func (s *FleetIssueSync) sync(ctx context.Context, task fleet.Task, project flee
 		}
 	}
 
+	if in.PR != nil && in.PR.Merged() {
+		observed, err := issueSyncPRLanded(ctx, s.Store, task)
+		if err != nil {
+			return nil, err
+		}
+		if !observed {
+			if _, err := s.Store.AppendEvent(ctx, task.ID, fleetEventPRLanded, issueSyncLanding{Number: task.PRNumber}); err != nil {
+				return nil, err
+			}
+		}
+		if in.Stage == issueStageMerged && task.Status == fleet.StatusReviewReady &&
+			(in.Acceptance == nil || in.Acceptance.OK) {
+			updated, err := s.Store.Transition(ctx, task.ID, fleet.StatusDone, "PR merged on GitHub")
+			if err != nil {
+				return nil, err
+			}
+			in.Task = updated
+		}
+	}
+
 	d := closeDecision{}
 	if in.Stage == issueStageMerged || in.Stage == issueStageEvidenceComplete || in.Stage == issueStageLocalMerged || in.Stage == issueStageUnconfirmed || in.Stage == issueStagePRClosed {
 		d = decideClose(in)
@@ -676,7 +698,7 @@ func (s *FleetIssueSync) sync(ctx context.Context, task fleet.Task, project flee
 	}
 	body := renderIssueComment(in, d)
 	sum := sha256.Sum256([]byte(body))
-	res := &IssueSyncResult{TaskID: task.ID, Issue: task.Source.IssueNumber, Stage: in.Stage, CommentHash: hex.EncodeToString(sum[:8]), KeptOpen: d.Reason}
+	res := &IssueSyncResult{TaskID: task.ID, Issue: task.Source.IssueNumber, Stage: in.Stage, CommentHash: hex.EncodeToString(sum[:8]), KeptOpen: d.Reason, status: in.Task.Status}
 
 	if err := s.Host.UpsertComment(ctx, project.RepoPath, task.Source.IssueNumber, fleetIssueMarker(task.ID), body); err != nil {
 		return res, fmt.Errorf("update issue #%d comment: %w", task.Source.IssueNumber, err)
@@ -724,7 +746,7 @@ func settledStage(in issueSyncInput, d closeDecision) bool {
 	case issueStageProblem, issueStageLocalMerged, issueStagePRClosed:
 		return true
 	case issueStageMerged, issueStageEvidenceComplete:
-		return d.Close || d.AlreadyClosed || !in.Authorized
+		return in.Task.Status != fleet.StatusReviewReady && (d.Close || d.AlreadyClosed || !in.Authorized)
 	}
 	return false
 }
@@ -750,6 +772,24 @@ func (s *FleetIssueSync) resolveDone(ctx context.Context, in *issueSyncInput) {
 	s.resolvePR(ctx, in)
 }
 
+type issueSyncLanding struct {
+	Number int `json:"number"`
+}
+
+func issueSyncPRLanded(ctx context.Context, store *fleet.Store, task fleet.Task) (bool, error) {
+	ev, ok, err := store.LastEvent(ctx, task.ID, fleetEventPRLanded)
+	if err != nil || !ok {
+		return false, err
+	}
+	var landed issueSyncLanding
+	err = json.Unmarshal(ev.Payload, &landed)
+	return err == nil && landed.Number == task.PRNumber, err
+}
+
+func issueTargetBranch(task fleet.Task, project fleet.Project) string {
+	return strings.TrimSpace(issueFirstNonEmpty(task.TargetBranch, project.DefaultBranch))
+}
+
 // resolvePR sets the stage from what the forge says about the pull request.
 func (s *FleetIssueSync) resolvePR(ctx context.Context, in *issueSyncInput) {
 	task, project := in.Task, in.Project
@@ -762,7 +802,17 @@ func (s *FleetIssueSync) resolvePR(ctx context.Context, in *issueSyncInput) {
 	in.PR = &pr
 	switch {
 	case pr.Merged():
-		in.Stage = issueStageMerged
+		target := issueTargetBranch(task, project)
+		switch {
+		case target == "" || pr.BaseBranch == "":
+			in.Stage = issueStageUnconfirmed
+			in.PRError = "PR 或任務缺少目標分支資料"
+		case pr.BaseBranch != target:
+			in.Stage = issueStageUnconfirmed
+			in.PRError = fmt.Sprintf("PR 已合併到 %s，任務目標分支為 %s", pr.BaseBranch, target)
+		default:
+			in.Stage = issueStageMerged
+		}
 	case strings.EqualFold(pr.State, "OPEN"):
 		in.Stage = issueStagePRReady
 	case strings.EqualFold(pr.State, "CLOSED"):
@@ -858,7 +908,7 @@ func (s *FleetIssueSync) siblings(ctx context.Context, task fleet.Task) []siblin
 		st := siblingState{Task: other, Landed: other.Status == fleet.StatusDone && other.PRNumber == 0 && strings.HasPrefix(other.StatusReason, fleetEvidenceFinishedPrefix)}
 		if other.Status == fleet.StatusDone && other.PRNumber > 0 {
 			if project, perr := s.Store.GetProject(ctx, other.ProjectID); perr == nil {
-				if pr, perr := s.Host.PullRequest(ctx, project.RepoPath, other.PRNumber); perr == nil && pr.Merged() {
+				if pr, perr := s.Host.PullRequest(ctx, project.RepoPath, other.PRNumber); perr == nil && pr.Merged() && pr.BaseBranch != "" && pr.BaseBranch == issueTargetBranch(other, project) {
 					st.Landed = true
 				}
 			}

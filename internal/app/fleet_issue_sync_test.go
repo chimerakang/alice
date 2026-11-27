@@ -575,3 +575,69 @@ func TestGHFleetIssueHostCommentLookup(t *testing.T) {
 		t.Fatalf("err = %v, calls = %.200s", err, log)
 	}
 }
+
+func TestIssueSyncKeepsIssueOpenWhenPRMergedToWrongBranch(t *testing.T) {
+	e := newIssueSyncEnv(t)
+	task := e.task(213, fleet.TrustDirectPR, &yes, toReview...)
+	// Set the pinned target explicitly. The forge fixture reports a merge into main.
+	if _, err := e.storage.db.Exec("UPDATE fleet_tasks SET target_branch = 'develop' WHERE id = ?", task.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.setPR(task, 9, "MERGED")
+	e.tick("first", "second")
+	if result := e.run(task, IssueSyncOptions{AuthorizeClose: true}); result.Closed {
+		t.Fatal("PR merged into main closed a task pinned to develop")
+	}
+}
+
+func TestIssueSyncReconcilesExternallyMergedReviewTask(t *testing.T) {
+	e := newIssueSyncEnv(t)
+	task := e.task(213, fleet.TrustDirectPR, &yes, toReview...)
+	e.setPR(task, 9, "MERGED")
+	e.tick("first", "second")
+	result := e.run(task, IssueSyncOptions{AuthorizeClose: true})
+	if !result.Closed {
+		t.Fatalf("fixture did not observe the merge: %+v", result)
+	}
+	got, err := e.svc.Store.GetTask(context.Background(), task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != fleet.StatusDone || e.svc.TaskActions(context.Background(), got).Can(fleetOpMerge) {
+		t.Fatal("GitHub is closed but Fleet still offers merge on the review task")
+	}
+}
+
+func TestIssueSyncExternallyMergedTaskWaitsForStructuredAcceptance(t *testing.T) {
+	e := newIssueSyncEnv(t)
+	ctx := context.Background()
+	task := e.task(213, fleet.TrustDirectPR, &yes, toReview...)
+	e.setPR(task, 9, "MERGED")
+	e.tick("first", "second")
+	decision := acceptDecisionPending
+	e.sync.Acceptance = func(context.Context, string) (acceptState, error) {
+		state := acceptStateOf(decision, decision)
+		state.Items[0].Text, state.Items[1].Text = "first", "second"
+		return state, nil
+	}
+
+	result := e.run(task, IssueSyncOptions{})
+	got, err := e.svc.Store.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := e.svc.TaskActions(ctx, got)
+	if result.Closed || got.Status != fleet.StatusReviewReady || actions.Can(fleetOpMerge) || actions.Can(fleetOpApprove) {
+		t.Fatalf("expected review without merge actions, got status %s, result %+v, actions %+v", got.Status, result, actions)
+	}
+
+	decision = acceptDecisionApproved
+	result = e.run(task, IssueSyncOptions{AuthorizeClose: true})
+	got, err = e.svc.Store.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Closed || got.Status != fleet.StatusDone {
+		t.Fatalf("expected completed task and closed issue after approval, got status %s, result %+v", got.Status, result)
+	}
+}
