@@ -1,3 +1,5 @@
+> **已移除（歷史文件）**：Hermes 任務系統已從 Alice 移除，任務改由 Fleet 執行。以下內容不再描述現行行為。
+
 # Hermes Task State Management
 
 This document describes the Hermes task-state persistence layer implemented in `internal/app/hermes/` for [issue #97](https://github.com/chimerakang/alice/issues/97).

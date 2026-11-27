@@ -10,9 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/chimerakang/alice-core/hermes"
-
 	"github.com/chimerakang/alice-core/fleet"
+	"github.com/chimerakang/alice-core/ghissue"
 )
 
 // fakeMessenger records the cards a manager sends and edits.
@@ -301,9 +300,9 @@ func TestFleetShipIssueGoesThroughTheQualityGate(t *testing.T) {
 		dir    string
 		number int
 	}
-	fleetFetchIssue = func(_ context.Context, dir string, number int) (*hermes.IssueContext, error) {
+	fleetFetchIssue = func(_ context.Context, dir string, number int) (*ghissue.IssueContext, error) {
 		asked.dir, asked.number = dir, number
-		return &hermes.IssueContext{Number: number, Title: "t", State: "CLOSED", Body: strings.Repeat("x", 200)}, nil
+		return &ghissue.IssueContext{Number: number, Title: "t", State: "CLOSED", Body: strings.Repeat("x", 200)}, nil
 	}
 	e.bot.handleFleetCommand(e.key, 42, "/ship #12")
 	if got := nextFleetMessage(t, e.bot); !strings.Contains(got, "fleet_issue_reading") {
@@ -316,8 +315,8 @@ func TestFleetShipIssueGoesThroughTheQualityGate(t *testing.T) {
 		t.Fatalf("issue fetched as %+v, want #12 in %s", asked, e.project.RepoPath)
 	}
 
-	fleetFetchIssue = func(context.Context, string, int) (*hermes.IssueContext, error) {
-		return &hermes.IssueContext{Number: 13, Title: "t", State: "OPEN", Body: "too short"}, nil
+	fleetFetchIssue = func(context.Context, string, int) (*ghissue.IssueContext, error) {
+		return &ghissue.IssueContext{Number: 13, Title: "t", State: "OPEN", Body: "too short"}, nil
 	}
 	e.bot.handleFleetCommand(e.key, 42, "/ship #13")
 	if got := nextFleetMessage(t, e.bot); !strings.Contains(got, "fleet_issue_reading") {
@@ -327,7 +326,7 @@ func TestFleetShipIssueGoesThroughTheQualityGate(t *testing.T) {
 		t.Fatalf("vague issue: message = %q", got)
 	}
 
-	fleetFetchIssue = func(context.Context, string, int) (*hermes.IssueContext, error) {
+	fleetFetchIssue = func(context.Context, string, int) (*ghissue.IssueContext, error) {
 		return nil, errors.New("gh: not found")
 	}
 	e.bot.handleFleetCommand(e.key, 42, "/ship #14")

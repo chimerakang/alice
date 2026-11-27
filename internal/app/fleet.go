@@ -32,16 +32,16 @@ func fleetPathWithin(path, root string) bool {
 }
 
 // FleetConfig controls the fleet: one agent run per task, each in its own
-// git worktree, across every registered project. It is the default task
-// backend; set backend to "hermes" to run the old Hermes system instead.
+// git worktree, across every registered project. It is the only task backend.
 type FleetConfig struct {
-	// Backend selects the task system: "fleet" (default when empty) or
-	// "hermes".
-	Backend string `json:"backend"`
-	// Enabled is the older on/off switch. It no longer has any effect:
-	// Backend decides, and an empty Backend means fleet.
+	// Backend is left from when a second task system could be selected. It is
+	// still read so that an old config can be warned about.
 	//
-	// Deprecated: use Backend.
+	// Deprecated: the fleet always runs.
+	Backend string `json:"backend"`
+	// Enabled is the older on/off switch. It has no effect.
+	//
+	// Deprecated: the fleet always runs.
 	Enabled bool `json:"enabled"`
 	// ScoutBackend selects the agent for read-only tasks. Empty uses Claude.
 	ScoutBackend string `json:"scout_backend"`
@@ -109,11 +109,6 @@ type FleetConfig struct {
 	NoEscalateReasons []string `json:"no_escalate_reasons"`
 }
 
-const (
-	fleetBackendFleet  = "fleet"
-	fleetBackendHermes = "hermes"
-)
-
 // defaultFleetVerifyStepTimeout is the cap on one verify command when
 // fleet.verify_step_timeout_minutes is not set.
 const defaultFleetVerifyStepTimeout = 20 * time.Minute
@@ -129,19 +124,18 @@ func (c FleetConfig) verifyStepTimeout() (time.Duration, error) {
 	return time.Duration(c.VerifyStepTimeoutMinutes) * time.Minute, nil
 }
 
-// Active reports whether the fleet is the task backend. Anything but an
-// explicit "hermes" selects it.
-func (c FleetConfig) Active() bool {
-	return !strings.EqualFold(strings.TrimSpace(c.Backend), fleetBackendHermes)
-}
-
-// validateBackend rejects a backend value that is neither system.
-func (c FleetConfig) validateBackend() error {
-	switch strings.ToLower(strings.TrimSpace(c.Backend)) {
-	case "", fleetBackendFleet, fleetBackendHermes:
-		return nil
+// backendWarning explains a fleet.backend value that no longer selects
+// anything. It is empty for an unset value or "fleet". An old config must not
+// stop startup, so this is only ever logged.
+func (c FleetConfig) backendWarning() string {
+	switch backend := strings.TrimSpace(c.Backend); {
+	case backend == "", strings.EqualFold(backend, "fleet"):
+		return ""
+	case strings.EqualFold(backend, "hermes"):
+		return `fleet.backend "hermes": Hermes has been removed; using fleet`
+	default:
+		return fmt.Sprintf("fleet.backend %q is not a task backend; using fleet", c.Backend)
 	}
-	return fmt.Errorf("fleet.backend %q: must be %q or %q", c.Backend, fleetBackendFleet, fleetBackendHermes)
 }
 
 // autoModelEnabled reports whether the commander picks models.

@@ -75,34 +75,10 @@
   "enable_data_cleanup": true,
 
   "hermes": {
-    "enabled": false,
-    "strict_mode_enabled": false,
-    "auto_route_complex": false,
-    "planner_effort": "medium",
-    "planner_fast_mode": false,
-    "reviewer_fast_mode": false,
-    "budget": {
-      "max_total_tokens": 500000,
-      "max_wallclock_seconds": 3600
-    },
-    "preflight": {
-      "enabled": false,
-      "model": "claude-haiku-4-5-20251001",
-      "completion_threshold": 90,
-      "timeout_seconds": 20
-    },
-    "summary": {
-      "enabled": false,
-      "verbosity": "minimal",
-      "include_cost_estimate": false,
-      "targets": [
-        "telegram"
-      ]
-    }
+    "planner_effort": "medium"
   },
 
   "fleet": {
-    "backend": "fleet",
     "scout_backend": "claude",
     "scout_codex_model": "",
     "scout_quota": {

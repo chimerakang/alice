@@ -73,7 +73,6 @@ docker compose up -d --build dashboard
 ```text
 cmd/alice/main.go        Process entry point
 internal/app/            Go application code
-internal/app/prompts/    Hermes planner/executor prompt rules
 (planner/engine/issueops/process live in github.com/chimerakang/alice-core)
 ```
 

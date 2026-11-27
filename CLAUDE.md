@@ -48,11 +48,13 @@ Build / restart 操作（`go build`、`pkill alice`、process restart）只有�
 
 ## Coordination architecture
 
-任務協調（Hermes planner/executor、plan-execute engine、issueops、process runner）已移到
-[`alice-core`](https://github.com/chimerakang/alice-core)，本 repo 以 `github.com/chimerakang/alice-core/{hermes,engine,issueops,process}` 引用，
-不再內含 `internal/app/{hermes,engine,task,issueops,process}`，也已移除 `AgentCoordinator` / `SubAgentOrchestrator`（`/multiagent`、`/agents`、`/api/multiagent/*`）。
-Hermes prompt 規則檔留在 `internal/app/prompts/`。Dashboard 的 `/hermes-tasks`、`/reviews`、`/quality` 改為唯讀歷史檢視
-（保留 `/api/hermes/{tasks,snapshots,stats}`、`/api/quality/*` GET；移除 `/api/hermes/active`、`/api/hermes/resolve`）。
+Fleet 是唯一的任務系統：每個任務一個 agent，在自己的 git worktree 執行（`github.com/chimerakang/alice-core/fleet`）。
+Hermes planner/executor、plan-execute engine 的執行路徑與 `/hermes`、`/ghermes`、`/resume`、`/retry`、`/strict`、`/mr` 已移除；
+這些指令只回覆改用的 Fleet 指令。設定檔的 `fleet.backend: "hermes"` 只會記一行警告。
+
+舊的 `hermes_*` 資料表保留唯讀、不做遷移。`/hermes-tasks`、`/reviews`、`/quality` 與
+`/api/hermes/{tasks,snapshots,stats}`、`/api/quality/*` 提供歷史檢視；`./alice export-hermes-history [database]`
+把歷史任務摘要以 JSON 輸出到 stdout。
 
 ## Roadmap
 
@@ -62,5 +64,4 @@ Hermes prompt 規則檔留在 `internal/app/prompts/`。Dashboard 的 `/hermes-t
 - Deployment Architecture、Startup Sequence、Project Structure：讀 [`docs/arch/deployment.md`](docs/arch/deployment.md) 與 [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
 - Task & Issue Management、`MASTER_TASKS.md` 生成：讀 [`docs/playbooks/tasks.md`](docs/playbooks/tasks.md)
 - Subtask 拆分框架與驗收標準：讀 [`docs/SUBTASK_FRAMEWORK.md`](docs/SUBTASK_FRAMEWORK.md) 與 [`docs/SUBTASK_DECISION_CARD.md`](docs/SUBTASK_DECISION_CARD.md)
-- Hermes prompt 規則與工具限制：讀 [`internal/app/prompts/planner_rules_codex.md`](internal/app/prompts/planner_rules_codex.md) 與 [`internal/app/prompts/executor_rules_codex.md`](internal/app/prompts/executor_rules_codex.md)
 - Dashboard、WebSocket、Storage、Git integration：讀 [`docs/DASHBOARD.md`](docs/DASHBOARD.md)、[`docs/WEBSOCKET_REALTIME.md`](docs/WEBSOCKET_REALTIME.md)、[`docs/STORAGE_PERSISTENCE.md`](docs/STORAGE_PERSISTENCE.md)、[`docs/GIT_INTEGRATION.md`](docs/GIT_INTEGRATION.md)

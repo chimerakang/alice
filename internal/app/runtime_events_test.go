@@ -6,7 +6,6 @@ import (
 	"time"
 
 	appengine "github.com/chimerakang/alice-core/engine"
-	"github.com/chimerakang/alice-core/hermes"
 )
 
 func TestRuntimeEventStorageRoundTrip(t *testing.T) {
@@ -75,74 +74,5 @@ func TestRecordRecoveryDecisionPersistsRuntimeEvent(t *testing.T) {
 	}
 	if got.Payload["mode"] != "planner_retry" || got.Payload["action"] != "retry" || got.Payload["reason"] != "planner_retry" {
 		t.Fatalf("payload = %+v", got.Payload)
-	}
-}
-
-func TestRecordHermesInteractionGatePersistsRuntimeEvent(t *testing.T) {
-	prev := globalStorage
-	s := newTestSQLiteStorage(t)
-	globalStorage = s
-	t.Cleanup(func() { globalStorage = prev })
-
-	recordHermesInteractionGate(context.Background(), chatKey{chatID: 42, threadID: 7}, "block_until_choice", "failure_pause_active", "task-1", 2, 5, "修復部署設定")
-
-	events, err := s.GetRuntimeEventsByType("HermesInteractionGate", 10)
-	if err != nil {
-		t.Fatalf("GetRuntimeEventsByType: %v", err)
-	}
-	if len(events) != 1 {
-		t.Fatalf("events = %d, want 1", len(events))
-	}
-	got := events[0]
-	if got.Type != "HermesInteractionGate" || got.ChatID != 42 || got.ThreadID != 7 || got.TaskID != "task-1" {
-		t.Fatalf("event metadata = %+v", got)
-	}
-	if got.Payload["action"] != "block_until_choice" || got.Payload["reason"] != "failure_pause_active" || got.Payload["subtask"] != "修復部署設定" {
-		t.Fatalf("payload = %+v", got.Payload)
-	}
-	if got.Payload["subtask_idx"] != float64(2) || got.Payload["subtask_num"] != float64(3) || got.Payload["total"] != float64(5) {
-		t.Fatalf("numeric payload = %+v", got.Payload)
-	}
-}
-
-func TestRecordIssueFSMTransitionPersistsRuntimeEvent(t *testing.T) {
-	prev := globalStorage
-	s := newTestSQLiteStorage(t)
-	globalStorage = s
-	t.Cleanup(func() { globalStorage = prev })
-
-	recordIssueFSMTransition(context.Background(), chatKey{chatID: 42, threadID: 7}, 153, appengine.IssueFSMTransitionPayload{
-		From:                   hermes.IssueStateChecklistUnsynced,
-		Event:                  hermes.IssueEventChecklistSynced,
-		To:                     hermes.IssueStateChecklistSynced,
-		Reason:                 "issue checklist synced after evidence review",
-		Source:                 "telegram.reconcile",
-		ChecklistTotal:         5,
-		CheckedCount:           4,
-		UncheckedCount:         1,
-		ReviewAccepted:         true,
-		ValidationPassed:       true,
-		ChecklistSynced:        true,
-		NeedsHumanConfirmation: false,
-		DryRun:                 false,
-		WouldWrite:             true,
-	})
-
-	events, err := s.GetRuntimeEventsByType("IssueFSMTransition", 10)
-	if err != nil {
-		t.Fatalf("GetRuntimeEventsByType: %v", err)
-	}
-	if len(events) != 1 {
-		t.Fatalf("events = %d, want 1", len(events))
-	}
-	got := events[0]
-	if got.Type != "IssueFSMTransition" || got.ChatID != 42 || got.ThreadID != 7 || got.Issue != 153 {
-		t.Fatalf("event metadata = %+v", got)
-	}
-	if got.Payload["from"] != "checklist_unsynced" || got.Payload["event"] != "ChecklistSynced" || got.Payload["to"] != "checklist_synced" {
-		t.Fatalf("payload transitions = %+v", got.Payload)
-	}
-	if got.Payload["source"] != "telegram.reconcile" || got.Payload["checklist_total"] != float64(5) || got.Payload["unchecked_count"] != float64(1) {
-		t.Fatalf("payload details = %+v", got.Payload)
 	}
 }

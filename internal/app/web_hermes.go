@@ -3,14 +3,13 @@ package app
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/chimerakang/alice-core/hermes"
 )
 
 // enrichTasksWithGithubURL resolves a GitHub issue URL per task that
@@ -18,7 +17,7 @@ import (
 // tasks never runs more than one `git remote` per unique project.
 // On lookup failure we leave GithubURL empty rather than aborting —
 // the dashboard falls back to plain "#N" text.
-func enrichTasksWithGithubURL(tasks []hermes.ActiveTaskRef) []hermes.ActiveTaskRef {
+func enrichTasksWithGithubURL(tasks []hermesTaskRef) []hermesTaskRef {
 	if len(tasks) == 0 {
 		return tasks
 	}
@@ -51,15 +50,6 @@ func truncateForDisplay(s string, max int) string {
 	return s[:max] + "\n…(truncated)"
 }
 
-// activeTaskStore is the storage surface the Hermes dashboard tools
-// need. SQLiteTaskStore satisfies it; the noop store does not (so a
-// missing-DB deployment surfaces 503 rather than blank lists).
-type activeTaskStore interface {
-	ListHermesTasks(filter hermes.HermesTaskFilter) ([]hermes.ActiveTaskRef, int, error)
-	ListSnapshotHistory(taskID string) ([]hermes.Snapshot, error)
-	GetTask(id string) (hermes.TaskState, error)
-}
-
 // handleHermesTasks returns Hermes tasks (active + terminal), optionally
 // filtered by status. Used by the dashboard's Hermes history page
 // (#171 Class C UI follow-up). Read-only — no auth.
@@ -76,14 +66,14 @@ func (wi *WebInterface) handleHermesTasks(w http.ResponseWriter, r *http.Request
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		store, ok := buildHermesTaskStore().(activeTaskStore)
+		history, ok := globalHermesHistory()
 		if !ok {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": "hermes task store unavailable"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "hermes history unavailable"})
 			return
 		}
 		q := r.URL.Query()
-		filter := hermes.HermesTaskFilter{
+		filter := hermesHistoryFilter{
 			Status: strings.TrimSpace(q.Get("status")),
 		}
 		if v := q.Get("limit"); v != "" {
@@ -96,7 +86,7 @@ func (wi *WebInterface) handleHermesTasks(w http.ResponseWriter, r *http.Request
 				filter.Offset = n
 			}
 		}
-		tasks, total, err := store.ListHermesTasks(filter)
+		tasks, total, err := history.list(filter)
 		if err == nil {
 			tasks = enrichTasksWithGithubURL(tasks)
 		}
@@ -130,22 +120,26 @@ func (wi *WebInterface) handleHermesSnapshots(w http.ResponseWriter, r *http.Req
 			http.Error(w, "task_id is required", http.StatusBadRequest)
 			return
 		}
-		store, ok := buildHermesTaskStore().(activeTaskStore)
+		history, ok := globalHermesHistory()
 		if !ok {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": "hermes task store unavailable"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "hermes history unavailable"})
 			return
 		}
-		hist, err := store.ListSnapshotHistory(taskID)
+		hist, err := history.snapshots(taskID)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
 			return
 		}
-		task, taskErr := store.GetTask(taskID)
-		if taskErr != nil && taskErr != hermes.ErrNoTask {
+		latestState := ""
+		if len(hist) > 0 {
+			latestState = hist[len(hist)-1].RawState
+		}
+		task, err := history.task(taskID, latestState)
+		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": taskErr.Error()})
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
 			return
 		}
 		// Project to a slim shape — full state JSON is too large to
@@ -169,10 +163,10 @@ func (wi *WebInterface) handleHermesSnapshots(w http.ResponseWriter, r *http.Req
 				Step:             s.Step,
 				SnapshotID:       s.ID,
 				ParentSnapshotID: s.ParentSnapshotID,
-				SourceNode:       string(s.SourceNode),
-				NextStep:         string(s.NextStep),
-				Reason:           s.Metadata.Reason,
-				Status:           string(s.State.Status),
+				SourceNode:       s.SourceNode,
+				NextStep:         s.NextStep,
+				Reason:           s.Reason,
+				Status:           s.State.Status,
 				CurrentIdx:       s.State.CurrentIdx,
 				CreatedAt:        s.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 			}
@@ -207,7 +201,7 @@ func (wi *WebInterface) handleHermesSnapshots(w http.ResponseWriter, r *http.Req
 				latestPlan = append(latestPlan, subTaskView{
 					ID:            st.ID,
 					Description:   st.Description,
-					Status:        string(st.Status),
+					Status:        st.Status,
 					Result:        truncateForDisplay(st.Result, 4000),
 					TokensUsed:    st.TokensUsed,
 					Attempts:      st.Attempts,
@@ -265,7 +259,13 @@ func (wi *WebInterface) handleHermesStats(w http.ResponseWriter, r *http.Request
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": "db unavailable"})
 			return
 		}
-		out, err := buildHermesStats(db, days)
+		out, err := emptyHermesStats(days), (hermesHistory{db: db}).check()
+		switch {
+		case errors.Is(err, errNoHermesTables):
+			err = nil
+		case err == nil:
+			out, err = buildHermesStats(db, days)
+		}
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
@@ -318,14 +318,22 @@ type hermesHopBucket struct {
 	Tasks int `json:"tasks"`
 }
 
-func buildHermesStats(db *sql.DB, days int) (*hermesStats, error) {
-	cutoff := fmt.Sprintf("-%d days", days)
-	out := &hermesStats{
+// emptyHermesStats is the answer for a database with no history.
+func emptyHermesStats(days int) *hermesStats {
+	return &hermesStats{
 		WindowDays:     days,
 		GeneratedAt:    time.Now().Format(time.RFC3339),
+		Daily:          []hermesDailyCounts{},
 		SourceNodes:    map[string]int{},
 		FailureReasons: map[string]int{},
+		Phases:         []hermesPhaseStats{},
+		Hops:           []hermesHopBucket{},
 	}
+}
+
+func buildHermesStats(db *sql.DB, days int) (*hermesStats, error) {
+	cutoff := fmt.Sprintf("-%d days", days)
+	out := emptyHermesStats(days)
 
 	// Totals + daily.
 	rows, err := db.Query(
