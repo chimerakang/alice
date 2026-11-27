@@ -10,7 +10,6 @@ import (
 	"sync"
 	"testing"
 
-	"claude-tg-agent/internal/app/hermes"
 	"github.com/chimerakang/alice-core/fleet"
 	"github.com/chimerakang/alice-core/ghissue"
 )
@@ -67,12 +66,12 @@ func newMilestoneEnv(t *testing.T, concurrency int) *milestoneEnv {
 	e.svc.Milestones.Host = e.host
 	e.svc.Commander.Issues.Host = shipAcceptanceIssueHost{e.bodies}
 	previous := fleetFetchIssue
-	fleetFetchIssue = func(_ context.Context, _ string, n int) (*hermes.IssueContext, error) {
+	fleetFetchIssue = func(_ context.Context, _ string, n int) (*ghissue.IssueContext, error) {
 		issue, err := e.host.Issue(context.Background(), "", n)
 		if err != nil {
 			return nil, err
 		}
-		return &hermes.IssueContext{Number: n, State: issue.State, Body: issue.Body, Checklist: []hermes.ChecklistItem{{Text: "x"}}}, nil
+		return &ghissue.IssueContext{Number: n, State: issue.State, Body: issue.Body, Checklist: []ghissue.ChecklistItem{{Text: "x"}}}, nil
 	}
 	t.Cleanup(func() { fleetFetchIssue = previous })
 	e.bot.attachFleetMilestones(e.svc)
@@ -474,5 +473,33 @@ func newGitRunner(t *testing.T, dir string) func(args ...string) {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
+	}
+}
+
+func TestMilestoneReconcilesManuallyMergedPR(t *testing.T) {
+	e := newMilestoneEnv(t, 1)
+	e.auto()
+	e.issue(70, "evaluate")
+	e.issue(71, "translates\n- 依賴:#70")
+	e.ship(70)
+	taskID := e.items()[70].TaskID
+	ctx := context.Background()
+	if _, err := e.storage.db.Exec("UPDATE fleet_tasks SET trust_mode = ? WHERE id = ?", fleet.TrustDirectPR, taskID); err != nil {
+		t.Fatal(err)
+	}
+	e.move(taskID, fleet.StatusRunning, fleet.StatusVerifying, fleet.StatusReviewReady, fleet.StatusDone)
+	if err := e.svc.Store.SetPullRequest(ctx, taskID, "https://example.test/pull/8", 8); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.IssueSync.Host = e.bodies
+	e.bodies.prs[8] = FleetPullRequest{State: "MERGED", BaseBranch: "wrong"}
+	wantItem(t, e.reconcile(), 70, itemAttention, reasonTargetMismatch)
+
+	e.bodies.prs[8] = FleetPullRequest{State: "MERGED", BaseBranch: e.batch().TargetBranch}
+	items := e.reconcile()
+	wantItem(t, items, 70, itemLanded, "")
+	wantItem(t, items, 71, itemWaiting, reasonDependency)
+	if got := e.dispatched(); !slices.Equal(got, []int{70}) {
+		t.Fatalf("dispatched %v, want only #70 until it closes", got)
 	}
 }

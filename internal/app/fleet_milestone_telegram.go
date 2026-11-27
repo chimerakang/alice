@@ -38,6 +38,9 @@ func (f *FleetService) attachMilestones(db *sql.DB) error {
 		return fleetCommanderDispatch(ctx, f, actor, req)
 	}
 	batches.gate = fleetMilestoneGate
+	batches.pullRequest = func(ctx context.Context, repo string, number int) (FleetPullRequest, error) {
+		return f.IssueSync.Host.PullRequest(ctx, repo, number)
+	}
 	epicLabels, epicPattern := resolvedEpicLabels(f.Config.EpicLabels), compileEpicPattern(f.Config.EpicTitlePattern)
 	batches.isEpic = func(labels []string, title string) bool { return isEpicIssue(labels, title, epicLabels, epicPattern) }
 	f.Milestones = batches

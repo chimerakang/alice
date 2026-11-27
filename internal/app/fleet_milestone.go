@@ -103,11 +103,12 @@ type milestoneBatches struct {
 	// dispatch queues one issue task the way /ship does.
 	dispatch func(context.Context, fleet.Actor, fleet.DispatchRequest) (fleet.Task, error)
 	// gate returns why an issue is too vague to dispatch, or "".
-	gate     func(context.Context, fleet.Project, int) (string, error)
-	isEpic   func(labels []string, title string) bool
-	mu       sync.Mutex // one reconcile at a time: two must not dispatch the same issue
-	hookMu   sync.Mutex
-	announce func(context.Context, milestoneBatch, fleet.Task)
+	gate        func(context.Context, fleet.Project, int) (string, error)
+	pullRequest func(context.Context, string, int) (FleetPullRequest, error)
+	isEpic      func(labels []string, title string) bool
+	mu          sync.Mutex // one reconcile at a time: two must not dispatch the same issue
+	hookMu      sync.Mutex
+	announce    func(context.Context, milestoneBatch, fleet.Task)
 }
 
 func newMilestoneBatches(db *sql.DB, store *fleet.Store, cfg fleetMilestoneConfig) (*milestoneBatches, error) {
@@ -350,6 +351,22 @@ func (m *milestoneBatches) reconcile(ctx context.Context, batch milestoneBatch) 
 	for _, issue := range issues {
 		inScope[issue.Number] = issue
 		it := m.classify(batch, issue, before[issue.Number], tasks)
+		if it.Reason == reasonAwaitingMerge && m.pullRequest != nil {
+			for _, task := range tasks {
+				if task.ID != it.TaskID || task.PRNumber <= 0 {
+					continue
+				}
+				pr, err := m.pullRequest(ctx, project.RepoPath, task.PRNumber)
+				if err == nil && pr.Merged() {
+					if pr.BaseBranch == batch.TargetBranch {
+						it.State, it.Reason = itemLanded, ""
+					} else {
+						it.Reason, it.Detail = reasonTargetMismatch, pr.BaseBranch
+					}
+				}
+				break
+			}
+		}
 		items = append(items, &it)
 	}
 	if err := m.applyDependencies(ctx, project, items, inScope); err != nil {
@@ -482,8 +499,8 @@ func (m *milestoneBatches) classify(batch milestoneBatch, issue milestoneIssue, 
 		default:
 			it.State, it.Reason = itemAttention, string(task.Status)
 		}
-		if task.Status != fleet.StatusDone && task.TargetBranch != "" && task.TargetBranch != batch.TargetBranch {
-			it.Reason, it.Detail = reasonTargetMismatch, task.TargetBranch
+		if task.TargetBranch != "" && task.TargetBranch != batch.TargetBranch {
+			it.State, it.Reason, it.Detail = itemAttention, reasonTargetMismatch, task.TargetBranch
 		}
 	case linked != nil:
 		// The owner threw this batch's task away; queueing it again would
