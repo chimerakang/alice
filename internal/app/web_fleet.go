@@ -180,8 +180,6 @@ func fleetErrorStatus(err error) (int, string) {
 		return http.StatusConflict, "no_github_repo"
 	case errors.Is(err, errTasksGitHubAuthRequired):
 		return http.StatusBadGateway, "github_auth"
-	case errors.Is(err, errFleetBackendUsageUnavailable):
-		return http.StatusNotImplemented, "backend_usage_unavailable"
 	case errors.Is(err, context.DeadlineExceeded):
 		return http.StatusGatewayTimeout, "timeout"
 	}

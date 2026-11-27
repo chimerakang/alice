@@ -106,15 +106,14 @@ func (s *FleetService) preferScoutByEstimatedQuota(ctx context.Context, choice f
 		cfg.ClaudeTokens <= 0 || cfg.CodexTokens <= 0 {
 		return choice
 	}
-	store, ok := any(s.Store).(fleetBackendUsageStore)
-	if !ok || s.Store == nil {
+	if s.Store == nil {
 		return choice
 	}
 
 	claudeRemaining, codexRemaining := 1.0, 1.0
 	now := time.Now()
 	start := now.Add(-time.Duration(cfg.WindowMinutes) * time.Minute)
-	err := store.VisitBackendUsage(ctx, start, now, func(backend string, input, output int64, _ float64, _ int64) {
+	err := s.Store.VisitBackendUsage(ctx, start, now, func(backend string, input, output int64, _ float64, _ int64) {
 		used := float64(input) + float64(output)
 		switch backend {
 		case fleetBackendClaude:

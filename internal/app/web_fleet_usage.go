@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -10,12 +9,6 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 )
-
-var errFleetBackendUsageUnavailable = errors.New("backend usage requires a newer Fleet store")
-
-type fleetBackendUsageStore interface {
-	VisitBackendUsage(context.Context, time.Time, time.Time, func(string, int64, int64, float64, int64)) error
-}
 
 func (wi *WebInterface) fleetBackendUsage(ctx context.Context, svc *FleetService, r *http.Request) (proto.Message, error) {
 	query := r.URL.Query()
@@ -38,14 +31,9 @@ func (wi *WebInterface) fleetBackendUsage(ctx context.Context, svc *FleetService
 	if !start.Before(end) {
 		return nil, fleetBadRequest("since must be earlier than until")
 	}
-	store, ok := any(svc.Store).(fleetBackendUsageStore)
-	if !ok {
-		return nil, errFleetBackendUsageUnavailable
-	}
-
 	// Preserve integer token counts as decimal strings in the JSON response.
 	rows := make([]any, 0)
-	err := store.VisitBackendUsage(ctx, start, end, func(backend string, input, output int64, costUSD float64, tasks int64) {
+	err := svc.Store.VisitBackendUsage(ctx, start, end, func(backend string, input, output int64, costUSD float64, tasks int64) {
 		rows = append(rows, map[string]any{
 			"backend":       backend,
 			"input_tokens":  strconv.FormatInt(input, 10),

@@ -273,11 +273,8 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 		runner.CodexScoutModel = cfg.ScoutCodexModel
 		if strings.EqualFold(strings.TrimSpace(cfg.ScoutBackend), fleetBackendAuto) {
 			runner.ScoutRoute = svc.routeScout
-			if configurable, ok := any(runner).(interface {
-				ConfigureScoutQuotaFallback(int, func(context.Context, fleet.Task, string) (string, bool))
-			}); ok {
-				configurable.ConfigureScoutQuotaFallback(cfg.ScoutQuota.MaxTransfers, svc.scoutQuotaFallback)
-			}
+			runner.ConfigureScoutQuotaAdmission(svc.planScoutRoute)
+			runner.ConfigureScoutQuotaFallback(cfg.ScoutQuota.MaxTransfers, svc.scoutQuotaFallback)
 		}
 	default:
 		return nil, fmt.Errorf("fleet.scout_backend %q: must be claude, codex or auto", cfg.ScoutBackend)
