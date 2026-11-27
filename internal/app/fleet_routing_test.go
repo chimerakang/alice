@@ -323,3 +323,20 @@ func fleetTaskProtoAnnotated(ctx context.Context, svc *FleetService, task fleet.
 	fleetAnnotateModel(ctx, svc, out, task)
 	return out
 }
+
+func TestFleetCustomNoEscalateReasonsPreserveDefaults(t *testing.T) {
+	svc := FleetService{Config: FleetConfig{NoEscalateReasons: []string{"maintenance"}}}
+	got := svc.noEscalateReasons()
+	for _, want := range append([]string{"maintenance"}, defaultNoEscalateReasons...) {
+		found := false
+		for _, reason := range got {
+			if reason == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("missing exclusion %q", want)
+		}
+	}
+}
