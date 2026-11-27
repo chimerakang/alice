@@ -232,6 +232,7 @@ func (m *fleetCardManager) Run(ctx context.Context) error {
 var cardEvents = map[string]bool{
 	fleet.EventStatus:              true,
 	fleet.EventStartupResumed:      true,
+	fleet.EventQuotaTransferred:    true,
 	fleet.EventStartupResumeCapped: true,
 	fleet.EventVerification:        true,
 	fleet.EventAgentToolUse:        true,
@@ -396,9 +397,21 @@ func (m *fleetCardManager) render(ctx context.Context, chatID int64, task fleet.
 		"{elapsed}": fleetElapsed(task, m.clock()),
 		"{cost}":    fmt.Sprintf("%.2f", task.CostUSD),
 	}))
+	if line := m.modelLine(ctx, loc, task); line != "" {
+		b.WriteString("\n")
+		b.WriteString(line)
+	}
 	if line := m.actionLine(loc, task, action); line != "" {
 		b.WriteString("\n▸ ")
 		b.WriteString(line)
+	}
+	set := m.Fleet.TaskActions(ctx, task)
+	for _, blocked := range set.Blocked {
+		if blocked.Reason == fleetWhyAlreadyLanded {
+			continue // nothing left to do, not something in the way
+		}
+		b.WriteString("\n⚠️ ")
+		b.WriteString(loc("fleet_card_blocked", fleetBlockVars(loc, blocked, task.Status)))
 	}
 	if task.PRURL != "" {
 		b.WriteString("\n🔗 ")
@@ -411,6 +424,15 @@ func (m *fleetCardManager) render(ctx context.Context, chatID int64, task fleet.
 		}
 		b.WriteString("\n" + loc(key, nil))
 	}
+	if ev, found, err := m.Fleet.Store.LastEvent(ctx, task.ID, fleet.EventQuotaTransferred); err == nil && found {
+		var transfer struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+		}
+		if json.Unmarshal(ev.Payload, &transfer) == nil && transfer.From != "" && transfer.To != "" {
+			b.WriteString("\n" + loc("fleet_card_quota_transfer", map[string]string{"{from}": transfer.From, "{to}": transfer.To}))
+		}
+	}
 	if task.Status == fleet.StatusNeedsDecision && task.SessionID != "" {
 		b.WriteString("\n\n")
 		b.WriteString(loc("fleet_card_retry_vs_reply", nil))
@@ -419,13 +441,16 @@ func (m *fleetCardManager) render(ctx context.Context, chatID int64, task fleet.
 		b.WriteString("\n\n")
 		b.WriteString(loc("fleet_card_confirm_discard", nil))
 	}
-	return b.String(), m.buttons(loc, task, card, confirm)
+	return b.String(), m.buttons(loc, task, card, confirm, set)
 }
 
 // actionLine is the card's one-line account of what is happening.
 func (m *fleetCardManager) actionLine(loc func(string, map[string]string) string, task fleet.Task, action string) string {
 	switch task.Status {
 	case fleet.StatusQueued:
+		if task.StatusReason != "" {
+			return fleetClip(firstLineOf(task.StatusReason), 160)
+		}
 		return loc("fleet_card_action_queued", nil)
 	case fleet.StatusRunning:
 		if action != "" {
@@ -438,8 +463,8 @@ func (m *fleetCardManager) actionLine(loc func(string, map[string]string) string
 	return fleetClip(firstLineOf(task.StatusReason), 160)
 }
 
-// buttons returns the actions a task's status allows.
-func (m *fleetCardManager) buttons(loc func(string, map[string]string) string, task fleet.Task, card fleetCard, confirm string) [][]fleetButton {
+// buttons returns the card's actions that the task allows now.
+func (m *fleetCardManager) buttons(loc func(string, map[string]string) string, task fleet.Task, card fleetCard, confirm string, set fleetActionSet) [][]fleetButton {
 	act := func(action string) fleetButton {
 		return fleetButton{Text: loc("fleet_btn_"+strings.TrimSuffix(action, "!"), nil), Data: fleetCallbackData(action, task.ID)}
 	}
@@ -455,11 +480,13 @@ func (m *fleetCardManager) buttons(loc func(string, map[string]string) string, t
 	case fleet.StatusQueued, fleet.StatusRunning, fleet.StatusVerifying:
 		row = append(row, act(fleetActCancel))
 	case fleet.StatusReviewReady:
-		row = append(row, act(fleetActApprove), act(fleetActDiscard))
+		row = append(row, act(fleetActApprove), act(fleetActMerge), act(fleetOpFinishEvidence), act(fleetActDiscard))
 	case fleet.StatusNeedsDecision:
 		row = append(row, act(fleetActRetry), act(fleetActDiscard))
 	case fleet.StatusFailed:
 		row = append(row, act(fleetActRetry), act(fleetActDiscard))
+	case fleet.StatusCancelled:
+		row = append(row, act(fleetActDiscard))
 	case fleet.StatusDone:
 		// A direct-pr task is done once its pull request is open; merging
 		// it is still the owner's call.
@@ -467,10 +494,7 @@ func (m *fleetCardManager) buttons(loc func(string, map[string]string) string, t
 			row = append(row, act(fleetActMerge))
 		}
 	}
-	var rows [][]fleetButton
-	if len(row) > 0 {
-		rows = append(rows, row)
-	}
+	rows := fleetFilterButtons([][]fleetButton{row}, set)
 	if url := m.detailsURL(task.ID); url != "" {
 		rows = append(rows, []fleetButton{{Text: loc("fleet_btn_details", nil), URL: url}})
 	}
@@ -566,4 +590,20 @@ func fleetClip(s string, max int) string {
 		return s
 	}
 	return string(runes[:max-1]) + "…"
+}
+
+// modelLine says which model a task runs on and who chose it, or "" when it
+// runs on the default.
+func (m *fleetCardManager) modelLine(ctx context.Context, loc func(string, map[string]string) string, task fleet.Task) string {
+	if task.Model == "" {
+		return ""
+	}
+	if c := fleetLastModelChoice(ctx, m.Fleet.Store, task.ID); c != nil && c.Source == fleetModelSourceCommander && c.Model == task.Model {
+		return loc("fleet_card_model_commander", map[string]string{
+			"{model}":  task.Model,
+			"{tier}":   c.Tier,
+			"{reason}": loc("fleet_model_reason_"+c.Reason, map[string]string{"{detail}": c.Detail}),
+		})
+	}
+	return loc("fleet_card_model_manual", map[string]string{"{model}": task.Model})
 }

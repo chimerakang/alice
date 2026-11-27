@@ -36,7 +36,7 @@ func (t *TelegramBot) fleetCompat(ctx context.Context, key chatKey, userID int64
 		return t.fleetCompatAct(ctx, key, userID, command, parts, "/fleet tasks",
 			[]fleet.Status{fleet.StatusFailed, fleet.StatusNeedsDecision},
 			func(id string) error {
-				_, err := t.fleet.Commander.Retry(ctx, fleetActor(userID), id)
+				_, err := fleetCommanderRetry(ctx, t.fleet, fleetActor(userID), id)
 				return err
 			}, "fleet_compat_retried")
 	case "/resume":
@@ -183,7 +183,7 @@ func (t *TelegramBot) fleetCompatParallel(ctx context.Context, key chatKey, user
 	}
 	t.send(key, t.fleetMsg(key.chatID, "fleet_compat_parallel", map[string]string{"{count}": strconv.Itoa(len(goals))}))
 	for _, goal := range goals {
-		task, err := t.fleet.Commander.Dispatch(ctx, fleetActor(userID), fleet.DispatchRequest{
+		task, err := t.fleet.DispatchIssue(ctx, fleetActor(userID), fleet.DispatchRequest{
 			ProjectID: project.ID, Goal: goal.Description, Shape: fleet.ShapeShip,
 		})
 		if err != nil {

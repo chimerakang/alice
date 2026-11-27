@@ -83,8 +83,9 @@ type FleetIssueHost interface {
 
 // FleetIssueSync keeps GitHub issues informed of their fleet tasks.
 type FleetIssueSync struct {
-	Store *fleet.Store
-	Host  FleetIssueHost
+	Store      *fleet.Store
+	Host       FleetIssueHost
+	Acceptance func(context.Context, string) (acceptState, error)
 	// Interval is how often unsettled tasks are re-checked. Zero uses the
 	// default.
 	Interval time.Duration
@@ -112,14 +113,15 @@ type IssueSyncResult struct {
 
 // Stages of a task as its issue is told about them.
 const (
-	issueStageWorking     = "working"
-	issueStageReview      = "review"
-	issueStagePRReady     = "pr_ready"
-	issueStageMerged      = "merged"
-	issueStageLocalMerged = "local_merged"
-	issueStageUnconfirmed = "unconfirmed"
-	issueStagePRClosed    = "pr_closed"
-	issueStageProblem     = "problem"
+	issueStageWorking          = "working"
+	issueStageReview           = "review"
+	issueStagePRReady          = "pr_ready"
+	issueStageEvidenceComplete = "evidence_complete"
+	issueStageMerged           = "merged"
+	issueStageLocalMerged      = "local_merged"
+	issueStageUnconfirmed      = "unconfirmed"
+	issueStagePRClosed         = "pr_closed"
+	issueStageProblem          = "problem"
 )
 
 func (s *FleetIssueSync) interval() time.Duration {
@@ -307,6 +309,7 @@ type issueSyncInput struct {
 	Siblings []siblingState
 
 	Authorized bool
+	Acceptance *acceptGate
 }
 
 type siblingState struct {
@@ -331,7 +334,7 @@ func decideClose(in issueSyncInput) closeDecision {
 		return closeDecision{AlreadyClosed: true}
 	}
 	switch in.Stage {
-	case issueStageMerged:
+	case issueStageMerged, issueStageEvidenceComplete:
 	case issueStageLocalMerged:
 		return closeDecision{Reason: "變更只合併到本機，尚未推送到遠端"}
 	case issueStageUnconfirmed:
@@ -344,32 +347,43 @@ func decideClose(in issueSyncInput) closeDecision {
 	if !in.Authorized {
 		return closeDecision{Reason: "尚未授權自動關單（專案未啟用 " + FleetProjectBindingIssueAutoClose + "，操作者也未授權）"}
 	}
-	if len(in.Checks) == 0 {
-		return closeDecision{Reason: "沒有驗收紀錄，視為未驗收"}
+	if in.Acceptance != nil && !in.Acceptance.OK {
+		return closeDecision{Reason: in.Acceptance.Message}
 	}
-	for _, c := range in.Checks {
-		if !c.Passed {
-			return closeDecision{Reason: "驗收未通過"}
+	if in.Stage == issueStageEvidenceComplete {
+		if in.Acceptance == nil {
+			return closeDecision{Reason: "沒有逐項驗收紀錄"}
+		}
+	} else {
+		if len(in.Checks) == 0 {
+			return closeDecision{Reason: "沒有驗收紀錄，視為未驗收"}
+		}
+		for _, c := range in.Checks {
+			if !c.Passed {
+				return closeDecision{Reason: "驗收未通過"}
+			}
 		}
 	}
 	if in.Issue == nil {
 		return closeDecision{Reason: "無法讀取 issue，無法確認驗收範圍"}
 	}
-	acceptance, open := 0, []string{}
-	for _, item := range in.Issue.Checklist {
-		if !ghissue.IsAcceptanceSection(item.Section) {
-			continue
+	if in.Acceptance == nil {
+		acceptance, open := 0, []string{}
+		for _, item := range in.Issue.Checklist {
+			if !ghissue.IsAcceptanceSection(item.Section) {
+				continue
+			}
+			acceptance++
+			if !item.Checked {
+				open = append(open, item.Text)
+			}
 		}
-		acceptance++
-		if !item.Checked {
-			open = append(open, item.Text)
+		if acceptance == 0 {
+			return closeDecision{Reason: "issue 沒有可核對的驗收項目"}
 		}
-	}
-	if acceptance == 0 {
-		return closeDecision{Reason: "issue 沒有可核對的驗收項目"}
-	}
-	if len(open) > 0 {
-		return closeDecision{Reason: fmt.Sprintf("仍有 %d 項驗收條件未完成（部分交付）", len(open))}
+		if len(open) > 0 {
+			return closeDecision{Reason: fmt.Sprintf("仍有 %d 項驗收條件未完成（部分交付）", len(open))}
+		}
 	}
 	for _, sib := range in.Siblings {
 		if !sib.Landed {
@@ -402,6 +416,10 @@ func renderIssueComment(in issueSyncInput, d closeDecision) string {
 		writeIssueFacts(&sb, task)
 		// A PR that is only ready makes no claim about the checklist.
 		writeIssueAcceptance(&sb, in, task.TrustMode != fleet.TrustDirectPR)
+	case issueStageEvidenceComplete:
+		fmt.Fprintf(&sb, "✅ **證據已驗收**（任務 `%s`）\n\n- 結果: 已完成逐項人工驗收，沒有需合併的檔案變更\n", task.ID)
+		writeIssueFacts(&sb, task)
+		writeIssueSummary(&sb, in)
 	case issueStageMerged:
 		fmt.Fprintf(&sb, "✅ **已合併**（任務 `%s`）\n\n", task.ID)
 		sb.WriteString("- 結果: 變更已合併到遠端\n")
@@ -587,19 +605,31 @@ func (s *FleetIssueSync) sync(ctx context.Context, task fleet.Task, project flee
 		return nil, nil
 	}
 
-	needIssue := in.Stage == issueStageMerged || in.Stage == issueStageLocalMerged || in.Stage == issueStageReview ||
+	needIssue := in.Stage == issueStageMerged || in.Stage == issueStageEvidenceComplete || in.Stage == issueStageLocalMerged || in.Stage == issueStageReview ||
 		in.Stage == issueStagePRReady || in.Stage == issueStageUnconfirmed || in.Stage == issueStagePRClosed
 	if needIssue {
 		if issue, err := s.Host.Fetch(ctx, project.RepoPath, task.Source.IssueNumber); err == nil {
 			in.Issue = issue
 		}
 	}
-	if in.Stage == issueStageMerged {
+	if in.Stage == issueStageMerged || in.Stage == issueStageEvidenceComplete {
 		in.Siblings = s.siblings(ctx, task)
+		if s.Acceptance != nil {
+			state, err := s.Acceptance(ctx, task.ID)
+			if err != nil {
+				in.Acceptance = &acceptGate{Message: "無法讀取逐項驗收紀錄"}
+			} else if state.Structured {
+				gate := evaluateAcceptGate(state, true)
+				if gate.OK && in.Issue != nil && !issueCriteriaCovered(state, in.Issue) {
+					gate = acceptGate{Message: "GitHub issue 的驗收條件已更新，請重新確認"}
+				}
+				in.Acceptance = &gate
+			}
+		}
 	}
 
 	d := closeDecision{}
-	if in.Stage == issueStageMerged || in.Stage == issueStageLocalMerged || in.Stage == issueStageUnconfirmed || in.Stage == issueStagePRClosed {
+	if in.Stage == issueStageMerged || in.Stage == issueStageEvidenceComplete || in.Stage == issueStageLocalMerged || in.Stage == issueStageUnconfirmed || in.Stage == issueStagePRClosed {
 		d = decideClose(in)
 	} else if in.Issue != nil && strings.EqualFold(strings.TrimSpace(in.Issue.State), "closed") {
 		d = closeDecision{AlreadyClosed: true}
@@ -629,6 +659,28 @@ func (s *FleetIssueSync) sync(ctx context.Context, task fleet.Task, project flee
 	return res, nil
 }
 
+// issueCriteriaCovered checks the live issue for criteria added or edited
+// since the reviewed snapshot. Checked legacy items are already settled.
+func issueCriteriaCovered(state acceptState, issue *ghissue.IssueContext) bool {
+	if state.Proposal != nil {
+		return false
+	}
+	approved := make(map[string]int)
+	for _, item := range state.active() {
+		if item.Decision == acceptDecisionApproved {
+			approved[strings.TrimSpace(item.Text)]++
+		}
+	}
+	for _, item := range openCriteria(issue) {
+		text := strings.TrimSpace(item.Text)
+		if approved[text] == 0 {
+			return false
+		}
+		approved[text]--
+	}
+	return true
+}
+
 // settledStage reports whether later re-checks can add nothing: the change
 // has landed (or is local-only or abandoned) and the issue is closed or
 // closing was not authorized. An unauthorized merged task is revisited only
@@ -637,7 +689,7 @@ func settledStage(in issueSyncInput, d closeDecision) bool {
 	switch in.Stage {
 	case issueStageProblem, issueStageLocalMerged, issueStagePRClosed:
 		return true
-	case issueStageMerged:
+	case issueStageMerged, issueStageEvidenceComplete:
 		return d.Close || d.AlreadyClosed || !in.Authorized
 	}
 	return false
@@ -648,6 +700,10 @@ func settledStage(in issueSyncInput, d closeDecision) bool {
 func (s *FleetIssueSync) resolveDone(ctx context.Context, in *issueSyncInput) {
 	task, project := in.Task, in.Project
 	if task.PRNumber == 0 {
+		if strings.HasPrefix(task.StatusReason, fleetEvidenceFinishedPrefix) {
+			in.Stage = issueStageEvidenceComplete
+			return
+		}
 		if task.TrustMode == fleet.TrustLocalOnly && s.approved(ctx, task.ID) {
 			in.Stage = issueStageLocalMerged
 			in.LocalSHA, in.LocalSubject, _ = s.Host.LocalHead(ctx, project.RepoPath, task.Branch)
@@ -759,13 +815,17 @@ func (s *FleetIssueSync) siblings(ctx context.Context, task fleet.Task) []siblin
 		case fleet.StatusCancelled, fleet.StatusFailed:
 			continue
 		}
-		st := siblingState{Task: other}
+		st := siblingState{Task: other, Landed: other.Status == fleet.StatusDone && other.PRNumber == 0 && strings.HasPrefix(other.StatusReason, fleetEvidenceFinishedPrefix)}
 		if other.Status == fleet.StatusDone && other.PRNumber > 0 {
 			if project, perr := s.Store.GetProject(ctx, other.ProjectID); perr == nil {
 				if pr, perr := s.Host.PullRequest(ctx, project.RepoPath, other.PRNumber); perr == nil && pr.Merged() {
 					st.Landed = true
 				}
 			}
+		}
+		if st.Landed && s.Acceptance != nil {
+			state, err := s.Acceptance(ctx, other.ID)
+			st.Landed = err == nil && evaluateAcceptGate(state, true).OK
 		}
 		out = append(out, st)
 	}

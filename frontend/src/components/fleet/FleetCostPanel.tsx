@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { clsx } from "clsx";
 import { Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { fleetApi, FleetApiError } from "@/lib/fleetApi";
+import { fleetApi, FleetApiError, type FleetBackendUsage, type FleetBackendQuota } from "@/lib/fleetApi";
 import { budgetUse, firstLine, formatCost } from "@/lib/fleet";
 import type { FleetCosts } from "@/types/fleet";
 
@@ -111,6 +111,80 @@ export function FleetCostView({ costs, days }: { costs: FleetCosts; days: number
   );
 }
 
+function FleetBackendUsageView({ days }: { days: number }) {
+  const { t } = useTranslation();
+  const [usage, setUsage] = useState<{ rows: FleetBackendUsage[]; quota: FleetBackendQuota[] } | { error: string } | null>(null);
+
+  useEffect(() => {
+    let stale = false;
+    const until = new Date();
+    const since = new Date(until.getTime() - days * 86_400_000);
+    fleetApi.getBackendUsage(since.toISOString(), until.toISOString()).then(
+      ({ backends, quota }) => {
+        if (!stale) setUsage({ rows: backends, quota: quota ?? [] });
+      },
+      (err: unknown) => {
+        if (!stale) setUsage({ error: err instanceof Error ? err.message : String(err) });
+      },
+    );
+    return () => { stale = true; };
+  }, [days]);
+
+  return (
+    <section className="space-y-2">
+      <h4 className="text-sm font-semibold text-gray-200">{t("fleet.costs.by_backend", { days })}</h4>
+      {!usage && <p className="text-xs text-gray-500">{t("common.loading")}</p>}
+      {usage && "error" in usage && <p className="text-xs text-error">{usage.error}</p>}
+      {usage && "rows" in usage && usage.quota.length > 0 && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {usage.quota.map((row) => (
+            <div key={row.backend} className="rounded-md border border-gray-800 p-3 text-xs text-gray-300">
+              <p className="font-medium capitalize text-white">{row.backend}</p>
+              <p className={row.blocked ? "text-warning" : undefined}>
+                {t(row.blocked ? "fleet.costs.quota_blocked" : "fleet.costs.quota_no_block")}
+              </p>
+              <p>{row.provider_remaining !== undefined
+                ? t("fleet.costs.quota_provider", { percent: Math.round(row.provider_remaining * 100) })
+                : row.estimated_remaining === undefined
+                ? t("fleet.costs.quota_unknown")
+                : t("fleet.costs.quota_estimate", { percent: Math.round(row.estimated_remaining * 100) })}</p>
+              <p>{row.resets_at
+                ? t("fleet.costs.quota_reset", { time: new Date(row.resets_at).toLocaleString() })
+                : row.blocked && t("fleet.costs.quota_reset_unknown")}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      {usage && "rows" in usage && (usage.rows.length === 0 ? (
+        <p className="text-xs text-gray-500">{t("fleet.costs.no_backend_usage")}</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="text-xs text-gray-500">
+              <tr>
+                {["backend", "input_tokens", "output_tokens", "cost_usd", "tasks"].map((column) => (
+                  <th key={column} scope="col" className="py-1.5 pr-4">{t(`fleet.costs.backend_columns.${column}`)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {usage.rows.map((row) => (
+                <tr key={row.backend} className="border-t border-gray-800/60 text-gray-300 tabular-nums">
+                  <th scope="row" className="py-1.5 pr-4 font-normal">{row.backend || t("fleet.costs.unattributed")}</th>
+                  <td className="pr-4">{row.input_tokens}</td>
+                  <td className="pr-4">{row.output_tokens}</td>
+                  <td className="pr-4">{formatCost(row.cost_usd)}</td>
+                  <td className="pr-4">{row.tasks}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 /**
  * Fleet spending on the Performance page: by project and by task, against
  * the budgets in force, with the tasks a budget has stopped. Shows nothing
@@ -161,6 +235,7 @@ export default function FleetCostPanel() {
       {!loaded && <p className="text-sm text-gray-500">{t("common.loading")}</p>}
       {loaded?.error && <p className="text-sm text-error break-words">{loaded.error}</p>}
       {loaded?.costs && <FleetCostView costs={loaded.costs} days={loaded.days} />}
+      {loaded?.costs && <FleetBackendUsageView key={days} days={days} />}
     </section>
   );
 }

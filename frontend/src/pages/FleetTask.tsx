@@ -1,3 +1,4 @@
+import ModelChoice from "@/components/fleet/ModelChoice";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -9,6 +10,7 @@ import TimelineEntry from "@/components/TimelineEntry";
 import ToolCallGantt from "@/components/ToolCallGantt";
 import FleetDecisionContext from "@/components/fleet/FleetDecisionContext";
 import FleetDeliverySummary from "@/components/fleet/FleetDeliverySummary";
+import FleetAcceptancePanel from "@/components/fleet/FleetAcceptancePanel";
 import FleetActions from "@/components/fleet/FleetActions";
 import FleetUnavailable from "@/components/fleet/FleetUnavailable";
 import LivenessDot from "@/components/fleet/LivenessDot";
@@ -210,7 +212,14 @@ export default function FleetTaskPage() {
           {task.model && (
             <div>
               <dt className="inline">{t("fleet.task.model")}: </dt>
-              <dd className="inline text-gray-300">{task.model}</dd>
+              <dd className="inline text-gray-300">
+                {task.model}
+                {task.model_source && (
+                  <span className="ml-2 text-xs text-gray-500" data-testid="model-choice">
+                    (<ModelChoice task={task} />)
+                  </span>
+                )}
+              </dd>
             </div>
           )}
           {task.branch && (
@@ -233,6 +242,7 @@ export default function FleetTaskPage() {
             onShowDiff={() => document.getElementById("fleet-task-diff")?.scrollIntoView({ behavior: "smooth" })}
           />
         )}
+        {currentDelivery && <FleetAcceptancePanel delivery={currentDelivery} onChange={(result) => { setDeliveryRead({ key: deliveryKey, result }); void refreshTask(id); }} />}
         <FleetActions task={task} />
         {task.goal.trim() !== goalTitle && (
           <CollapsiblePanel title={t("fleet.task.original_brief")}>

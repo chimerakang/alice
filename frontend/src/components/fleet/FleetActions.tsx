@@ -8,6 +8,7 @@ import { useFleetStore } from "@/stores/fleetStore";
 import type { FleetTask, FleetTaskAction } from "@/types/fleet";
 
 const tone: Record<FleetTaskAction, string> = {
+  finish_evidence: "bg-success/15 text-success border-success/30 hover:bg-success/25",
   approve: "bg-success/15 text-success border-success/30 hover:bg-success/25",
   merge: "bg-success/15 text-success border-success/30 hover:bg-success/25",
   pass: "bg-warning/15 text-warning border-warning/30 hover:bg-warning/25",

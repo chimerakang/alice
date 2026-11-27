@@ -104,6 +104,22 @@ function query(params: Record<string, string | number | undefined>): string {
 
 const enc = encodeURIComponent;
 
+export interface FleetBackendUsage {
+  backend: string;
+  input_tokens: string;
+  output_tokens: string;
+  cost_usd: number;
+  tasks: string;
+}
+
+export interface FleetBackendQuota {
+  backend: string;
+  blocked: boolean;
+  estimated_remaining?: number;
+  provider_remaining?: number;
+  resets_at?: string;
+}
+
 export const fleetApi = {
   getDigest: () => request<FleetDigest>("GET", "/api/fleet/digest"),
 
@@ -145,6 +161,20 @@ export const fleetApi = {
     ),
   getTaskDiff: (id: string) => request<FleetDiff>("GET", `/api/fleet/tasks/${enc(id)}/diff`),
   getTaskDelivery: (id: string) => request<FleetDelivery>("GET", `/api/fleet/tasks/${enc(id)}/delivery`),
+  /** Per-item acceptance commands; each returns the refreshed delivery summary. */
+  decideAcceptance: (id: string, item_id: string, decision: string, note: string) =>
+    request<FleetDelivery>("POST", `/api/fleet/tasks/${enc(id)}/acceptance/decide`, { item_id, decision, note }, true),
+  enterAcceptance: (
+    id: string,
+    body: {
+      criteria?: { id: string; text: string }[];
+      items: { id: string; status: string; evidence?: { type: string; ref: string; note?: string }[]; blocker?: { missing: string; owner: string }; note?: string }[];
+    },
+  ) => request<FleetDelivery>("POST", `/api/fleet/tasks/${enc(id)}/acceptance/entry`, body, true),
+  acceptanceCriteria: (id: string, action: "refresh" | "apply" | "dismiss") =>
+    request<FleetDelivery>("POST", `/api/fleet/tasks/${enc(id)}/acceptance/criteria`, { action }, true),
+  requestEvidence: (id: string) =>
+    request<FleetDelivery>("POST", `/api/fleet/tasks/${enc(id)}/acceptance/request-evidence`, {}, true),
   getTaskVerifications: async (id: string) =>
     (await request<{ verifications?: FleetVerification[] }>("GET", `/api/fleet/tasks/${enc(id)}/verifications`))
       .verifications ?? [],
@@ -159,6 +189,8 @@ export const fleetApi = {
   tryVerify: async (id: string) =>
     (await request<{ verifications?: FleetVerification[] }>("POST", `/api/fleet/projects/${enc(id)}/verify`, {}, true))
       .verifications ?? [],
+  getBackendUsage: (since: string, until: string) =>
+    request<{ backends: FleetBackendUsage[]; quota?: FleetBackendQuota[] }>("GET", `/api/fleet/usage/backends${query({ since, until })}`),
   getCosts: (days = 7) => request<FleetCosts>("GET", `/api/costs/fleet${query({ days })}`),
 
   getAudit: async (params: { project?: string; task?: string; actor?: string; limit?: number; beforeId?: number } = {}) =>
