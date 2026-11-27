@@ -617,6 +617,29 @@ func TestFleetCardShowsLatestToolAndClearsItOnStatusChange(t *testing.T) {
 	}
 }
 
+func TestFleetCardExplainsRetryVersusReplyWhenASessionExists(t *testing.T) {
+	e := newCardEnv(t)
+	ctx := context.Background()
+	task := e.dispatch("/ship fix it")
+	if _, err := e.svc.Store.Transition(ctx, task.ID, fleet.StatusRunning, "slot free"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Store.Transition(ctx, task.ID, fleet.StatusNeedsDecision, "runner stopped: context canceled"); err != nil {
+		t.Fatal(err)
+	}
+	e.cards.handleEvent(ctx, fleet.Event{TaskID: task.ID, Type: fleet.EventStatus})
+	if got := e.msgr.lastEdit(t).Text; strings.Contains(got, "fleet_card_retry_vs_reply") {
+		t.Fatalf("no session yet, but the card explains Retry vs Reply:\n%s", got)
+	}
+	if err := e.svc.Store.SetSession(ctx, task.ID, "sess-1"); err != nil {
+		t.Fatal(err)
+	}
+	e.cards.handleEvent(ctx, fleet.Event{TaskID: task.ID, Type: fleet.EventStatus})
+	if got := e.msgr.lastEdit(t).Text; !strings.Contains(got, "fleet_card_retry_vs_reply") {
+		t.Fatalf("card with a session lacks the Retry vs Reply note:\n%s", got)
+	}
+}
+
 func TestFleetToolSummary(t *testing.T) {
 	cases := []struct{ payload, want string }{
 		{`{"tool":"Edit","input":{"file_path":"internal/app/main.go","old_string":"a"}}`, "Edit internal/app/main.go"},

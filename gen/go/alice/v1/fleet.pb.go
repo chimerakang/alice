@@ -365,9 +365,11 @@ type FleetTask struct {
 	IssueUrl string `protobuf:"bytes,28,opt,name=issue_url,json=issueUrl,proto3" json:"issue_url,omitempty"`
 	// A non-fatal warning from the dispatch, e.g. the epic could not be updated.
 	// Not persisted; only set in the dispatch response.
-	Warning       string `protobuf:"bytes,29,opt,name=warning,proto3" json:"warning,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Warning             string `protobuf:"bytes,29,opt,name=warning,proto3" json:"warning,omitempty"`
+	StartupRecovered    bool   `protobuf:"varint,34,opt,name=startup_recovered,json=startupRecovered,proto3" json:"startup_recovered,omitempty"`
+	StartupResumeCapped bool   `protobuf:"varint,35,opt,name=startup_resume_capped,json=startupResumeCapped,proto3" json:"startup_resume_capped,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *FleetTask) Reset() {
@@ -601,6 +603,20 @@ func (x *FleetTask) GetWarning() string {
 		return x.Warning
 	}
 	return ""
+}
+
+func (x *FleetTask) GetStartupRecovered() bool {
+	if x != nil {
+		return x.StartupRecovered
+	}
+	return false
+}
+
+func (x *FleetTask) GetStartupResumeCapped() bool {
+	if x != nil {
+		return x.StartupResumeCapped
+	}
+	return false
 }
 
 type FleetTaskList struct {
@@ -3176,7 +3192,7 @@ const file_alice_v1_fleet_proto_rawDesc = "" +
 	"updated_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12)\n" +
 	"\x10github_available\x18\x0e \x01(\bR\x0fgithubAvailable\"F\n" +
 	"\x10FleetProjectList\x122\n" +
-	"\bprojects\x18\x01 \x03(\v2\x16.alice.v1.FleetProjectR\bprojects\"\xfb\a\n" +
+	"\bprojects\x18\x01 \x03(\v2\x16.alice.v1.FleetProjectR\bprojects\"\xdc\b\n" +
 	"\tFleetTask\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
@@ -3215,7 +3231,9 @@ const file_alice_v1_fleet_proto_rawDesc = "" +
 	"finishedAt\x12D\n" +
 	"\x10last_activity_at\x18\x1b \x01(\v2\x1a.google.protobuf.TimestampR\x0elastActivityAt\x12\x1b\n" +
 	"\tissue_url\x18\x1c \x01(\tR\bissueUrl\x12\x18\n" +
-	"\awarning\x18\x1d \x01(\tR\awarning\":\n" +
+	"\awarning\x18\x1d \x01(\tR\awarning\x12+\n" +
+	"\x11startup_recovered\x18\" \x01(\bR\x10startupRecovered\x122\n" +
+	"\x15startup_resume_capped\x18# \x01(\bR\x13startupResumeCapped\":\n" +
 	"\rFleetTaskList\x12)\n" +
 	"\x05tasks\x18\x01 \x03(\v2\x13.alice.v1.FleetTaskR\x05tasks\"\xc6\x01\n" +
 	"\n" +

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/chimerakang/alice-core/fleet"
 	"github.com/chimerakang/alice-core/worktree"
@@ -55,6 +56,8 @@ type FleetConfig struct {
 	// MaxConcurrent caps active tasks across all projects. Zero uses the
 	// fleet's default.
 	MaxConcurrent int `json:"max_concurrent"`
+	// Zero disables startup recovery. Positive values cap attempts per task.
+	StartupResumeLimit int `json:"startup_resume_limit"`
 	// DefaultTrustMode is given to newly registered projects: "local-only"
 	// (default), "direct-pr" or "no-mistakes".
 	DefaultTrustMode string `json:"default_trust_mode"`
@@ -63,6 +66,10 @@ type FleetConfig struct {
 	DailyBudgetUSD float64 `json:"daily_budget_usd"`
 	// TaskBudgetUSD caps one task's lifetime spend. Zero means no limit.
 	TaskBudgetUSD float64 `json:"task_budget_usd"`
+	// VerifyStepTimeoutMinutes caps each verify command of a task. Zero uses
+	// defaultFleetVerifyStepTimeout; a busy machine needs more than a quiet
+	// one, since a timed-out check counts as a failed one.
+	VerifyStepTimeoutMinutes int `json:"verify_step_timeout_minutes"`
 	// OwnerUserID is the Telegram user the fleet reports to, and the only
 	// one who may approve, merge or wave a task through. Defaults to the
 	// first of allowed_user_ids.
@@ -85,6 +92,21 @@ const (
 	fleetBackendFleet  = "fleet"
 	fleetBackendHermes = "hermes"
 )
+
+// defaultFleetVerifyStepTimeout is the cap on one verify command when
+// fleet.verify_step_timeout_minutes is not set.
+const defaultFleetVerifyStepTimeout = 20 * time.Minute
+
+// verifyStepTimeout returns the cap on one verify command of a task.
+func (c FleetConfig) verifyStepTimeout() (time.Duration, error) {
+	switch {
+	case c.VerifyStepTimeoutMinutes < 0:
+		return 0, fmt.Errorf("must not be negative, got %d", c.VerifyStepTimeoutMinutes)
+	case c.VerifyStepTimeoutMinutes == 0:
+		return defaultFleetVerifyStepTimeout, nil
+	}
+	return time.Duration(c.VerifyStepTimeoutMinutes) * time.Minute, nil
+}
 
 // Active reports whether the fleet is the task backend. Anything but an
 // explicit "hermes" selects it.
@@ -147,9 +169,16 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 	if db == nil {
 		return nil, fmt.Errorf("fleet needs persistence: enable_persistence must be on")
 	}
+	if cfg.StartupResumeLimit < 0 {
+		return nil, fmt.Errorf("fleet.startup_resume_limit must be non-negative")
+	}
 	mode, err := cfg.trustMode()
 	if err != nil {
 		return nil, fmt.Errorf("fleet.default_trust_mode: %w", err)
+	}
+	verifyStepTimeout, err := cfg.verifyStepTimeout()
+	if err != nil {
+		return nil, fmt.Errorf("fleet.verify_step_timeout_minutes: %w", err)
 	}
 	dataDir := filepath.Dir(databasePath)
 	if strings.TrimSpace(cfg.WorktreeRoot) == "" {
@@ -196,12 +225,14 @@ func NewFleetService(cfg FleetConfig, db *sql.DB, databasePath, defaultModel str
 	// when it is closed, is FleetIssueSync's.
 	issues := &fleet.IssueTracker{Store: store, NoComments: true}
 	sched := &fleet.Scheduler{
-		Store:         store,
-		Runner:        runner,
-		Deliverer:     deliverer,
-		Issues:        issues,
-		MaxConcurrent: cfg.MaxConcurrent,
-		OnRecovery:    logFleetRecovery,
+		Store:              store,
+		Runner:             runner,
+		Verifier:           &fleet.Verifier{Store: store, ReportRoot: runner.ReportRoot, StepTimeout: verifyStepTimeout},
+		Deliverer:          deliverer,
+		Issues:             issues,
+		MaxConcurrent:      cfg.MaxConcurrent,
+		OnRecovery:         logFleetRecovery,
+		StartupResumeLimit: cfg.StartupResumeLimit,
 	}
 	return &FleetService{
 		Config:    cfg,

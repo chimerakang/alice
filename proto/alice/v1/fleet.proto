@@ -92,6 +92,8 @@ message FleetTask {
   // A non-fatal warning from the dispatch, e.g. the epic could not be updated.
   // Not persisted; only set in the dispatch response.
   string warning = 29;
+  bool startup_recovered = 34;
+  bool startup_resume_capped = 35;
 }
 
 message FleetTaskList {

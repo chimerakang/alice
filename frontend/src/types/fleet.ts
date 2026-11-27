@@ -44,6 +44,8 @@ export interface FleetProject {
 }
 
 export interface FleetTask {
+  startup_recovered?: boolean;
+  startup_resume_capped?: boolean;
   id: string;
   project_id: string;
   project_name: string;

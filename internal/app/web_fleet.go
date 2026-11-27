@@ -428,7 +428,9 @@ func (wi *WebInterface) fleetListTasks(ctx context.Context, svc *FleetService, r
 	names := fleetProjectNames(ctx, svc)
 	out := &alicev1.FleetTaskList{}
 	for _, t := range tasks {
-		out.Tasks = append(out.Tasks, fleetTaskProto(t, names[t.ProjectID]))
+		entry := fleetTaskProto(t, names[t.ProjectID])
+		entry.StartupRecovered, entry.StartupResumeCapped = fleetStartupResumeState(ctx, svc.Store, t)
+		out.Tasks = append(out.Tasks, entry)
 	}
 	return out, nil
 }
@@ -438,7 +440,9 @@ func (wi *WebInterface) fleetTaskReply(ctx context.Context, svc *FleetService, t
 	if p, err := svc.Store.GetProject(ctx, task.ProjectID); err == nil {
 		name = p.Name
 	}
-	return fleetTaskProto(task, name)
+	out := fleetTaskProto(task, name)
+	out.StartupRecovered, out.StartupResumeCapped = fleetStartupResumeState(ctx, svc.Store, task)
+	return out
 }
 
 func (wi *WebInterface) fleetGetTask(ctx context.Context, svc *FleetService, r *http.Request) (proto.Message, error) {
