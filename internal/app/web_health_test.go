@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -70,5 +71,39 @@ func TestHandleHealthIncludesStorageAndJobs(t *testing.T) {
 	}
 	if got := jobs["active_count"]; got != float64(1) {
 		t.Fatalf("active_count = %v, want 1", got)
+	}
+}
+
+// The liveness probe must give the polling verdict without touching storage:
+// a supervisor restarts the service when this endpoint is slow.
+func TestHealthLiveReflectsPollingWithoutStorage(t *testing.T) {
+	oldStorage := globalStorage
+	globalStorage = nil
+	t.Cleanup(func() { globalStorage = oldStorage })
+
+	bot := &TelegramBot{}
+	wi := &WebInterface{bot: bot}
+	for _, tc := range []struct {
+		err  error
+		want int
+	}{{errors.New("offline"), http.StatusServiceUnavailable}, {nil, http.StatusOK}} {
+		bot.pollHealth.record(tc.err)
+		w := httptest.NewRecorder()
+		wi.handleHealthLive(w, httptest.NewRequest(http.MethodGet, "/api/health/live", nil))
+		if w.Code != tc.want {
+			t.Fatalf("HTTP %d; want %d", w.Code, tc.want)
+		}
+		var body map[string]interface{}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		for _, key := range []string{"storage", "jobs", "hermes"} {
+			if _, ok := body[key]; ok {
+				t.Fatalf("liveness reply includes %q", key)
+			}
+		}
+		if body["telegram"] == nil || body["status"] == nil {
+			t.Fatalf("liveness reply = %v", body)
+		}
 	}
 }

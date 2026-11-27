@@ -172,3 +172,38 @@ func TestFleetConfigBackend(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+func TestFleetVerifyStepTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		minutes int
+		want    time.Duration
+		wantErr bool
+	}{
+		{minutes: 0, want: defaultFleetVerifyStepTimeout},
+		{minutes: 45, want: 45 * time.Minute},
+		{minutes: -1, wantErr: true},
+	} {
+		got, err := FleetConfig{VerifyStepTimeoutMinutes: tc.minutes}.verifyStepTimeout()
+		if (err != nil) != tc.wantErr || got != tc.want {
+			t.Errorf("verifyStepTimeout(%d) = %v, %v; want %v, error %v", tc.minutes, got, err, tc.want, tc.wantErr)
+		}
+	}
+}
+
+func TestNewFleetServiceGivesTheVerifierItsStepTimeout(t *testing.T) {
+	storage, err := NewSQLiteStorage(filepath.Join(t.TempDir(), "alice.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+	svc, err := NewFleetService(FleetConfig{VerifyStepTimeoutMinutes: 45}, storage.db, filepath.Join(t.TempDir(), "alice.db"), "sonnet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := svc.Scheduler.Verifier; v == nil || v.StepTimeout != 45*time.Minute {
+		t.Fatalf("scheduler verifier = %+v, want a 45m step timeout", v)
+	}
+	if _, err := NewFleetService(FleetConfig{VerifyStepTimeoutMinutes: -1}, storage.db, "./data/alice.db", "sonnet"); err == nil {
+		t.Fatal("a negative verify step timeout was accepted")
+	}
+}
