@@ -1001,6 +1001,17 @@
       "pass": "放行會略過驗收門檻，讓目前的變更進入交付流程。",
       "discard": "捨棄會移除工作目錄及未提交的變更。"
     },
+    "model_choice": {
+      "manual": "由你指定",
+      "commander": "由指揮層選擇：{{tier}}，{{reason}}",
+      "tier": { "fast": "fast", "smart": "smart", "deep": "deep", "flagship": "flagship" },
+      "reason": {
+        "label": "issue 標籤 {{detail}}",
+        "complexity": "任務文字符合 {{detail}}",
+        "default": "拿不準，使用預設等級",
+        "escalated": "失敗後重試升級（{{detail}}）"
+      }
+    },
     "delivery": {
       "title": "交付摘要",
       "verify_passed": "驗收通過",

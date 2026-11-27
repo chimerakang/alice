@@ -1002,6 +1002,17 @@
       "pass": "Pass skips the verification gate and sends the current changes forward for delivery.",
       "discard": "Discard removes the worktree and any uncommitted changes."
     },
+    "model_choice": {
+      "manual": "Chosen by you",
+      "commander": "Chosen by the commander: {{tier}} — {{reason}}",
+      "tier": { "fast": "fast", "smart": "smart", "deep": "deep", "flagship": "flagship" },
+      "reason": {
+        "label": "issue label {{detail}}",
+        "complexity": "task text matched {{detail}}",
+        "default": "not sure, so the default tier",
+        "escalated": "retried after a failure ({{detail}})"
+      }
+    },
     "delivery": {
       "title": "Delivery summary",
       "verify_passed": "Checks passed",

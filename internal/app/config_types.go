@@ -4,16 +4,16 @@ import "encoding/json"
 
 // MultimediaConfig 多媒體處理設定
 type MultimediaConfig struct {
-	EnablePhotoSupport     bool   `json:"enable_photo_support"`
-	EnableVoiceSupport     bool   `json:"enable_voice_support"`
-	EnableImageGeneration  bool   `json:"enable_image_generation"`
-	OpenAIAPIKey           string `json:"openai_api_key"`
-	MaxFileSizeMB          int    `json:"max_file_size_mb"`
-	TempDownloadDir        string `json:"temp_download_dir"`
-	VoiceToTextProvider    string `json:"voice_to_text_provider"`
-	ImageModel             string `json:"image_model"`
-	ImageSize              string `json:"image_size"`
-	ImageQuality           string `json:"image_quality"`
+	EnablePhotoSupport    bool   `json:"enable_photo_support"`
+	EnableVoiceSupport    bool   `json:"enable_voice_support"`
+	EnableImageGeneration bool   `json:"enable_image_generation"`
+	OpenAIAPIKey          string `json:"openai_api_key"`
+	MaxFileSizeMB         int    `json:"max_file_size_mb"`
+	TempDownloadDir       string `json:"temp_download_dir"`
+	VoiceToTextProvider   string `json:"voice_to_text_provider"`
+	ImageModel            string `json:"image_model"`
+	ImageSize             string `json:"image_size"`
+	ImageQuality          string `json:"image_quality"`
 }
 
 // RenderingConfig HTML 渲染設定
@@ -31,10 +31,14 @@ type CodexInterceptionConfig struct {
 
 // ModelRoutingConfig 動態模型路由設定
 type ModelRoutingConfig struct {
-	EnableDynamicRouting  bool   `json:"enable_dynamic_routing"`
-	FastModel             string `json:"fast_model"`
-	SmartModel            string `json:"smart_model"`
-	DeepModel             string `json:"deep_model"`
+	EnableDynamicRouting bool   `json:"enable_dynamic_routing"`
+	FastModel            string `json:"fast_model"`
+	SmartModel           string `json:"smart_model"`
+	DeepModel            string `json:"deep_model"`
+	// FlagshipModel is the top tier, above DeepModel. It is used only by the
+	// Fleet commander (hardest tasks, last escalation step). Empty means the
+	// tier does not exist and escalation stops at DeepModel.
+	FlagshipModel         string `json:"flagship_model"`
 	PlanModel             string `json:"plan_model"`
 	ExecuteModel          string `json:"execute_model"`
 	CodexFastModel        string `json:"codex_fast_model"`

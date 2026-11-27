@@ -495,7 +495,7 @@ func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, da
 	case fleetActCancel:
 		_, err = cmd.Cancel(ctx, actor, taskID, "")
 	case fleetActRetry:
-		_, err = cmd.Retry(ctx, actor, taskID)
+		_, err = fleetCommanderRetry(ctx, t.fleet, actor, taskID)
 	case fleetActApprove:
 		task, err = cmd.Approve(ctx, actor, taskID)
 	case fleetActMerge:

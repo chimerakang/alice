@@ -943,6 +943,7 @@ func Main() {
 	if config.Fleet.Active() {
 		svc, err := NewFleetService(config.Fleet, fleetDatabase(), config.DatabasePath, config.Model)
 		if err == nil {
+			svc.Routing = config.ModelRouting
 			err = svc.Start(appCtx)
 		}
 		if err != nil {
