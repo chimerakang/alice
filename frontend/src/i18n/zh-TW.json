@@ -991,6 +991,7 @@
       "title": "目前卡在哪裡",
       "interrupted": "執行程序被中斷，Fleet 已停下這輪工作。",
       "reason_unavailable": "沒有留下停止原因。",
+      "checks_loading": "正在載入交付明細…",
       "checks_unavailable": "目前無法讀取驗收明細。",
       "changed_files_other": "{{count}} 個檔案有變更",
       "reply": "若要接續原本的 session，選「追加指示」，再選「照原樣繼續」或填寫新的指示。",

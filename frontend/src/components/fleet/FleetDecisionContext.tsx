@@ -1,9 +1,10 @@
 import { useTranslation } from "react-i18next";
 import type { FleetDelivery, FleetTask } from "@/types/fleet";
 
-export default function FleetDecisionContext({ task, delivery }: {
+export default function FleetDecisionContext({ task, delivery, deliveryLoading }: {
   task: FleetTask;
   delivery: FleetDelivery | null;
+  deliveryLoading: boolean;
 }) {
   const { t } = useTranslation();
   const reason = delivery?.stop_reason || task.status_reason;
@@ -17,8 +18,10 @@ export default function FleetDecisionContext({ task, delivery }: {
       <p className="break-words text-gray-100">
         {interrupted ? t("fleet.decision_context.interrupted") : reason || t("fleet.decision_context.reason_unavailable")}
       </p>
-      <p className="text-gray-300">
-        {delivery ? t(`fleet.delivery.verify_${delivery.verification}`) : t("fleet.decision_context.checks_unavailable")}
+      <p className="text-gray-300" role="status">
+        {delivery
+          ? t(`fleet.delivery.verify_${delivery.verification}`)
+          : t(deliveryLoading ? "fleet.decision_context.checks_loading" : "fleet.decision_context.checks_unavailable")}
         {delivery?.diff_known && ` · ${t("fleet.decision_context.changed_files", { count: delivery.files + delivery.untracked })}`}
       </p>
       {delivery && (
