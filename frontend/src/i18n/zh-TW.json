@@ -987,6 +987,19 @@
       "github_reason_no_remote": "無法使用 GitHub：此專案沒有 GitHub remote。",
       "github_reason_auth_required": "無法使用 GitHub：gh 尚未登入。請在 Alice 主機執行 `gh auth login`。"
     },
+    "decision_context": {
+      "title": "目前卡在哪裡",
+      "interrupted": "執行程序被中斷，Fleet 已停下這輪工作。",
+      "reason_unavailable": "沒有留下停止原因。",
+      "checks_loading": "正在載入交付明細…",
+      "checks_unavailable": "目前無法讀取驗收明細。",
+      "changed_files_other": "{{count}} 個檔案有變更",
+      "reply": "若要接續原本的 session，選「追加指示」，再選「照原樣繼續」或填寫新的指示。",
+      "no_session": "這筆任務沒有保存 session。若要重新執行，請選「重試」。",
+      "retry": "重試會開新 session，從原始任務說明重新執行。",
+      "pass": "放行會略過驗收門檻，讓目前的變更進入交付流程。",
+      "discard": "捨棄會移除工作目錄及未提交的變更。"
+    },
     "delivery": {
       "title": "交付摘要",
       "verify_passed": "驗收通過",
@@ -1038,6 +1051,7 @@
       }
     },
     "task": {
+      "original_brief": "原始任務說明",
       "back": "回到看板",
       "not_found": "找不到任務 {{id}}。",
       "elapsed": "耗時",
