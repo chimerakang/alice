@@ -111,6 +111,7 @@
     "default_trust_mode": "local-only",
     "daily_budget_usd": 0,
     "task_budget_usd": 0,
+    "verify_step_timeout_minutes": 20,
     "dashboard_url": "",
     "owner_user_id": 0
   },
