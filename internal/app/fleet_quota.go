@@ -72,7 +72,7 @@ func routeWithQuota(now time.Time, preferred string, codexEligible bool, claude,
 
 // matchFleetQuotaError matches configured CLI error patterns. An optional
 // named reset group contains a timestamp in the configured Go time layout.
-func matchFleetQuotaError(message string, patterns []*regexp.Regexp, layout string, location *time.Location) (bool, time.Time, error) {
+func matchFleetQuotaError(message string, patterns []*regexp.Regexp, layout string, location *time.Location, now time.Time) (bool, time.Time, error) {
 	for _, pattern := range patterns {
 		match := pattern.FindStringSubmatch(message)
 		if match == nil {
@@ -85,6 +85,20 @@ func matchFleetQuotaError(message string, patterns []*regexp.Regexp, layout stri
 		reset, err := time.ParseInLocation(layout, strings.TrimSpace(match[i]), location)
 		if err != nil {
 			return true, time.Time{}, fmt.Errorf("parse quota reset: %w", err)
+		}
+		if reset.Year() == 0 {
+			// A layout without date fields represents the next occurrence
+			// of that local clock time. A partial date is ambiguous.
+			probe := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
+			if probe.Format(layout) != probe.AddDate(1, 1, 1).Format(layout) {
+				return true, time.Time{}, fmt.Errorf("quota reset has no usable calendar year")
+			}
+			local := now.In(location)
+			reset = time.Date(local.Year(), local.Month(), local.Day(),
+				reset.Hour(), reset.Minute(), reset.Second(), reset.Nanosecond(), location)
+			if !reset.After(now) {
+				reset = reset.AddDate(0, 0, 1)
+			}
 		}
 		return true, reset, nil
 	}
@@ -134,7 +148,7 @@ func (cfg fleetScoutQuotaConfig) errorMatcher() (func(string, string) (bool, tim
 		}
 	}
 	return func(backend, diagnostic string) (bool, time.Time) {
-		blocked, reset, _ := matchFleetQuotaError(diagnostic, compiled[backend], layout, location)
+		blocked, reset, _ := matchFleetQuotaError(diagnostic, compiled[backend], layout, location, time.Now())
 		return blocked, reset
 	}, nil
 }
