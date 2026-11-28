@@ -104,7 +104,9 @@ export default function FleetTaskPage() {
   }, [stamp, task, pullEvents]);
 
   const shape = task?.shape;
-  const deliveryKey = JSON.stringify([id, stamp]);
+  // GitHub can publish merge evidence without changing the task status.
+  const mergeEvent = events.filter((event) => event.type === "issue_sync.pr_landed" || event.type === "issue_sync.result").at(-1);
+  const deliveryKey = JSON.stringify([id, stamp, mergeEvent?.id]);
   useEffect(() => {
     if (!id || !shape) return;
     let active = true;
