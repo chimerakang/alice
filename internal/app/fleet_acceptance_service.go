@@ -177,6 +177,7 @@ func (f *FleetService) SeedCriteria(ctx context.Context, taskID, source string, 
 // agent how to report on them. Anything but an issue goes to the Commander.
 func (f *FleetService) DispatchIssue(ctx context.Context, actor fleet.Actor, req fleet.DispatchRequest) (fleet.Task, error) {
 	if req.Issue <= 0 || f.Accept == nil {
+		req.Goal = fleetDispatchGoal(req.Shape, req.Goal)
 		return f.Commander.Dispatch(ctx, actor, req)
 	}
 	if strings.TrimSpace(actor.ID) == "" {
@@ -207,7 +208,7 @@ func (f *FleetService) DispatchIssue(ctx context.Context, actor fleet.Actor, req
 	criteria := openCriteria(issue)
 	task, err := f.Store.CreateTask(ctx, fleet.NewTask{
 		ProjectID: req.ProjectID, Shape: req.Shape, Model: req.Model, Priority: req.Priority, Budget: req.Budget,
-		Goal:   acceptanceGoal(req.Issue, issue, criteria),
+		Goal:   fleetDispatchGoal(req.Shape, acceptanceGoal(req.Issue, issue, criteria)),
 		Source: fleet.Source{Kind: fleet.SourceIssue, IssueNumber: req.Issue},
 	})
 	if err != nil {
@@ -223,6 +224,16 @@ func (f *FleetService) DispatchIssue(ctx context.Context, actor fleet.Actor, req
 	}
 	f.Scheduler.Kick()
 	return task, nil
+}
+
+const fleetShipDeliveryInstructions = `Fleet delivery rules:
+Keep all changes in this task's worktree. Do not push commits, open or merge pull requests, or write to issues or other remote services. Fleet handles repository delivery. If the task requires any other remote write, list it in your final report as a proposed action with its target and reason, and leave it for the owner to review. Read-only remote queries are allowed. If you need an unavailable credential, report the blocker without searching for credentials outside the worktree.`
+
+func fleetDispatchGoal(shape fleet.Shape, goal string) string {
+	if (shape == "" || shape == fleet.ShapeShip) && strings.TrimSpace(goal) != "" {
+		return goal + "\n\n" + fleetShipDeliveryInstructions
+	}
+	return goal
 }
 
 func acceptanceGoal(number int, issue *ghissue.IssueContext, items []acceptCriterion) string {
