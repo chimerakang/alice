@@ -151,7 +151,8 @@ type fleetCardManager struct {
 	// DashboardURL, when set, is the base of the "details" link.
 	DashboardURL string
 
-	now func() time.Time
+	now        func() time.Time
+	serviceCtx context.Context
 
 	mu     sync.Mutex
 	states map[string]*fleetCardState
@@ -284,12 +285,21 @@ func (m *fleetCardManager) SetConfirm(ctx context.Context, taskID, action string
 // edited within MinInterval, otherwise once that interval has passed.
 // Refreshes that arrive while one is waiting are folded into it.
 func (m *fleetCardManager) Refresh(ctx context.Context, taskID string) {
+	// An HTTP request or Telegram callback can return before a throttled
+	// update runs. The deferred edit belongs to the bot's lifetime.
+	editCtx := m.serviceCtx
+	if editCtx == nil {
+		editCtx = context.WithoutCancel(ctx)
+	}
+	if editCtx.Err() != nil {
+		return
+	}
 	m.mu.Lock()
 	st := m.state(taskID)
 	wait := m.interval() - m.clock().Sub(st.lastEdit)
 	if wait <= 0 {
 		m.mu.Unlock()
-		m.refreshNow(ctx, taskID)
+		m.refreshNow(editCtx, taskID)
 		return
 	}
 	if st.pending {
@@ -305,14 +315,15 @@ func (m *fleetCardManager) Refresh(ctx context.Context, taskID string) {
 		timer := time.NewTimer(wait)
 		defer timer.Stop()
 		select {
-		case <-ctx.Done():
-			return
+		case <-editCtx.Done():
 		case <-timer.C:
 		}
 		m.mu.Lock()
 		st.pending = false
 		m.mu.Unlock()
-		m.refreshNow(ctx, taskID)
+		if editCtx.Err() == nil {
+			m.refreshNow(editCtx, taskID)
+		}
 	}()
 }
 

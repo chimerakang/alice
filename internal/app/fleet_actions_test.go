@@ -189,7 +189,23 @@ func TestFleetApproveOfferedOnceItemsApproved(t *testing.T) {
 	if b := list(t, task, "blocked_actions"); len(b) != 1 || b[0]["reason"] != fleetWhyItemsOpen || fmt.Sprint(b[0]["items"]) != "["+a+"]" {
 		t.Fatalf("blocked = %v", b)
 	}
+	stored, err := e.svc.Store.GetTask(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.cards.Post(context.Background(), e.key, stored); err != nil {
+		t.Fatal(err)
+	}
+	card, found, err := e.cards.Store.Get(id)
+	if err != nil || !found {
+		t.Fatalf("card = %+v, found = %t, err = %v", card, found, err)
+	}
 	e.post(path+"/acceptance/decide", fmt.Sprintf(`{"item_id":%q,"decision":"approved"}`, a), http.StatusOK)
+	e.msgr.waitEdits(t, 1)
+	edit := e.msgr.lastEdit(t)
+	if edit.MessageID != card.MessageID || !strings.Contains(fleetCardFingerprint(edit.Text, edit.Buttons), fleetCallbackData(fleetActApprove, id)) {
+		t.Fatalf("existing card did not gain approval: %+v", edit)
+	}
 	if task = e.get(path); fmt.Sprint(task["actions"]) != "[approve reply discard]" {
 		t.Fatalf("after approval: %v", task["actions"])
 	}
