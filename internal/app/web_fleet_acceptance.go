@@ -129,6 +129,9 @@ func (wi *WebInterface) fleetAcceptanceOp(ctx context.Context, svc *FleetService
 	if err != nil {
 		return nil, err
 	}
+	if wi.bot != nil && wi.bot.fleetCards != nil {
+		wi.bot.fleetCards.Refresh(ctx, id)
+	}
 	d, err := svc.Delivery(ctx, id)
 	if err != nil {
 		return nil, err

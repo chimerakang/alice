@@ -325,6 +325,7 @@ func (t *TelegramBot) attachFleet(ctx context.Context, svc *FleetService, db *sq
 	t.fleet = svc
 	t.fleetCards = &fleetCardManager{
 		Fleet:        svc,
+		serviceCtx:   ctx,
 		Store:        cards,
 		Messenger:    t,
 		Localize:     t.fleetMsg,

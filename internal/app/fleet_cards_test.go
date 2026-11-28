@@ -685,3 +685,24 @@ func TestFleetElapsed(t *testing.T) {
 		}
 	}
 }
+
+func TestFleetCardRefreshSurvivesCallbackReturn(t *testing.T) {
+	e := newCardEnv(t)
+	lifetime, stop := context.WithCancel(context.Background())
+	t.Cleanup(stop)
+	e.cards.serviceCtx = lifetime
+	e.cards.MinInterval = 100 * time.Millisecond
+	e.cards.now = func() time.Time { return time.Unix(100, 0) }
+	task := e.dispatch("/ship cancellation fixture")
+	ctx, returned := context.WithCancel(context.Background())
+	if _, err := e.svc.Store.Transition(ctx, task.ID, fleet.StatusCancelled, "cancelled by owner"); err != nil {
+		t.Fatal(err)
+	}
+	e.cards.Refresh(ctx, task.ID)
+	returned()
+	e.msgr.waitEdits(t, 1)
+	edit := e.msgr.lastEdit(t)
+	if edit.MessageID != e.msgr.sent[0].MessageID || !strings.Contains(edit.Text, "fleet_status_cancelled") {
+		t.Fatalf("original card was not cancelled: %+v", edit)
+	}
+}
