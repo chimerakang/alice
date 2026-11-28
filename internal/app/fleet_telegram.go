@@ -207,6 +207,9 @@ func (t *TelegramBot) handleFleetCommand(key chatKey, userID int64, text string)
 		case parts[1] == "mode":
 			t.fleetSetProjectMode(ctx, key, userID, parts[2:])
 			return true
+		case parts[1] == "milestone":
+			t.fleetSetProjectMilestone(ctx, key, userID, parts[2:])
+			return true
 		}
 	}
 	return false
@@ -291,7 +294,7 @@ func (t *TelegramBot) fleetAfterCommand(key chatKey, userID int64, text string) 
 	default:
 		return
 	}
-	if len(parts) < 2 || parts[1] == "mode" {
+	if len(parts) < 2 || parts[1] == "mode" || parts[1] == "milestone" {
 		return
 	}
 	// /project saved the path only if it was valid; read back what it saved.
@@ -331,6 +334,7 @@ func (t *TelegramBot) attachFleet(ctx context.Context, svc *FleetService, db *sq
 		DashboardURL: svc.Config.DashboardURL,
 	}
 	svc.run("fleet.cards", func() error { return t.fleetCards.Run(ctx) })
+	t.attachFleetMilestones(svc)
 
 	if err := cards.preparePrompts(); err != nil {
 		return err
@@ -442,6 +446,11 @@ func (t *TelegramBot) handleFleetCallback(key chatKey, userID int64, queryID, da
 	}
 	if t.fleet == nil {
 		answer("fleet_disabled", nil)
+		return
+	}
+	// Batch buttons carry a batch ID, not a task ID.
+	if action == fleetActBatchGo || action == fleetActBatchOne {
+		t.handleFleetBatchCallback(key, userID, queryID, action, taskID)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), fleetCommandTimeout)
