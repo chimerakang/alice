@@ -71,3 +71,21 @@ func TestProjectStateRecordCallCostUnknownModelReturnsZero(t *testing.T) {
 		t.Fatalf("unknown model fallback = %v, want 0 (cannot price)", got)
 	}
 }
+
+func TestEstimateClaudeCostFable52(t *testing.T) {
+	for _, model := range []string{"claude-fable-5-2", "global.anthropic.claude-fable-5-2"} {
+		// Per million tokens: $8 input + $0.20 cache read + $10 cache write + $40 output.
+		if got := EstimateClaudeCost(model, 1_000_000, 1_000_000, 1_000_000, 1_000_000); got != 58.2 {
+			t.Errorf("%s: estimated cost = %v, want 58.2", model, got)
+		}
+	}
+
+	previous := ModelPricing["fable_5_2"]
+	t.Cleanup(func() { ModelPricing["fable_5_2"] = previous })
+	var config ModelPricingConfig
+	config.Fable52.Input, config.Fable52.Output = 4, 20
+	InitModelPricing(&config)
+	if got := EstimateClaudeCost("claude-fable-5-2", 1_000_000, 0, 0, 1_000_000); got != 24 {
+		t.Fatalf("configured estimate = %v, want 24", got)
+	}
+}

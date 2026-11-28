@@ -19,6 +19,7 @@ var ModelPricing = map[string]struct {
 	"haiku":     {1.00, 5.00},   // Default: Claude Haiku 4.5
 	"sonnet":    {3.00, 15.00},  // Default: Claude Sonnet 4.6
 	"opus":      {5.00, 25.00},  // Default: Claude Opus 4.7 / 4.8 (standard tier)
+	"fable_5_2": {8.00, 40.00},  // Default: Claude Fable 5.2 standard pricing
 	"opus_fast": {10.00, 50.00}, // Default: Claude Opus 4.8 Fast Mode (research preview; CLI headless flag pending — see #178)
 }
 
@@ -45,6 +46,12 @@ func InitModelPricing(config *ModelPricingConfig) {
 			OutputPerMTok float64
 		}{config.Opus.Input, config.Opus.Output}
 	}
+	if config.Fable52.Input > 0 {
+		ModelPricing["fable_5_2"] = struct {
+			InputPerMTok  float64
+			OutputPerMTok float64
+		}{config.Fable52.Input, config.Fable52.Output}
+	}
 	if config.OpusFast.Input > 0 {
 		ModelPricing["opus_fast"] = struct {
 			InputPerMTok  float64
@@ -60,8 +67,8 @@ func InitModelPricing(config *ModelPricingConfig) {
 //
 // Honours Anthropic prompt-cache pricing:
 //   - uncached input        × 1.00x base rate
-//   - cache_read_input      × 0.10x base rate
-//   - cache_creation_input  × 1.25x base rate
+//   - cache_read_input      × 0.10x base rate (0.025x for Fable 5.2)
+//   - cache_creation_input  × 1.25x base rate (5-minute cache write)
 //   - output                ×       output rate
 //
 // Returns 0 when the model cannot be matched against the pricing table; the
@@ -72,8 +79,12 @@ func EstimateClaudeCost(model string, inputTokens, cacheReadTokens, cacheCreatio
 	if !ok {
 		return 0
 	}
+	cacheReadMultiplier := 0.1
+	if short == "fable_5_2" {
+		cacheReadMultiplier = 0.025
+	}
 	weightedInput := float64(inputTokens) +
-		float64(cacheReadTokens)*0.1 +
+		float64(cacheReadTokens)*cacheReadMultiplier +
 		float64(cacheCreationTokens)*1.25
 	return (weightedInput*rate.InputPerMTok + float64(outputTokens)*rate.OutputPerMTok) / 1_000_000
 }
@@ -91,6 +102,8 @@ func EstimateClaudeCost(model string, inputTokens, cacheReadTokens, cacheCreatio
 func ExtractModelShortName(fullModelID string) string {
 	m := strings.ToLower(fullModelID)
 	switch {
+	case m == "fable_5_2", strings.HasSuffix(m, "claude-fable-5-2"):
+		return "fable_5_2"
 	case strings.Contains(m, "opus") && strings.Contains(m, "fast"):
 		return "opus_fast"
 	case strings.Contains(m, "opus"):
@@ -138,7 +151,7 @@ type PerformanceMetrics struct {
 	ChatID            int64         `json:"chat_id"`
 	ProjectPath       string        `json:"project_path,omitempty"`
 	AgentType         string        `json:"agent_type,omitempty"`
-	Model             string        `json:"model,omitempty"` // NEW: "haiku", "sonnet", "opus"
+	Model             string        `json:"model,omitempty"`     // NEW: "haiku", "sonnet", "opus"
 	FastMode          bool          `json:"fast_mode,omitempty"` // Opus Fast Mode tier (see #178)
 }
 
