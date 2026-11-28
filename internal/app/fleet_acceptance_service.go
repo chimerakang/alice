@@ -177,7 +177,6 @@ func (f *FleetService) SeedCriteria(ctx context.Context, taskID, source string, 
 // agent how to report on them. Anything but an issue goes to the Commander.
 func (f *FleetService) DispatchIssue(ctx context.Context, actor fleet.Actor, req fleet.DispatchRequest) (fleet.Task, error) {
 	if req.Issue <= 0 || f.Accept == nil {
-		req.Goal = fleetDispatchGoal(req.Shape, req.Goal)
 		return f.Commander.Dispatch(ctx, actor, req)
 	}
 	if strings.TrimSpace(actor.ID) == "" {
