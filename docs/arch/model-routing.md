@@ -138,7 +138,7 @@ moves it up one configured tier (fast → smart → deep → flagship) and recor
 `model.selected` event with reason `escalated`. It does not escalate when the
 model was set by hand, the task is already on the top tier, or the status
 reason contains a built-in exclusion (budget limits, lost agent process,
-interrupted verification, quota / rate / usage limit) or an entry in
+verification interrupted by a host restart, quota / rate / usage / weekly limit) or an entry in
 `fleet.no_escalate_reasons`. Configured entries add to the built-in list; they
 do not replace it.
 
