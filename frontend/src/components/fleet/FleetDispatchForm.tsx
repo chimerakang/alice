@@ -222,6 +222,7 @@ export default function FleetDispatchForm({ projects, defaultProject = "", onClo
           {t("fleet.dispatch.project")}
           <select
             value={project}
+            disabled={busy}
             onChange={(e) => {
               setProject(e.target.value);
               setPicked([]); // issue numbers mean nothing in another project
