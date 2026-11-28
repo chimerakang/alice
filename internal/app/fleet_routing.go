@@ -208,9 +208,11 @@ var defaultNoEscalateReasons = []string{
 	"over the project's daily budget",
 	"over the fleet's daily budget",
 	"agent process is gone",
+	"by a host restart",
 	"runner stopped",
 	"verification interrupted",
 	"usage limit",
+	"hit your weekly limit",
 	"rate limit",
 	"quota",
 }

@@ -123,6 +123,9 @@ func TestEscalation(t *testing.T) {
 		"over the fleet's daily budget: x",
 		"agent process is gone: it died or the host restarted while it was running",
 		"agent error: Claude usage limit reached",
+		"agent error: You've hit your weekly limit · resets 2pm (Asia/Taipei)",
+		"verification was cut off by a host restart",
+		"agent was left running without supervision by a host restart and has been stopped",
 	} {
 		if _, ok := svc.escalation(task(fleet.StatusNeedsDecision, reason, "m-smart"), auto("smart", "m-smart")); ok {
 			t.Errorf("%q must not escalate", reason)
