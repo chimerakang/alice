@@ -34,11 +34,12 @@ const (
 
 // Next actions the reviewer can take.
 const (
-	deliveryNextApprove = "approve"
-	deliveryNextDecide  = "decide"
-	deliveryNextRerun   = "rerun"
-	deliveryNextWait    = "wait"
-	deliveryNextNone    = "none"
+	deliveryNextApprove     = "approve"
+	deliveryNextDecide      = "decide"
+	deliveryNextReviewMerge = "review_merge"
+	deliveryNextRerun       = "rerun"
+	deliveryNextWait        = "wait"
+	deliveryNextNone        = "none"
 )
 
 // deliveryNoteLimit caps the agent's delivery note kept in a summary.
@@ -230,11 +231,22 @@ func buildFleetDelivery(in fleetDeliveryInput) fleetDelivery {
 	}
 
 	landing := deliveryLanding(in.Events)
-	deliveryLists(&d, task, landing.Code == "")
+	externalMerge, verifiedTarget := deliveryExternalMerge(task, in.Events)
+	if landing.Code == "" && verifiedTarget {
+		landing = fleetDeliveryItem{Code: "landed_pr", Detail: task.PRURL}
+	}
+	deliveryLists(&d, task, landing.Code == "" && !externalMerge)
+	if externalMerge && landing.Code == "" {
+		d.Pending = append(d.Pending, fleetDeliveryItem{Code: "pr_merge_unconfirmed", Detail: task.PRURL})
+	}
 	if landing.Code != "" {
 		d.Completed = append(d.Completed, landing)
 	}
 	d.Next = deliveryNext(task)
+	if externalMerge && d.Next == deliveryNextApprove {
+		d.Next = deliveryNextReviewMerge
+		d.Approvable = false
+	}
 	return d
 }
 
@@ -414,6 +426,33 @@ func deliveryLists(d *fleetDelivery, task fleet.Task, awaitingLanding bool) {
 	if d.DiffTruncate {
 		d.Limits = append(d.Limits, fleetDeliveryItem{Code: "diff_truncated"})
 	}
+}
+
+// Older merge observations rely on the subsequent sync result to confirm the target branch.
+func deliveryExternalMerge(task fleet.Task, events []fleet.Event) (observed, verifiedTarget bool) {
+	if task.PRNumber <= 0 {
+		return false, false
+	}
+	var result issueSyncRecord
+	for i := len(events) - 1; i >= 0; i-- {
+		event := events[i]
+		switch event.Type {
+		case fleetEventIssueSyncResult:
+			if result.Stage == "" {
+				_ = json.Unmarshal(event.Payload, &result)
+			}
+		case fleetEventPRLanded:
+			var pr issueSyncLanding
+			if json.Unmarshal(event.Payload, &pr) == nil && pr.Number == task.PRNumber {
+				if pr.TargetVerified != nil {
+					return true, *pr.TargetVerified
+				}
+				return true, result.Stage == issueStageMerged
+			}
+			return false, false
+		}
+	}
+	return false, false
 }
 
 // deliveryLanding reads the recorded outcome only after Fleet successfully landed the change.

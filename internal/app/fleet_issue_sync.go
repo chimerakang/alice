@@ -669,7 +669,8 @@ func (s *FleetIssueSync) sync(ctx context.Context, task fleet.Task, project flee
 			return nil, err
 		}
 		if !observed {
-			if _, err := s.Store.AppendEvent(ctx, task.ID, fleetEventPRLanded, issueSyncLanding{Number: task.PRNumber}); err != nil {
+			targetVerified := in.Stage == issueStageMerged
+			if _, err := s.Store.AppendEvent(ctx, task.ID, fleetEventPRLanded, issueSyncLanding{Number: task.PRNumber, TargetVerified: &targetVerified}); err != nil {
 				return nil, err
 			}
 		}
@@ -773,7 +774,8 @@ func (s *FleetIssueSync) resolveDone(ctx context.Context, in *issueSyncInput) {
 }
 
 type issueSyncLanding struct {
-	Number int `json:"number"`
+	Number         int   `json:"number"`
+	TargetVerified *bool `json:"target_verified,omitempty"`
 }
 
 func issueSyncPRLanded(ctx context.Context, store *fleet.Store, task fleet.Task) (bool, error) {

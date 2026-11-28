@@ -170,7 +170,7 @@ export interface FleetDelivery {
   completed: FleetDeliveryItem[];
   pending: FleetDeliveryItem[];
   limits: FleetDeliveryItem[];
-  next: "approve" | "decide" | "rerun" | "wait" | "none";
+  next: "approve" | "decide" | "review_merge" | "rerun" | "wait" | "none";
   pr_url: string;
   pr_number: number;
   /** Per-item acceptance; empty when the task has no criteria on record. */

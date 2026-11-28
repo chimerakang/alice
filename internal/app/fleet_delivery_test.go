@@ -216,3 +216,29 @@ func TestDelivery_UsesRecordedLanding(t *testing.T) {
 		}
 	}
 }
+
+func TestDelivery_ExternalMergeNeedsVerifiedTarget(t *testing.T) {
+	task := fleet.Task{Shape: fleet.ShapeShip, Status: fleet.StatusReviewReady, PRNumber: 42, PRURL: "https://example.com/pr/42"}
+	observed := dvEvent(2, fleetEventPRLanded, issueSyncLanding{Number: task.PRNumber})
+	for _, tc := range []struct {
+		stage string
+		want  string
+	}{
+		{issueStageMerged, "landed_pr"},
+		{issueStageUnconfirmed, ""},
+		{"", ""},
+	} {
+		events := []fleet.Event{observed}
+		if tc.stage != "" {
+			events = append(events, dvEvent(3, fleetEventIssueSyncResult, issueSyncRecord{Stage: tc.stage}))
+		}
+		d := buildFleetDelivery(fleetDeliveryInput{Task: task, Events: events})
+		if got := dvCodes(d.Completed); got != tc.want || d.Next != deliveryNextReviewMerge || d.Approvable {
+			t.Fatalf("stage %q: completed=%q next=%q", tc.stage, got, d.Next)
+		}
+		pending := strings.Contains(dvCodes(d.Pending), "pr_merge_unconfirmed")
+		if pending != (tc.want == "") {
+			t.Fatalf("stage %q: pending=%v", tc.stage, d.Pending)
+		}
+	}
+}

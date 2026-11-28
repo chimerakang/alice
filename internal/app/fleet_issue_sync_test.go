@@ -592,6 +592,10 @@ func TestIssueSyncKeepsIssueOpenWhenPRMergedToWrongBranch(t *testing.T) {
 		t.Fatal("PR merged into main closed a task pinned to develop")
 	}
 	contains(t, e.host.commentFor(task.ID), "PR 已合併到 main", "任務目標分支為 develop")
+	delivery, err := e.svc.Delivery(context.Background(), task.ID)
+	if err != nil || !strings.Contains(dvCodes(delivery.Pending), "pr_merge_unconfirmed") || delivery.Approvable {
+		t.Fatalf("delivery after wrong target merge: %+v, %v", delivery, err)
+	}
 }
 
 func TestIssueSyncReconcilesExternallyMergedReviewTask(t *testing.T) {
@@ -609,6 +613,16 @@ func TestIssueSyncReconcilesExternallyMergedReviewTask(t *testing.T) {
 	}
 	if got.Status != fleet.StatusDone || e.svc.TaskActions(context.Background(), got).Can(fleetOpMerge) {
 		t.Fatal("GitHub is closed but Fleet still offers merge on the review task")
+	}
+	delivery, err := e.svc.Delivery(context.Background(), task.ID)
+	if err != nil || !strings.Contains(dvCodes(delivery.Completed), "landed_pr") {
+		t.Fatalf("delivery after confirmed merge: %+v, %v", delivery, err)
+	}
+	message := renderFleetDelivery(func(key string, vars map[string]string) string {
+		return testLocalize(0, key, vars)
+	}, delivery, "")
+	if !strings.Contains(message, "fleet_dv_item_landed_pr") {
+		t.Fatalf("Telegram delivery summary: %s", message)
 	}
 }
 
