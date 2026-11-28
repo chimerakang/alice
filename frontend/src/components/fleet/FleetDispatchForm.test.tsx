@@ -13,6 +13,7 @@ const api = vi.hoisted(() => ({
   listProjectMilestones: vi.fn(),
   listProjectIssues: vi.fn(),
   dispatch: vi.fn(),
+  createEpic: vi.fn(),
 }));
 
 vi.mock("@/lib/fleetApi", () => ({
@@ -100,4 +101,35 @@ describe("FleetDispatchForm GitHub section", () => {
       project_id: "app", shape: "ship", goal: "fix it", create_issue: true, milestone: "v2 new",
     });
   });
+});
+
+it("creates an epic without dispatching and selects it even if the refreshed list is stale", async () => {
+  api.getProjectGitHub.mockResolvedValue({ available: true, reason: "" });
+  let finish!: (reply: { number: number; title: string }) => void;
+  api.createEpic.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+  await render();
+
+  const kinds = container.querySelectorAll<HTMLInputElement>('input[name="github-kind"]');
+  expect(kinds[0].checked).toBe(true);
+  await act(async () => kinds[1].click());
+  const project = container.querySelector("select")!;
+  const shape = container.querySelectorAll("select")[1];
+  expect(shape.disabled).toBe(true);
+  for (const field of ["model_default", "budget_default"]) {
+    const placeholder = i18n.t(`fleet.dispatch.${field}`);
+    expect(container.querySelector<HTMLInputElement>(`input[placeholder="${placeholder}"]`)!.disabled).toBe(true);
+  }
+
+  await type(container.querySelector('input[list="fleet-milestones"]')!, "v1");
+  await submitGoal();
+  expect(api.createEpic).toHaveBeenCalledWith({ project_id: "app", description: "fix it", milestone: "v1" });
+  expect(api.dispatch).not.toHaveBeenCalled();
+  expect(project.disabled).toBe(true);
+
+  await act(async () => finish({ number: 62, title: "fix it" }));
+  expect(project.disabled).toBe(false);
+  expect(container.querySelector<HTMLInputElement>('input[name="github-kind"]')?.checked).toBe(true);
+  const epic = container.querySelector<HTMLOptionElement>('option[value="62"]')!;
+  expect(epic.textContent).toContain("fix it");
+  expect(epic.selected).toBe(true);
 });
