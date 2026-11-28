@@ -8,7 +8,7 @@ Sources:
 - [Codex App Server](https://developers.openai.com/codex/app-server)
 - [Claude Agent SDK reference](https://code.claude.com/docs/en/agent-sdk/python)
 
-The Alice-side policy is in `internal/app/fleet_quota.go`. It takes snapshots and eligible backends as input. Unknown data preserves the normal preference when both backends are available. Detected exhaustion without a reset remains blocked until the provider refreshes its state. Error matching accepts caller-supplied expressions and a timestamp layout. Time-only human-readable resets need the provider date and timezone context before they can become absolute timestamps.
+The Alice-side policy is in `internal/app/fleet_quota.go`. It takes snapshots and eligible backends as input. Unknown data preserves the normal preference when both backends are available. Detected exhaustion without a reset remains blocked until the provider refreshes its state. Error matching accepts caller-supplied expressions and a timestamp layout. For a time-only reset layout such as `3pm`, Fleet uses the next occurrence of that clock time in the configured timezone. A date without a year leaves the reset unknown.
 
 The accompanying alice-core changes record backend and model when available, preserve unattributed usage, and aggregate tokens, cost and distinct tasks by backend. Alice exposes these totals at `GET /api/fleet/usage/backends`. Pass RFC3339 `since` and `until` values for a half-open interval. The end defaults to now, and the start defaults to 24 hours before the end. The optional `backend` filter accepts `claude`, `codex`, or `unattributed`. An empty backend represents unattributed usage. The Fleet cost panel shows the breakdown for the selected period.
 

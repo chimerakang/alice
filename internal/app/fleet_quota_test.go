@@ -38,7 +38,7 @@ func TestRouteWithQuota(t *testing.T) {
 func TestMatchFleetQuotaError(t *testing.T) {
 	patterns := []*regexp.Regexp{regexp.MustCompile(`weekly limit; reset (?P<reset>\S+)`), regexp.MustCompile(`subscription quota exhausted`)}
 	for _, message := range []string{"weekly limit; reset 2026-11-27T14:00:00+08:00", "subscription quota exhausted", "weekly limit; reset invalid", "network timeout"} {
-		blocked, reset, err := matchFleetQuotaError(message, patterns, time.RFC3339, time.UTC)
+		blocked, reset, err := matchFleetQuotaError(message, patterns, time.RFC3339, time.UTC, time.Date(2026, 11, 27, 0, 0, 0, 0, time.UTC))
 		switch message {
 		case "network timeout":
 			if blocked || err != nil {
@@ -86,5 +86,30 @@ func TestFleetBackendUsageFilterAndQuotaEstimate(t *testing.T) {
 	}
 	if code, _ := e.call(http.MethodGet, "/api/fleet/usage/backends?backend=invalid", "", false); code != http.StatusBadRequest {
 		t.Fatalf("invalid backend returned %d", code)
+	}
+}
+
+func TestMatchFleetQuotaErrorTimeOnlyReset(t *testing.T) {
+	location, err := time.LoadLocation("Asia/Taipei")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const message = "You've hit your weekly limit · resets 2pm (Asia/Taipei)"
+	patterns := []*regexp.Regexp{regexp.MustCompile(`weekly limit.*resets (?P<reset>\d+[ap]m)`)}
+	for _, tc := range []struct{ hour, day int }{{13, 27}, {14, 28}, {15, 28}} {
+		now := time.Date(2026, 11, 27, tc.hour, 0, 0, 0, location)
+		blocked, reset, err := matchFleetQuotaError(message, patterns, "3pm", location, now)
+		want := time.Date(2026, 11, tc.day, 14, 0, 0, 0, location)
+		if err != nil || !blocked || !reset.Equal(want) {
+			t.Errorf("at %s: blocked=%t reset=%s, want %s, err=%v", now, blocked, reset, want, err)
+		}
+	}
+}
+
+func TestMatchFleetQuotaErrorPartialDateKeepsUnknownReset(t *testing.T) {
+	patterns := []*regexp.Regexp{regexp.MustCompile(`reset (?P<reset>.+)`)}
+	blocked, reset, err := matchFleetQuotaError("reset Nov 27 2pm", patterns, "Jan 2 3pm", time.UTC, time.Now())
+	if !blocked || !reset.IsZero() || err == nil {
+		t.Fatalf("blocked=%t reset=%s, err=%v", blocked, reset, err)
 	}
 }
