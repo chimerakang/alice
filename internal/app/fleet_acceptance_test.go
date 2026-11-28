@@ -425,3 +425,22 @@ func TestAcceptanceLegacyTaskCompatibility(t *testing.T) {
 		t.Fatalf("manual entry = %v", out)
 	}
 }
+
+func TestFleetShipGoalKeepsExternalWritesForReview(t *testing.T) {
+	e := newAcceptEnv(t, `"true"`)
+	e.setIssue(313, "Write the result file")
+	id := e.dispatch(313)
+	task, err := e.svc.Store.GetTask(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(task.Goal, fleetShipDeliveryInstructions) {
+		t.Fatalf("Ship issue goal missing delivery instructions: %q", task.Goal)
+	}
+	if got := fleetDispatchGoal(fleet.ShapeScout, "read only"); got != "read only" {
+		t.Fatalf("Scout goal changed: %q", got)
+	}
+	if got := fleetDispatchGoal(fleet.ShapeShip, ""); got != "" {
+		t.Fatalf("empty Ship goal changed: %q", got)
+	}
+}
