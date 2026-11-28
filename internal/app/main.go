@@ -31,6 +31,10 @@ type ModelPricingConfig struct {
 		Input  float64 `json:"input"`
 		Output float64 `json:"output"`
 	} `json:"opus"`
+	Fable52 struct {
+		Input  float64 `json:"input"`
+		Output float64 `json:"output"`
+	} `json:"fable_5_2"`
 	// OpusFast is the premium Fast Mode tier for Opus models (research preview).
 	// Pricing per Anthropic docs: Opus 4.8 fast = $10/$50 per MTok; Opus 4.6/4.7
 	// fast = $30/$150. Defaults follow 4.8. Currently unused at runtime — gated
@@ -227,6 +231,8 @@ func LoadConfig() (*Config, error) {
 	config.ModelPricing.Sonnet.Output = 15.00
 	config.ModelPricing.Opus.Input = 5.00
 	config.ModelPricing.Opus.Output = 25.00
+	config.ModelPricing.Fable52.Input = 8.00
+	config.ModelPricing.Fable52.Output = 40.00
 	config.ModelPricing.OpusFast.Input = 10.00
 	config.ModelPricing.OpusFast.Output = 50.00
 

@@ -57,6 +57,10 @@
       "input": 5.00,
       "output": 25.00
     },
+    "fable_5_2": {
+      "input": 8.0,
+      "output": 40.0
+    },
     "opus_fast": {
       "input": 10.00,
       "output": 50.00
